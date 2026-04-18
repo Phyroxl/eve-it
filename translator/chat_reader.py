@@ -18,7 +18,6 @@ def _get_chatlog_dir() -> Optional[Path]:
     for p in candidates:
         if p.exists():
             return p
-    # Fallback: buscar via find_all_log_dirs
     try:
         from core.log_parser import find_all_log_dirs
         for dirs in find_all_log_dirs().values():
@@ -74,10 +73,10 @@ class ChatFileReader:
             with open(self.filepath, 'r', encoding=self._encoding, errors='ignore') as f:
                 self._parse_header(f.read(4096))
                 if read_existing:
-                    # Ajustado a 40KB para capturar ~30 min de historial ligero
+                    # Ajustado a 128KB para capturar ~60 min de historial (aprox 1 hora)
                     f.seek(0, 2)
                     size = f.tell()
-                    self._pos = max(0, size - 40960)
+                    self._pos = max(0, size - 131072)
                 else:
                     f.seek(0, 2)
                     self._pos = f.tell()
@@ -88,22 +87,43 @@ class ChatFileReader:
     def read_new(self) -> list:
         if not self._initialized:
             self.initialize()
-            return []
+            # En la primera lectura tras inicializar (historial), 
+            # solo queremos los últimos 60 minutos reales.
+            return self._read_and_filter(max_age_minutes=60)
+        return self._read_and_filter()
+
+    def _read_and_filter(self, max_age_minutes: Optional[int] = None) -> list:
         msgs = []
         try:
+            now_ts = time.time()
             enc = getattr(self, '_encoding', 'utf-16')
             with open(self.filepath, 'r', encoding=enc, errors='ignore') as f:
                 f.seek(self._pos)
                 new_text = f.read()
                 self._pos = f.tell()
-            for line in new_text.splitlines():
+            
+            lines = new_text.splitlines()
+            for line in lines:
                 line = line.strip()
                 if not line: continue
                 m = CHAT_LINE_RE.match(line)
                 if m:
-                    ts, sender, text = m.group(1), m.group(2).strip(), m.group(3).strip()
-                    if text and sender not in ('EVE System', 'Mensaje', 'Message', 'System', 'Sistema', 'Сообщение', 'Message', 'Nachricht'):
-                        msgs.append(ChatMessage(ts, self._channel, sender, text, self._listener))
+                    ts_str, sender, text = m.group(1), m.group(2).strip(), m.group(3).strip()
+                    if not text or sender in ('EVE System', 'Mensaje', 'Message', 'System', 'Sistema', 'Сообщение', 'Nachricht'):
+                        continue
+                    
+                    # Validar antigüedad si se requiere
+                    if max_age_minutes is not None:
+                        try:
+                            # Formato EVE: 2026.04.18 06:21:33 (UTC)
+                            from datetime import datetime, timezone
+                            dt = datetime.strptime(ts_str, "%Y.%m.%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                            age_secs = datetime.now(timezone.utc).timestamp() - dt.timestamp()
+                            if age_secs > max_age_minutes * 60:
+                                continue # Demasiado antiguo
+                        except Exception: pass
+
+                    msgs.append(ChatMessage(ts_str, self._channel, sender, text, self._listener))
         except Exception as e:
             logger.debug(f"ChatFileReader read error: {e}")
         return msgs
@@ -156,12 +176,9 @@ class ChatWatcher:
         return files
 
     def _get_canonical_id(self, name: str) -> str:
-        """Mapea nombres crudos de EVE a IDs internas de traducción."""
         import re as _re
-        # Extraer nombre si es un chat privado: "Private Chat (Player Name)" -> "Player Name"
         m = _re.match(r'Private Chat \((.+)\)', name, _re.I)
         if m: name = m.group(1).strip()
-        
         low = name.lower().strip()
         synonyms = {
             'local': 'ch_local',
@@ -172,11 +189,9 @@ class ChatWatcher:
         return synonyms.get(low, name)
 
     def set_active_channel(self, ch_id: str):
-        """Cambia el canal activo y rebobina los lectores para cargar historial."""
         with self._lock:
             self._active_channels = {ch_id}
             logger.info(f"Watcher: Canal activo cambiado a -> {ch_id}")
-            # Forzar rebobinado de los archivos que coincidan con el nuevo canal
             for fpath, reader in self._readers.items():
                 if self._channel_matches(fpath.name):
                     try:
@@ -185,19 +200,15 @@ class ChatWatcher:
                     except Exception: pass
 
     def _get_channel_aliases(self, ch_id: str) -> list:
-        """Dada una ID (ej ch_fleet), devuelve todos los prefijos de archivo posibles."""
         if ch_id == 'ch_local': return ['local']
         if ch_id == 'ch_fleet': return ['fleet', 'flota', 'escuadrón', 'esquadrão']
         if ch_id == 'ch_corp':  return ['corp.', 'corporación', 'corporação', 'корпорация']
         if ch_id == 'ch_alliance': return ['alliance', 'alianza', 'aliança']
-        # Para privados, el alias es el nombre del personaje limpio
         return [ch_id.lower().strip()]
 
     def _channel_matches(self, fname: str) -> bool:
-        """Filtra por canal activo basándose en sinónimos de IDs canónicas."""
         if not self._active_channels: return True
         stem = fname.split('_')[0].lower() if '_' in fname else fname.lower()
-        
         for active_ch in self._active_channels:
             aliases = self._get_channel_aliases(active_ch)
             if any(a in stem for a in aliases):
@@ -207,6 +218,7 @@ class ChatWatcher:
     def _loop(self):
         while self._running:
             try:
+                all_new_msgs = []
                 for fpath in self._get_files():
                     # Escanear todos los archivos dentro del rango temporal (Persistencia)
                     if fpath not in self._readers:
@@ -223,29 +235,30 @@ class ChatWatcher:
                         # FILTRO: Solo emitir si coincide con el canal activo en el HUD
                         if not self._channel_matches(fpath.name): continue
                         
+                        all_new_msgs.append(msg)
                         self._seen_ids.add(msg.msg_id)
+                
+                # ORDENAR POR TIMESTAMP ANTES DE EMITIR
+                if all_new_msgs:
+                    all_new_msgs.sort(key=lambda x: x.timestamp)
+                    for msg in all_new_msgs:
                         if len(self._seen_ids) > 5000:
                             self._seen_ids = set(list(self._seen_ids)[-2000:])
-                        
                         try: self._callback(msg)
                         except Exception: pass
             except Exception as e:
                 logger.debug(f"ChatWatcher loop error: {e}")
-            
-            # Limpieza periódica de lectores antiguos (> 2 horas de inactividad)
             try:
-                if time.time() % 300 < 2: # cada 5 minutos aprox
-                    cutoff = time.time() - 7200 # 2 horas
+                if time.time() % 300 < 2:
+                    cutoff = time.time() - 7200
                     to_del = [fp for fp, r in self._readers.items() if fp.stat().st_mtime < cutoff]
                     for fp in to_del:
                         del self._readers[fp]
                         logger.debug(f"Nettoyage: Lector eliminado por antigüedad -> {fp.name}")
             except Exception: pass
-
             time.sleep(self._poll_interval)
 
     def get_known_channels(self) -> list:
-        """Devuelve lista de canales únicos detectados por los readers activos."""
         seen = []
         for reader in self._readers.values():
             ch = getattr(reader, '_channel', '')
@@ -254,41 +267,28 @@ class ChatWatcher:
         return sorted(seen)
 
     def get_all_channels(self) -> list:
-        """
-        Escanea logs recientes y devuelve IDs canónicas o nombres crudos (privados).
-        """
         import re as _re
         from pathlib import Path
-        # Canales base que SIEMPRE deben estar visibles
         seen = {'ch_local', 'ch_fleet', 'ch_corp', 'ch_alliance'}
-        
         try:
-            # Escaneamos los archivos del último periodo (60 min) para el menú
             for fpath in self._get_files(window_minutes=60):
                 try:
-                    # Detectar canal desde la cabecera del archivo
-                    enc = 'utf-16' # EVE logs son casi siempre utf-16
+                    enc = 'utf-16'
                     try:
                         with open(fpath, 'r', encoding=enc, errors='ignore') as f:
                             header = f.read(2048)
                     except Exception:
                         with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                             header = f.read(2048)
-                    
                     found_ch = None
                     m = _re.search(r'Channel Name[:\s]+(.+)', header)
-                    if m:
-                        found_ch = m.group(1).strip()
+                    if m: found_ch = m.group(1).strip()
                     else:
-                        # Fallback a nombre de archivo
                         stem = Path(fpath).stem
                         found_ch = stem.split('_')[0] if '_' in stem else stem
-                    
                     if found_ch:
                         seen.add(self._get_canonical_id(found_ch))
                 except Exception: pass
         except Exception: pass
-            
-        # Ordenar: primero local, luego alfabético
         res = sorted(list(seen), key=lambda x: (x != 'ch_local', x))
         return res

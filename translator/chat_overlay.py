@@ -116,16 +116,17 @@ class ChatOverlay(W.QWidget):
         self._send_lang = self._profile.target_lang  # idioma destino del compositor
         self._send_channel = None  # canal EVE destino seleccionado
         self._bubbles = []
-        self._bubble_map = {} # msg_id -> bubble
+        self._bubble_map = {}
+        self._msg_cache = {} 
         self._drag_pos = None
         self._watcher = None
-        # self.setAttribute(C.Qt.WA_TranslucentBackground)
+        
         self.setWindowOpacity(1.0)
         self.setGeometry(config.overlay_x, config.overlay_y, config.overlay_w, config.overlay_h)
         self.setMinimumSize(280, 120)
         self._setup_ui()
         self._migrate_channels()
-        
+
         if self._ctrl:
             self._ctrl.state.subscribe(self._on_state_change)
         self._new_message.connect(self._on_new_message_ui)
@@ -187,15 +188,33 @@ class ChatOverlay(W.QWidget):
         ico.setStyleSheet("color:#00c8ff;font-size:11px;background:transparent;")
         ttl = W.QLabel("EVE Chat Translator")
         ttl.setStyleSheet("color:rgba(0,200,255,0.8);font-size:10px;background:transparent;")
-        self._btn_compact = W.QPushButton("\u2212")
-        self._btn_compact.setFixedSize(18, 18)
-        self._btn_compact.setStyleSheet("QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);border-radius:3px;color:#00c8ff;font-size:10px;}QPushButton:hover{background:rgba(0,180,255,0.35);}")
+        
+        # Botones de control
+        btn_ctrl_style = "QPushButton{background:rgba(0,180,255,0.1);border:none;border-radius:3px;color:rgba(200,230,255,0.5);font-size:11px;}QPushButton:hover{background:rgba(0,180,255,0.25);color:#00c8ff;}"
+        
+        # Compactar (ahora con icono de cuadro pequeño)
+        self._btn_compact = W.QPushButton("\u25ab")
+        self._btn_compact.setFixedSize(20, 20)
+        self._btn_compact.setStyleSheet(btn_ctrl_style)
+        self._btn_compact.setToolTip("Modo Compacto")
         self._btn_compact.clicked.connect(self._toggle_compact)
+        
+        # Minimizar (Real)
+        self._btn_min = W.QPushButton("\u2014")
+        self._btn_min.setFixedSize(20, 20)
+        self._btn_min.setStyleSheet(btn_ctrl_style)
+        self._btn_min.clicked.connect(self.showMinimized)
+        
+        # Cerrar
         btn_cls = W.QPushButton("\u00d7")
-        btn_cls.setFixedSize(18, 18)
-        btn_cls.setStyleSheet("QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);border-radius:3px;color:#ff6666;font-size:10px;}QPushButton:hover{background:rgba(255,50,50,0.35);}")
+        btn_cls.setFixedSize(20, 20)
+        btn_cls.setStyleSheet("QPushButton{background:transparent;border:none;color:rgba(200,230,255,0.4);font-size:16px;}QPushButton:hover{color:#ff4444;}")
         btn_cls.clicked.connect(self.hide)
+        
         tbl.addWidget(ico); tbl.addWidget(ttl); tbl.addStretch()
+        tbl.addWidget(self._btn_compact)
+        tbl.addWidget(self._btn_min)
+        tbl.addWidget(btn_cls)
         btn_style = "QPushButton{background:rgba(0,180,255,0.12);border:1px solid rgba(0,180,255,0.3);border-radius:3px;font-size:11px;padding:0;}QPushButton:hover{background:rgba(0,180,255,0.25);}"
         self._btn_paint = W.QPushButton("\U0001f3a8")
         self._btn_paint.setFixedSize(22, 18)
@@ -440,6 +459,17 @@ class ChatOverlay(W.QWidget):
 
     def _on_chat_message(self, msg):
         try:
+            now = time.time()
+            # Limpiar caché antiguo (más de 10 segundos)
+            self._msg_cache = {k: v for k, v in self._msg_cache.items() if now - v < 10.0}
+            
+            # Crear huella digital del mensaje (Emisor + Texto)
+            fingerprint = (msg.sender, msg.text.strip())
+            if fingerprint in self._msg_cache:
+                return # IGNORAR DUPLICADO
+            
+            self._msg_cache[fingerprint] = now
+            
             processed = process(msg)
             if not processed: return
             

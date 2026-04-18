@@ -319,110 +319,80 @@ class ControlWindow:
         self._lbl_sec_tools.setObjectName("section")
         body_lay.addWidget(self._lbl_sec_tools)
 
-        from PySide6.QtGui import QPainter, QPainterPath, QLinearGradient, QColor, QPen, QBrush, QFont
-
         class EveButton(QPushButton):
             """Botón de alta fidelidad con estética EVE Online (Sci-Fi/Tech)."""
             def __init__(self, text, base_color, icon_char, parent=None):
                 super().__init__(parent)
-                self.base_color = QColor(base_color)
+                # Usar G (QtGui) para los colores y dibujo
+                self.base_color = G.QColor(base_color)
                 self.icon_char = icon_char
-                self.setText(text) # Aplicar limpieza inmediata
+                self.setText(text)
                 self.setMinimumHeight(100)
                 self.setCursor(C.Qt.PointingHandCursor)
                 self._is_hover = False
                 self._is_pressed = False
-                self._is_active = False # Para indicar si el módulo está ON
+                self._is_active = False
+                self._is_minimized = False
 
-            def set_active(self, active: bool):
-                if self._is_active != active:
-                    self._is_active = active
-                    self.update()
-
-            def enterEvent(self, event):
-                self._is_hover = True
+            def set_active(self, active: bool, minimized: bool = False):
+                self._is_active = active
+                self._is_minimized = minimized
                 self.update()
-                super().enterEvent(event)
-
-            def leaveEvent(self, event):
-                self._is_hover = False
-                self.update()
-                super().leaveEvent(event)
-
-            def mousePressEvent(self, event):
-                if event.button() == C.Qt.LeftButton:
-                    self._is_pressed = True
-                    self.update()
-                super().mousePressEvent(event)
-
-            def mouseReleaseEvent(self, event):
-                self._is_pressed = False
-                self.update()
-                super().mouseReleaseEvent(event)
 
             def paintEvent(self, event):
-                p = QPainter(self)
-                p.setRenderHint(QPainter.Antialiasing)
+                p = G.QPainter(self)
+                p.setRenderHint(G.QPainter.Antialiasing)
                 rect = self.rect().adjusted(2, 2, -2, -2)
                 w, h = rect.width(), rect.height()
                 bevel = 15
-                path = QPainterPath()
-                path.moveTo(bevel, 0)
-                path.lineTo(w - bevel, 0); path.lineTo(w, bevel)
-                path.lineTo(w, h - bevel); path.lineTo(w - bevel, h)
-                path.lineTo(bevel, h); path.lineTo(0, h - bevel)
-                path.lineTo(0, bevel); path.closeSubpath()
+                path = G.QPainterPath()
+                path.moveTo(bevel, 0); path.lineTo(w - bevel, 0); path.lineTo(w, bevel)
+                path.lineTo(w, h - bevel); path.lineTo(w - bevel, h); path.lineTo(bevel, h)
+                path.lineTo(0, h - bevel); path.lineTo(0, bevel); path.closeSubpath()
 
-                # Brillo de estado Activo (Glow de fondo)
-                if self._is_active:
-                    p.setPen(C.Qt.NoPen)
-                    p.setBrush(QBrush(QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), 15)))
-                    p.drawPath(path)
-
-                bg_alpha = 50 if self._is_hover else 30
-                if self._is_pressed: bg_alpha = 80
+                # Fondo y Brillo
+                bg_alpha = 50 if self._is_hover else (40 if self._is_active else 20)
                 p.setPen(C.Qt.NoPen)
-                p.setBrush(QBrush(QColor(0, 0, 0, 220)))
+                p.setBrush(G.QBrush(G.QColor(0, 0, 0, 220)))
                 p.drawPath(path)
-                grad = QLinearGradient(0, 0, 0, h)
-                grad.setColorAt(0, QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), bg_alpha))
-                grad.setColorAt(1, QColor(0, 0, 0, 0))
-                p.setBrush(grad)
-                p.drawPath(path)
+                
+                grad = G.QLinearGradient(0, 0, 0, h)
+                c = self.base_color
+                grad.setColorAt(0, G.QColor(c.red(), c.green(), c.blue(), bg_alpha))
+                grad.setColorAt(1, G.QColor(0, 0, 0, 0))
+                p.setBrush(grad); p.drawPath(path)
 
-                # Scanlines
-                p.setPen(QPen(QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), 15), 1))
-                for y in range(5, h, 4): p.drawLine(5, y, w-5, y)
+                # Indicador de MINIMIZADO (Punto latente)
+                if self._is_minimized:
+                    p.setBrush(G.QBrush(G.QColor(c.red(), c.green(), c.blue(), 200)))
+                    p.drawEllipse(w - 20, 10, 8, 8)
+                    p.setPen(G.QPen(G.QColor(c.red(), c.green(), c.blue(), 100), 1))
+                    p.drawEllipse(w - 23, 7, 14, 14)
 
                 # Bordes Neón
-                border_alpha = 200 if self._is_hover or self._is_active else 100
-                if self._is_pressed: border_alpha = 255
-                p.setPen(QPen(QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), border_alpha // 2), 1))
+                border_alpha = 200 if self._is_hover or self._is_active else 80
+                p.setPen(G.QPen(G.QColor(c.red(), c.green(), c.blue(), border_alpha), 1 if not self._is_active else 2))
                 p.drawPath(path)
-                p.setPen(QPen(QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), border_alpha), 2))
-                p.drawLine(0, bevel, bevel, 0) # Highlight superior izquierdo
-                p.drawLine(w - bevel, h, w, h - bevel) # Highlight inferior derecho
 
                 # Icono y Texto
-                icon_rect = C.QRect(15, 0, 50, h)
-                p.setFont(QFont("Segoe UI Symbol", 24))
-                p.setPen(QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), 255 if self._is_hover or self._is_active else 180))
-                p.drawText(icon_rect, C.Qt.AlignCenter, self.icon_char)
-                text_rect = C.QRect(70, 0, w - 80, h)
-                f = QFont("Share Tech Mono", 12); f.setBold(True)
-                p.setFont(f)
-                p.setPen(QColor(255, 255, 255, 255 if self._is_hover else 200))
-                p.drawText(text_rect, C.Qt.AlignLeft | C.Qt.AlignVCenter, self.text().upper())
+                p.setFont(G.QFont("Segoe UI Symbol", 24))
+                p.setPen(G.QColor(c.red(), c.green(), c.blue(), 255 if self._is_active else 150))
+                p.drawText(C.QRect(15, 0, 50, h), C.Qt.AlignCenter, self.icon_char)
+                
+                f = G.QFont("Share Tech Mono", 11); f.setBold(True)
+                p.setFont(f); p.setPen(G.QColor(255, 255, 255, 255 if self._is_hover or self._is_active else 150))
+                p.drawText(C.QRect(70, 0, w - 80, h), C.Qt.AlignLeft | C.Qt.AlignVCenter, self.text().upper())
 
-                # Adorno lateral
-                p.setBrush(QColor(self.base_color.red(), self.base_color.green(), self.base_color.blue(), border_alpha))
-                p.setPen(C.Qt.NoPen)
-                p.drawEllipse(w-5, h//2 - 8, 3, 16)
+            def enterEvent(self, event): self._is_hover = True; self.update(); super().enterEvent(event)
+            def leaveEvent(self, event): self._is_hover = False; self.update(); super().leaveEvent(event)
+            def mousePressEvent(self, event): 
+                if event.button() == C.Qt.LeftButton: self._is_pressed = True; self.update()
+                super().mousePressEvent(event)
+            def mouseReleaseEvent(self, event): self._is_pressed = False; self.update(); super().mouseReleaseEvent(event)
 
             def setText(self, text):
-                # Elimina cualquier cosa entre corchetes, iconos Unicode o saltos de línea
                 import re
-                clean = re.sub(r'\[.*?\]', '', text) # Quita [T], [H], etc
+                clean = re.sub(r'\[.*?\]', '', text)
                 clean = clean.replace('\n', ' ').replace('📡', '').replace('👁️', '').replace('🧬', '').replace('⏻', '').strip()
                 super().setText(clean)
 
@@ -441,6 +411,22 @@ class ControlWindow:
         body_lay.addLayout(grid)
         body_lay.addStretch()
         root.addWidget(body)
+
+        # ── Barra de Acoplamiento (NUEVA) ─────────────────────────────────────
+        self._dock_widget = QWidget()
+        self._dock_widget.setFixedHeight(40)
+        self._dock_widget.setStyleSheet("background: rgba(0,20,40,0.8); border-top: 1px solid rgba(0,180,255,0.2);")
+        self._dock_lay = QHBoxLayout(self._dock_widget)
+        self._dock_lay.setContentsMargins(10, 0, 10, 0); self._dock_lay.setSpacing(5)
+        self._dock_lay.addStretch() # Empujar iconos a la derecha o mantener centrados
+        
+        # Etiqueta de Dock
+        self._lbl_dock = QLabel("ACTIVOS:")
+        self._lbl_dock.setStyleSheet("color:rgba(0,180,255,0.4); font-size:8px; font-weight:bold;")
+        self._dock_lay.insertWidget(0, self._lbl_dock)
+        
+        root.addWidget(self._dock_widget)
+        self._dock_buttons = {} # Cache de botones de dock
 
         # ── Conexiones ────────────────────────────────────────────────────────
         self._btn_refresh.clicked.connect(self._on_restart_tracker)
@@ -485,100 +471,188 @@ class ControlWindow:
         self._update_status() # fuerza actualización de etiquetas de estado
 
     # ── Diálogo personajes detectados ─────────────────────────────────────────
+    # ── Diálogo personajes detectados ─────────────────────────────────────────
     def _on_scan_chars(self):
         try:
             W, C, G = _load_qt()
             chars = list(self._ctrl._tracker.sessions.keys()) if self._ctrl._tracker else []
             dlg = W.QDialog(self._win)
-            dlg.setWindowFlags(
-                dlg.windowFlags() |
-                (C.Qt.WindowType.FramelessWindowHint if hasattr(C.Qt, 'WindowType') else C.Qt.FramelessWindowHint)
-            )
-            dlg.setMinimumWidth(300)
-            dlg.setStyleSheet(
-                "QDialog{background:#000000;border:1px solid rgba(0,180,255,0.3);}"
-                "QLabel{color:rgba(200,230,255,0.9);font-size:11px;padding:2px 8px;}"
-                "QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);"
-                "border-radius:4px;color:#00c8ff;padding:6px 16px;}"
-            )
-            lay = W.QVBoxLayout(dlg)
-            lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+            
+            # Flags de ventana: Frameless + AlwaysOnTop + Tool
+            flags = (C.Qt.WindowType.FramelessWindowHint | C.Qt.WindowType.WindowStaysOnTopHint | C.Qt.WindowType.Tool) \
+                    if hasattr(C.Qt, 'WindowType') else \
+                    (C.Qt.FramelessWindowHint | C.Qt.WindowStaysOnTopHint | C.Qt.Tool)
+            dlg.setWindowFlags(flags)
+            
+            # Forzar TopMost via Win32 API
+            try:
+                import ctypes
+                hwnd = int(dlg.winId())
+                ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+            except: pass
 
-            tb = W.QWidget(); tb.setFixedHeight(30)
-            tb.setStyleSheet("QWidget{background:#000000;border-bottom:1px solid rgba(0,180,255,0.15);}")
-            tb_lay = W.QHBoxLayout(tb); tb_lay.setContentsMargins(10, 0, 6, 0)
+            dlg.setMinimumWidth(350); dlg.setMinimumHeight(400)
+            dlg.setStyleSheet("QDialog{background:#000000; border:1px solid rgba(0,180,255,0.4); border-radius:10px;}")
+            
+            lay = W.QVBoxLayout(dlg); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+            
+            # Header (Barra superior)
+            tb = W.QWidget(); tb.setFixedHeight(40); tb.setStyleSheet("background:rgba(0,180,255,0.08); border-bottom:1px solid rgba(0,180,255,0.2);")
+            tb_lay = W.QHBoxLayout(tb); tb_lay.setContentsMargins(15, 0, 10, 0)
             tb_lbl = W.QLabel(t('gui_dlg_chars_title', self._lang))
-            tb_lbl.setStyleSheet("color:rgba(0,180,255,0.6);font-size:9px;letter-spacing:2px;")
+            tb_lbl.setStyleSheet("color:#00c8ff; font-weight:bold; letter-spacing:1px; font-size:11px;")
             tb_lay.addWidget(tb_lbl); tb_lay.addStretch()
-            btn_x = W.QPushButton("✕"); btn_x.setFixedSize(24, 20)
-            btn_x.setStyleSheet("QPushButton{background:transparent;border:none;color:rgba(200,230,255,0.4);}QPushButton:hover{color:#ff4444;}")
+            btn_x = W.QPushButton("✕"); btn_x.setFixedSize(24, 24)
+            btn_x.setStyleSheet("QPushButton{background:transparent; border:none; color:rgba(200,230,255,0.4); font-size:16px;} QPushButton:hover{color:#ff4444;}")
             btn_x.clicked.connect(dlg.accept); tb_lay.addWidget(btn_x)
             lay.addWidget(tb)
 
+            # Lógica de Arrastre para el Header (tb)
             dlg._dp = None
             def _mp(e): dlg._dp = e.globalPos() if hasattr(e,'globalPos') else e.globalPosition().toPoint()
             def _mm(e):
                 if dlg._dp:
                     cur = e.globalPos() if hasattr(e,'globalPos') else e.globalPosition().toPoint()
-                    dlg.move(dlg.pos()+cur-dlg._dp); dlg._dp = cur
+                    dlg.move(dlg.pos() + cur - dlg._dp); dlg._dp = cur
             def _mr(e): dlg._dp = None
-            tb.mousePressEvent=_mp; tb.mouseMoveEvent=_mm; tb.mouseReleaseEvent=_mr
+            tb.mousePressEvent = _mp; tb.mouseMoveEvent = _mm; tb.mouseReleaseEvent = _mr
 
-            hint = W.QLabel(f"  {t('gui_dlg_chars_hint', self._lang)}")
-            hint.setStyleSheet("color:rgba(0,180,255,0.5);font-size:8px;padding:6px 8px 2px;letter-spacing:1px;")
-            lay.addWidget(hint)
-
-            inner = W.QWidget(); inner_lay = W.QVBoxLayout(inner)
-            inner_lay.setContentsMargins(8, 4, 8, 8); inner_lay.setSpacing(2)
-
+            # Scroll Area
+            scroll = W.QScrollArea(); scroll.setWidgetResizable(True); scroll.setStyleSheet("border:none; background:transparent;")
+            scroll_content = W.QWidget(); scroll_lay = W.QVBoxLayout(scroll_content)
+            scroll_lay.setContentsMargins(15, 15, 15, 15); scroll_lay.setSpacing(10)
+            
             import json as _j
-            _cfg = Path(__file__).resolve().parent.parent / "_main_char.json"
-            try: _main = _j.loads(_cfg.read_text(encoding="utf-8")).get("main", "")
-            except Exception: _main = ""
-            _mref = [_main]
+            _cfg_file = Path(__file__).resolve().parent.parent / "_main_char.json"
+            try: _main = _j.loads(_cfg_file.read_text(encoding="utf-8")).get("main", "")
+            except: _main = ""
 
             if chars:
                 for ch in chars:
-                    star = " \u2605" if ch == _mref[0] else ""
-                    lbl = W.QLabel("\u25cf " + ch + star)
-                    lbl.setStyleSheet("color:#00ff9d;font-size:11px;padding:3px 8px;border-radius:3px;")
-                    ctx_policy = (
-                        C.Qt.ContextMenuPolicy.CustomContextMenu
-                        if hasattr(C.Qt, "ContextMenuPolicy")
-                        else C.Qt.CustomContextMenu
-                    )
-                    lbl.setContextMenuPolicy(ctx_policy)
-                    def _on_ctx(pos, n=ch, l=lbl):
-                        m = W.QMenu(dlg)
-                        m.setStyleSheet(
-                            "QMenu{background:#0a0a0a;border:1px solid rgba(0,180,255,0.4);"
-                            "color:#00c8ff;font-size:10px;padding:4px;}"
-                            "QMenu::item{padding:5px 16px;}"
-                            "QMenu::item:selected{background:rgba(0,180,255,0.2);}"
-                        )
-                        t = m.addAction(f"\u00bfSeleccionar '{n}' como Main?"); t.setEnabled(False)
-                        m.addSeparator()
-                        a_yes = m.addAction("\u2705  SI, seleccionar como Main")
-                        m.addAction("\u274c  NO, cancelar")
-                        chosen = m.exec(l.mapToGlobal(pos))
-                        if chosen == a_yes:
-                            _mref[0] = n
-                            try: _cfg.write_text(_j.dumps({"main": n}), encoding="utf-8")
-                            except Exception: pass
-                            for w in dlg.findChildren(W.QLabel):
-                                t2 = w.text()
-                                if " \u2605" in t2: w.setText(t2.replace(" \u2605", ""))
-                            l.setText("\u25cf " + n + " \u2605")
-                    lbl.customContextMenuRequested.connect(_on_ctx)
-                    inner_lay.addWidget(lbl)
-            else:
-                inner_lay.addWidget(W.QLabel("  No se detectaron personajes."))
+                    # Marco de Personaje (Tarjeta)
+                    card = W.QFrame()
+                    card.setCursor(C.Qt.PointingHandCursor)
+                    is_main = (ch == _main)
+                    border_color = "#00ff9d" if is_main else "rgba(0,180,255,0.3)"
+                    card.setStyleSheet(f"QFrame {{ background:rgba(0,180,255,0.05); border:1px solid {border_color}; border-radius:6px; }} QFrame:hover {{ background:rgba(0,180,255,0.1); border-color:#00c8ff; }}")
+                    
+                    # Convertir TODA la tarjeta en link a zKillboard
+                    import webbrowser
+                    card.mouseReleaseEvent = lambda e, n=ch: webbrowser.open(f"https://zkillboard.com/search/{n}/") if e.button() == C.Qt.LeftButton else None
+                    
+                    cl = W.QHBoxLayout(card); cl.setContentsMargins(10, 8, 12, 8); cl.setSpacing(12)
+                    
+                    # Retrato del Personaje
+                    pic = W.QLabel()
+                    pic.setFixedSize(42, 42)
+                    pic.setStyleSheet("border: 1px solid rgba(0,180,255,0.2); border-radius: 4px; background: #050a10;")
+                    
+                    # Motor de Red Nativo de Qt (Mucho más robusto)
+                    from PySide6 import QtNetwork as N
+                    
+                    if not hasattr(dlg, '_network_mgr'):
+                        dlg._network_mgr = N.QNetworkAccessManager(dlg)
+                    
+                    def _do_load(name, label):
+                        url_search = f"https://esi.evetech.net/latest/search/?categories=character&search={name.replace(' ', '%20')}&strict=true"
+                        req = N.QNetworkRequest(C.QUrl(url_search))
+                        req.setRawHeader(b"User-Agent", b"EVE-iT-App")
+                        
+                        def _on_search_finished(reply):
+                            try:
+                                if reply.error() == N.QNetworkReply.NoError:
+                                    import json as _j
+                                    res = _j.loads(reply.readAll().data().decode())
+                                    ids = res.get('character', [])
+                                    if ids:
+                                        char_id = ids[0]
+                                        logger.info(f"ID resuelto para {name}: {char_id}")
+                                        img_url = f"https://images.evetech.net/characters/{char_id}/portrait?size=64"
+                                        img_req = N.QNetworkRequest(C.QUrl(img_url))
+                                        
+                                        def _on_img_finished(img_reply):
+                                            if img_reply.error() == N.QNetworkReply.NoError:
+                                                pix = G.QPixmap()
+                                                if pix.loadFromData(img_reply.readAll().data()):
+                                                    label.setPixmap(pix.scaled(42, 42, C.Qt.SmoothTransformation))
+                                            else:
+                                                logger.warning(f"Error cargando imagen para {name}: {img_reply.error()}")
+                                            img_reply.deleteLater()
+                                            
+                                        img_reply = dlg._network_mgr.get(img_req)
+                                        img_reply.finished.connect(lambda: _on_img_finished(img_reply))
+                                    else:
+                                        logger.warning(f"No se encontró ID para el personaje: {name}")
+                                else:
+                                    logger.error(f"Error en búsqueda ESI para {name}: {reply.error()}")
+                            except Exception as e:
+                                logger.error(f"Excepción en _on_search_finished: {e}")
+                            finally:
+                                reply.deleteLater()
 
-            inner_lay.addSpacing(6)
-            btn_close = W.QPushButton("Cerrar"); btn_close.clicked.connect(dlg.accept)
-            inner_lay.addWidget(btn_close)
-            lay.addWidget(inner)
+                        reply = dlg._network_mgr.get(req)
+                        reply.finished.connect(lambda: _on_search_finished(reply))
+
+                    _do_load(ch, pic)
+                    cl.addWidget(pic)
+
+                    # Info
+                    info_lay = W.QVBoxLayout(); info_lay.setSpacing(2)
+                    name_lbl = W.QLabel(ch)
+                    name_lbl.setStyleSheet("border:none; color:white; font-weight:bold; font-size:12px; background:transparent;")
+                    info_lay.addWidget(name_lbl)
+                    if is_main:
+                        star = W.QLabel("\u2605 MAIN")
+                        star.setStyleSheet("border:none; color:#00ff9d; font-size:9px; font-weight:bold; background:transparent;")
+                        info_lay.addWidget(star)
+                    cl.addLayout(info_lay); cl.addStretch()
+
+                    # Menú contextual para Main
+                    card.setContextMenuPolicy(C.Qt.CustomContextMenu)
+                    def _on_ctx(pos, n=ch, c=card):
+                        m = W.QMenu(dlg)
+                        m.setStyleSheet("QMenu{background:#0a0a0a; border:1px solid #00c8ff; color:#00c8ff; font-size:11px; padding:5px;} QMenu::item:selected{background:rgba(0,180,255,0.2);}")
+                        
+                        # Título y pregunta NO seleccionables (usando QWidgetAction con QLabel)
+                        from PySide6.QtWidgets import QWidgetAction as _QA
+                        q_lbl = W.QLabel(f" ¿HACER PRINCIPAL A {n.upper()}? ")
+                        q_lbl.setStyleSheet("color: #00c8ff; font-weight: bold; font-size: 10px; padding: 10px 5px; background: rgba(0,200,255,0.05); border-radius: 4px;")
+                        q_act = _QA(m)
+                        q_act.setDefaultWidget(q_lbl)
+                        m.addAction(q_act)
+                        m.addSeparator()
+                        
+                        a_yes = m.addAction("\u2705 SÍ, ESTABLECER")
+                        a_no  = m.addAction("\u274C NO, CANCELAR")
+                        
+                        res = m.exec(c.mapToGlobal(pos))
+                        if res == a_yes:
+                            try:
+                                _cfg_file.write_text(_j.dumps({"main": n}), encoding="utf-8")
+                                dlg.accept()
+                                self._on_scan_chars() # Recargar para ver cambios
+                            except: pass
+                    
+                    card.customContextMenuRequested.connect(_on_ctx)
+                    scroll_lay.addWidget(card)
+            else:
+                scroll_lay.addWidget(W.QLabel("No se han detectado personajes activos."))
+
+            scroll_lay.addStretch()
+            scroll.setWidget(scroll_content)
+            lay.addWidget(scroll)
+            
+            # Footer
+            footer = W.QWidget(); footer.setFixedHeight(40)
+            fl = W.QHBoxLayout(footer); fl.setContentsMargins(15, 0, 15, 0)
+            hint = W.QLabel("Clic derecho para establecer como Main")
+            hint.setStyleSheet("color:rgba(0,180,255,0.4); font-size:9px; font-style:italic;")
+            fl.addWidget(hint); fl.addStretch()
+            lay.addWidget(footer)
+
             dlg.exec() if hasattr(dlg, 'exec') else dlg.exec_()
+        except Exception as e:
+            logger.error(f"scan_chars error: {e}")
         except Exception as e:
             logger.error(f"scan_chars error: {e}")
 
@@ -671,7 +745,16 @@ class ControlWindow:
 
     def _on_replicator(self):
         try:
-            logger.info("Lanzando Replicator 2.0 (Pro Edition)")
+            # Si el HUB ya existe y está minimizado, restaurarlo
+            from controller.replicator_wizard import _GLOBAL_HUB
+            if _GLOBAL_HUB and _GLOBAL_HUB.window.isVisible():
+                if _GLOBAL_HUB.window.isMinimized():
+                    _GLOBAL_HUB.window.showNormal()
+                _GLOBAL_HUB.window.raise_()
+                _GLOBAL_HUB.window.activateWindow()
+                return
+
+            logger.info("Lanzando Replicator HUB")
             if self._tray:
                 self._tray._on_replicator()
         except Exception as e:
@@ -753,11 +836,57 @@ class ControlWindow:
         except Exception:
             pass
 
-        # Actualizar brillo de los módulos según su estado activo
+        # Actualizar brillo de los módulos según su estado activo y minimizado
+        is_repl_min = False
+        try:
+            from controller.replicator_wizard import _GLOBAL_HUB
+            if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window') and _GLOBAL_HUB.window.isVisible():
+                is_repl_min = _GLOBAL_HUB.window.isMinimized()
+        except Exception: pass
+
         if hasattr(self._btn_overlay, 'set_active'):
             self._btn_overlay.set_active(state.overlay_active)
         if hasattr(self._btn_replicator, 'set_active'):
-            self._btn_replicator.set_active(state.replicator_active)
+            self._btn_replicator.set_active(state.replicator_active, is_repl_min)
+
+        # GESTIÓN DEL DOCK (Pestañas de herramientas minimizadas)
+        
+        # 1. Replicator Hub
+        is_repl_min = False
+        try:
+            # Buscar el HUB en el controlador (o wizard global)
+            from controller.replicator_wizard import _GLOBAL_HUB
+            if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window') and _GLOBAL_HUB.window.isVisible():
+                is_repl_min = _GLOBAL_HUB.window.isMinimized()
+        except Exception: pass
+        self._sync_dock_button("REPLICATOR", is_repl_min, "#b464ff", "🧬", self._on_replicator)
+
+        # 2. Chat Translator
+        is_trans_min = False
+        try:
+            if self._ctrl.translator_window and self._ctrl.translator_window.isVisible():
+                is_trans_min = self._ctrl.translator_window.isMinimized()
+        except Exception: pass
+        self._sync_dock_button("TRANSLATOR", is_trans_min, "#00c8ff", "📡", self._on_translator)
+
+    def _sync_dock_button(self, key, is_minimized, color, icon, callback):
+        """Añade o quita botones de la barra de acoplamiento inferior."""
+        if is_minimized and key not in self._dock_buttons:
+            # Crear botón de pestaña para el dock
+            btn = self._W.QPushButton(f"{icon} {key}")
+            btn.setFixedSize(110, 28)
+            style = (f"QPushButton{{background:rgba(0,180,255,0.1); border:1px solid {color}; "
+                     f"border-radius:3px; color:{color}; font-size:9px; font-weight:bold;}}"
+                     f"QPushButton:hover{{background:rgba(0,180,255,0.2);}}")
+            btn.setStyleSheet(style)
+            btn.clicked.connect(callback)
+            self._dock_lay.insertWidget(self._dock_lay.count()-1, btn)
+            self._dock_buttons[key] = btn
+        elif not is_minimized and key in self._dock_buttons:
+            # Quitar botón si ya no está minimizado
+            btn = self._dock_buttons.pop(key)
+            self._dock_lay.removeWidget(btn)
+            btn.deleteLater()
 
     # ── Mostrar/ocultar ───────────────────────────────────────────────────────
     def show(self):

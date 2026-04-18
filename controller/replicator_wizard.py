@@ -25,7 +25,18 @@ class ReplicatorWizard:
         
         # UI Components
         self.dlg = None
+        self.hub = None # Referencia al HUB táctico
         self._setup_ui()
+
+    def _reassert_topmost(self):
+        try:
+            import ctypes
+            hwnd = int(self.dlg.winId())
+            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+        except: pass
+        
+    def _setup_ui_content(self): # Helper or just continue in _setup_ui
+        pass
 
     def _setup_ui(self):
         W, C, G = self._W, self._C, self._G
@@ -33,10 +44,28 @@ class ReplicatorWizard:
         self.dlg.setWindowTitle("REPLICATOR 2.0 — Pro Edition")
         self.dlg.setMinimumSize(560, 520)
         
-        # Tool & Frameless Window Hints (Hides from Taskbar like HUD/Translator)
-        flags = C.Qt.WindowType.FramelessWindowHint if hasattr(C.Qt, 'WindowType') else C.Qt.FramelessWindowHint
-        tool_flag = C.Qt.WindowType.Tool if hasattr(C.Qt, 'WindowType') else C.Qt.Tool
-        self.dlg.setWindowFlags(tool_flag | flags)
+        # Tool & Frameless & TopMost Window Hints
+        flags = (self._C.Qt.WindowType.FramelessWindowHint | 
+                 self._C.Qt.WindowType.WindowStaysOnTopHint | 
+                 self._C.Qt.WindowType.Tool) \
+                if hasattr(self._C.Qt, 'WindowType') else \
+                (self._C.Qt.FramelessWindowHint | 
+                 self._C.Qt.WindowStaysOnTopHint | 
+                 self._C.Qt.Tool)
+        
+        self.dlg.setWindowFlags(flags)
+
+        # Forzar TopMost via Win32 API inmediatamente
+        try:
+            import ctypes
+            hwnd = int(self.dlg.winId())
+            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+        except: pass
+
+        # Re-afirmar cada 2 segundos mientras esté abierto
+        self._top_timer = self._C.QTimer(self.dlg)
+        self._top_timer.timeout.connect(self._reassert_topmost)
+        self._top_timer.start(2000)
         
         # Estilo Global (Neon Dark - Fondo negro puro)
         self.dlg.setStyleSheet("""
@@ -516,7 +545,33 @@ class ReplicatorWizard:
         elif idx == 2:
             self._cfg_mod.save_config(self._cfg)
             self.dlg.accept()
-            if self._callback: self._callback(self._cfg, self._cfg_mod)
+            self._launch_hub()
+
+    def _launch_hub(self):
+        """Lanza el nuevo panel de control HUB y las réplicas asegurando instancia única."""
+        global _GLOBAL_HUB
+        try:
+            # Si ya existe un HUB activo, lo restauramos y salimos
+            if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window') and not _GLOBAL_HUB._is_closed:
+                try:
+                    if _GLOBAL_HUB.window.isMinimized():
+                        _GLOBAL_HUB.window.showNormal()
+                    _GLOBAL_HUB.window.show()
+                    _GLOBAL_HUB.window.raise_()
+                    _GLOBAL_HUB.window.activateWindow()
+                    return
+                except:
+                    _GLOBAL_HUB = None # Si falló la comprobación, lo limpiamos
+
+            titles = self._cfg.get('selected_windows', [])
+            region = self._cfg.get('region', {'x':0, 'y':0, 'w':0.1, 'h':0.1})
+            
+            # Crear HUB único
+            self.hub_window = ReplicatorHub(self._W, self._C, self._G, self._cfg, titles, region)
+            self.hub_window.show()
+            _GLOBAL_HUB = self.hub_window
+        except Exception as e:
+            logger.error(f"Error lanzando HUB: {e}")
 
     def _go_back(self):
         idx = self.stack.currentIndex()
@@ -534,3 +589,198 @@ class ReplicatorWizard:
     @property
     def result(self):
         return self.dlg.result()
+
+# --- CLASE HUB INTEGRADA PARA EVITAR ERRORES DE IMPORT ---
+_GLOBAL_HUB = None
+
+class ReplicatorHub(logging.Handler): # Dummy parent to allow class definition
+    pass
+
+class ReplicatorHub:
+    def __init__(self, W, C, G, cfg, initial_titles, region):
+        self._W = W; self._C = C; self._G = G
+        self._cfg = cfg; self._region = region
+        self._overlays = {}; self._handles = {}
+        self._drag_pos = None
+        self._is_closed = False # Marca de estado activo
+        
+        self.window = W.QWidget()
+        self.window.setObjectName("ReplicatorHub")
+        self.window.setWindowTitle("EVE HUB")
+        
+        self.window.closeEvent = self._on_close
+        
+        # Botones de Control Estilo App Principal
+        BTN_MIN_STYLE = (
+            "QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);"
+            "border-radius:3px;color:#00c8ff;font-size:10px;}QPushButton:hover{background:rgba(0,180,255,0.35);}"
+        )
+        BTN_CLS_STYLE = (
+            "QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);"
+            "border-radius:3px;color:#ff6666;font-size:10px;}QPushButton:hover{background:rgba(255,50,50,0.35);}"
+        )
+        
+        self.window = W.QWidget()
+        self.window.setObjectName("ReplicatorHub")
+        self.window.setWindowTitle("EVE HUB")
+        
+        Qt = C.Qt
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+        self.window.setWindowFlags(flags)
+        self.window.setMinimumSize(320, 480)
+        
+        # Estilo HUB Premium (Como el de ISK y Wizard)
+        self.window.setStyleSheet("""
+            QWidget#ReplicatorHub { 
+                background: #000; border: 1px solid rgba(0,200,255,0.3); border-radius: 6px; 
+            }
+            QLabel { color: rgba(200,230,255,0.9); font-family: 'Segoe UI', sans-serif; font-size: 11px; }
+            QListWidget { background: transparent; border: none; outline: none; }
+            QListWidget::item:selected { background: rgba(0,180,255,0.1); }
+            
+            QPushButton { 
+                background: rgba(0,180,255,0.08); border: 1px solid rgba(0,180,255,0.25);
+                border-radius: 4px; color: #00c8ff; padding: 5px; font-weight: bold; font-size: 10px;
+            }
+            QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }
+            
+            QCheckBox::indicator {
+                width: 18px; height: 18px;
+                background: rgba(0,255,157,0.05);
+                border: 2px solid rgba(0,255,157,0.3);
+                border-radius: 4px;
+            }
+            QCheckBox::indicator:checked {
+                background: #00ff9d;
+                border-color: #00ff9d;
+                image: url(none);
+            }
+            QCheckBox::indicator:hover {
+                border-color: #00ff9d;
+            }
+        """)
+        
+        lay = W.QVBoxLayout(self.window); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
+        
+        # Cabecera Arrastrable
+        self.hdr = W.QWidget(); self.hdr.setFixedHeight(35)
+        self.hdr.setStyleSheet("background: #000; border-bottom: 1px solid rgba(0,180,255,0.15);")
+        hl = W.QHBoxLayout(self.hdr); hl.setContentsMargins(15,0,10,0); hl.setSpacing(6)
+        t = W.QLabel("REPLICATOR HUB"); t.setStyleSheet("font-weight: bold; color: rgba(0,180,255,0.8); letter-spacing: 1px;")
+        hl.addWidget(t); hl.addStretch()
+        
+        bm = W.QPushButton("\u2212"); bm.setFixedSize(18,18); bm.setStyleSheet(BTN_MIN_STYLE)
+        bm.clicked.connect(self.window.showMinimized); hl.addWidget(bm)
+        
+        bc = W.QPushButton("\u00d7"); bc.setFixedSize(18,18); bc.setStyleSheet(BTN_CLS_STYLE)
+        bc.clicked.connect(self.window.close); hl.addWidget(bc)
+        lay.addWidget(self.hdr)
+        
+        # Cuerpo (Lista estilo Wizard)
+        body = W.QWidget(); bl = W.QVBoxLayout(body); bl.setContentsMargins(5,5,5,5)
+        self._list = W.QListWidget(); bl.addWidget(self._list)
+        lay.addWidget(body)
+        
+        # Footer
+        footer = W.QWidget(); footer.setFixedHeight(50); fl = W.QHBoxLayout(footer); fl.setContentsMargins(15,0,15,0)
+        br = W.QPushButton("🔄 REFRESCAR"); br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
+        fl.addStretch()
+        bo = W.QPushButton("\u2715 CERRAR TODO"); bo.setStyleSheet("color: #ff8888; border-color: rgba(255,50,50,0.3);")
+        bo.clicked.connect(self.close_all); fl.addWidget(bo)
+        lay.addWidget(footer)
+
+        # Lógica de Arrastre (Conectada directamente a la ventana)
+        def _press(e): 
+            if e.button() == Qt.MouseButton.LeftButton: 
+                self._drag_pos = e.globalPosition().toPoint() if hasattr(e, 'globalPosition') else e.globalPos()
+        def _move(e):
+            if e.buttons() & Qt.MouseButton.LeftButton and self._drag_pos:
+                gpos = e.globalPosition().toPoint() if hasattr(e, 'globalPosition') else e.globalPos()
+                self.window.move(self.window.pos() + gpos - self._drag_pos)
+                self._drag_pos = gpos
+        self.hdr.mousePressEvent = _press
+        self.hdr.mouseMoveEvent = _move
+        
+        # Lógica de Minimizado/Restaurado
+        def _change_event(e):
+            if e.type() == C.QEvent.WindowStateChange:
+                if self.window.isMinimized():
+                    logger.info("HUB Minimizado")
+                    # Aquí podríamos avisar al controlador
+                else:
+                    logger.info("HUB Restaurado")
+            self.window.old_change_event(e)
+            
+        self.window.old_change_event = self.window.changeEvent
+        self.window.changeEvent = _change_event
+        
+        self._timer = C.QTimer(); self._timer.timeout.connect(lambda: self.refresh_windows()); self._timer.start(5000)
+        C.QTimer.singleShot(200, lambda: self.refresh_windows(initial_titles))
+
+    def show(self): self.window.show(); self.window.raise_(); self.window.activateWindow()
+
+    def refresh_windows(self, force_titles=None):
+        if not isinstance(force_titles, (list, tuple)): force_titles = None
+        try:
+            from overlay.win32_capture import find_eve_windows
+            current = find_eve_windows()
+            self._handles = {w['title']: w['hwnd'] for w in current}
+            active = force_titles if force_titles is not None else [t for t, ov in self._overlays.items()]
+            
+            self._list.clear()
+            for w in current:
+                title = w['title']
+                item = self._W.QListWidgetItem(self._list)
+                row = self._W.QWidget()
+                rl = self._W.QHBoxLayout(row); rl.setContentsMargins(5,5,5,5); rl.setSpacing(10)
+                
+                chk = self._W.QCheckBox()
+                chk.setChecked(title in active or title in self._overlays)
+                chk.toggled.connect(lambda v, t=title: self._toggle(t, v))
+                rl.addWidget(chk)
+                
+                # Nombre completo
+                name = self._W.QLabel(title); name.setStyleSheet("font-weight: bold;")
+                rl.addWidget(name); rl.addStretch()
+                
+                b1 = self._W.QPushButton("-"); b1.setFixedSize(24, 24); b1.clicked.connect(lambda _, t=title: self._adj_op(t, -0.1))
+                b2 = self._W.QPushButton("+"); b2.setFixedSize(24, 24); b2.clicked.connect(lambda _, t=title: self._adj_op(t, 0.1))
+                rl.addWidget(b1); rl.addWidget(b2)
+                
+                item.setSizeHint(row.sizeHint())
+                self._list.setItemWidget(item, row)
+                if chk.isChecked() and title not in self._overlays: self._launch_one(title)
+        except: pass
+
+    def _toggle(self, title, active):
+        if active: self._launch_one(title)
+        else: self._stop_one(title)
+
+    def _launch_one(self, title):
+        if title in self._overlays: return
+        h = self._handles.get(title)
+        if not h: return
+        from overlay.replication_overlay import ReplicationOverlay
+        from overlay import replicator_config as cfg_lib
+        ov = ReplicationOverlay(title=title, hwnd_getter=lambda t=title: self._handles.get(t),
+                                region_rel=self._region, cfg=self._cfg, 
+                                save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
+        ov.show(); self._overlays[title] = ov
+
+    def _stop_one(self, title):
+        if title in self._overlays: self._overlays.pop(title).close()
+
+    def _adj_op(self, title, d):
+        if title in self._overlays:
+            o = self._overlays[title]
+            o.setWindowOpacity(max(0.1, min(1.0, o.windowOpacity() + d)))
+
+    def close_all(self):
+        for t in list(self._overlays.keys()): self._stop_one(t)
+        self.refresh_windows([])
+
+    def _on_close(self, event):
+        """Limpia todo al cerrar la ventana principal del HUB."""
+        self.close_all()
+        self._is_closed = True
+        event.accept()

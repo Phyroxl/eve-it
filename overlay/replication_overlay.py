@@ -197,10 +197,84 @@ class ReplicationOverlay(QWidget):
         self._resize_dir  = ResizeHandle.NONE
         self._resize_origin_global = None
         self._resize_origin_geom   = None
+        
+        # Modo compacto (oculta barra)
+        self._is_compact = False
+        
+        # UI de Controles (HUD flotante)
+        self._setup_hud()
 
         self._setup_window()
         self._restore_state()
         self._start_capture()
+
+        # Timer de Persistencia Always-on-Top (Nivel Win32)
+        import ctypes
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.timeout.connect(self._reassert_topmost)
+        self._topmost_timer.start(1500)
+
+    def _setup_hud(self):
+        self._hud = QFrame(self)
+        self._hud.setFixedHeight(CTRL_BAR_H)
+        # Borde y fondo estilo neón
+        self._hud.setStyleSheet(f"QFrame {{ background: rgba(13, 22, 38, 220); border: 1px solid rgba(0, 180, 255, 120); border-radius: 4px; }}")
+        self._hud.move(5, 5)
+        self._hud.hide() # Solo se muestra al hacer hover
+        
+        hl = QHBoxLayout(self._hud)
+        hl.setContentsMargins(5, 0, 5, 0); hl.setSpacing(8)
+        
+        # Título corto
+        lbl = QLabel(self._title[:15] + "...")
+        lbl.setStyleSheet(f"color: #00c8ff; font-size: 10px; font-weight: bold; border:none; background:transparent;")
+        hl.addWidget(lbl)
+        
+        hl.addStretch()
+        
+        btn_style = "QPushButton { background: transparent; border: none; color: #fff; font-size: 12px; font-weight: bold; } QPushButton:hover { color: #00ff9d; }"
+        
+        # Controles de opacidad
+        BTN_STYLE = "QPushButton { background: transparent; border: none; color: #fff; font-size: 12px; font-weight: bold; } QPushButton:hover { color: #00ff9d; }"
+        
+        self._btn_op_up = QPushButton("+", self._hud); self._btn_op_up.setFixedSize(22, 22)
+        self._btn_op_up.setStyleSheet(BTN_STYLE); self._btn_op_up.clicked.connect(lambda: self._adj_opacity(0.1))
+        hl.addWidget(self._btn_op_up)
+        
+        self._btn_op_down = QPushButton("-", self._hud); self._btn_op_down.setFixedSize(22, 22)
+        self._btn_op_down.setStyleSheet(BTN_STYLE); self._btn_op_down.clicked.connect(lambda: self._adj_opacity(-0.1))
+        hl.addWidget(self._btn_op_down)
+        
+        hl.addStretch()
+        
+        # Botón cerrar
+        self._btn_close = QPushButton("\u00d7", self._hud); self._btn_close.setFixedSize(22, 22)
+        self._btn_close.setStyleSheet("QPushButton { background: transparent; border: none; color: #ff6666; font-size: 18px; } QPushButton:hover { color: #ff0000; }")
+        self._btn_close.clicked.connect(self.close)
+        hl.addWidget(self._btn_close)
+        
+        self._hud.hide()
+
+        # [NUEVO] Marcador visual de redimensionado (Triángulo Neón)
+        self._resizer_marker = QLabel(self)
+        self._resizer_marker.setText("◢")
+        self._resizer_marker.setStyleSheet("color: rgba(0, 200, 255, 0.7); font-size: 14px; background: transparent;")
+        self._resizer_marker.setFixedSize(16, 16)
+        # WA_TransparentForMouseEvents para que no bloquee el resize real
+        self._resizer_marker.setAttribute(Qt.WA_TransparentForMouseEvents if hasattr(Qt, 'WA_TransparentForMouseEvents') else Qt.WidgetAttribute(0x4000000))
+        self._resizer_marker.hide() # Solo se ve en hover
+
+    def _toggle_compact(self):
+        self._is_compact = not self._is_compact
+        self.update()
+
+    def _reassert_topmost(self):
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            # HWND_TOPMOST = -1, SWP_NOMOVE = 2, SWP_NOSIZE = 1, SWP_NOACTIVATE = 0x10
+            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+        except: pass
 
     def _setup_window(self):
         flags = (
@@ -290,16 +364,22 @@ class ReplicationOverlay(QWidget):
             align = Qt.AlignmentFlag.AlignCenter if hasattr(Qt, 'AlignmentFlag') else Qt.AlignCenter
             p.drawText(r, align, f"Buscando ventana...\n{self._title}")
 
-        # Borde
-        border_color = C['hover'] if self._hovering else C['border']
-        p.setPen(QPen(border_color, 1))
-        p.drawRect(r.adjusted(0, 0, -1, -1))
+        # Borde (solo se ve si no es compacto o si hay hover)
+        if not self._is_compact or self._hovering:
+            border_color = C['hover'] if self._hovering else C['border']
+            p.setPen(QPen(border_color, 1))
+            p.drawRect(r.adjusted(0, 0, -1, -1))
 
     def resizeEvent(self, event):
         # Actualizar tamaño de captura (thread-safe via Lock)
         if hasattr(self, '_capture'):
             # El área de captura ahora es la ventana completa
             self._capture.set_output_size(self.width(), self.height())
+        
+        # Posicionar marcador de resizer
+        if hasattr(self, '_resizer_marker'):
+            self._resizer_marker.move(self.width() - 14, self.height() - 14)
+            
         self._save_state()
 
     # ── Controles ─────────────────────────────────────────────────────────────
@@ -404,10 +484,14 @@ class ReplicationOverlay(QWidget):
 
     def enterEvent(self, event):
         self._hovering = True
+        if hasattr(self, '_hud'): self._hud.show()
+        if hasattr(self, '_resizer_marker'): self._resizer_marker.show()
         self.update()
 
     def leaveEvent(self, event):
         self._hovering = False
+        if hasattr(self, '_hud'): self._hud.hide()
+        if hasattr(self, '_resizer_marker'): self._resizer_marker.hide()
         self.update()
 
     # ── Persistencia ──────────────────────────────────────────────────────────
