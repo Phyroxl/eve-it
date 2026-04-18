@@ -1,0 +1,122 @@
+{
+  "global": {
+    "capture_fps": 5,
+    "current_profile": "Default"
+  },
+  "regions": {
+    "Default": {
+      "x": 0.2,
+      "y": 0.2,
+      "w": 0.3,
+      "h": 0.3
+    }
+  },
+  "selected_windows": [
+    "EVE — Lana Drake",
+    "EVE — Isuka Virpio",
+    "EVE — Blade Valeburn",
+    "EVE — Jin Rockhart"
+  ],
+  "overlays": {
+    "EVE — KonaN Herrera": {
+      "x": 620,
+      "y": 148,
+      "w": 323,
+      "h": 87,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Lana Drake": {
+      "x": 552,
+      "y": 194,
+      "w": 172,
+      "h": 77,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Blade Valeburn": {
+      "x": 806,
+      "y": 144,
+      "w": 121,
+      "h": 54,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Jin Rockhart": {
+      "x": 808,
+      "y": 51,
+      "w": 93,
+      "h": 41,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Alina Isuri": {
+      "x": 555,
+      "y": 59,
+      "w": 150,
+      "h": 39,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Marek Volkov": {
+      "x": 274,
+      "y": 50,
+      "w": 227,
+      "h": 182,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Keira Halesen": {
+      "x": 639,
+      "y": 70,
+      "w": 121,
+      "h": 69,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Isuka Virpio": {
+      "x": 1199,
+      "y": 128,
+      "w": 150,
+      "h": 67,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Ian Perken": {
+      "x": 465,
+      "y": 175,
+      "w": 150,
+      "h": 40,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Arien Inkura": {
+      "x": 1068,
+      "y": 225,
+      "w": 166,
+      "h": 44,
+      "opacity": 1.0,
+      "click_through": false
+    },
+    "EVE — Rilena Kulen": {
+      "x": 855,
+      "y": 57,
+      "w": 232,
+      "h": 62,
+      "opacity": 1.0,
+      "click_through": false
+    }
+  },
+  "region": {
+    "x": 0.484375,
+    "y": 0.8861111111111111,
+    "w": 0.20572916666666666,
+    "h": 0.09259259259259259
+  },
+  "sizes": {
+    "wizard_pos": {
+      "x": 742,
+      "y": 29
+    }
+  }
+}
