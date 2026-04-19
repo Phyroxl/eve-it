@@ -403,6 +403,7 @@ class TrayManager:
                         if _ov in self._replicator_overlays:
                             self._replicator_overlays.remove(_ov)
                     ov.closed.connect(_on_closed)
+                    ov.selection_requested.connect(lambda _ov=ov: self._on_reselect_region(_ov))
                     ov.show()
                     ov.raise_()
                     ov.activateWindow()
@@ -496,6 +497,22 @@ class TrayManager:
 
     def _on_overlay_closed(self):
         self._ctrl.state.update(overlay_active=False)
+
+    def _on_reselect_region(self, overlay):
+        """Reabre el selector de región para una réplica específica o para el conjunto."""
+        logger.info(f"Petición de re-selección de región para: {overlay._title}")
+        if self._replicator_dialog:
+            self._replicator_dialog.show()
+            self._replicator_dialog.raise_()
+            # Ir al paso 2 directamente y activar selección visual
+            self._replicator_dialog.stack.setCurrentIndex(1)
+            self._replicator_dialog.retranslate_ui(self._ctrl.state.language)
+            self._replicator_dialog.start_visual_selection()
+        else:
+            self._launch_replicator_wizard()
+            if self._replicator_dialog:
+                self._replicator_dialog.stack.setCurrentIndex(1)
+                self._replicator_dialog.start_visual_selection()
 
     def set_control_window(self, win):
         self._control_window = win

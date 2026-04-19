@@ -125,8 +125,8 @@ if IS_WINDOWS:
         rw, rh = int(region_rel['w'] * ww), int(region_rel['h'] * wh)
         if rw <= 0 or rh <= 0: return None
 
-        # Inicializar recursos a None para limpieza segura
-        hdc_window = hdc_screen = mdc = bmp = full_mdc = full_bmp = None
+        # Inicializar recursos
+        hdc_window = None; mdc = None; bmp = None; hdc_screen = None
         data = None
         
         try:
@@ -138,37 +138,49 @@ if IS_WINDOWS:
             old_mdc_obj = gdi32.SelectObject(mdc, bmp)
             
             gdi32.SetStretchBltMode(mdc, 4) # HALFTONE
-            
-            # Intento primario: PrintWindow (funciona con ventanas en fondo)
-            full_mdc = gdi32.CreateCompatibleDC(hdc_window)
-            full_bmp = gdi32.CreateCompatibleBitmap(hdc_window, ww, wh)
-            old_full_obj = gdi32.SelectObject(full_mdc, full_bmp)
-            
-            ok = False
-            if user32.PrintWindow(hwnd, full_mdc, 0x3): # 0x3 = CLIENTONLY + RENDERFULLCONTENT
-                ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, full_mdc, rx, ry, rw, rh, SRCCOPY)
-            
-            # Cleanup inmediato de recursos temporales de PrintWindow
-            gdi32.SelectObject(full_mdc, old_full_obj)
-            gdi32.DeleteObject(full_bmp); full_bmp = None
-            gdi32.DeleteDC(full_mdc); full_mdc = None
 
-            # Fallback: BitBlt directo (solo si la ventana es visible)
-            if not ok:
-                ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY)
+            # --- ESTRATEGIA DE CAPTURA HÍBRIDA ---
+            # 1. Intentar BitBlt directo (Extremadamente rápido y eficiente)
+            # Solo funciona si la ventana está visible y no está minimizada.
+            ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY)
+            
+            # 2. Comprobar si la captura ha sido exitosa (no negra)
+            # Si el BitBlt falló o devolvió negro (ventana tapada/fondo), usamos PrintWindow
+            needs_printwindow = True
+            if ok:
+                # Comprobación rápida de color en el primer píxel (o punto central)
+                # para evitar procesamiento de GetDIBits si sabemos que BitBlt falló
+                pix = gdi32.GetPixel(mdc, out_w // 2, out_h // 2)
+                if pix != 0: # Si no es negro puro en el centro, asumimos que BitBlt funcionó
+                    needs_printwindow = False
+
+            if needs_printwindow:
+                # 3. PrintWindow (Lento pero funciona con ventanas tapadas)
+                # Para evitar el crash por bitmap gigante, intentamos BitBlt desde un DC temporal
+                # que solo creamos si es estrictamente necesario.
+                full_mdc = gdi32.CreateCompatibleDC(hdc_window)
+                full_bmp = gdi32.CreateCompatibleBitmap(hdc_window, ww, wh)
+                old_full = gdi32.SelectObject(full_mdc, full_bmp)
+                
+                if user32.PrintWindow(hwnd, full_mdc, 0x3): # CLIENTONLY + RENDERFULLCONTENT
+                    ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, full_mdc, rx, ry, rw, rh, SRCCOPY)
+                
+                gdi32.SelectObject(full_mdc, old_full)
+                gdi32.DeleteObject(full_bmp)
+                gdi32.DeleteDC(full_mdc)
 
             if ok:
                 bmi = BITMAPINFO()
                 bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
                 bmi.bmiHeader.biWidth = out_w
-                bmi.bmiHeader.biHeight = -out_h # Top-down
+                bmi.bmiHeader.biHeight = -out_h
                 bmi.bmiHeader.biPlanes = 1
                 bmi.bmiHeader.biBitCount = 32
                 buf = ctypes.create_string_buffer(out_w * out_h * 4)
                 gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
                 
+                # Comprobar si la captura es negra (fallback final)
                 raw_bytes = buf.raw
-                # Optimización: comprobar solo el centro del frame para detectar pantalla negra
                 mid = len(raw_bytes) // 2
                 is_black = (raw_bytes[mid] == 0 and raw_bytes[mid+1] == 0 and raw_bytes[mid+2] == 0)
                 
@@ -179,20 +191,21 @@ if IS_WINDOWS:
                     user32.ClientToScreen(hwnd, ctypes.byref(pt))
                     gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_screen, pt.x + rx, pt.y + ry, rw, rh, SRCCOPY)
                     gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
-                    data = buf.raw
-                else:
-                    data = raw_bytes
+                    raw_bytes = buf.raw
+
+                # FORZAR ALFA A 255 para que sea visible en ventanas con WA_TranslucentBackground
+                # Optimizado mediante rebanado (mucho más rápido que un bucle for)
+                ba = bytearray(raw_bytes)
+                ba[3::4] = b'\xff' * (len(ba) // 4)
+                data = bytes(ba)
                     
         except Exception as e:
             logger.debug(f"Error captura Win32: {e}")
         finally:
-            # Limpieza exhaustiva de TODOS los recursos GDI
             if mdc:
                 if 'old_mdc_obj' in locals(): gdi32.SelectObject(mdc, old_mdc_obj)
                 gdi32.DeleteDC(mdc)
             if bmp: gdi32.DeleteObject(bmp)
-            if full_mdc: gdi32.DeleteDC(full_mdc)
-            if full_bmp: gdi32.DeleteObject(full_bmp)
             if hdc_window: user32.ReleaseDC(hwnd, hdc_window)
             if hdc_screen: user32.ReleaseDC(0, hdc_screen)
             

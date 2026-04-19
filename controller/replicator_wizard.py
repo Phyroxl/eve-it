@@ -42,7 +42,7 @@ class ReplicatorWizard:
     def _setup_ui(self):
         W, C, G = self._W, self._C, self._G
         self.dlg = W.QDialog()
-        self.dlg.setWindowTitle("EvE Window Replicator")
+        self.dlg.setWindowTitle("EVE iT")
         self.dlg.setMinimumSize(400, 360)
         
         # Tool & Frameless & TopMost Window Hints
@@ -100,7 +100,7 @@ class ReplicatorWizard:
         icon_lbl = W.QLabel("🪟")
         hl.addWidget(icon_lbl)
         
-        title_lbl = W.QLabel("EVE Window Replicator"); title_lbl.setStyleSheet("color: rgba(0,200,255,0.8); font-size: 10px; font-weight: normal;")
+        title_lbl = W.QLabel(""); title_lbl.setStyleSheet("color: rgba(0,200,255,0.8); font-size: 10px; font-weight: normal;")
         hl.addWidget(title_lbl)
         
         hl.addStretch()
@@ -146,7 +146,7 @@ class ReplicatorWizard:
         # Main Title (Step 1 visual title)
         title_bar = W.QWidget(); title_bar.setFixedHeight(35); title_bar.setStyleSheet("background: transparent;")
         tbl = W.QHBoxLayout(title_bar); tbl.setContentsMargins(20,5,20,0)
-        title_main = W.QLabel("EvE Window Replicator"); title_main.setStyleSheet("color: rgba(0,200,255,0.7); font-size: 14px; font-weight: bold;"); tbl.addWidget(title_main)
+        title_main = W.QLabel(""); title_main.setStyleSheet("color: rgba(0,200,255,0.7); font-size: 14px; font-weight: bold;"); tbl.addWidget(title_main)
         tbl.addStretch()
         main_lay.addWidget(title_bar)
 
@@ -156,10 +156,9 @@ class ReplicatorWizard:
 
         # STEP 1: Selección de Ventanas
         self._setup_step1()
-        # STEP 2: Gestión de Regiones (The "User Special Request")
+        # STEP 2: Gestión de Regiones
         self._setup_step2()
-        # STEP 3: Resumen
-        self._setup_step3()
+        # STEP 3 ELIMINADO
 
         # Bottom Bar
         footer = W.QWidget(); footer.setFixedHeight(45); footer.setStyleSheet("background: #040810; border-top: 1px solid #1a2533;")
@@ -187,12 +186,12 @@ class ReplicatorWizard:
             self.btn_back.setText(t('gui_btn_close', lang))
         else:
             self.btn_back.setText(t('repl_btn_back', lang))
-        if idx == 2:
+        if idx == 1:
             self.btn_next.setText(t('repl_btn_launch', lang))
         else:
             self.btn_next.setText(t('repl_btn_next', lang))
             
-        if hasattr(self, 'step_lbl'): self.step_lbl.setText(t('repl_step', lang) + f" {idx+1} / 3")
+        if hasattr(self, 'step_lbl'): self.step_lbl.setText(t('repl_step', lang) + f" {idx+1} / 2")
         if hasattr(self, 'lbl_step1_title'): self.lbl_step1_title.setText(t('repl_p1_title', lang))
         if hasattr(self, 'btn_all'): self.btn_all.setText(t('repl_btn_all', lang))
         if hasattr(self, 'btn_none'): self.btn_none.setText(t('repl_btn_none', lang))
@@ -300,7 +299,8 @@ class ReplicatorWizard:
         # Visual Selector Button
         self.btn_visual = W.QPushButton("SELECCIONAR REGIÓN EN PANTALLA")
         self.btn_visual.setMinimumHeight(45)
-        self.btn_visual.setStyleSheet("background: rgba(0,200,100,0.1); border-color: rgba(0,200,100,0.3); color: #00ff9d;")
+        self.btn_visual.setObjectName("primary")
+        self.btn_visual.setStyleSheet("QPushButton#primary { background: rgba(0,200,100,0.1); border-color: rgba(0,200,100,0.3); color: #00ff9d; } QPushButton#primary:hover { background: rgba(0,200,100,0.2); }")
         l2.addWidget(self.btn_visual)
         
         l2.addStretch()
@@ -317,6 +317,10 @@ class ReplicatorWizard:
             sp.valueChanged.connect(self._sync_to_cfg)
 
         self._load_profiles()
+
+    def start_visual_selection(self):
+        """Inicia el modo de selección visual directamente."""
+        self._on_visual_select()
 
     def _setup_step3(self):
         W = self._W
@@ -550,8 +554,9 @@ class ReplicatorWizard:
             self.stack.setCurrentIndex(1)
             self.retranslate_ui(self._lang)
         elif idx == 1:
-            self.stack.setCurrentIndex(2)
-            self.retranslate_ui(self._lang)
+            self._cfg_mod.save_config(self._cfg)
+            self.dlg.accept()
+            self._launch_hub()
         elif idx == 2:
             self._cfg_mod.save_config(self._cfg)
             self.dlg.accept()

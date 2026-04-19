@@ -43,10 +43,13 @@ def save_config(cfg):
         return False
 
 def save_overlay_state(cfg, title, x, y, w, h, opacity, click_through):
-    """Guarda el estado de una ventana overlay específica."""
+    """Guarda el estado de una ventana overlay específica preservando otros datos."""
     if 'overlays' not in cfg: cfg['overlays'] = {}
-    cfg['overlays'][title] = {
+    if title not in cfg['overlays']: cfg['overlays'][title] = {}
+    
+    # Actualizar solo los campos de posición y estado
+    cfg['overlays'][title].update({
         'x': x, 'y': y, 'w': w, 'h': h, 
         'opacity': opacity, 'click_through': click_through
-    }
+    })
     save_config(cfg)

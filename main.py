@@ -18,9 +18,21 @@ import logging
 import logging.handlers
 import os
 import socket
-import sys
 import threading
+import sys
 from pathlib import Path
+
+# ── Alta Densidad de Píxeles (DPI Awareness) ──────────────────────────────────
+if os.name == 'nt':
+    try:
+        import ctypes
+        # SetProcessDpiAwareness(1) -> PROCESS_SYSTEM_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 # ── sys.path — garantizar que el proyecto está accesible ──────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -297,7 +309,9 @@ def main():
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     try:
-        if tray: tray.hide()
+        if tray: 
+            tray.hide()
+            tray.shutdown()
     except Exception: pass
     
     # Nuclear Option: Iniciar un timer de seguridad para forzar el cierre si se queda colgado

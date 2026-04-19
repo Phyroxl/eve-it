@@ -182,6 +182,7 @@ class ReplicationOverlay(QWidget):
       4. Al cerrar, emite closed(title) para que el manager limpie
     """
     closed = Signal(str)      # emite el título al cerrarse
+    selection_requested = Signal(object) # [NUEVO] para reabrir el selector de región
 
     def __init__(self, title: str, hwnd_getter: Callable[[], Optional[int]],
                  region_rel: dict, cfg: dict, save_callback: Callable):
@@ -191,10 +192,12 @@ class ReplicationOverlay(QWidget):
         self._region       = region_rel
         self._cfg          = cfg
         self._save_cb      = save_callback
+        self._frame_lock   = threading.Lock() # [NUEVO] Evitar crashes por concurrencia
         self._click_through = False
         self._interactive    = False  # [NUEVO] Modo portal (broadcasting)
         self._hovering     = False
         self._flash_pos    = None  # [NUEVO] Para feedback visual de click
+        self._offset_calib = {'x': 0, 'y': 0} # [NUEVO] Calibración manual
 
         # Estado de drag/resize
         self._drag_pos    = None
@@ -210,6 +213,10 @@ class ReplicationOverlay(QWidget):
         self._start_capture()
         
         self._setup_window()
+        
+        # Cargar calibración si existe
+        ov_cfg = self._cfg.get('overlays', {}).get(self._title, {})
+        self._offset_calib = ov_cfg.get('offset_calib', {'x': 0, 'y': 0})
         
         # UI de Controles (HUD flotante) - Al final para asegurar que esté encima
         self._setup_hud()
@@ -231,10 +238,8 @@ class ReplicationOverlay(QWidget):
         hl = QHBoxLayout(self._hud)
         hl.setContentsMargins(5, 0, 5, 0); hl.setSpacing(8)
         
-        # Título corto
-        lbl = QLabel(self._title[:15] + "...")
-        lbl.setStyleSheet(f"color: #00c8ff; font-size: 10px; font-weight: bold; border:none; background:transparent;")
-        hl.addWidget(lbl)
+        # Título removido según solicitud del usuario
+        hl.addStretch()
         
         hl.addStretch()
         
@@ -377,7 +382,8 @@ class ReplicationOverlay(QWidget):
 
     def _on_frame(self, img: 'QImage'):
         """Recibe frame del hilo de captura y fuerza redibujado."""
-        self._frame = QPixmap.fromImage(img)
+        with self._frame_lock:
+            self._frame = QPixmap.fromImage(img)
         self.update()
 
     # ── Pintura ───────────────────────────────────────────────────────────────
@@ -394,24 +400,18 @@ class ReplicationOverlay(QWidget):
         # Fondo sutil para asegurar que el widget reciba clicks (algunas GPUs ignoran clicks en 100% transparente)
         p.fillRect(r, QColor(0, 0, 0, 1))
 
-        if self._frame:
-            # Dibujar manteniendo relación de aspecto para evitar deformación
-            target = r.adjusted(1, 1, -1, -1)
-            scaled = self._frame.scaled(target.size(), 
-                                        Qt.AspectRatioMode.KeepAspectRatio 
-                                        if hasattr(Qt, 'AspectRatioMode') else Qt.KeepAspectRatio,
-                                        Qt.TransformationMode.SmoothTransformation
-                                        if hasattr(Qt, 'TransformationMode') else Qt.SmoothTransformation)
-            
-            # Centrar la imagen en la ventana
-            offset_x = (target.width() - scaled.width()) // 2
-            offset_y = (target.height() - scaled.height()) // 2
-            p.drawPixmap(target.left() + offset_x, target.top() + offset_y, scaled)
-        else:
-            p.setPen(QPen(C['text']))
-            p.setFont(QFont('Consolas', 9))
-            align = Qt.AlignmentFlag.AlignCenter if hasattr(Qt, 'AlignmentFlag') else Qt.AlignCenter
-            p.drawText(r, align, f"Buscando ventana...\n{self._title}")
+        with self._frame_lock:
+            if self._frame:
+                # USAR STRETCH para permitir "libre ajuste" y que el mapeo de clicks sea 100% exacto
+                # Dibujamos ocupando todo el rectángulo interior (ajustado por el borde de 1px)
+                p.drawPixmap(r.adjusted(1, 1, -1, -1), self._frame)
+            else:
+                p.setPen(QPen(C['text']))
+                p.setFont(QFont('Consolas', 9))
+                align = Qt.AlignmentFlag.AlignCenter if hasattr(Qt, 'AlignmentFlag') else Qt.AlignCenter
+                p.drawText(r, align, f"Buscando ventana...\n{self._title}")
+        # Fin de zona crítica de frame_lock
+        # Fin de zona crítica de frame_lock
 
         # Borde (se ve si hay hover O si estamos operando la ventana)
         if self._hovering or self._is_moving_or_resizing:
@@ -473,11 +473,11 @@ class ReplicationOverlay(QWidget):
 
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         if event.button() == left:
-            # Si estamos en modo interactivo O se pulsa Ctrl, enviamos el click al juego
+            # Si estamos en modo interactivo O se pulsa Shift (cambiado de Ctrl), enviamos el click al juego
             modifiers = QApplication.keyboardModifiers()
-            ctrl = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, 'KeyboardModifier') else 0x04000000
+            shift = Qt.KeyboardModifier.ShiftModifier if hasattr(Qt, 'KeyboardModifier') else 0x02000000
             
-            if self._interactive or (modifiers & ctrl):
+            if self._interactive or (modifiers & shift):
                 self._broadcast_click(event.pos())
                 return
 
@@ -498,7 +498,7 @@ class ReplicationOverlay(QWidget):
                 )
 
     def _broadcast_click(self, pos: QPoint):
-        """Mapea y envía el click a la ventana original."""
+        """Mapea y envía el click a la ventana original con máxima precisión."""
         hwnd = self._hwnd_getter()
         if not hwnd or not IS_WINDOWS: return
         
@@ -506,49 +506,40 @@ class ReplicationOverlay(QWidget):
             import ctypes
             from ctypes import wintypes
             
-            # 1. Obtener tamaño del cliente (área útil de EVE)
+            # 1. Obtener tamaño del cliente original en tiempo real para reajuste exacto
             rect = wintypes.RECT()
             ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
-            w = rect.right - rect.left
-            h = rect.bottom - rect.top
-            if w <= 0 or h <= 0: return
+            w_src = rect.right - rect.left
+            h_src = rect.bottom - rect.top
+            if w_src <= 0 or h_src <= 0: return
 
-            # 2. Calcular coordenadas relativas [0, 1] respecto al ÁREA DE IMAGEN (no al widget)
-            # El paintEvent escala la imagen centrada dentro de rect.adjusted(1,1,-1,-1).
-            w_win, h_win = self.width() - 2, self.height() - 2
-            ratio_img = self._region['w'] / max(0.01, self._region['h'])
-            ratio_win = w_win / max(0.01, h_win)
+            # 2. Mapeo de coordenadas locales del widget a coordenadas de la imagen
+            # El overlay dibuja la imagen en rect().adjusted(1, 1, -1, -1)
+            # Para un widget de width W, el área de dibujo es de x=1 a x=W-2 (inclusive)
+            # El ancho de esa área es (W-2) píxeles.
+            # Los índices de píxel van de 0 a (W-3).
             
-            if ratio_win > ratio_img:
-                # Window es más ancha que la imagen (barras negras a los lados)
-                actual_w = h_win * ratio_img
-                actual_h = h_win
-                offset_x = (w_win - actual_w) / 2 + 1
-                offset_y = 1
-            else:
-                # Window es más alta (barras negras arriba/abajo)
-                actual_w = w_win
-                actual_h = w_win / ratio_img
-                offset_x = 1
-                offset_y = (h_win - actual_h) / 2 + 1
+            draw_w = self.width() - 2
+            draw_h = self.height() - 2
             
-            # Ajustar click relativo a la imagen real
-            click_x = pos.x() - offset_x
-            click_y = pos.y() - offset_y
-            
-            if click_x < 0 or click_x > actual_w or click_y < 0 or click_y > actual_h:
-                return # Fuera de la imagen
-                
-            rx = click_x / actual_w
-            ry = click_y / actual_h
+            if draw_w <= 1 or draw_h <= 1: return # Evitar división por cero
 
-            # 3. Mapear a coordenadas de la ventana original usando la región capturada
-            tx = int((self._region['x'] + rx * self._region['w']) * w)
-            ty = int((self._region['y'] + ry * self._region['h']) * h)
+            # Coordenadas relativas dentro del área de dibujo (0.0 a 1.0)
+            # Restamos 1 porque el dibujo empieza en x=1
+            rx = (pos.x() - 1) / (draw_w - 1)
+            ry = (pos.y() - 1) / (draw_h - 1)
+            
+            # Clamp para asegurar que no salimos de la región
+            rx = max(0.0, min(1.0, rx))
+            ry = max(0.0, min(1.0, ry))
 
-            # 4. Enviar WM_ACTIVATE + WM_MOUSEMOVE + WM_LBUTTONDOWN + WM_LBUTTONUP
-            # lParam = (y << 16) | x
-            lparam = (ty << 16) | tx
+            # 3. Mapear a coordenadas de la ventana original
+            # Usamos (w_src - 1) porque los índices de píxel van de 0 a Ancho-1
+            tx = int((self._region['x'] + rx * self._region['w']) * (w_src - 1)) + self._offset_calib['x']
+            ty = int((self._region['y'] + ry * self._region['h']) * (h_src - 1)) + self._offset_calib['y']
+
+            # 4. Enviar el click mediante Win32
+            lparam = (ty << 16) | (tx & 0xFFFF)
             WM_ACTIVATE    = 0x0006
             WA_ACTIVE      = 1
             WM_MOUSEMOVE   = 0x0200
@@ -556,21 +547,22 @@ class ReplicationOverlay(QWidget):
             WM_LBUTTONUP   = 0x0202
             MK_LBUTTON     = 0x0001
             
-            logger.info(f"Portal -> {self._title}: Click en ({tx}, {ty})")
-            
-            # Intentar activar mínimamente la ventana sin traerla al frente
+            # Enviar secuencia completa para asegurar que el juego procesa el click correctamente
+            # Usamos SendMessage para el UP para asegurar que se procesa antes de volver
             ctypes.windll.user32.PostMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0)
             ctypes.windll.user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, lparam)
             ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+            # Pequeña redundancia para asegurar el "Up" en juegos con lag de input
+            ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
             ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
             
-            # [NUEVO] Feedback visual: pequeño flash en el punto de click
+            # Feedback visual del click en el overlay
             self._flash_pos = pos
             QTimer.singleShot(150, self._clear_flash)
             self.update()
             
         except Exception as e:
-            pass # Silencioso para no romper el loop visual
+            logger.error(f"Error en broadcast: {e}")
 
     def contextMenuEvent(self, event):
         """Menú de control de la zona replicada (Joystick y Zoom)."""
@@ -597,24 +589,45 @@ class ReplicationOverlay(QWidget):
         
         menu.addSeparator()
         
-        # Reset y Compacto
-        restart_cap = menu.addAction("⚡ Reiniciar Captura")
-        reset_reg = menu.addAction("🔄 Resetear Zona")
-        compact_mode = menu.addAction("🔲 Alternar Modo Compacto")
+        # Calibración Manual
+        calib_menu = menu.addMenu("🎯 Calibración de Click")
+        c_up = calib_menu.addAction("Mover Click Arriba")
+        c_dn = calib_menu.addAction("Mover Click Abajo")
+        c_lf = calib_menu.addAction("Mover Click Izquierda")
+        c_rg = calib_menu.addAction("Mover Click Derecha")
+        calib_menu.addSeparator()
+        c_rs = calib_menu.addAction("Resetear Calibración")
+        
+        menu.addSeparator()
+        
+        # Reset
+        restart_cap = menu.addAction("(Cambiar Zona)")
+        reset_reg = menu.addAction("🔄 Resetear Zona (100%)")
+        # Compacto eliminado según solicitud
         
         # Ejecutar menú
         action = menu.exec(event.globalPos())
         
-        step = 0.02 # 2% del tamaño total
+        step = 0.005 # Reducido para máxima precisión (0.5% por click)
         if action == move_up:    self._move_region(0, -step)
         elif action == move_dn:  self._move_region(0, step)
         elif action == move_lf:  self._move_region(-step, 0)
         elif action == move_rg:  self._move_region(step, 0)
         elif action == zoom_in:  self._zoom_region(0.9)
         elif action == zoom_out: self._zoom_region(1.1)
-        elif action == restart_cap: self._restart_capture_thread()
+        elif action == restart_cap: self.selection_requested.emit(self)
         elif action == reset_reg: self._reset_region()
-        elif action == compact_mode: self._toggle_compact()
+        
+        # Acciones de Calibración
+        c_step = 5 # píxeles
+        if action == c_up:    self._offset_calib['y'] -= c_step
+        elif action == c_dn:  self._offset_calib['y'] += c_step
+        elif action == c_lf:  self._offset_calib['x'] -= c_step
+        elif action == c_rg:  self._offset_calib['x'] += c_step
+        elif action == c_rs:  self._offset_calib.update({'x':0, 'y':0})
+        if action in [c_up, c_dn, c_lf, c_rg, c_rs]:
+            logger.info(f"Calibración manual: {self._offset_calib}")
+            self._save_state()
 
     def _restart_capture_thread(self):
         """Detiene y reinicia el hilo de captura."""
@@ -650,6 +663,29 @@ class ReplicationOverlay(QWidget):
     def _reset_region(self):
         self._region.update({'x': 0.0, 'y': 0.0, 'w': 1.0, 'h': 1.0})
         self._save_state()
+
+    def keyPressEvent(self, event):
+        """Atajos de teclado para mover la región con alta precisión."""
+        step = 0.005 # Paso ultra-fino
+        k = event.key()
+        Key = Qt.Key if hasattr(Qt, 'Key') else Qt
+        
+        if k == getattr(Key, 'Key_Up', 0x01000013):    self._move_region(0, -step)
+        elif k == getattr(Key, 'Key_Down', 0x01000015):  self._move_region(0, step)
+        elif k == getattr(Key, 'Key_Left', 0x01000012):  self._move_region(-step, 0)
+        elif k == getattr(Key, 'Key_Right', 0x01000014): self._move_region(step, 0)
+        else:
+            super().keyPressEvent(event)
+
+    def wheelEvent(self, event):
+        """Zoom con scroll del ratón."""
+        # Detectar dirección del scroll
+        delta = event.angleDelta().y() if hasattr(event, 'angleDelta') else event.delta()
+        if delta > 0:
+            self._zoom_region(0.95) # Acercar
+        else:
+            self._zoom_region(1.05) # Alejar
+        event.accept()
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
@@ -703,6 +739,8 @@ class ReplicationOverlay(QWidget):
 
     def enterEvent(self, event):
         self._hovering = True
+        # Enfoque automático para permitir interacción con 1 solo click
+        self.setFocus(Qt.MouseFocusReason if hasattr(Qt, 'MouseFocusReason') else Qt.OtherFocusReason)
         if hasattr(self, '_hud'): self._hud.show()
         if hasattr(self, '_resizer_marker'): self._resizer_marker.show()
         self.update()
@@ -727,10 +765,11 @@ class ReplicationOverlay(QWidget):
             self.windowOpacity(),
             False,   # click_through siempre False
         )
-        # Guardar también la región específica en el dict global de la réplica
+        # Guardar también la región específica y calibración
         if 'overlays' not in self._cfg: self._cfg['overlays'] = {}
         if self._title not in self._cfg['overlays']: self._cfg['overlays'][self._title] = {}
         self._cfg['overlays'][self._title]['region'] = self._region.copy()
+        self._cfg['overlays'][self._title]['offset_calib'] = self._offset_calib.copy()
 
     # ── Cierre ────────────────────────────────────────────────────────────────
 

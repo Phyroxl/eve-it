@@ -827,8 +827,11 @@ class ControlWindow:
             logger.error(f"reset error: {e}")
 
     def _on_quit(self):
-        self._ctrl.shutdown()
-        self._app.quit()
+        if self._tray:
+            self._tray._on_quit()
+        else:
+            self._ctrl.shutdown()
+            self._app.quit()
 
     # ── Estado ────────────────────────────────────────────────────────────────
     def _update_status(self):
