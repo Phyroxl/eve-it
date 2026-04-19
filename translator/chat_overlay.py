@@ -25,31 +25,42 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 
 
 class MessageBubble(W.QFrame):
-    def __init__(self, msg, translation, profile, parent=None):
+    def __init__(self, msg, translation, profile, lang='es', parent=None):
         super().__init__(parent)
         self._created = time.time()
         self._msg = msg
         self._orig_text = msg.text
         self._fade_secs = profile.fade_seconds
         self._is_alert = is_alert_message(msg.text) or is_alert_message(translation)
+        self._lang = lang
         self._setup_ui(msg, translation, profile)
 
     def _setup_ui(self, msg, translation, profile):
         lay = W.QVBoxLayout(self)
-        lay.setContentsMargins(8, 5, 8, 5)
-        lay.setSpacing(2)
-        col = profile.alert_color if self._is_alert else profile.normal_color
-        self.lbl_hdr = W.QLabel(f"[{msg.channel}] {msg.sender}  {msg.timestamp[-8:]}")
+        lay.setContentsMargins(5, 2, 5, 2)
+        lay.setSpacing(1)
+        
+        ch_name = t(msg.channel, self._lang) if msg.channel.startswith('ch_') else msg.channel
+        hdr_html = f"[{ch_name}] <a href='https://zkillboard.com/search/{msg.sender}/' style='color:#FFA500; text-decoration:none;'>{msg.sender}</a> {msg.timestamp[-8:]}"
+        
+        self.lbl_hdr = W.QLabel(hdr_html)
+        self.lbl_hdr.setWordWrap(True)
+        self.lbl_hdr.setOpenExternalLinks(True)
+        self.lbl_hdr.setTextInteractionFlags(C.Qt.TextBrowserInteraction)
         lay.addWidget(self.lbl_hdr)
         self.lbl_orig = None
         if profile.show_original:
             self.lbl_orig = W.QLabel(msg.text)
             self.lbl_orig.setWordWrap(True)
+            self.lbl_orig.setTextInteractionFlags(C.Qt.TextSelectableByMouse)
+            self.lbl_orig.setCursor(C.Qt.IBeamCursor)
             lay.addWidget(self.lbl_orig)
         self.lbl_tl = None
         if profile.show_translation and translation and translation != msg.text:
             self.lbl_tl = W.QLabel(f"\u27a4 {translation}")
             self.lbl_tl.setWordWrap(True)
+            self.lbl_tl.setTextInteractionFlags(C.Qt.TextSelectableByMouse)
+            self.lbl_tl.setCursor(C.Qt.IBeamCursor)
             lay.addWidget(self.lbl_tl)
         self.update_style(profile)
 
@@ -58,6 +69,8 @@ class MessageBubble(W.QFrame):
             if not self.lbl_tl:
                 self.lbl_tl = W.QLabel()
                 self.lbl_tl.setWordWrap(True)
+                self.lbl_tl.setTextInteractionFlags(C.Qt.TextSelectableByMouse)
+                self.lbl_tl.setCursor(C.Qt.IBeamCursor)
                 self.layout().addWidget(self.lbl_tl)
             self.lbl_tl.setText(f"\u27a4 {translation}")
             self.lbl_tl.show()
@@ -66,14 +79,14 @@ class MessageBubble(W.QFrame):
     def update_style(self, profile):
         col = profile.alert_color if self._is_alert else profile.normal_color
         fw = 'bold' if self._is_alert else 'normal'
-        self.lbl_hdr.setStyleSheet(f"color:{profile.system_color};font-size:9px;background:transparent;")
+        self.lbl_hdr.setStyleSheet(f"color:{profile.system_color};font-size:10px;font-weight:bold;background:transparent;border:none;selection-background-color: rgba(0, 180, 255, 0.4);")
         if self.lbl_orig:
-            self.lbl_orig.setStyleSheet(f"color:{profile.original_color};font-size:{profile.font_size-1}px;background:transparent;")
+            self.lbl_orig.setStyleSheet(f"color:{profile.original_color};font-size:{profile.font_size-1}px;background:transparent;border:none;selection-background-color: rgba(0, 180, 255, 0.4);")
         if self.lbl_tl:
-            self.lbl_tl.setStyleSheet(f"color:{col};font-size:{profile.font_size}px;font-weight:{fw};background:transparent;")
-        border = 'rgba(0,180,255,0.25)'
-        bg = profile.bg_color
-        self.setStyleSheet(f"QFrame{{background:{bg};border:1px solid {border};border-radius:5px;margin:1px;}}")
+            self.lbl_tl.setStyleSheet(f"color:{col};font-size:{profile.font_size}px;font-weight:{fw};background:transparent;border:none;selection-background-color: rgba(0, 180, 255, 0.4);")
+        
+        # Estética limpia: SIN bordes ni fondos de caja
+        self.setStyleSheet("QFrame{background:transparent;border:none;margin:0;padding:2px;}")
 
     def retranslate(self, engine, detect_lang_fn, profile):
         try:
@@ -179,6 +192,9 @@ class ChatOverlay(W.QWidget):
         main = W.QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(0)
+        
+        # Variable para controlar si el usuario está al final del scroll
+        self._is_at_bottom = True
         tb = W.QWidget()
         tb.setFixedHeight(26)
         tb.setStyleSheet("background:#000000;border-bottom:1px solid rgba(0,180,255,0.3);border-radius:5px 5px 0 0;")
@@ -189,49 +205,71 @@ class ChatOverlay(W.QWidget):
         ttl = W.QLabel("EVE Chat Translator")
         ttl.setStyleSheet("color:rgba(0,200,255,0.8);font-size:10px;background:transparent;")
         
-        # Botones de control
-        btn_ctrl_style = "QPushButton{background:rgba(0,180,255,0.1);border:none;border-radius:3px;color:rgba(200,230,255,0.5);font-size:11px;}QPushButton:hover{background:rgba(0,180,255,0.25);color:#00c8ff;}"
+        # Estilo idéntico a la App Principal
+        BTN_MIN_STYLE = """
+            QPushButton {
+                background: rgba(0, 180, 255, 0.15);
+                border: 1px solid rgba(0, 180, 255, 0.4);
+                border-radius: 3px;
+                color: #00c8ff;
+                font-size: 10px;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background: rgba(0, 180, 255, 0.35);
+            }
+        """
+        BTN_CLS_STYLE = """
+            QPushButton {
+                background: rgba(255, 50, 50, 0.15);
+                border: 1px solid rgba(255, 50, 50, 0.4);
+                border-radius: 3px;
+                color: #ff6666;
+                font-size: 10px;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background: rgba(255, 50, 50, 0.35);
+            }
+        """
         
-        # Compactar (ahora con icono de cuadro pequeño)
-        self._btn_compact = W.QPushButton("\u25ab")
-        self._btn_compact.setFixedSize(20, 20)
-        self._btn_compact.setStyleSheet(btn_ctrl_style)
-        self._btn_compact.setToolTip("Modo Compacto")
-        self._btn_compact.clicked.connect(self._toggle_compact)
+        # Paleta
+        self._btn_paint = W.QPushButton("\U0001f3a8")
+        self._btn_paint.setFixedSize(20, 20)
+        self._btn_paint.setStyleSheet(BTN_MIN_STYLE)
+        self._btn_paint.setToolTip(t('style_bg_overlay', self._lang))
+        self._btn_paint.clicked.connect(self._on_style_menu)
         
-        # Minimizar (Real)
-        self._btn_min = W.QPushButton("\u2014")
+        # Idioma
+        self._btn_lang = W.QPushButton()
+        self._btn_lang.setFixedSize(26, 20)
+        self._btn_lang.setStyleSheet(BTN_MIN_STYLE)
+        self._btn_lang.setToolTip(t('gui_dlg_lang_title', self._lang))
+        flag_path = os.path.join(ASSETS_DIR, f"flag_{self._profile.target_lang}.png")
+        self._btn_lang.setIcon(G.QIcon(flag_path))
+        self._btn_lang.setIconSize(C.QSize(18, 12))
+        self._btn_lang.clicked.connect(self._on_lang_select)
+
+        # Minimizar
+        self._btn_min = W.QPushButton("\u2212")
         self._btn_min.setFixedSize(20, 20)
-        self._btn_min.setStyleSheet(btn_ctrl_style)
-        self._btn_min.clicked.connect(self.showMinimized)
+        self._btn_min.setStyleSheet(BTN_MIN_STYLE)
+        self._btn_min.clicked.connect(self._animate_minimize)
         
         # Cerrar
         btn_cls = W.QPushButton("\u00d7")
         btn_cls.setFixedSize(20, 20)
-        btn_cls.setStyleSheet("QPushButton{background:transparent;border:none;color:rgba(200,230,255,0.4);font-size:16px;}QPushButton:hover{color:#ff4444;}")
+        btn_cls.setStyleSheet(BTN_CLS_STYLE)
         btn_cls.clicked.connect(self.hide)
         
-        tbl.addWidget(ico); tbl.addWidget(ttl); tbl.addStretch()
-        tbl.addWidget(self._btn_compact)
-        tbl.addWidget(self._btn_min)
-        tbl.addWidget(btn_cls)
-        btn_style = "QPushButton{background:rgba(0,180,255,0.12);border:1px solid rgba(0,180,255,0.3);border-radius:3px;font-size:11px;padding:0;}QPushButton:hover{background:rgba(0,180,255,0.25);}"
-        self._btn_paint = W.QPushButton("\U0001f3a8")
-        self._btn_paint.setFixedSize(22, 18)
-        self._btn_paint.setStyleSheet(btn_style)
-        self._btn_paint.setToolTip(t('style_bg_overlay', self._lang))
-        self._btn_paint.clicked.connect(self._on_style_menu)
-        self._btn_lang = W.QPushButton()
-        self._btn_lang.setFixedSize(26, 18)
-        self._btn_lang.setStyleSheet(btn_style)
-        self._btn_lang.setToolTip(t('gui_dlg_lang_title', self._lang))
-        flag_path = os.path.join(ASSETS_DIR, f"flag_{self._profile.target_lang}.png")
-        self._btn_lang.setIcon(G.QIcon(flag_path))
-        self._btn_lang.setIconSize(C.QSize(20, 14))
-        self._btn_lang.clicked.connect(self._on_lang_select)
+        # Añadir al layout de la barra (Título IZQUIERDA, Botones DERECHA)
+        tbl.addWidget(ico)
+        tbl.addWidget(ttl)
+        tbl.addStretch()
         tbl.addWidget(self._btn_paint)
         tbl.addWidget(self._btn_lang)
-        tbl.addWidget(self._btn_compact); tbl.addWidget(btn_cls)
+        tbl.addWidget(self._btn_min)
+        tbl.addWidget(btn_cls)
         tb.mousePressEvent = lambda e: setattr(self, '_drag_pos', e.globalPosition().toPoint() - self.frameGeometry().topLeft()) if e.button()==C.Qt.LeftButton else None
         tb.mouseMoveEvent = lambda e: self.move(e.globalPosition().toPoint() - self._drag_pos) if self._drag_pos and e.buttons()==C.Qt.LeftButton else None
         tb.mouseReleaseEvent = lambda e: (setattr(self,'_drag_pos',None), self._save_pos())
@@ -243,9 +281,13 @@ class ChatOverlay(W.QWidget):
         self._mc.setStyleSheet("background:transparent;")
         self._ml = W.QVBoxLayout(self._mc)
         self._ml.setContentsMargins(4,4,4,4)
-        self._ml.setSpacing(3)
+        self._ml.setSpacing(10) # Más espacio entre bloques de chat
         self._ml.addStretch()
         self._scroll.setWidget(self._mc)
+        
+        # Detectar cuando el usuario mueve el scroll manualmente
+        self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_manual)
+        
         main.addWidget(self._scroll)
         self.setStyleSheet("ChatOverlay{background:#000000;border:1px solid rgba(0,180,255,0.3);border-radius:5px;}")
         
@@ -540,7 +582,11 @@ class ChatOverlay(W.QWidget):
     @C.Slot(object, str)
     def _on_new_message_ui(self, msg, translation):
         try:
-            bubble = MessageBubble(msg, translation, self._profile, self._mc)
+            # Comprobar si estábamos al final antes de añadir
+            vbar = self._scroll.verticalScrollBar()
+            was_at_bottom = vbar.value() >= vbar.maximum() - 20
+            
+            bubble = MessageBubble(msg, translation, self._profile, self._lang, self._mc)
             self._ml.insertWidget(self._ml.count()-1, bubble)
             self._bubbles.append(bubble)
             
@@ -553,16 +599,28 @@ class ChatOverlay(W.QWidget):
                     del self._bubble_map[old._msg.msg_id]
                 self._ml.removeWidget(old)
                 old.deleteLater()
-            C.QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(self._scroll.verticalScrollBar().maximum()))
+            if was_at_bottom or len(self._bubbles) < 5:
+                C.QTimer.singleShot(50, lambda: vbar.setValue(vbar.maximum()))
         except Exception as e:
             logger.debug(f"on_new_message_ui: {e}")
 
     @C.Slot(object, str)
     def _on_translation_ready_ui(self, msg, translation):
-        """Actualiza la burbuja cuando la traducción está disponible."""
+        """Actualiza la burbuja y hace scroll si estábamos al final."""
         if msg.msg_id in self._bubble_map:
+            vbar = self._scroll.verticalScrollBar()
+            was_at_bottom = self._is_at_bottom or vbar.value() >= vbar.maximum() - 20
+            
             bubble = self._bubble_map[msg.msg_id]
             bubble.update_translation(translation, self._profile)
+            
+            if was_at_bottom:
+                C.QTimer.singleShot(50, lambda: vbar.setValue(vbar.maximum()))
+
+    def _on_scroll_manual(self, value):
+        """Detecta si el usuario ha subido el scroll para no forzar el final."""
+        vbar = self._scroll.verticalScrollBar()
+        self._is_at_bottom = (value >= vbar.maximum() - 20)
 
     def _update_fade(self):
         for b in list(self._bubbles):
@@ -576,12 +634,100 @@ class ChatOverlay(W.QWidget):
                 b.setGraphicsEffect(eff)
                 eff.setOpacity(op)
 
-    def _toggle_compact(self):
-        self._profile.compact_mode = not self._profile.compact_mode
-        if self._profile.compact_mode:
-            self._scroll.hide(); self.setFixedHeight(26); self._btn_compact.setText("+")
-        else:
-            self._scroll.show(); self.setMinimumHeight(120); self.resize(self.width(), max(self.height(),300)); self._btn_compact.setText("\u2212")
+
+    def _animate_minimize(self):
+        """Anima la ventana deslizándose hacia el dock antes de ocultarla."""
+        try:
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+            from PySide6.QtWidgets import QApplication
+
+            self._saved_geo = self.geometry()
+            self._saved_opacity = self.windowOpacity()
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    end_x = tg.x() + tg.width() // 2 - 60
+                    end_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                end_x = sg.x() + sg.width() // 2 - 60
+                end_y = sg.y() + sg.height() - 50
+            end_geo = QRect(end_x, end_y, 120, 30)
+
+            group = QParallelAnimationGroup(self)
+
+            anim_geo = QPropertyAnimation(self, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(self._saved_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.InCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.InCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(self, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(self._saved_opacity)
+            anim_op.setEndValue(0.0)
+            group.addAnimation(anim_op)
+
+            def _on_finished():
+                self.setWindowOpacity(self._saved_opacity)
+                self.setGeometry(self._saved_geo)
+                self.hide()
+
+            group.finished.connect(_on_finished)
+            group.start()
+            self._anim_group = group
+        except Exception:
+            self.hide()
+
+    def _animate_restore(self):
+        """Anima la ventana desde el dock hacia su posición original."""
+        try:
+            if not hasattr(self, '_saved_geo'): return
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+            from PySide6.QtWidgets import QApplication
+
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    start_x = tg.x() + tg.width() // 2 - 60
+                    start_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                start_x = sg.x() + sg.width() // 2 - 60
+                start_y = sg.y() + sg.height() - 50
+            
+            start_geo = QRect(start_x, start_y, 120, 30)
+            end_geo = self._saved_geo
+
+            self.setGeometry(start_geo)
+            self.setWindowOpacity(0.0)
+
+            group = QParallelAnimationGroup(self)
+
+            anim_geo = QPropertyAnimation(self, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(start_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.OutCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.OutCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(self, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(0.0)
+            anim_op.setEndValue(self._saved_opacity if hasattr(self, '_saved_opacity') else 1.0)
+            group.addAnimation(anim_op)
+
+            group.start()
+            self._anim_group = group
+        except Exception:
+            pass
 
     def toggle_visibility(self):
         self.hide() if self.isVisible() else self.show()
@@ -597,5 +743,12 @@ class ChatOverlay(W.QWidget):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._grip.move(self.width()-16, self.height()-16)
-        self._resizer_marker.move(self.width()-14, self.height()-14)
+        self._resizer_marker.move(self.width()-12, self.height()-12)
         self._config.overlay_w = self.width(); self._config.overlay_h = self.height()
+
+    def closeEvent(self, e):
+        try:
+            from PySide6.QtCore import QSettings
+            QSettings("EVE_iT", "ChatOverlay").setValue("geometry", self.saveGeometry())
+        except: pass
+        super().closeEvent(e)

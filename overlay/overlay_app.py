@@ -11,6 +11,11 @@ import threading
 import struct
 from pathlib import Path
 
+try:
+    from importlib import import_module as _imp
+    _anim_mod = _imp('PySide6.QtCore') if 'PySide6' in str(Path(__file__)) else None
+except: _anim_mod = None
+
 # Garantizar que el directorio raíz del proyecto esté en sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -110,7 +115,7 @@ class CountdownBlock(QWidget):
         self._lbl = QLabel(t('hud_next_tick', self._lang))
         self._lbl.setStyleSheet(f"color: {C['dim']}; font-family: {FONT_MONO}; font-size: 8px; letter-spacing: 1px;")
         self._val = QLabel("--:--")
-        self._val.setStyleSheet(f"color: {C['gold']}; font-family: {FONT_HUD}; font-size: 18px; font-weight: bold; letter-spacing: 2px;")
+        self._val.setStyleSheet(f"color: {C['gold']}; font-family: {FONT_HUD}; font-size: 15px; font-weight: bold; letter-spacing: 1px;")
         lay.addWidget(self._lbl); lay.addWidget(self._val)
         self.setStyleSheet(f"CountdownBlock {{ background: {C['bg_panel']}; border: 1px solid {C['border']}; border-radius: 5px; }}")
         self._timer = QTimer(self); self._timer.timeout.connect(self._tick); self._timer.start(1000)
@@ -119,15 +124,24 @@ class CountdownBlock(QWidget):
         if self._secs_left > 0: self._secs_left -= 1; self._render()
 
     def _render(self):
-        secs = self._secs_left
-        txt = '--:--' if secs < 0 else f"{secs//60:02d}:{secs%60:02d}"
-        color = C['red'] if 0 <= secs <= 60 else ('#ffa040' if secs <= 300 else C['gold'])
+        if hasattr(self, '_override_str') and self._override_str:
+            txt = self._override_str
+            color = C['gold'] if txt == '--:--' else ('#ffa040' if txt == 'Esperando...' else C['dim'])
+        else:
+            secs = self._secs_left
+            txt = '--:--' if secs < 0 else f"{secs//60:02d}:{secs%60:02d}"
+            color = C['red'] if 0 <= secs <= 60 else ('#ffa040' if secs <= 300 else C['gold'])
+            
         if self._val.text() != txt: self._val.setText(txt)
         if color not in self._val.styleSheet():
-            self._val.setStyleSheet(f"color: {color}; font-family: {FONT_HUD}; font-size: 18px; font-weight: bold; letter-spacing: 2px;")
+            self._val.setStyleSheet(f"color: {color}; font-family: {FONT_HUD}; font-size: 15px; font-weight: bold; letter-spacing: 1px;")
 
-    def update_countdown(self, secs: int):
-        if secs > 0: self._secs_left = secs
+    def update_countdown(self, secs: int, text_str: str = '--:--'):
+        self._secs_left = secs
+        if secs < 0:
+            self._override_str = text_str
+        else:
+            self._override_str = None
         self._render()
 
     def retranslate_ui(self, lang: str):
@@ -185,7 +199,14 @@ class DataPoller(QThread):
     def __init__(self):
         super().__init__()
         self._stop_event = threading.Event()
+        self._sock = None
     def stop(self): self._stop_event.set()
+    def _send_command(self, cmd: str):
+        if self._sock:
+            try:
+                self._sock.sendall((cmd + '\n').encode('utf-8'))
+            except Exception:
+                pass
     def run(self):
         import time
         connected = False
@@ -193,6 +214,7 @@ class DataPoller(QThread):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(2.0); s.connect(('127.0.0.1', OVERLAY_PORT))
+                    self._sock = s
                     if not connected:
                         connected = True; self.connection_ok.emit()
                     buf = b''
@@ -218,8 +240,20 @@ class OverlayWindow(QWidget):
         self._ctrl = controller
         self._lang = controller.state.language if controller else 'es'
         self._drag_pos = None; self._compact = False
+        self._all_chars = []; self._current_main = self._load_saved_main()
+        self._last_server_secs = 0; self._local_secs = 0; self._is_paused = False
         self._setup_window(); self._build_ui(); self._restore_position(); self._setup_poller()
+        self._interp_timer = QTimer(self); self._interp_timer.timeout.connect(self._local_tick); self._interp_timer.start(1000)
         if self._ctrl: self._ctrl.state.subscribe(self._on_state_change)
+
+    def _load_saved_main(self) -> str:
+        """Lee el main character guardado en _main_char.json."""
+        import json as _json
+        cfg = Path(__file__).resolve().parent.parent / '_main_char.json'
+        try:
+            return _json.loads(cfg.read_text(encoding='utf-8')).get('main', '')
+        except Exception:
+            return ''
 
     def _setup_window(self):
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
@@ -234,26 +268,71 @@ class OverlayWindow(QWidget):
         main_lay = QVBoxLayout(self._container); main_lay.setContentsMargins(10, 8, 10, 8); main_lay.setSpacing(6)
 
         title_row = QHBoxLayout()
-        self._dot = StatusDot(); self._dot.setFixedSize(10, 10); title_row.addWidget(self._dot)
-        self._title_lbl = QLabel("⚡ " + t('hud_isk_total', self._lang).upper())
-        self._title_lbl.setStyleSheet(f"color: {C['accent']}; font-family: {FONT_HUD}; font-size: 10px; font-weight: bold; letter-spacing: 1.5px;")
-        title_row.addWidget(self._title_lbl)
-        
-        title_row.addStretch()
+        # StatusDot pequeño para conexión
+        self._dot = StatusDot(); self._dot.setFixedSize(8, 8); title_row.addWidget(self._dot)
+
+        # Título de la funcionalidad
+        self._lbl_title = QLabel(t('hud_title', self._lang))
+        self._lbl_title.setStyleSheet("color: rgba(0,180,255,0.7); font-size: 10px; font-weight: bold; margin-left: 2px;")
+        title_row.addWidget(self._lbl_title)
+
+        # Botón selector de Main Character (Icono de Personaje)
+        self._btn_main = QPushButton("👤")
+        self._btn_main.setFixedSize(24, 24)
+        self._btn_main.setToolTip(f"Main: {self._current_main}" if self._current_main else "Seleccionar personaje Main")
+        self._btn_main.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                color: #ffffff;
+                font-size: 14px;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.15);
+                border-color: #ffffff;
+            }
+        """)
+        self._btn_main.clicked.connect(self._show_main_selector)
+        title_row.addWidget(self._btn_main, 1)  # stretch factor 1 para que ocupe espacio
+
         title_row.setSpacing(5)
         
-        BTN_MIN_STYLE = "QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);border-radius:3px;color:#00c8ff;font-size:10px;padding:0;margin:0;}QPushButton:hover{background:rgba(0,180,255,0.35);}"
-        BTN_CLS_STYLE = "QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);border-radius:3px;color:#ff6666;font-size:10px;padding:0;margin:0;}QPushButton:hover{background:rgba(255,50,50,0.35);}"
+        BTN_NEON_STYLE = """
+            QPushButton {
+                background: rgba(0, 180, 255, 0.15);
+                border: 1px solid rgba(0, 180, 255, 0.4);
+                border-radius: 3px;
+                color: #00c8ff;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background: rgba(0, 180, 255, 0.35);
+            }
+        """
+        BTN_RED_STYLE = """
+            QPushButton {
+                background: rgba(255, 50, 50, 0.15);
+                border: 1px solid rgba(255, 50, 50, 0.4);
+                border-radius: 3px;
+                color: #ff6666;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 50, 50, 0.35);
+            }
+        """
 
         # Botones de sesión
         self._btn_playpause = QPushButton("\u23ef") # ⏯
-        self._btn_playpause.setFixedSize(18, 18); self._btn_playpause.setStyleSheet(BTN_MIN_STYLE)
+        self._btn_playpause.setFixedSize(24, 24); self._btn_playpause.setStyleSheet(BTN_NEON_STYLE)
         self._btn_playpause.setToolTip("Pausar/Reanudar")
         self._btn_playpause.clicked.connect(self._do_pause)
         title_row.addWidget(self._btn_playpause)
 
         self._btn_reset_hud = QPushButton("\u21bb") # 🔄
-        self._btn_reset_hud.setFixedSize(18, 18); self._btn_reset_hud.setStyleSheet(BTN_MIN_STYLE)
+        self._btn_reset_hud.setFixedSize(24, 24); self._btn_reset_hud.setStyleSheet(BTN_NEON_STYLE)
         self._btn_reset_hud.setToolTip("Resetear Sesión")
         self._btn_reset_hud.clicked.connect(self._do_reset)
         title_row.addWidget(self._btn_reset_hud)
@@ -262,12 +341,13 @@ class OverlayWindow(QWidget):
         title_row.addWidget(sep_tool)
 
         self._btn_compact = QPushButton("\u2212") # −
-        self._btn_compact.setFixedSize(18, 18); self._btn_compact.setStyleSheet(BTN_MIN_STYLE)
-        self._btn_compact.clicked.connect(self._toggle_compact)
+        self._btn_compact.setFixedSize(24, 24); self._btn_compact.setStyleSheet(BTN_NEON_STYLE)
+        self._btn_compact.setToolTip("Minimizar")
+        self._btn_compact.clicked.connect(self._do_minimize)
         title_row.addWidget(self._btn_compact)
         
         btn_close = QPushButton("\u00d7") # ×
-        btn_close.setFixedSize(18, 18); btn_close.setStyleSheet(BTN_CLS_STYLE)
+        btn_close.setFixedSize(24, 24); btn_close.setStyleSheet(BTN_RED_STYLE)
         btn_close.clicked.connect(self.hide)
         title_row.addWidget(btn_close)
         
@@ -277,12 +357,13 @@ class OverlayWindow(QWidget):
         main_lay.addWidget(sep)
 
         self._full_panel = QWidget(); full_lay = QVBoxLayout(self._full_panel); full_lay.setContentsMargins(0, 0, 0, 0); full_lay.setSpacing(4)
-        r1 = QHBoxLayout(); self._m_iskh = MetricBlock('hud_isk_h_rolling'); self._m_isks = MetricBlock('hud_isk_h_session')
-        r1.addWidget(self._m_iskh); r1.addWidget(self._m_isks); full_lay.addLayout(r1)
+        r1 = QHBoxLayout(); self._m_total = MetricBlock('hud_isk_total'); self._m_isks = MetricBlock('hud_isk_h_session')
+        r1.addWidget(self._m_total); r1.addWidget(self._m_isks); full_lay.addLayout(r1)
         r2 = QHBoxLayout(); self._m_cd = CountdownBlock(); self._m_sess = MetricBlock('hud_session')
         r2.addWidget(self._m_cd); r2.addWidget(self._m_sess); full_lay.addLayout(r2)
-        r3 = QHBoxLayout(); self._m_total = MetricBlock('hud_isk_total'); self._m_chars = MetricBlock('hud_characters')
-        r3.addWidget(self._m_total); r3.addWidget(self._m_chars); full_lay.addLayout(r3)
+        # m_iskh y m_chars ocultos pero mantenidos para compatibilidad
+        self._m_iskh = MetricBlock('hud_isk_h_rolling'); self._m_iskh.hide()
+        self._m_chars = MetricBlock('hud_characters'); self._m_chars.hide()
         main_lay.addWidget(self._full_panel)
 
         self._compact_panel = QWidget(); self._compact_panel.hide()
@@ -293,30 +374,118 @@ class OverlayWindow(QWidget):
         main_lay.addWidget(self._compact_panel)
 
     def _do_pause(self):
-        try:
-            from controller.control_window import _control_window_ref
-            if _control_window_ref: _control_window_ref._on_playpause()
-        except: pass
+        if self._ctrl:
+            self._ctrl.toggle_tracker()
+            # Cambiar icono visualmente según el nuevo estado
+            is_paused = getattr(self._ctrl, '_paused', False)
+            self._btn_playpause.setText("▶" if is_paused else "⏸")
+        else:
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref:
+                    _control_window_ref._on_playpause()
+                    is_paused = getattr(_control_window_ref, '_paused', False)
+                    self._btn_playpause.setText("▶" if is_paused else "⏸")
+            except: pass
 
     def _do_reset(self):
-        try:
-            from controller.control_window import _control_window_ref
-            if _control_window_ref: _control_window_ref._on_reset()
-        except: pass
+        if self._ctrl:
+            self._ctrl.reset_tracker()
+        else:
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref: _control_window_ref._on_reset()
+            except: pass
 
     def _send_command(self, cmd: str):
-        """Mantenido por compatibilidad legacy."""
-        pass
+        """Envía comando al servidor vía el poller."""
+        if hasattr(self, '_poller'):
+            self._poller._send_command(cmd)
+
+    def _show_main_selector(self):
+        """Muestra un menú popup para seleccionar el personaje Main."""
+        from importlib import import_module
+        try:
+            _w = import_module(_QT_BACKEND + '.QtWidgets')
+            QMenu = _w.QMenu
+            QAction = _gui.QAction if hasattr(_gui, 'QAction') else _w.QAction
+        except Exception:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: #0d0d0d;
+                border: 1px solid rgba(0, 180, 255, 0.5);
+                border-radius: 4px;
+                padding: 4px 0;
+                color: {C['white']};
+                font-family: {FONT_MONO};
+                font-size: 10px;
+            }}
+            QMenu::item {{
+                padding: 5px 16px;
+            }}
+            QMenu::item:selected {{
+                background: rgba(0, 200, 255, 0.25);
+            }}
+            QMenu::item:checked {{
+                color: #00ff9d;
+                font-weight: bold;
+            }}
+        """)
+        if not self._all_chars:
+            act = menu.addAction("Sin personajes")
+            act.setEnabled(False)
+        else:
+            for name in self._all_chars:
+                act = menu.addAction(("✓ " if name == self._current_main else "   ") + name)
+                act.setData(name)
+                act.triggered.connect(lambda checked, n=name: self._set_main(n))
+        menu.exec(self._btn_main.mapToGlobal(self._btn_main.rect().bottomLeft()))
+
+    def _set_main(self, name: str):
+        """Guarda el main character seleccionado en _main_char.json."""
+        import json as _json
+        cfg = Path(__file__).resolve().parent.parent / '_main_char.json'
+        try:
+            cfg.write_text(_json.dumps({'main': name}), encoding='utf-8')
+            self._current_main = name
+            self._btn_main.setToolTip(f"Main: {name}")
+        except Exception:
+            pass
+
+    def _local_tick(self):
+        """Timer local de 1s para interpolar contadores suavemente."""
+        if self._is_paused:
+            return
+        self._local_secs += 1
+        self._m_sess.set_value(self._fmt_dur(self._local_secs))
 
     def _on_data(self, data):
         self._m_iskh.set_value(self._fmt(data.get('isk_h_rolling', 0)))
         self._m_isks.set_value(self._fmt(data.get('isk_h_session', 0)))
-        self._m_sess.set_value(self._fmt_dur(data.get('session_secs', 0)))
+        # Sincronizar el contador local con el servidor
+        server_secs = data.get('session_secs', 0)
+        self._local_secs = server_secs
+        self._m_sess.set_value(self._fmt_dur(server_secs))
         self._m_total.set_value(self._fmt(data.get('total_isk', 0)))
         self._m_chars.set_value(str(data.get('char_count', 0)))
         self._c_iskh.setText(self._fmt(data.get('isk_h_rolling', 0)) + " ISK/h")
-        self._m_cd.update_countdown(data.get('secs_until_next', -1))
+        self._m_cd.update_countdown(
+            data.get('secs_until_next', -1),
+            data.get('countdown', '--:--')
+        )
         self._c_tick.setText(data.get('countdown', '--:--'))
+        # Actualizar lista de personajes y main actual
+        self._all_chars = data.get('all_char_names', [])
+        new_main = data.get('main_char', '')
+        # Solo actualizar si el servidor envía un main válido Y nosotros no tenemos uno guardado ya
+        if new_main and new_main != self._current_main:
+            self._current_main = new_main
+            self._btn_main.setToolTip(f"Main: {new_main}")
+
+        self._is_paused = data.get('is_paused', False)
+        self._btn_playpause.setText("▶" if self._is_paused else "⏸")
 
     def _fmt(self, v):
         if v >= 1e9: return f"{v/1e9:.2f}B"
@@ -327,18 +496,125 @@ class OverlayWindow(QWidget):
     def _fmt_dur(self, s):
         return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
 
-    def _on_connected(self): self._dot.set_status('connected'); self._status_lbl.setText(t('hud_live', self._lang))
-    def _on_disconnected(self): self._dot.set_status('disconnected'); self._status_lbl.setText(t('hud_connecting', self._lang))
+    def _on_connected(self): self._dot.set_status('connected')
+    def _on_disconnected(self): self._dot.set_status('disconnected')
 
     def _on_state_change(self, state):
         if state.language != self._lang: self.retranslate_ui(state.language)
 
     def retranslate_ui(self, lang):
         self._lang = lang
-        self._title_lbl.setText("⚡ " + t('hud_isk_total', lang).upper())
-        self._status_lbl.setText(t('hud_live', lang) if self._dot._color.name() == '#00ff9d' else t('hud_connecting', lang))
+        if hasattr(self, '_lbl_title'):
+            self._lbl_title.setText(t('hud_title', lang))
         for m in [self._m_iskh, self._m_isks, self._m_sess, self._m_total, self._m_chars, self._m_cd]:
             m.retranslate_ui(lang)
+
+    def _do_minimize(self):
+        """Minimiza el HUD con animación de deslizamiento hacia el dock."""
+        self._animate_to_dock()
+
+    def _animate_to_dock(self):
+        """Anima la ventana deslizándose y encogiéndose hacia la posición del dock."""
+        try:
+            _c = __import__('importlib').import_module(_QT_BACKEND + '.QtCore')
+            QPropertyAnimation = _c.QPropertyAnimation
+            QEasingCurve = _c.QEasingCurve
+            QRect = _c.QRect
+            QParallelAnimationGroup = _c.QParallelAnimationGroup
+
+            # Guardar geometría ANTES de animar
+            self._saved_geo = self.geometry()
+
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    end_x = tg.x() + tg.width() // 2 - 60
+                    end_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                end_x = sg.x() + sg.width() // 2 - 60
+                end_y = sg.y() + sg.height() - 50
+            end_geo = QRect(end_x, end_y, 120, 30)
+
+            group = QParallelAnimationGroup(self)
+
+            anim_geo = QPropertyAnimation(self, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(self._saved_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.InCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.InCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(self, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(1.0)
+            anim_op.setEndValue(0.0)
+            group.addAnimation(anim_op)
+
+            def _on_finished():
+                # Restaurar geometría y opacidad ANTES de ocultar
+                self.setWindowOpacity(1.0)
+                self.setGeometry(self._saved_geo)
+                self.hide()
+
+            group.finished.connect(_on_finished)
+            group.start()
+            self._anim_group = group
+        except Exception:
+            self.hide()
+
+    def _animate_restore(self):
+        """Anima la ventana desde el dock hacia su posición original."""
+        try:
+            if not hasattr(self, '_saved_geo'): return
+            _c = __import__('importlib').import_module(_QT_BACKEND + '.QtCore')
+            QPropertyAnimation = _c.QPropertyAnimation
+            QEasingCurve = _c.QEasingCurve
+            QRect = _c.QRect
+            QParallelAnimationGroup = _c.QParallelAnimationGroup
+
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    start_x = tg.x() + tg.width() // 2 - 60
+                    start_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                from PySide6.QtWidgets import QApplication
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                start_x = sg.x() + sg.width() // 2 - 60
+                start_y = sg.y() + sg.height() - 50
+            
+            start_geo = QRect(start_x, start_y, 120, 30)
+            end_geo = self._saved_geo
+
+            self.setGeometry(start_geo)
+            self.setWindowOpacity(0.0)
+
+            group = QParallelAnimationGroup(self)
+
+            anim_geo = QPropertyAnimation(self, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(start_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.OutCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.OutCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(self, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(0.0)
+            anim_op.setEndValue(1.0)
+            group.addAnimation(anim_op)
+
+            group.start()
+            self._anim_group = group
+        except Exception:
+            pass
 
     def _toggle_compact(self):
         self._compact = not self._compact

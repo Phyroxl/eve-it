@@ -43,6 +43,9 @@ try:
 except Exception:
     pass
 
+# Referencia global para que overlays externos puedan mandar comandos
+_control_window_ref = None
+
 STYLE = """
 QWidget#main {
     background: #000000;
@@ -137,6 +140,10 @@ class ControlWindow:
         self._pause_elapsed = 0
         self._session_start = None
         self._lang = 'es'
+        
+        global _control_window_ref
+        _control_window_ref = self
+        
         self._build()
 
     def _build(self):
@@ -169,7 +176,15 @@ class ControlWindow:
         flags = Qt.FramelessWindowHint if hasattr(Qt, 'FramelessWindowHint') else Qt.WindowFlags(0x00000800)
         win.setWindowFlags(flags | Qt.Window)
         win.setAttribute(Qt.WA_TranslucentBackground, False) # Negro sólido
-        win.closeEvent = lambda e: (e.ignore(), win.hide())
+        
+        def _on_close(e):
+            try:
+                from PySide6.QtCore import QSettings
+                QSettings("EVE_iT", "ControlWindow").setValue("geometry", win.saveGeometry())
+            except: pass
+            e.ignore()
+            win.hide()
+        win.closeEvent = _on_close
 
         root = QVBoxLayout(win)
         root.setContentsMargins(0, 0, 0, 0)
@@ -440,16 +455,21 @@ class ControlWindow:
         # ── Timer estado ──────────────────────────────────────────────────────
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_status)
-        self._timer.start(2000)
+        self._timer.start(500)
         self._ctrl.state.subscribe(lambda s: self._update_status())
         self._win = win
 
-        screen = self._app.primaryScreen()
-        sg = screen.geometry()
-        win.move(
-            sg.left() + (sg.width()  - win.width())  // 2,
-            sg.top()  + (sg.height() - win.height()) // 2,
-        )
+        from PySide6.QtCore import QSettings
+        saved_geo = QSettings("EVE_iT", "ControlWindow").value("geometry")
+        if saved_geo:
+            win.restoreGeometry(saved_geo)
+        else:
+            screen = self._app.primaryScreen()
+            sg = screen.geometry()
+            win.move(
+                sg.left() + (sg.width()  - win.width())  // 2,
+                sg.top()  + (sg.height() - win.height()) // 2,
+            )
 
     def _divider(self, W):
         d = W.QFrame(); d.setObjectName("divider")
@@ -560,31 +580,30 @@ class ControlWindow:
                         
                         def _on_search_finished(reply):
                             try:
-                                if reply.error() == N.QNetworkReply.NoError:
+                                no_err = getattr(N.QNetworkReply, 'NoError', None) or getattr(N.QNetworkReply, 'NetworkError', {}).get('NoError', 0)
+                                if reply.error() == 0:  # NoError = 0
                                     import json as _j
                                     res = _j.loads(reply.readAll().data().decode())
                                     ids = res.get('character', [])
                                     if ids:
                                         char_id = ids[0]
-                                        logger.info(f"ID resuelto para {name}: {char_id}")
                                         img_url = f"https://images.evetech.net/characters/{char_id}/portrait?size=64"
                                         img_req = N.QNetworkRequest(C.QUrl(img_url))
                                         
                                         def _on_img_finished(img_reply):
-                                            if img_reply.error() == N.QNetworkReply.NoError:
-                                                pix = G.QPixmap()
-                                                if pix.loadFromData(img_reply.readAll().data()):
-                                                    label.setPixmap(pix.scaled(42, 42, C.Qt.SmoothTransformation))
-                                            else:
-                                                logger.warning(f"Error cargando imagen para {name}: {img_reply.error()}")
-                                            img_reply.deleteLater()
-                                            
+                                            try:
+                                                if img_reply.error() == 0:  # NoError
+                                                    pix = G.QPixmap()
+                                                    if pix.loadFromData(img_reply.readAll().data()):
+                                                        scaled = pix.scaled(42, 42, C.Qt.AspectRatioMode.KeepAspectRatio if hasattr(C.Qt, 'AspectRatioMode') else C.Qt.KeepAspectRatio, C.Qt.TransformationMode.SmoothTransformation if hasattr(C.Qt, 'TransformationMode') else C.Qt.SmoothTransformation)
+                                                        label.setPixmap(scaled)
+                                            except Exception as e:
+                                                logger.warning(f"Error cargando imagen para {name}: {e}")
+                                            finally:
+                                                img_reply.deleteLater()
+                                        
                                         img_reply = dlg._network_mgr.get(img_req)
                                         img_reply.finished.connect(lambda: _on_img_finished(img_reply))
-                                    else:
-                                        logger.warning(f"No se encontró ID para el personaje: {name}")
-                                else:
-                                    logger.error(f"Error en búsqueda ESI para {name}: {reply.error()}")
                             except Exception as e:
                                 logger.error(f"Excepción en _on_search_finished: {e}")
                             finally:
@@ -646,7 +665,7 @@ class ControlWindow:
             footer = W.QWidget(); footer.setFixedHeight(40)
             fl = W.QHBoxLayout(footer); fl.setContentsMargins(15, 0, 15, 0)
             hint = W.QLabel("Clic derecho para establecer como Main")
-            hint.setStyleSheet("color:rgba(0,180,255,0.4); font-size:9px; font-style:italic;")
+            hint.setStyleSheet("color:rgba(255,255,255,0.85); font-size:12px; font-style:italic;")
             fl.addWidget(hint); fl.addStretch()
             lay.addWidget(footer)
 
@@ -730,7 +749,17 @@ class ControlWindow:
 
     def _on_translator(self):
         try:
-            if self._tray and hasattr(self._tray, '_on_translator'):
+            trans_ov = getattr(self._ctrl, '_translator_overlay', None)
+            if trans_ov:
+                if not trans_ov.isVisible() or trans_ov.isMinimized():
+                    trans_ov.showNormal()
+                trans_ov.show()
+                if hasattr(trans_ov, '_animate_restore'):
+                    trans_ov._animate_restore()
+                else:
+                    trans_ov.raise_()
+                    trans_ov.activateWindow()
+            elif self._tray and hasattr(self._tray, '_on_translator'):
                 self._tray._on_translator()
             else:
                 self._ctrl.start_translator()
@@ -745,13 +774,16 @@ class ControlWindow:
 
     def _on_replicator(self):
         try:
-            # Si el HUB ya existe y está minimizado, restaurarlo
+            # Si el HUB ya existe, restaurarlo
             from controller.replicator_wizard import _GLOBAL_HUB
-            if _GLOBAL_HUB and _GLOBAL_HUB.window.isVisible():
-                if _GLOBAL_HUB.window.isMinimized():
-                    _GLOBAL_HUB.window.showNormal()
-                _GLOBAL_HUB.window.raise_()
-                _GLOBAL_HUB.window.activateWindow()
+            if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window') and not getattr(_GLOBAL_HUB, '_is_closed', False):
+                _GLOBAL_HUB.window.showNormal()
+                _GLOBAL_HUB.window.show()
+                if hasattr(_GLOBAL_HUB, '_animate_restore_hub'):
+                    _GLOBAL_HUB._animate_restore_hub()
+                else:
+                    _GLOBAL_HUB.window.raise_()
+                    _GLOBAL_HUB.window.activateWindow()
                 return
 
             logger.info("Lanzando Replicator HUB")
@@ -760,9 +792,15 @@ class ControlWindow:
         except Exception as e:
             logger.error(f"replicator error: {e}")
 
-    def _on_playpause(self):
+    def _on_playpause(self, sync_from_ctrl=False):
         from datetime import datetime
-        self._paused = not self._paused
+        if not sync_from_ctrl:
+            self._ctrl.toggle_tracker()
+            return
+
+        # Si llegamos aquí, el tracker ya cambió su estado, solo actualizamos UI
+        self._paused = self._ctrl._tracker.is_paused if self._ctrl._tracker else False
+        
         if self._paused:
             self._pause_time = datetime.now()
             self._btn_playpause.setText("▶\n" + t('gui_btn_resume', self._lang))
@@ -770,8 +808,7 @@ class ControlWindow:
             if self._pause_time:
                 self._pause_elapsed += int((datetime.now() - self._pause_time).total_seconds())
                 self._pause_time = None
-            if not self._ctrl.state.tracker_running:
-                self._ctrl.start_tracker()
+            
             if self._session_start is None:
                 self._session_start = datetime.now()
             self._btn_playpause.setText("⏸\n" + t('gui_btn_pause', self._lang))
@@ -824,11 +861,7 @@ class ControlWindow:
                 h = sess // 3600; m = (sess % 3600) // 60; s = sess % 60
                 self._lbl_session.setText(f"{t('gui_session_time', self._lang)}: {h:02d}:{m:02d}:{s:02d}")
 
-                per_char = summary.get('per_character', [])
-                for cd in per_char:
-                    ti = cd.get('tick_info', {})
-                    if ti.get('countdown_str', '--:--') != '--:--':
-                        break
+                # (Tick info se maneja en el overlay_server.py)
             else:
                 self._lbl_chars.setText(f"0 {t('gui_chars_suffix', self._lang)}")
                 self._lbl_isk.setText("— " + t('gui_isk_total', self._lang))
@@ -851,23 +884,35 @@ class ControlWindow:
 
         # GESTIÓN DEL DOCK (Pestañas de herramientas minimizadas)
         
-        # 1. Replicator Hub
-        is_repl_min = False
+        # 1. HUD Overlay
+        is_hud_docked = False
         try:
-            # Buscar el HUB en el controlador (o wizard global)
-            from controller.replicator_wizard import _GLOBAL_HUB
-            if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window') and _GLOBAL_HUB.window.isVisible():
-                is_repl_min = _GLOBAL_HUB.window.isMinimized()
+            hud_ov = self._ctrl.overlay_window
+            if hud_ov:
+                if not hud_ov.isVisible() or hud_ov.isMinimized():
+                    is_hud_docked = True
         except Exception: pass
-        self._sync_dock_button("REPLICATOR", is_repl_min, "#b464ff", "🧬", self._on_replicator)
+        self._sync_dock_button("HUD", is_hud_docked, "#32ff96", "👁️", self._on_overlay)
 
-        # 2. Chat Translator
-        is_trans_min = False
+        # 2. Replicator Hub (oculto = docked)
+        is_repl_docked = False
         try:
-            if self._ctrl.translator_window and self._ctrl.translator_window.isVisible():
-                is_trans_min = self._ctrl.translator_window.isMinimized()
+            from controller.replicator_wizard import _GLOBAL_HUB
+            if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window') and not getattr(_GLOBAL_HUB, '_is_closed', False):
+                if not _GLOBAL_HUB.window.isVisible():
+                    is_repl_docked = True
         except Exception: pass
-        self._sync_dock_button("TRANSLATOR", is_trans_min, "#00c8ff", "📡", self._on_translator)
+        self._sync_dock_button("REPLICATOR", is_repl_docked, "#b464ff", "🧬", self._on_replicator)
+
+        # 3. Chat Translator (oculto o minimizado = docked)
+        is_trans_docked = False
+        try:
+            trans_ov = getattr(self._ctrl, '_translator_overlay', None)
+            if trans_ov:
+                if not trans_ov.isVisible() or trans_ov.isMinimized():
+                    is_trans_docked = True
+        except Exception: pass
+        self._sync_dock_button("TRANSLATOR", is_trans_docked, "#00c8ff", "📡", self._on_translator)
 
     def _sync_dock_button(self, key, is_minimized, color, icon, callback):
         """Añade o quita botones de la barra de acoplamiento inferior."""

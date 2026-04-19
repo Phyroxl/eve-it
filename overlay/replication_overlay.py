@@ -56,6 +56,9 @@ for _qt_try in [
 
 from overlay.win32_capture import capture_window_region, IS_WINDOWS
 
+import logging
+logger = logging.getLogger('eve.overlay')
+
 
 # ── Constantes de diseño ──────────────────────────────────────────────────────
 BORDER_RESIZE_PX = 8    # píxeles en el borde para activar resize
@@ -188,25 +191,28 @@ class ReplicationOverlay(QWidget):
         self._region       = region_rel
         self._cfg          = cfg
         self._save_cb      = save_callback
-        self._frame        = None       # QPixmap actual
         self._click_through = False
+        self._interactive    = False  # [NUEVO] Modo portal (broadcasting)
         self._hovering     = False
+        self._flash_pos    = None  # [NUEVO] Para feedback visual de click
 
         # Estado de drag/resize
         self._drag_pos    = None
         self._resize_dir  = ResizeHandle.NONE
         self._resize_origin_global = None
         self._resize_origin_geom   = None
+        self._is_moving_or_resizing = False # [NUEVO] Para mantener borde visible
         
         # Modo compacto (oculta barra)
         self._is_compact = False
         
-        # UI de Controles (HUD flotante)
-        self._setup_hud()
-
-        self._setup_window()
         self._restore_state()
         self._start_capture()
+        
+        self._setup_window()
+        
+        # UI de Controles (HUD flotante) - Al final para asegurar que esté encima
+        self._setup_hud()
 
         # Timer de Persistencia Always-on-Top (Nivel Win32)
         import ctypes
@@ -217,8 +223,8 @@ class ReplicationOverlay(QWidget):
     def _setup_hud(self):
         self._hud = QFrame(self)
         self._hud.setFixedHeight(CTRL_BAR_H)
-        # Borde y fondo estilo neón
-        self._hud.setStyleSheet(f"QFrame {{ background: rgba(13, 22, 38, 220); border: 1px solid rgba(0, 180, 255, 120); border-radius: 4px; }}")
+        # Fondo ultra-minimalista sin bordes molestos
+        self._hud.setStyleSheet("QFrame { background: rgba(0, 20, 40, 180); border: none; border-radius: 4px; }")
         self._hud.move(5, 5)
         self._hud.hide() # Solo se muestra al hacer hover
         
@@ -247,6 +253,13 @@ class ReplicationOverlay(QWidget):
         
         hl.addStretch()
         
+        # Botón Interactivo (Portal) [NUEVO]
+        self._btn_interact = QPushButton("🔗", self._hud); self._btn_interact.setFixedSize(22, 22)
+        self._btn_interact.setToolTip("Activar Modo Portal (Click-through al juego)")
+        self._btn_interact.setStyleSheet("QPushButton { background: transparent; border: none; color: #888; font-size: 14px; }")
+        self._btn_interact.clicked.connect(self._toggle_interactive)
+        hl.addWidget(self._btn_interact)
+        
         # Botón cerrar
         self._btn_close = QPushButton("\u00d7", self._hud); self._btn_close.setFixedSize(22, 22)
         self._btn_close.setStyleSheet("QPushButton { background: transparent; border: none; color: #ff6666; font-size: 18px; } QPushButton:hover { color: #ff0000; }")
@@ -254,6 +267,7 @@ class ReplicationOverlay(QWidget):
         hl.addWidget(self._btn_close)
         
         self._hud.hide()
+        self._hud.raise_() # Asegurar que esté encima de la pintura de fondo
 
         # [NUEVO] Marcador visual de redimensionado (Triángulo Neón)
         self._resizer_marker = QLabel(self)
@@ -263,6 +277,22 @@ class ReplicationOverlay(QWidget):
         # WA_TransparentForMouseEvents para que no bloquee el resize real
         self._resizer_marker.setAttribute(Qt.WA_TransparentForMouseEvents if hasattr(Qt, 'WA_TransparentForMouseEvents') else Qt.WidgetAttribute(0x4000000))
         self._resizer_marker.hide() # Solo se ve en hover
+
+    def _toggle_interactive(self):
+        self._interactive = not self._interactive
+        logger.info(f"Portal [{self._title}]: {'ACTIVADO' if self._interactive else 'DESACTIVADO'}")
+        color = "#00ff9d" if self._interactive else "#888"
+        self._btn_interact.setStyleSheet(f"QPushButton {{ background: transparent; border: none; color: {color}; font-size: 14px; }}")
+        # Cambiar el cursor si el modo está activo para dar feedback visual
+        if self._interactive:
+            self.setCursor(QCursor(Qt.CursorShape.CrossCursor if hasattr(Qt, 'CursorShape') else Qt.CrossCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor if hasattr(Qt, 'CursorShape') else Qt.ArrowCursor))
+        self.update()
+
+    def _clear_flash(self):
+        self._flash_pos = None
+        self.update()
 
     def _toggle_compact(self):
         self._is_compact = not self._is_compact
@@ -288,7 +318,8 @@ class ReplicationOverlay(QWidget):
         self.setMinimumSize(30, 30)
         self.setMouseTracking(True)
         self.setWindowTitle(f"EVE Replica: {self._title}")
-        self.setStyleSheet("background-color: rgb(8, 14, 26); border-radius: 0px;")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground if hasattr(Qt, 'WidgetAttribute') else Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent; border: none;")
         
         try:
             import ctypes
@@ -318,6 +349,24 @@ class ReplicationOverlay(QWidget):
 
     # ── Captura ───────────────────────────────────────────────────────────────
 
+    def stop(self):
+        """Detiene la captura y cierra el hilo."""
+        if hasattr(self, '_capture'):
+            try:
+                self._capture.stop()
+                self._capture.wait(500)
+            except: pass
+        self.close()
+
+    def closeEvent(self, event):
+        """Asegurar que el hilo se detiene al cerrar la ventana."""
+        if hasattr(self, '_capture'):
+            try:
+                self._capture.stop()
+                self._capture.wait(300)
+            except: pass
+        event.accept()
+
     def _start_capture(self):
         # PrintWindow es más lento que BitBlt — límite de 5fps por defecto
         fps = min(self._cfg.get('global', {}).get('capture_fps', 10), 10)
@@ -342,8 +391,8 @@ class ReplicationOverlay(QWidget):
 
         r = self.rect()
 
-        # Fondo sólido siempre (evita transparencia aunque el frame tenga alpha=0)
-        p.fillRect(r, C['bg'])
+        # Fondo sutil para asegurar que el widget reciba clicks (algunas GPUs ignoran clicks en 100% transparente)
+        p.fillRect(r, QColor(0, 0, 0, 1))
 
         if self._frame:
             # Dibujar manteniendo relación de aspecto para evitar deformación
@@ -364,11 +413,16 @@ class ReplicationOverlay(QWidget):
             align = Qt.AlignmentFlag.AlignCenter if hasattr(Qt, 'AlignmentFlag') else Qt.AlignCenter
             p.drawText(r, align, f"Buscando ventana...\n{self._title}")
 
-        # Borde (solo se ve si no es compacto o si hay hover)
-        if not self._is_compact or self._hovering:
-            border_color = C['hover'] if self._hovering else C['border']
-            p.setPen(QPen(border_color, 1))
+        # Borde (se ve si hay hover O si estamos operando la ventana)
+        if self._hovering or self._is_moving_or_resizing:
+            border_color = C['hover']
+            p.setPen(QPen(border_color, 2))
             p.drawRect(r.adjusted(0, 0, -1, -1))
+
+        # Feedback de click
+        if hasattr(self, '_flash_pos') and self._flash_pos:
+            p.setPen(QPen(QColor(0, 255, 150, 200), 2))
+            p.drawEllipse(self._flash_pos, 4, 4)
 
     def resizeEvent(self, event):
         # Actualizar tamaño de captura (thread-safe via Lock)
@@ -412,8 +466,22 @@ class ReplicationOverlay(QWidget):
     # ── Drag & resize ─────────────────────────────────────────────────────────
 
     def mousePressEvent(self, event):
+        # Si el click es sobre el HUD, dejar que Qt lo maneje normalmente (para los botones)
+        if self._hud.isVisible() and self._hud.geometry().contains(event.pos()):
+            super().mousePressEvent(event)
+            return
+
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         if event.button() == left:
+            # Si estamos en modo interactivo O se pulsa Ctrl, enviamos el click al juego
+            modifiers = QApplication.keyboardModifiers()
+            ctrl = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, 'KeyboardModifier') else 0x04000000
+            
+            if self._interactive or (modifiers & ctrl):
+                self._broadcast_click(event.pos())
+                return
+
+            self._is_moving_or_resizing = True
             pos = event.pos()
             dir = ResizeHandle.detect(pos, self.rect(), BORDER_RESIZE_PX)
             if dir != ResizeHandle.NONE:
@@ -428,6 +496,160 @@ class ReplicationOverlay(QWidget):
                     event.globalPosition().toPoint()
                     if hasattr(event, 'globalPosition') else event.globalPos()
                 )
+
+    def _broadcast_click(self, pos: QPoint):
+        """Mapea y envía el click a la ventana original."""
+        hwnd = self._hwnd_getter()
+        if not hwnd or not IS_WINDOWS: return
+        
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            # 1. Obtener tamaño del cliente (área útil de EVE)
+            rect = wintypes.RECT()
+            ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
+            w = rect.right - rect.left
+            h = rect.bottom - rect.top
+            if w <= 0 or h <= 0: return
+
+            # 2. Calcular coordenadas relativas [0, 1] respecto al ÁREA DE IMAGEN (no al widget)
+            # El paintEvent escala la imagen centrada dentro de rect.adjusted(1,1,-1,-1).
+            w_win, h_win = self.width() - 2, self.height() - 2
+            ratio_img = self._region['w'] / max(0.01, self._region['h'])
+            ratio_win = w_win / max(0.01, h_win)
+            
+            if ratio_win > ratio_img:
+                # Window es más ancha que la imagen (barras negras a los lados)
+                actual_w = h_win * ratio_img
+                actual_h = h_win
+                offset_x = (w_win - actual_w) / 2 + 1
+                offset_y = 1
+            else:
+                # Window es más alta (barras negras arriba/abajo)
+                actual_w = w_win
+                actual_h = w_win / ratio_img
+                offset_x = 1
+                offset_y = (h_win - actual_h) / 2 + 1
+            
+            # Ajustar click relativo a la imagen real
+            click_x = pos.x() - offset_x
+            click_y = pos.y() - offset_y
+            
+            if click_x < 0 or click_x > actual_w or click_y < 0 or click_y > actual_h:
+                return # Fuera de la imagen
+                
+            rx = click_x / actual_w
+            ry = click_y / actual_h
+
+            # 3. Mapear a coordenadas de la ventana original usando la región capturada
+            tx = int((self._region['x'] + rx * self._region['w']) * w)
+            ty = int((self._region['y'] + ry * self._region['h']) * h)
+
+            # 4. Enviar WM_ACTIVATE + WM_MOUSEMOVE + WM_LBUTTONDOWN + WM_LBUTTONUP
+            # lParam = (y << 16) | x
+            lparam = (ty << 16) | tx
+            WM_ACTIVATE    = 0x0006
+            WA_ACTIVE      = 1
+            WM_MOUSEMOVE   = 0x0200
+            WM_LBUTTONDOWN = 0x0201
+            WM_LBUTTONUP   = 0x0202
+            MK_LBUTTON     = 0x0001
+            
+            logger.info(f"Portal -> {self._title}: Click en ({tx}, {ty})")
+            
+            # Intentar activar mínimamente la ventana sin traerla al frente
+            ctypes.windll.user32.PostMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0)
+            ctypes.windll.user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, lparam)
+            ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+            ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
+            
+            # [NUEVO] Feedback visual: pequeño flash en el punto de click
+            self._flash_pos = pos
+            QTimer.singleShot(150, self._clear_flash)
+            self.update()
+            
+        except Exception as e:
+            pass # Silencioso para no romper el loop visual
+
+    def contextMenuEvent(self, event):
+        """Menú de control de la zona replicada (Joystick y Zoom)."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background: #080e1a; border: 1px solid #00c8ff; color: #fff; padding: 5px; }
+            QMenu::item { padding: 5px 20px; }
+            QMenu::item:selected { background: rgba(0, 200, 255, 0.2); }
+            QMenu::separator { height: 1px; background: rgba(0, 200, 255, 0.2); margin: 5px 0; }
+        """)
+        
+        # Joystick de Movimiento
+        move_up = menu.addAction("▲ Mover Arriba")
+        move_dn = menu.addAction("▼ Mover Abajo")
+        move_lf = menu.addAction("◀ Mover Izquierda")
+        move_rg = menu.addAction("▶ Mover Derecha")
+        
+        menu.addSeparator()
+        
+        # Zoom
+        zoom_in = menu.addAction("🔍 Acercar (Zoom +)")
+        zoom_out = menu.addAction("🔍 Alejar (Zoom -)")
+        
+        menu.addSeparator()
+        
+        # Reset y Compacto
+        restart_cap = menu.addAction("⚡ Reiniciar Captura")
+        reset_reg = menu.addAction("🔄 Resetear Zona")
+        compact_mode = menu.addAction("🔲 Alternar Modo Compacto")
+        
+        # Ejecutar menú
+        action = menu.exec(event.globalPos())
+        
+        step = 0.02 # 2% del tamaño total
+        if action == move_up:    self._move_region(0, -step)
+        elif action == move_dn:  self._move_region(0, step)
+        elif action == move_lf:  self._move_region(-step, 0)
+        elif action == move_rg:  self._move_region(step, 0)
+        elif action == zoom_in:  self._zoom_region(0.9)
+        elif action == zoom_out: self._zoom_region(1.1)
+        elif action == restart_cap: self._restart_capture_thread()
+        elif action == reset_reg: self._reset_region()
+        elif action == compact_mode: self._toggle_compact()
+
+    def _restart_capture_thread(self):
+        """Detiene y reinicia el hilo de captura."""
+        logger.info(f"Reiniciando captura para {self._title}")
+        if hasattr(self, '_capture'):
+            self._capture.stop()
+            self._capture.wait(500)
+        self._start_capture()
+        self.update()
+
+    def _move_region(self, dx, dy):
+        self._region['x'] = max(0.0, min(1.0 - self._region['w'], self._region['x'] + dx))
+        self._region['y'] = max(0.0, min(1.0 - self._region['h'], self._region['y'] + dy))
+        self._save_state()
+
+    def _zoom_region(self, factor):
+        # Zoom centrado
+        old_w, old_h = self._region['w'], self._region['h']
+        new_w = max(0.01, min(1.0, old_w * factor))
+        new_h = max(0.01, min(1.0, old_h * factor))
+        
+        # Ajustar x, y para que el zoom sea hacia el centro de la zona actual
+        self._region['x'] += (old_w - new_w) / 2
+        self._region['y'] += (old_h - new_h) / 2
+        
+        self._region['w'], self._region['h'] = new_w, new_h
+        # Clamp final
+        self._region['x'] = max(0.0, min(1.0 - new_w, self._region['x']))
+        self._region['y'] = max(0.0, min(1.0 - new_h, self._region['y']))
+        
+        self._save_state()
+
+    def _reset_region(self):
+        self._region.update({'x': 0.0, 'y': 0.0, 'w': 1.0, 'h': 1.0})
+        self._save_state()
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
@@ -452,7 +674,9 @@ class ReplicationOverlay(QWidget):
         self._resize_dir      = ResizeHandle.NONE
         self._resize_origin_global = None
         self._resize_origin_geom   = None
+        self._is_moving_or_resizing = False
         self._save_state()
+        self.update()
 
     def _do_resize(self, gpos: QPoint):
         if not self._resize_origin_global:
@@ -469,12 +693,7 @@ class ReplicationOverlay(QWidget):
         if d & R.TOP:    ny += dy; nh -= dy
         if d & R.BOTTOM: nh += dy
 
-        # MANTENER RELACIÓN DE ASPECTO
-        ratio = self._region['w'] / max(0.01, self._region['h'])
-        if d & (R.LEFT | R.RIGHT):
-            nh = nw / ratio
-        elif d & (R.TOP | R.BOTTOM):
-            nw = nh * ratio
+        # ELIMINADO EL BLOQUEO DE ASPECTO PARA PERMITIR "LIBRE AJUSTE"
 
         nw = max(self.minimumWidth(),  nw)
         nh = max(self.minimumHeight(), nh)
@@ -497,6 +716,10 @@ class ReplicationOverlay(QWidget):
     # ── Persistencia ──────────────────────────────────────────────────────────
 
     def _save_state(self):
+        # Actualizar el hilo de captura si existe
+        if hasattr(self, '_capture'):
+            self._capture._region = self._region
+            
         self._save_cb(
             self._title,
             self.x(), self.y(),
@@ -504,6 +727,10 @@ class ReplicationOverlay(QWidget):
             self.windowOpacity(),
             False,   # click_through siempre False
         )
+        # Guardar también la región específica en el dict global de la réplica
+        if 'overlays' not in self._cfg: self._cfg['overlays'] = {}
+        if self._title not in self._cfg['overlays']: self._cfg['overlays'][self._title] = {}
+        self._cfg['overlays'][self._title]['region'] = self._region.copy()
 
     # ── Cierre ────────────────────────────────────────────────────────────────
 

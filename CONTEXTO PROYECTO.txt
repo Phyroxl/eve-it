@@ -1,0 +1,48 @@
+# EVE iT Suite - Resumen Técnico de Arquitectura y Funcionalidad
+
+Este documento sirve como contexto para que una IA comprenda rápidamente la estructura y el propósito de la suite EVE iT.
+
+## 1. Propósito General
+EVE iT es una suite de herramientas de asistencia para el juego EVE Online, diseñada para funcionar como un overlay no intrusivo. Sus tres pilares son:
+1. **ISK Tracker:** Monitorización en tiempo real de ingresos (Bounties, ESS, Mining) mediante el parseo de logs de juego.
+2. **Chat Translator:** Traducción automática de canales de chat de EVE (Local, Alianza, Corp, etc.) con overlays personalizables.
+3. **Window Replicator:** Sistema de duplicación de ventanas de EVE (multi-boxing) con controles de opacidad y redimensionado.
+
+## 2. Tecnologías Principales
+* **Lenguaje:** Python 3.10+.
+* **Interfaz Gráfica:** PySide6 (Qt para Python) para los overlays y ventanas de control.
+* **Dashboard:** Streamlit (ejecutado como subproceso) para análisis de datos avanzado.
+* **Comunicación Interna:** Sockets (puerto 47288 para singleton y comunicación HUD-Controller).
+* **Captura de Ventanas:** Win32 API (para el replicador y detección de procesos).
+
+## 3. Estructura de Carpetas
+* `/controller`: Lógica de negocio y gestión de ventanas (TrayManager, AppController, ReplicatorWizard).
+* `/overlay`: Definiciones de las ventanas flotantes (HUD de ISK, Overlays de Replicación).
+* `/translator`: Motor de lectura de logs de chat y conexión con APIs de traducción.
+* `/core`: Motores de cálculo (SessionTracker, TickCalculator, LogParser).
+* `/utils`: Herramientas auxiliares, especialmente `i18n.py` para la localización (ES/EN).
+* `/assets`: Iconos, banderas y recursos visuales.
+
+## 4. Funcionamiento del ISK Tracker
+* **Entrada:** Lee archivos `.txt` de la carpeta `Documents/EVE/logs/Gamelogs`.
+* **Procesamiento:** `LogParser` identifica líneas de ISK. `MultiAccountTracker` gestiona sesiones activas, pausas y cálculos de ISK/h.
+* **Salida:** HUD minimalista en pantalla y Dashboard detallado en navegador.
+
+## 5. Funcionamiento del Chat Translator
+* **Entrada:** Vigilancia (`ChatWatcher`) de archivos en `Documents/EVE/logs/Chatlogs`.
+* **Filtro:** Solo procesa logs de los últimos 20 minutos para evitar sobrecarga.
+* **Overlays:** Ventanas individuales por canal con soporte para copiar texto y enlaces directos a Zkillboard.
+
+## 6. Funcionamiento del Replicator
+* **Captura:** Identifica ventanas con nombre "EVE - [Nombre Personaje]".
+* **Overlays:** Crea ventanas `Frameless` que replican el área de juego seleccionada.
+* **Control:** El "Panel de Control" (ReplicatorHub) permite gestionar todas las réplicas desde un punto único.
+
+## 7. Notas para Desarrollo (Mantenimiento)
+* **Localización:** Siempre añadir nuevas etiquetas a `utils/i18n.py`. Usar la función `t('key', lang)`.
+* **Estética:** La suite utiliza un estilo "Premium Dark/Neon" con colores Cian (#00c8ff) y Verde Neón (#00ff9d).
+* **Cierre:** La app es muy estricta con los procesos residuales. `AppController.shutdown()` debe limpiar sockets, trackers y matar subprocesos como Streamlit usando `taskkill`.
+* **Singleton:** `main.py` usa un lock de socket para evitar instancias duplicadas.
+
+---
+**Documento generado para transferencia de contexto entre modelos de IA.**

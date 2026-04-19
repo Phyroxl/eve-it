@@ -179,7 +179,7 @@ def init_session_state():
         'ess_retention': 1.0,
         'inactivity_threshold': 2.5,
         'log_dir': '',
-        'skip_existing': True,
+        'skip_existing': False,
         'session_start': None,
         'last_save_path': None,
         'activity_type': 'ratting_null',
@@ -932,7 +932,7 @@ def render_sidebar():
             custom_dir = st.text_input(t('logs_manual', lang), placeholder=r"C:\...\Gamelogs", key="log_dir_in")
             st.session_state.log_dir = custom_dir
             st.session_state.skip_existing = st.toggle(
-                t('new_events_only', lang), value=True, help=t('new_events_help', lang), key="skip_tog"
+                t('new_events_only', lang), value=False, help=t('new_events_help', lang), key="skip_tog"
             )
             st.session_state.active_window_minutes = st.slider(
                 "⏱ Ventana activa (min)",

@@ -163,15 +163,21 @@ def build_overlay_payload(tracker, now=None) -> dict:
     secs_until    = 0
 
     per_char = summary.get('per_character', [])
-    for cd in per_char:
-        ti = cd.get('tick_info', {})
-        if ti.get('secs_until_next', -1) > 0:
+    main_char = summary.get('main_character', '')
+
+    if main_char:
+        main_cd = next((cd for cd in per_char if cd.get('character') == main_char or cd.get('display_name') == main_char), None)
+        if main_cd:
+            ti = main_cd.get('tick_info', {})
             countdown    = ti.get('countdown_str', '--:--')
-            cycle_isk    = max(cycle_isk, ti.get('current_cycle_isk', 0))
+            cycle_isk    = ti.get('current_cycle_isk', 0)
             is_estimated = ti.get('is_estimated', True)
             tick_count   = ti.get('tick_count', 0)
             secs_until   = ti.get('secs_until_next', 0)
-            break  # usar el primer personaje con datos válidos
+        else:
+            countdown = 'No main'
+    else:
+        countdown = 'No main'
 
     # Lista simplificada de personajes para el overlay
     chars = []
@@ -197,9 +203,11 @@ def build_overlay_payload(tracker, now=None) -> dict:
         'tick_count':       tick_count,
         'secs_until_next':  secs_until,
         'characters':       chars,
+        'all_char_names':   [cd.get('display_name', cd.get('character', '?')) for cd in per_char],
+        'main_char':        main_char,
+        'is_paused':        summary.get('is_paused', False),
         'ts':               now.isoformat(),
     }
-
 
 def _empty_payload() -> dict:
     return {
@@ -208,5 +216,5 @@ def _empty_payload() -> dict:
         'char_count': 0, 'session_secs': 0,
         'countdown': '--:--', 'cycle_isk': 0,
         'is_estimated': True, 'tick_count': 0, 'secs_until_next': 0,
-        'characters': [], 'ts': '',
+        'characters': [], 'all_char_names': [], 'main_char': '', 'is_paused': False, 'ts': '',
     }

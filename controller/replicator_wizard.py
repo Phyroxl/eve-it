@@ -4,6 +4,7 @@ from pathlib import Path
 
 # Configurar logger
 logger = logging.getLogger('eve.replicator_wizard')
+from utils.i18n import t
 
 class ReplicatorWizard:
     """
@@ -41,8 +42,8 @@ class ReplicatorWizard:
     def _setup_ui(self):
         W, C, G = self._W, self._C, self._G
         self.dlg = W.QDialog()
-        self.dlg.setWindowTitle("REPLICATOR 2.0 — Pro Edition")
-        self.dlg.setMinimumSize(560, 520)
+        self.dlg.setWindowTitle("EvE Window Replicator")
+        self.dlg.setMinimumSize(400, 360)
         
         # Tool & Frameless & TopMost Window Hints
         flags = (self._C.Qt.WindowType.FramelessWindowHint | 
@@ -93,13 +94,13 @@ class ReplicatorWizard:
         main_lay.setContentsMargins(0,0,0,0); main_lay.setSpacing(0)
 
         # Header Custom
-        hdr = W.QWidget(); hdr.setFixedHeight(40); hdr.setStyleSheet("background: #000000; border-bottom: 1px solid #1a2533;")
+        hdr = W.QWidget(); hdr.setFixedHeight(28); hdr.setStyleSheet("background: #000000; border-bottom: 1px solid #1a2533;")
         hl = W.QHBoxLayout(hdr); hl.setContentsMargins(10,0,10,0)
         
-        icon_lbl = W.QLabel("🔋")
+        icon_lbl = W.QLabel("🪟")
         hl.addWidget(icon_lbl)
         
-        title_lbl = W.QLabel("REPLICATOR 2.0"); title_lbl.setStyleSheet("color: rgba(200,230,255,0.8); font-size: 12px; font-weight: bold;")
+        title_lbl = W.QLabel("EVE Window Replicator"); title_lbl.setStyleSheet("color: rgba(0,200,255,0.8); font-size: 10px; font-weight: normal;")
         hl.addWidget(title_lbl)
         
         hl.addStretch()
@@ -110,7 +111,7 @@ class ReplicatorWizard:
         btn_min = W.QPushButton("\u2212")
         btn_min.setFixedSize(18, 18)
         btn_min.setStyleSheet("QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);border-radius:3px;color:#00c8ff;font-size:10px;padding:0;margin:0;font-weight:normal;}QPushButton:hover{background:rgba(0,180,255,0.35);}")
-        btn_min.clicked.connect(self.dlg.showMinimized)
+        btn_min.clicked.connect(lambda: self._animate_minimize(self.dlg))
         hl.addWidget(btn_min)
         
         btn_close = W.QPushButton("\u00d7")
@@ -143,9 +144,9 @@ class ReplicatorWizard:
         hdr.mouseReleaseEvent = mouseReleaseEvent
         
         # Main Title (Step 1 visual title)
-        title_bar = W.QWidget(); title_bar.setFixedHeight(60); title_bar.setStyleSheet("background: transparent;")
-        tbl = W.QHBoxLayout(title_bar); tbl.setContentsMargins(20,20,20,0)
-        title_main = W.QLabel("REPLICATOR 2.0"); title_main.setObjectName("title"); tbl.addWidget(title_main)
+        title_bar = W.QWidget(); title_bar.setFixedHeight(35); title_bar.setStyleSheet("background: transparent;")
+        tbl = W.QHBoxLayout(title_bar); tbl.setContentsMargins(20,5,20,0)
+        title_main = W.QLabel("EvE Window Replicator"); title_main.setStyleSheet("color: rgba(0,200,255,0.7); font-size: 14px; font-weight: bold;"); tbl.addWidget(title_main)
         tbl.addStretch()
         main_lay.addWidget(title_bar)
 
@@ -161,7 +162,7 @@ class ReplicatorWizard:
         self._setup_step3()
 
         # Bottom Bar
-        footer = W.QWidget(); footer.setFixedHeight(60); footer.setStyleSheet("background: #040810; border-top: 1px solid #1a2533;")
+        footer = W.QWidget(); footer.setFixedHeight(45); footer.setStyleSheet("background: #040810; border-top: 1px solid #1a2533;")
         fl = W.QHBoxLayout(footer); fl.setContentsMargins(20,0,20,0)
         self.btn_back = W.QPushButton("CERRAR"); fl.addWidget(self.btn_back)
         fl.addStretch()
@@ -208,6 +209,10 @@ class ReplicatorWizard:
             wins = ", ".join(self._cfg.get('selected_windows', []))
             s_out = t('repl_summary_wins', lang, wins=wins) + "\n" + t('repl_summary_reg', lang, profile=self.prof_combo.currentText())
             self.summary_txt.setText(s_out)
+            
+        if hasattr(self, 'hub_window') and self.hub_window:
+            try: self.hub_window.retranslate_ui(lang)
+            except: pass
 
     def _save_position(self):
         self._cfg.setdefault('sizes', {})['wizard_pos'] = {'x': self.dlg.x(), 'y': self.dlg.y()}
@@ -220,8 +225,9 @@ class ReplicatorWizard:
 
     def _setup_step1(self):
         W = self._W
-        p1 = W.QWidget(); l1 = W.QVBoxLayout(p1); l1.setContentsMargins(25,20,25,20); l1.setSpacing(10)
-        self.lbl_step1_title = W.QLabel("SELECCIONA LAS VENTANAS DE EVE A REPLICAR")
+        p1 = W.QWidget(); l1 = W.QVBoxLayout(p1); l1.setContentsMargins(15,10,15,10); l1.setSpacing(8)
+        self.lbl_step1_title = W.QLabel(t('repl_p1_title', self._lang))
+        self.lbl_step1_title.setStyleSheet("color: #00c8ff; font-weight: bold; font-size: 11px;")
         l1.addWidget(self.lbl_step1_title)
         self.win_list = W.QListWidget(); l1.addWidget(self.win_list)
         
@@ -258,7 +264,7 @@ class ReplicatorWizard:
 
     def _setup_step2(self):
         W = self._W
-        p2 = W.QWidget(); l2 = W.QVBoxLayout(p2); l2.setContentsMargins(25,20,25,20); l2.setSpacing(15)
+        p2 = W.QWidget(); l2 = W.QVBoxLayout(p2); l2.setContentsMargins(15,10,15,10); l2.setSpacing(10)
         
         self.lbl_step2_title = W.QLabel("CONFIGURAR REGIÓN DE CAPTURA")
         l2.addWidget(self.lbl_step2_title)
@@ -347,6 +353,10 @@ class ReplicatorWizard:
                 lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.5); border-radius: 3px; background: transparent; color: transparent;")
         
         self._set_checked_helper = set_custom_chk
+
+        # Actualizar título con el conteo (Task: Ventanas EvE Detectadas (X))
+        count = len(self._windows_cache)
+        self.lbl_step1_title.setText(f"{t('repl_p1_title', self._lang)} ({count})")
 
         for w in self._windows_cache:
             it = self._W.QListWidgetItem()
@@ -586,15 +596,104 @@ class ReplicatorWizard:
         self.dlg.raise_()
         self.dlg.activateWindow()
 
+    def _animate_minimize(self, widget):
+        """Anima una ventana deslizándose hacia el dock antes de ocultarla."""
+        try:
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+            from PySide6.QtWidgets import QApplication
+
+            self._saved_geo = widget.geometry()
+            self._saved_opacity = widget.windowOpacity()
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    end_x = tg.x() + tg.width() // 2 - 60
+                    end_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                end_x = sg.x() + sg.width() // 2 - 60
+                end_y = sg.y() + sg.height() - 50
+            end_geo = QRect(end_x, end_y, 120, 30)
+
+            group = QParallelAnimationGroup(widget)
+
+            anim_geo = QPropertyAnimation(widget, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(self._saved_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.InCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.InCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(widget, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(self._saved_opacity)
+            anim_op.setEndValue(0.0)
+            group.addAnimation(anim_op)
+
+            def _on_finished():
+                widget.setWindowOpacity(self._saved_opacity)
+                widget.setGeometry(self._saved_geo)
+                widget.hide()
+
+            group.finished.connect(_on_finished)
+            group.start()
+            self._anim_group = group
+        except Exception:
+            widget.hide()
+
+    def _animate_restore(self, widget):
+        try:
+            if not hasattr(self, '_saved_geo'): return
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+            from PySide6.QtWidgets import QApplication
+
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    start_x = tg.x() + tg.width() // 2 - 60
+                    start_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                start_x = sg.x() + sg.width() // 2 - 60
+                start_y = sg.y() + sg.height() - 50
+            
+            start_geo = QRect(start_x, start_y, 120, 30)
+            end_geo = self._saved_geo
+
+            widget.setGeometry(start_geo)
+            widget.setWindowOpacity(0.0)
+
+            group = QParallelAnimationGroup(widget)
+
+            anim_geo = QPropertyAnimation(widget, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(start_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.OutCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.OutCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(widget, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(0.0)
+            anim_op.setEndValue(self._saved_opacity if hasattr(self, '_saved_opacity') else 1.0)
+            group.addAnimation(anim_op)
+
+            group.start()
+            self._anim_group = group
+        except Exception:
+            pass
+
     @property
     def result(self):
         return self.dlg.result()
 
-# --- CLASE HUB INTEGRADA PARA EVITAR ERRORES DE IMPORT ---
 _GLOBAL_HUB = None
-
-class ReplicatorHub(logging.Handler): # Dummy parent to allow class definition
-    pass
 
 class ReplicatorHub:
     def __init__(self, W, C, G, cfg, initial_titles, region):
@@ -606,28 +705,14 @@ class ReplicatorHub:
         
         self.window = W.QWidget()
         self.window.setObjectName("ReplicatorHub")
-        self.window.setWindowTitle("EVE HUB")
-        
+        self.window.setWindowTitle("Panel de Control")
         self.window.closeEvent = self._on_close
-        
-        # Botones de Control Estilo App Principal
-        BTN_MIN_STYLE = (
-            "QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);"
-            "border-radius:3px;color:#00c8ff;font-size:10px;}QPushButton:hover{background:rgba(0,180,255,0.35);}"
-        )
-        BTN_CLS_STYLE = (
-            "QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);"
-            "border-radius:3px;color:#ff6666;font-size:10px;}QPushButton:hover{background:rgba(255,50,50,0.35);}"
-        )
-        
-        self.window = W.QWidget()
-        self.window.setObjectName("ReplicatorHub")
-        self.window.setWindowTitle("EVE HUB")
-        
+
         Qt = C.Qt
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
         self.window.setWindowFlags(flags)
-        self.window.setMinimumSize(320, 480)
+        self.window.setMinimumSize(260, 320)
+        self.window.resize(260, 380)
         
         # Estilo HUB Premium (Como el de ISK y Wizard)
         self.window.setStyleSheet("""
@@ -663,14 +748,25 @@ class ReplicatorHub:
         lay = W.QVBoxLayout(self.window); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
         
         # Cabecera Arrastrable
-        self.hdr = W.QWidget(); self.hdr.setFixedHeight(35)
+        BTN_MIN_STYLE = (
+            "QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);"
+            "border-radius:3px;color:#00c8ff;font-size:10px;}QPushButton:hover{background:rgba(0,180,255,0.35);}"
+        )
+        BTN_CLS_STYLE = (
+            "QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);"
+            "border-radius:3px;color:#ff6666;font-size:10px;}QPushButton:hover{background:rgba(255,50,50,0.35);}"
+        )
+
+        self.hdr = W.QWidget(); self.hdr.setFixedHeight(30)
         self.hdr.setStyleSheet("background: #000; border-bottom: 1px solid rgba(0,180,255,0.15);")
-        hl = W.QHBoxLayout(self.hdr); hl.setContentsMargins(15,0,10,0); hl.setSpacing(6)
-        t = W.QLabel("REPLICATOR HUB"); t.setStyleSheet("font-weight: bold; color: rgba(0,180,255,0.8); letter-spacing: 1px;")
-        hl.addWidget(t); hl.addStretch()
+        hl = W.QHBoxLayout(self.hdr); hl.setContentsMargins(12,0,8,0); hl.setSpacing(6)
+        from utils.i18n import t
+        self._lbl_title = W.QLabel(t('repl_control_panel', cfg.get('language', 'es')).upper())
+        self._lbl_title.setStyleSheet("font-weight: bold; color: rgba(0,180,255,0.8); letter-spacing: 1px; font-size: 10px;")
+        hl.addWidget(self._lbl_title); hl.addStretch()
         
         bm = W.QPushButton("\u2212"); bm.setFixedSize(18,18); bm.setStyleSheet(BTN_MIN_STYLE)
-        bm.clicked.connect(self.window.showMinimized); hl.addWidget(bm)
+        bm.clicked.connect(lambda: self._animate_minimize_hub()); hl.addWidget(bm)
         
         bc = W.QPushButton("\u00d7"); bc.setFixedSize(18,18); bc.setStyleSheet(BTN_CLS_STYLE)
         bc.clicked.connect(self.window.close); hl.addWidget(bc)
@@ -682,10 +778,10 @@ class ReplicatorHub:
         lay.addWidget(body)
         
         # Footer
-        footer = W.QWidget(); footer.setFixedHeight(50); fl = W.QHBoxLayout(footer); fl.setContentsMargins(15,0,15,0)
-        br = W.QPushButton("🔄 REFRESCAR"); br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
+        footer = W.QWidget(); footer.setFixedHeight(40); fl = W.QHBoxLayout(footer); fl.setContentsMargins(12,0,12,0)
+        br = W.QPushButton("🔄"); br.setFixedSize(28, 24); br.setToolTip("Refrescar"); br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
         fl.addStretch()
-        bo = W.QPushButton("\u2715 CERRAR TODO"); bo.setStyleSheet("color: #ff8888; border-color: rgba(255,50,50,0.3);")
+        bo = W.QPushButton("\u2715 CERRAR TODO"); bo.setFixedHeight(26); bo.setStyleSheet("color: #ff8888; border-color: rgba(255,50,50,0.3); font-size: 9px; padding: 0 8px;")
         bo.clicked.connect(self.close_all); fl.addWidget(bo)
         lay.addWidget(footer)
 
@@ -717,7 +813,107 @@ class ReplicatorHub:
         self._timer = C.QTimer(); self._timer.timeout.connect(lambda: self.refresh_windows()); self._timer.start(5000)
         C.QTimer.singleShot(200, lambda: self.refresh_windows(initial_titles))
 
+    def retranslate_ui(self, lang):
+        from utils.i18n import t
+        if hasattr(self, '_lbl_title'):
+            self._lbl_title.setText(t('repl_control_panel', lang).upper())
+        # Refrescar botones de la lista si es necesario
+        self.refresh_windows()
+
     def show(self): self.window.show(); self.window.raise_(); self.window.activateWindow()
+
+    def _animate_minimize_hub(self):
+        """Anima la ventana del HUB deslizándose hacia el dock."""
+        try:
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+            from PySide6.QtWidgets import QApplication
+
+            self._saved_geo = self.window.geometry()
+            self._saved_opacity = self.window.windowOpacity()
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    end_x = tg.x() + tg.width() // 2 - 60
+                    end_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                end_x = sg.x() + sg.width() // 2 - 60
+                end_y = sg.y() + sg.height() - 50
+            end_geo = QRect(end_x, end_y, 120, 30)
+
+            group = QParallelAnimationGroup(self.window)
+
+            anim_geo = QPropertyAnimation(self.window, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(self._saved_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.InCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.InCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(self.window, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(self._saved_opacity)
+            anim_op.setEndValue(0.0)
+            group.addAnimation(anim_op)
+
+            def _on_finished():
+                self.window.setWindowOpacity(self._saved_opacity)
+                self.window.setGeometry(self._saved_geo)
+                self.window.hide()
+
+            group.finished.connect(_on_finished)
+            group.start()
+            self._hub_anim_group = group
+        except Exception:
+            self.window.hide()
+
+    def _animate_restore_hub(self):
+        try:
+            if not hasattr(self, '_saved_geo'): return
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
+            from PySide6.QtWidgets import QApplication
+
+            try:
+                from controller.control_window import _control_window_ref
+                if _control_window_ref and _control_window_ref._win:
+                    tg = _control_window_ref._win.geometry()
+                    start_x = tg.x() + tg.width() // 2 - 60
+                    start_y = tg.y() + tg.height() - 30
+                else: raise Exception()
+            except:
+                screen = QApplication.primaryScreen()
+                sg = screen.geometry()
+                start_x = sg.x() + sg.width() // 2 - 60
+                start_y = sg.y() + sg.height() - 50
+            
+            start_geo = QRect(start_x, start_y, 120, 30)
+            end_geo = self._saved_geo
+
+            self.window.setGeometry(start_geo)
+            self.window.setWindowOpacity(0.0)
+
+            group = QParallelAnimationGroup(self.window)
+
+            anim_geo = QPropertyAnimation(self.window, b'geometry')
+            anim_geo.setDuration(250)
+            anim_geo.setStartValue(start_geo)
+            anim_geo.setEndValue(end_geo)
+            anim_geo.setEasingCurve(QEasingCurve.Type.OutCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.OutCubic)
+            group.addAnimation(anim_geo)
+
+            anim_op = QPropertyAnimation(self.window, b'windowOpacity')
+            anim_op.setDuration(250)
+            anim_op.setStartValue(0.0)
+            anim_op.setEndValue(self._saved_opacity if hasattr(self, '_saved_opacity') else 1.0)
+            group.addAnimation(anim_op)
+
+            group.start()
+            self._hub_anim_group = group
+        except Exception:
+            pass
 
     def refresh_windows(self, force_titles=None):
         if not isinstance(force_titles, (list, tuple)): force_titles = None

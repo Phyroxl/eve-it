@@ -70,6 +70,17 @@ class TickCalculator:
 
     # ── API pública ───────────────────────────────────────────────────────────
 
+    def _auto_advance_if_expired(self, ts: datetime) -> bool:
+        ref = self._current_cycle_start or getattr(self, '_provisional_cycle_start', None)
+        if ref is not None:
+            if (ts - ref).total_seconds() >= self._calc_interval():
+                self._current_cycle_start = None
+                self._provisional_cycle_start = None
+                self._current_cycle_isk = 0
+                self._awaiting_cycle_start = False
+                return True
+        return False
+
     def record_event(self, processed_at: datetime, isk: int,
                      is_payout: bool = False) -> bool:
         """
@@ -93,15 +104,26 @@ class TickCalculator:
             return True
 
         if self._burst_start is None:
+            self._auto_advance_if_expired(processed_at)
             self._open_burst(processed_at, isk)
         else:
-            gap = (processed_at - self._burst_last).total_seconds()
-            if gap < BURST_GAP_SECS:
-                self._extend_burst(processed_at, isk)
-            else:
-                # Silencio > 60s: cerrar burst anterior y clasificarlo
-                new_payout = self._close_and_classify_burst()
+            ref = self._current_cycle_start or getattr(self, '_provisional_cycle_start', None)
+            is_expired = False
+            if ref is not None and (processed_at - ref).total_seconds() >= self._calc_interval():
+                is_expired = True
+
+            if is_expired:
+                self._close_and_classify_burst()
+                self._auto_advance_if_expired(processed_at)
                 self._open_burst(processed_at, isk)
+            else:
+                gap = (processed_at - self._burst_last).total_seconds()
+                if gap < BURST_GAP_SECS:
+                    self._extend_burst(processed_at, isk)
+                else:
+                    # Silencio > 60s: cerrar burst anterior y clasificarlo
+                    new_payout = self._close_and_classify_burst()
+                    self._open_burst(processed_at, isk)
 
         # Si esperamos el inicio del nuevo ciclo y no es el inicio de un payout,
         # este evento podría ser el primer bounty del nuevo ciclo.
@@ -126,7 +148,6 @@ class TickCalculator:
         n = len(self._payouts)
 
         if n == 0 and self._current_cycle_start is None:
-            # También verificar si hay un provisional
             if not hasattr(self, '_provisional_cycle_start') or self._provisional_cycle_start is None:
                 return self._no_data()
 
@@ -137,33 +158,49 @@ class TickCalculator:
         ref = self._current_cycle_start
         if ref is None and hasattr(self, '_provisional_cycle_start'):
             ref = getattr(self, '_provisional_cycle_start', None)
+            
+        is_waiting = False
         if ref is None and n > 0:
-            ref = self._payouts[-1]
-        if ref is None:
+            is_waiting = True
+
+        if ref is None and not is_waiting:
             return self._no_data()
 
-        next_ts = ref + timedelta(seconds=interval)
-        if next_ts < now:
-            elapsed = (now - next_ts).total_seconds()
-            skip = int(elapsed / interval) + 1
-            next_ts += timedelta(seconds=interval * skip)
-
-        secs = max(0, int((next_ts - now).total_seconds()))
-        cycle_isk = self._current_cycle_isk
-        if cycle_isk == 0 and hasattr(self, '_provisional_cycle_isk'):
-            cycle_isk = getattr(self, '_provisional_cycle_isk', 0)
+        if is_waiting:
+            next_ts = None
+            secs = -1
+            countdown_str = "Esperando..."
+            cycle_isk = 0
+        else:
+            next_ts = ref + timedelta(seconds=interval)
+            
+            # Si el tiempo actual ha superado en más de 60s el final del ciclo
+            # y seguimos aquí, significa que el ciclo expiró, no hubo payout y no ha habido nuevos eventos.
+            if (now - next_ts).total_seconds() > 60:
+                if self._auto_advance_if_expired(now):
+                    return self.get_tick_info(now)
+            
+            secs = max(0, int((next_ts - now).total_seconds()))
+            countdown_str = f"{secs // 60:02d}:{secs % 60:02d}"
+            if secs == 0:
+                countdown_str = "00:00"
+                
+            cycle_isk = self._current_cycle_isk
+            if cycle_isk == 0 and hasattr(self, '_provisional_cycle_isk'):
+                cycle_isk = getattr(self, '_provisional_cycle_isk', 0)
 
         return {
             'tick_count':        n,
             'interval_secs':     round(interval),
             'last_payout_at':    self._payouts[-1] if n > 0 else None,
-            'last_tick_ts':      self._payouts[-1] if n > 0 else None,  # alias
+            'last_tick_ts':      self._payouts[-1] if n > 0 else None,
             'cycle_start':       self._current_cycle_start or getattr(self, '_provisional_cycle_start', None),
             'next_tick_ts':      next_ts,
             'secs_until_next':   secs,
-            'countdown_str':     f"{secs // 60:02d}:{secs % 60:02d}",
+            'countdown_str':     countdown_str,
             'current_cycle_isk': cycle_isk,
             'is_estimated':      estimated,
+            'is_waiting':        is_waiting,
         }
 
     def reset(self):

@@ -113,7 +113,7 @@ if IS_WINDOWS:
         return result
 
     def capture_window_region(hwnd: int, region_rel: dict, out_w: int = 400, out_h: int = 300):
-        """Captura robusta con fallback de PrintWindow."""
+        """Captura optimizada y libre de fugas de memoria GDI."""
         if not hwnd or not user32.IsWindow(hwnd): return None
         
         cl = wt.RECT()
@@ -121,33 +121,39 @@ if IS_WINDOWS:
         ww, wh = cl.right, cl.bottom
         if ww <= 0 or wh <= 0: return None
 
-        rx = int(region_rel['x'] * ww)
-        ry = int(region_rel['y'] * wh)
-        rw = int(region_rel['w'] * ww)
-        rh = int(region_rel['h'] * wh)
+        rx, ry = int(region_rel['x'] * ww), int(region_rel['y'] * wh)
+        rw, rh = int(region_rel['w'] * ww), int(region_rel['h'] * wh)
         if rw <= 0 or rh <= 0: return None
 
-        hdc_window = user32.GetDC(hwnd)
-        if not hdc_window: return None
-        
-        mdc = gdi32.CreateCompatibleDC(hdc_window)
-        bmp = gdi32.CreateCompatibleBitmap(hdc_window, out_w, out_h)
-        old = gdi32.SelectObject(mdc, bmp)
-        
+        # Inicializar recursos a None para limpieza segura
+        hdc_window = hdc_screen = mdc = bmp = full_mdc = full_bmp = None
         data = None
-        ok = False
+        
         try:
-            gdi32.SetStretchBltMode(mdc, 4)
+            hdc_window = user32.GetDC(hwnd)
+            if not hdc_window: return None
+            
+            mdc = gdi32.CreateCompatibleDC(hdc_window)
+            bmp = gdi32.CreateCompatibleBitmap(hdc_window, out_w, out_h)
+            old_mdc_obj = gdi32.SelectObject(mdc, bmp)
+            
+            gdi32.SetStretchBltMode(mdc, 4) # HALFTONE
+            
+            # Intento primario: PrintWindow (funciona con ventanas en fondo)
             full_mdc = gdi32.CreateCompatibleDC(hdc_window)
             full_bmp = gdi32.CreateCompatibleBitmap(hdc_window, ww, wh)
-            f_old = gdi32.SelectObject(full_mdc, full_bmp)
-            if user32.PrintWindow(hwnd, full_mdc, 0x3):
-                gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, full_mdc, rx, ry, rw, rh, SRCCOPY)
-                ok = True
-            gdi32.SelectObject(full_mdc, f_old)
-            gdi32.DeleteObject(full_bmp)
-            gdi32.DeleteDC(full_mdc)
+            old_full_obj = gdi32.SelectObject(full_mdc, full_bmp)
+            
+            ok = False
+            if user32.PrintWindow(hwnd, full_mdc, 0x3): # 0x3 = CLIENTONLY + RENDERFULLCONTENT
+                ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, full_mdc, rx, ry, rw, rh, SRCCOPY)
+            
+            # Cleanup inmediato de recursos temporales de PrintWindow
+            gdi32.SelectObject(full_mdc, old_full_obj)
+            gdi32.DeleteObject(full_bmp); full_bmp = None
+            gdi32.DeleteDC(full_mdc); full_mdc = None
 
+            # Fallback: BitBlt directo (solo si la ventana es visible)
             if not ok:
                 ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY)
 
@@ -155,44 +161,41 @@ if IS_WINDOWS:
                 bmi = BITMAPINFO()
                 bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
                 bmi.bmiHeader.biWidth = out_w
-                bmi.bmiHeader.biHeight = -out_h
+                bmi.bmiHeader.biHeight = -out_h # Top-down
                 bmi.bmiHeader.biPlanes = 1
                 bmi.bmiHeader.biBitCount = 32
-                bmi.bmiHeader.biCompression = 0
                 buf = ctypes.create_string_buffer(out_w * out_h * 4)
                 gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
                 
                 raw_bytes = buf.raw
-                is_black = True
-                for i in range(0, min(len(raw_bytes), 1000), 4):
-                    if raw_bytes[i] != 0 or raw_bytes[i+1] != 0 or raw_bytes[i+2] != 0:
-                        is_black = False
-                        break
+                # Optimización: comprobar solo el centro del frame para detectar pantalla negra
+                mid = len(raw_bytes) // 2
+                is_black = (raw_bytes[mid] == 0 and raw_bytes[mid+1] == 0 and raw_bytes[mid+2] == 0)
                 
-                if is_black:
-                    foreground = user32.GetForegroundWindow()
-                    if hwnd == foreground:
-                        hdc_screen = user32.GetDC(0)
-                        pt = wt.POINT(0, 0)
-                        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-                        gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_screen, pt.x + rx, pt.y + ry, rw, rh, SRCCOPY)
-                        user32.ReleaseDC(0, hdc_screen)
-                        gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
-                        data = buf.raw
-                    else:
-                        data = raw_bytes
+                if is_black and hwnd == user32.GetForegroundWindow():
+                    # Fallback final: Captura de pantalla si está al frente pero sale negro (DPI/DX12)
+                    hdc_screen = user32.GetDC(0)
+                    pt = wt.POINT(0, 0)
+                    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+                    gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_screen, pt.x + rx, pt.y + ry, rw, rh, SRCCOPY)
+                    gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
+                    data = buf.raw
                 else:
                     data = raw_bytes
-            else:
-                data = None
                     
         except Exception as e:
-            logger.error(f"Error en captura: {e}")
+            logger.debug(f"Error captura Win32: {e}")
         finally:
-            gdi32.SelectObject(mdc, old)
-            gdi32.DeleteObject(bmp)
-            gdi32.DeleteDC(mdc)
-            user32.ReleaseDC(hwnd, hdc_window)
+            # Limpieza exhaustiva de TODOS los recursos GDI
+            if mdc:
+                if 'old_mdc_obj' in locals(): gdi32.SelectObject(mdc, old_mdc_obj)
+                gdi32.DeleteDC(mdc)
+            if bmp: gdi32.DeleteObject(bmp)
+            if full_mdc: gdi32.DeleteDC(full_mdc)
+            if full_bmp: gdi32.DeleteObject(full_bmp)
+            if hdc_window: user32.ReleaseDC(hwnd, hdc_window)
+            if hdc_screen: user32.ReleaseDC(0, hdc_screen)
+            
         return data
 
     def set_click_through(hwnd: int, enabled: bool):

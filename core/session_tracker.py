@@ -8,6 +8,9 @@ from typing import Optional
 import json
 
 from core.tick_calculator import TickCalculator
+import logging
+
+logger = logging.getLogger('eve.tracker')
 
 
 # ── Estados de personaje (semáforo) ──────────────────────────────────────────
@@ -47,8 +50,8 @@ class CharacterSession:
         self.events.append({'timestamp': timestamp, 'isk': isk, 'line': raw_line})
         self._rolling_events.append((timestamp, isk))
         self._prune_rolling_window(timestamp)
-        # Pasar is_payout al TickCalculator para detección precisa
-        self._tick_calc.record_event(wall, isk, is_payout=(evt_type == EVT_PAYOUT))
+        # Pasar is_payout al TickCalculator para detección precisa. Usar 'timestamp' (hora real del evento)
+        self._tick_calc.record_event(timestamp, isk, is_payout=(evt_type == EVT_PAYOUT))
 
     def _prune_rolling_window(self, reference: datetime):
         cutoff = reference - timedelta(minutes=self._rolling_window_minutes)
@@ -168,6 +171,9 @@ class MultiAccountTracker:
         self.wall_start: datetime = datetime.now()
         self.isk_history: deque = deque(maxlen=3600)
         self._alias: dict[str, str] = {}
+        self.is_paused = False
+        self.pause_start = None
+        self.total_paused_seconds = 0
 
     # ── Gestión de nombres ────────────────────────────────────────────────────
 
@@ -267,7 +273,21 @@ class MultiAccountTracker:
         return self.get_total_isk() / span_minutes
 
     def get_total_session_duration(self, now: Optional[datetime] = None) -> timedelta:
-        return (now or datetime.now()) - self.wall_start
+        now = now or datetime.now()
+        duration = now - self.wall_start
+        pause_sec = self.total_paused_seconds
+        if self.is_paused and self.pause_start:
+            pause_sec += (now - self.pause_start).total_seconds()
+        return timedelta(seconds=max(0, duration.total_seconds() - pause_sec))
+
+    def get_main_character(self) -> str:
+        from pathlib import Path
+        import json
+        _cfg_file = Path(__file__).resolve().parent.parent / "_main_char.json"
+        try:
+            return json.loads(_cfg_file.read_text(encoding="utf-8")).get("main", "")
+        except Exception:
+            return ""
 
     def get_inactive_characters(self, now: Optional[datetime] = None) -> list[str]:
         return [n for n, s in self.sessions.items() if s.is_inactive(self.inactivity_threshold, now)]
@@ -316,14 +336,39 @@ class MultiAccountTracker:
             'per_character': per_character,
             'inactive_characters': self.get_inactive_characters(now),
             'character_count': len(self.sessions),
+            'main_character': self.get_main_character(),
             'now': now,
+            'is_paused': self.is_paused,
         }
 
     def reset_all(self):
         self.wall_start = datetime.now()
-        self.sessions.clear()
         self.isk_history.clear()
-        self._alias.clear()
+        self.is_paused = False
+        self.pause_start = None
+        self.total_paused_seconds = 0
+        # No borrar las sesiones ni los alias, solo resetear el ISK y tiempo de cada uno
+        for s in self.sessions.values():
+            s.reset(self.wall_start)
+        logger.info("Tracker reset (contadores a cero, personajes mantenidos)")
+
+    def pause(self):
+        if not self.is_paused:
+            self.is_paused = True
+            self.pause_start = datetime.now()
+
+    def resume(self):
+        if self.is_paused:
+            self.is_paused = False
+            if self.pause_start:
+                self.total_paused_seconds += (datetime.now() - self.pause_start).total_seconds()
+                self.pause_start = None
+
+    def toggle_pause(self):
+        if self.is_paused:
+            self.resume()
+        else:
+            self.pause()
 
     def reset_character(self, character: str):
         canonical = self._normalize_character(character)

@@ -4,6 +4,7 @@ import re, time, threading, logging, os
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+from datetime import datetime, timezone
 
 logger = logging.getLogger('eve.translator')
 CHAT_LINE_RE = re.compile(r'.*?\[\s*(\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}:\d{2})\s*\]\s+([^>]+?)\s*>\s*(.*)', re.UNICODE)
@@ -73,10 +74,10 @@ class ChatFileReader:
             with open(self.filepath, 'r', encoding=self._encoding, errors='ignore') as f:
                 self._parse_header(f.read(4096))
                 if read_existing:
-                    # Ajustado a 128KB para capturar ~60 min de historial (aprox 1 hora)
+                    # Buscar últimos 20 minutos (margen de 64KB)
                     f.seek(0, 2)
                     size = f.tell()
-                    self._pos = max(0, size - 131072)
+                    self._pos = max(0, size - 65536)
                 else:
                     f.seek(0, 2)
                     self._pos = f.tell()
@@ -87,9 +88,8 @@ class ChatFileReader:
     def read_new(self) -> list:
         if not self._initialized:
             self.initialize()
-            # En la primera lectura tras inicializar (historial), 
-            # solo queremos los últimos 60 minutos reales.
-            return self._read_and_filter(max_age_minutes=60)
+            # Solo queremos los últimos 20 minutos reales.
+            return self._read_and_filter(max_age_minutes=20)
         return self._read_and_filter()
 
     def _read_and_filter(self, max_age_minutes: Optional[int] = None) -> list:
@@ -116,9 +116,8 @@ class ChatFileReader:
                     if max_age_minutes is not None:
                         try:
                             # Formato EVE: 2026.04.18 06:21:33 (UTC)
-                            from datetime import datetime, timezone
                             dt = datetime.strptime(ts_str, "%Y.%m.%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                            age_secs = datetime.now(timezone.utc).timestamp() - dt.timestamp()
+                            age_secs = time.time() - dt.timestamp()
                             if age_secs > max_age_minutes * 60:
                                 continue # Demasiado antiguo
                         except Exception: pass
@@ -130,7 +129,7 @@ class ChatFileReader:
 
 class ChatWatcher:
     def __init__(self, callback: Callable, poll_interval: float = 1.5,
-                 active_channels: Optional[set] = None, active_window_minutes: int = 120):
+                 active_channels: Optional[set] = None, active_window_minutes: int = 20):
         self._callback = callback
         self._poll_interval = poll_interval
         self._active_channels = active_channels or {'ch_local'}
@@ -163,6 +162,7 @@ class ChatWatcher:
         else:
             try:
                 from core.log_parser import find_all_log_dirs
+                # find_all_log_dirs ahora usa caché interna, es seguro llamarlo
                 for dirs in find_all_log_dirs().values():
                     dirs_to_scan.extend(dirs)
             except Exception: pass
@@ -235,6 +235,14 @@ class ChatWatcher:
                         # FILTRO: Solo emitir si coincide con el canal activo en el HUD
                         if not self._channel_matches(fpath.name): continue
                         
+                        # FILTRO TEMPORAL: Máximo 20 minutos
+                        try:
+                            from datetime import datetime, timezone
+                            dt = datetime.strptime(msg.timestamp, "%Y.%m.%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                            if time.time() - dt.timestamp() > 20 * 60:
+                                continue
+                        except: pass
+
                         all_new_msgs.append(msg)
                         self._seen_ids.add(msg.msg_id)
                 
@@ -267,28 +275,10 @@ class ChatWatcher:
         return sorted(seen)
 
     def get_all_channels(self) -> list:
-        import re as _re
-        from pathlib import Path
+        """Versión optimizada que usa los canales ya detectados por los readers."""
         seen = {'ch_local', 'ch_fleet', 'ch_corp', 'ch_alliance'}
-        try:
-            for fpath in self._get_files(window_minutes=60):
-                try:
-                    enc = 'utf-16'
-                    try:
-                        with open(fpath, 'r', encoding=enc, errors='ignore') as f:
-                            header = f.read(2048)
-                    except Exception:
-                        with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                            header = f.read(2048)
-                    found_ch = None
-                    m = _re.search(r'Channel Name[:\s]+(.+)', header)
-                    if m: found_ch = m.group(1).strip()
-                    else:
-                        stem = Path(fpath).stem
-                        found_ch = stem.split('_')[0] if '_' in stem else stem
-                    if found_ch:
-                        seen.add(self._get_canonical_id(found_ch))
-                except Exception: pass
-        except Exception: pass
-        res = sorted(list(seen), key=lambda x: (x != 'ch_local', x))
-        return res
+        with self._lock:
+            for r in self._readers.values():
+                ch = getattr(r, '_channel', None)
+                if ch: seen.add(self._get_canonical_id(ch))
+        return sorted(list(seen), key=lambda x: (x != 'ch_local', x))

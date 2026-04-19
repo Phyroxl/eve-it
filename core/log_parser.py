@@ -47,35 +47,18 @@ EVT_INDIVIDUAL = 'individual'   # bounty individual de Gamelog (acumula en ciclo
 EVT_PAYOUT     = 'payout'       # pago ESS de Chatlog (marca fin de ciclo)
 EVT_UNKNOWN    = 'unknown'
 
-# Patrones de bounties individuales (Gamelogs)
-BOUNTY_PATTERNS = [
-    re.compile(r'Se ha a[ñn]adido\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Recompensa de caza\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Bounty prize\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Added\b.*?([\d.,]+)\s*ISK.*?bounty', re.IGNORECASE),
-    re.compile(r'Bounty payout\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'awarded a bounty of\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Mission reward\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Mission bonus\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Recompensa de misi[oó]n\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-]
-
-# Patrones de PAYOUT ESS (Chatlogs de Registro/Journal)
-# Formato: "Pagos de recompensa   9.037.207 ISK"
-# o con tabuladores: "Pagos de recompensa<t>ISK<t>saldo<t>descripcion"
-PAYOUT_PATTERNS = [
-    re.compile(r'Pagos de recompensa.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Bounty payments.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'Bounty prize payments.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'\bPago de recompensa\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-    re.compile(r'\bRecompensa\b.*?([\d.,]+)\s*ISK', re.IGNORECASE),
-]
-
-# Patrón de IMPUESTO de corporación sobre recompensa — ignorar (ISK negativo)
-TAX_PATTERN = re.compile(
-    r'Impuesto.*recompensa|Tax.*bounty|Corporation.*tax.*bounty',
+# Patrones UNIFICADOS para mayor rendimiento (un solo paso)
+BOUNTY_COMBINED = re.compile(
+    r'(?:Se ha a[ñn]adido\b|Recompensa de caza\b|Bounty prize\b|Added\b.*?bounty|Bounty payout\b|awarded a bounty of\b|Mission reward\b|Mission bonus\b|Recompensa de misi[oó]n\b).*?([\d.,]+)\s*ISK',
     re.IGNORECASE
 )
+
+PAYOUT_COMBINED = re.compile(
+    r'(?:Pagos de recompensa|Bounty payments|Bounty prize payments|\bPago de recompensa\b|\bRecompensa\b).*?([\d.,]+)\s*ISK',
+    re.IGNORECASE
+)
+
+TAX_PATTERN = re.compile(r'Impuesto.*recompensa|Tax.*bounty|Corporation.*tax.*bounty', re.IGNORECASE)
 
 TIMESTAMP_RE = re.compile(r'\[\s*(\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}:\d{2})\s*\]')
 
@@ -90,7 +73,10 @@ def parse_timestamp(line: str) -> Optional[datetime]:
     m = TIMESTAMP_RE.search(line)
     if m:
         try:
-            return datetime.strptime(m.group(1), "%Y.%m.%d %H:%M:%S")
+            dt_utc = datetime.strptime(m.group(1), "%Y.%m.%d %H:%M:%S")
+            import calendar
+            ts = calendar.timegm(dt_utc.timetuple())
+            return datetime.fromtimestamp(ts)
         except ValueError:
             return None
     return None
@@ -120,35 +106,24 @@ def extract_isk(line: str) -> Optional[int]:
 
 
 def extract_isk_with_type(line: str) -> Optional[tuple]:
-    """
-    Extrae (isk, tipo) de una línea de log.
-    tipo: EVT_INDIVIDUAL para bounties de Gamelog,
-          EVT_PAYOUT para pagos ESS de Chatlog.
-    Retorna None si no hay ISK relevante o es un impuesto (línea negativa).
-    """
-    clean_line = HTML_TAG_RE.sub(' ', line)
-
-    # Ignorar líneas de impuesto (contienen ISK negativo o texto de impuesto)
+    """Extrae (isk, tipo) usando regex unificadas y pre-limpieza de HTML."""
     if TAX_PATTERN.search(line):
         return None
 
-    # Intentar como PAYOUT primero (líneas de Chatlog "Pagos de recompensa")
-    for candidate in [line, clean_line]:
-        for pattern in PAYOUT_PATTERNS:
-            m = pattern.search(candidate)
-            if m:
-                value = parse_isk_number(m.group(1))
-                if value is not None and value > 0:
-                    return (value, EVT_PAYOUT)
+    # Limpiar HTML una sola vez
+    clean = HTML_TAG_RE.sub(' ', line)
 
-    # Intentar como bounty individual (Gamelog)
-    for candidate in [line, clean_line]:
-        for pattern in BOUNTY_PATTERNS:
-            m = pattern.search(candidate)
-            if m:
-                value = parse_isk_number(m.group(1))
-                if value is not None and value > 0:
-                    return (value, EVT_INDIVIDUAL)
+    # 1. Intentar Payout (Chatlogs)
+    m_pay = PAYOUT_COMBINED.search(clean)
+    if m_pay:
+        val = parse_isk_number(m_pay.group(1))
+        if val and val > 0: return (val, EVT_PAYOUT)
+
+    # 2. Intentar Bounty Individual (Gamelogs)
+    m_bty = BOUNTY_COMBINED.search(clean)
+    if m_bty:
+        val = parse_isk_number(m_bty.group(1))
+        if val and val > 0: return (val, EVT_INDIVIDUAL)
 
     return None
 
@@ -187,7 +162,14 @@ def extract_character_name(filepath: Path) -> str:
     return stem
 
 
+_CACHED_BASE_DIRS: list[Path] = []
+
 def _build_eve_base_dirs() -> list[Path]:
+    """Construye y cachea la lista de posibles directorios de EVE."""
+    global _CACHED_BASE_DIRS
+    if _CACHED_BASE_DIRS:
+        return _CACHED_BASE_DIRS
+    
     import string
     home = Path.home()
     bases = []
@@ -231,6 +213,7 @@ def _build_eve_base_dirs() -> list[Path]:
         Path("C:/EVE"),
     ]:
         bases.append(cr)
+    _CACHED_BASE_DIRS = bases
     return bases
 
 

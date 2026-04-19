@@ -251,8 +251,25 @@ class TrayManager:
         _toggle_autostart(enabled)
 
     def _on_quit(self):
+        logger.info("Cerrando aplicación desde el Tray...")
+        self.shutdown()
         self._ctrl.shutdown()
         self._app.quit()
+        # Forzar salida si el event loop se queda colgado
+        import os
+        QTimer.singleShot(2000, lambda: os._exit(0))
+
+    def shutdown(self):
+        """Cierre de emergencia de todos los recursos de UI."""
+        try:
+            self.close_replicator_overlays()
+            if self._overlay_win:
+                self._overlay_win.close()
+            if self._control_window:
+                self._control_window.close()
+            self._tray.hide()
+            self._tray.deleteLater()
+        except Exception: pass
 
     def _on_tray_activated(self, reason):
         Trigger  = (self._W.QSystemTrayIcon.ActivationReason
@@ -267,6 +284,29 @@ class TrayManager:
                 self._on_dashboard()
 
     # ── Creación de ventanas Qt ───────────────────────────────────────────────
+    def close_replicator_overlays(self):
+        """Cierra todos los overlays del replicador y el asistente."""
+        try:
+            if self._replicator_dialog:
+                self._replicator_dialog.close()
+                self._replicator_dialog = None
+            
+            for ov in list(self._replicator_overlays):
+                try:
+                    ov.stop()
+                    ov.close()
+                except Exception: pass
+            self._replicator_overlays.clear()
+            
+            # También cerrar el HUB global si existe
+            try:
+                from controller.replicator_wizard import _GLOBAL_HUB
+                if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window'):
+                    _GLOBAL_HUB.window.close()
+            except: pass
+        except Exception as e:
+            logger.error(f"Error cerrando overlays del replicador: {e}")
+
 
     def _create_overlay_window(self):
         """Crea el overlay HUD Qt en el hilo principal."""

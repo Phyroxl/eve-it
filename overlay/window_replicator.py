@@ -153,10 +153,6 @@ class ReplicatorHub(W.QWidget):
         hdr.mouseMoveEvent = self._hdr_move
         hdr.mouseReleaseEvent = self._hdr_release
         
-        # Manager de red persistente para retratos
-        from PySide6 import QtNetwork as N
-        self._net_mgr = N.QNetworkAccessManager(self)
-        
         self._timer = QTimer(); self._timer.timeout.connect(lambda: self.refresh_windows()); self._timer.start(5000)
         QTimer.singleShot(100, lambda: self.refresh_windows(initial_titles))
 
@@ -217,7 +213,7 @@ class ReplicatorHub(W.QWidget):
                 title = w['title']
                 item = QItem(self._list)
                 row = CharacterRow(title, title in active or title in self._overlays, 
-                                 self._toggle, self._adj_op, self._net_mgr)
+                                 self._toggle, self._adj_op)
                 item.setSizeHint(row.sizeHint())
                 self._list.addItem(item)
                 self._list.setItemWidget(item, row)
@@ -234,20 +230,14 @@ class ReplicatorHub(W.QWidget):
     def _launch_one(self, title):
         if title in self._overlays: return
         h = self._handles.get(title)
-        print(f"[DEBUG] Lanzando replica para '{title}' (HWND: {h})")
-        if not h:
-            print(f"[DEBUG] ERROR: No hay HWND para '{title}'")
-            return
         try:
             ov = ReplicationOverlay(title=title, hwnd_getter=lambda t=title: self._handles.get(t),
                                     region_rel=self._region, cfg=self._cfg, save_callback=self._save)
             ov.show()
             self._overlays[title] = ov
-            print(f"[DEBUG] Replica '{title}' mostrada con éxito.")
         except Exception as e:
-            import traceback
-            print(f"[DEBUG] FALLO lanzando '{title}': {e}")
-            traceback.print_exc()
+            import logging
+            logging.getLogger('eve.replicator').error(f"Error lanzando réplica '{title}': {e}")
 
     def _stop_one(self, title):
         if title in self._overlays: self._overlays.pop(title).close()
@@ -266,7 +256,7 @@ class ReplicatorHub(W.QWidget):
 
 # Widget personalizado para las filas de la lista (Estilo Foto)
 class CharacterRow(W.QWidget):
-    def __init__(self, title, checked, toggle_cb, opacity_cb, net_mgr):
+    def __init__(self, title, checked, toggle_cb, opacity_cb):
         super().__init__()
         self.title = title
         self.toggle_cb = toggle_cb

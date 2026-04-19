@@ -80,7 +80,7 @@ class AppController:
         self._dashboard_proc: Optional[subprocess.Popen] = None
         self._tracker_thread: Optional[threading.Thread] = None
         self._data_push_timer: Optional[threading.Timer]  = None
-        self._lock           = threading.Lock()
+        self._lock           = threading.RLock()
 
         # Referencia a la ventana Qt del overlay (gestionada externamente)
         self.overlay_window  = None
@@ -164,6 +164,30 @@ class AppController:
         time.sleep(0.5)
         self.start_tracker()
 
+    def toggle_tracker(self):
+        """Alterna entre pausa y ejecución (usado por el HUD)."""
+        with self._lock:
+            if not self._tracker:
+                self.start_tracker()
+                return
+            
+            self._tracker.toggle_pause()
+            
+            # Sincronizar con la ventana de control si existe
+            from controller.control_window import _control_window_ref
+            if _control_window_ref:
+                _control_window_ref._on_playpause(sync_from_ctrl=True)
+            
+            logger.info(f"Tracker {'pausado' if self._tracker.is_paused else 'reanudado'}")
+
+    def reset_tracker(self):
+        """Reinicia los contadores de la sesión actual."""
+        from controller.control_window import _control_window_ref
+        if _control_window_ref:
+            _control_window_ref._on_reset()
+        elif self._tracker:
+            self._tracker.reset_all()
+
     def _stop_tracker_internal(self):
         """Llama sin lock externo."""
         if self._data_push_timer:
@@ -190,12 +214,16 @@ class AppController:
     # ══════════════════════════════════════════════════════════════════════════
 
     def _schedule_data_push(self):
-        """Programa el siguiente push de datos (cada 1.5s)."""
-        self._push_overlay_data()
-        if self.state.tracker_running:
-            self._data_push_timer = threading.Timer(1.5, self._schedule_data_push)
-            self._data_push_timer.daemon = True
-            self._data_push_timer.start()
+        """Inicia el hilo persistente de push de datos."""
+        def _push_loop():
+            while self.state.tracker_running:
+                try:
+                    self._push_overlay_data()
+                except Exception: pass
+                time.sleep(1.5)
+        
+        thread = threading.Thread(target=_push_loop, daemon=True, name="DataPushThread")
+        thread.start()
 
     def _push_overlay_data(self):
         """Envía datos del tracker al overlay server y al overlay HUD Qt."""
@@ -206,14 +234,11 @@ class AppController:
             payload = build_overlay_payload(self._tracker)
             self._overlay_server.push(payload)
 
-            # Si el overlay HUD Qt está activo, actualizar directamente via Signal
+            # Si el overlay HUD Qt está activo, actualizar directamente
             if self.overlay_window and self.state.overlay_active:
-                try:
-                    self.overlay_window._on_data(payload)
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.debug(f"Error en data push: {e}")
+                self.overlay_window._on_data(payload)
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════════════
     # Dashboard Streamlit
@@ -290,13 +315,12 @@ class AppController:
         with self._lock:
             if self._dashboard_proc:
                 try:
+                    pid = self._dashboard_proc.pid
                     self._dashboard_proc.terminate()
-                    self._dashboard_proc.wait(timeout=5)
+                    import subprocess
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True)
                 except Exception:
-                    try:
-                        self._dashboard_proc.kill()
-                    except Exception:
-                        pass
+                    pass
                 self._dashboard_proc = None
                 self.state.update(dashboard_running=False)
                 logger.info("Dashboard detenido")
@@ -325,7 +349,11 @@ class AppController:
         if self.overlay_window:
             try:
                 self.overlay_window.show()
-                self.overlay_window.bring_to_front()
+                if hasattr(self.overlay_window, '_animate_restore'):
+                    self.overlay_window._animate_restore()
+                # Standard Qt way to bring to front
+                self.overlay_window.raise_()
+                self.overlay_window.activateWindow()
                 self.state.update(overlay_active=True)
                 logger.info("Overlay HUD activado")
             except Exception as e:
@@ -334,7 +362,10 @@ class AppController:
     def hide_overlay(self):
         if self.overlay_window:
             try:
-                self.overlay_window.hide()
+                if hasattr(self.overlay_window, '_animate_to_dock'):
+                    self.overlay_window._animate_to_dock()
+                else:
+                    self.overlay_window.hide()
                 self.state.update(overlay_active=False)
                 logger.info("Overlay HUD ocultado")
             except Exception as e:
@@ -358,9 +389,9 @@ class AppController:
         logger.info("Replicador activado")
 
     def stop_replicator(self):
-        if self.replicator_mgr:
+        if hasattr(self, '_tray') and self._tray:
             try:
-                self.replicator_mgr.close_all()
+                self._tray.close_replicator_overlays()
             except Exception:
                 pass
         self.state.update(replicator_active=False)
@@ -372,38 +403,40 @@ class AppController:
 
     def shutdown(self):
         """Cierre limpio de todos los módulos."""
-        logger.info("Apagando EVE ISK Tracker...")
+        logger.info("Iniciando secuencia de apagado...")
         
         # 1. Detener servicios de datos y threads
-        with self._lock:
-            self._stop_tracker_internal()
+        try:
+            with self._lock:
+                self._stop_tracker_internal()
+        except Exception as e:
+            logger.error(f"Error apagando tracker: {e}")
         
         # 2. Cerrar ventanas y módulos de UI
-        self.stop_translator()
-        self.hide_overlay()
-        self.stop_replicator()
+        try: self.stop_translator()
+        except Exception as e: logger.error(f"Error apagando traductor: {e}")
         
-        # Ocultar icono de bandeja inmediatamente para evitar "iconos fantasma"
+        try: self.hide_overlay()
+        except Exception as e: logger.error(f"Error ocultando overlay: {e}")
+        
+        try: self.stop_replicator()
+        except Exception as e: logger.error(f"Error apagando replicador: {e}")
+        
+        # Ocultar icono de bandeja inmediatamente
         if hasattr(self, '_tray') and self._tray:
             try: self._tray.hide()
             except: pass
         
         # 3. Detener dashboard (Streamlit)
-        self.stop_dashboard()
-        # Matar todos los procesos python relacionados con la app
+        try: self.stop_dashboard()
+        except Exception as e: logger.error(f"Error apagando dashboard: {e}")
+        
+        # 4. Limpieza final de recursos del sistema
         try:
-            import psutil, os, subprocess
-            my_pid = os.getpid()
-            keywords = ['server.py', 'server_launcher.py', 'main.py']
-            for p in psutil.process_iter(['pid','name','cmdline']):
-                try:
-                    if p.pid == my_pid: continue
-                    name = (p.info['name'] or '').lower()
-                    if name in ('python.exe','pythonw.exe'):
-                        cmd = ' '.join(p.info['cmdline'] or [])
-                        if any(k in cmd for k in keywords):
-                            p.kill()
+            import os
+            for f in ['.main.pid', '_main_char.json']:
+                try: (PROJECT_ROOT / f).unlink(missing_ok=True)
                 except: pass
-        except Exception:
-            pass
-        logger.info("Apagado completo")
+        except Exception: pass
+        
+        logger.info("Apagado completo del controlador")

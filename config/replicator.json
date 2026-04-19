@@ -12,40 +12,38 @@
     }
   },
   "selected_windows": [
-    "EVE — KonaN Herrera",
-    "EVE — Rilena Kulen",
-    "EVE — Lana Drake"
+    "EVE — KonaN Herrera"
   ],
   "overlays": {
     "EVE — KonaN Herrera": {
-      "x": 1189,
-      "y": 305,
-      "w": 60,
-      "h": 134,
+      "x": 1015,
+      "y": 400,
+      "w": 210,
+      "h": 230,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Lana Drake": {
-      "x": 1201,
-      "y": 199,
-      "w": 46,
-      "h": 102,
+      "x": 377,
+      "y": 206,
+      "w": 205,
+      "h": 282,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Blade Valeburn": {
-      "x": 1020,
-      "y": 215,
-      "w": 40,
-      "h": 91,
+      "x": 711,
+      "y": 115,
+      "w": 207,
+      "h": 285,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Jin Rockhart": {
-      "x": 1064,
-      "y": 156,
-      "w": 35,
-      "h": 78,
+      "x": 1074,
+      "y": 148,
+      "w": 204,
+      "h": 281,
       "opacity": 1.0,
       "click_through": false
     },
@@ -53,31 +51,31 @@
       "x": 555,
       "y": 59,
       "w": 30,
-      "h": 39,
+      "h": 30,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Marek Volkov": {
-      "x": 1201,
-      "y": 131,
-      "w": 30,
-      "h": 51,
+      "x": 1126,
+      "y": 136,
+      "w": 93,
+      "h": 114,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Keira Halesen": {
-      "x": 639,
-      "y": 70,
-      "w": 30,
-      "h": 67,
+      "x": 1126,
+      "y": 253,
+      "w": 115,
+      "h": 115,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Isuka Virpio": {
-      "x": 1199,
-      "y": 128,
-      "w": 30,
-      "h": 67,
+      "x": 729,
+      "y": 142,
+      "w": 256,
+      "h": 169,
       "opacity": 1.0,
       "click_through": false
     },
@@ -90,40 +88,40 @@
       "click_through": false
     },
     "EVE — Arien Inkura": {
-      "x": 1117,
-      "y": 145,
-      "w": 64,
-      "h": 142,
+      "x": 815,
+      "y": 22,
+      "w": 66,
+      "h": 135,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Rilena Kulen": {
-      "x": 1126,
-      "y": 444,
-      "w": 71,
+      "x": 1023,
+      "y": 326,
+      "w": 157,
       "h": 160,
       "opacity": 1.0,
       "click_through": false
     },
     "EVE — Phyrox Perez": {
-      "x": 1100,
-      "y": 365,
-      "w": 115,
-      "h": 256,
+      "x": 1686,
+      "y": 0,
+      "w": 223,
+      "h": 310,
       "opacity": 1.0,
       "click_through": false
     }
   },
   "region": {
-    "x": 0.4890625,
-    "y": 0.8425925925925926,
-    "w": 0.0609375,
-    "h": 0.1361111111111111
+    "x": 0.3859375,
+    "y": 0.8138888888888889,
+    "w": 0.16197916666666667,
+    "h": 0.17685185185185184
   },
   "sizes": {
     "wizard_pos": {
-      "x": 210,
-      "y": 85
+      "x": 376,
+      "y": 242
     }
   }
 }

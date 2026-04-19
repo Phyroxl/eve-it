@@ -296,22 +296,38 @@ def main():
     ret = exec_fn()
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
-    # Limpiar icono de bandeja antes de cerrar
     try:
-        tray.hide()
-    except Exception:
-        pass
+        if tray: tray.hide()
+    except Exception: pass
+    
+    # Nuclear Option: Iniciar un timer de seguridad para forzar el cierre si se queda colgado
+    def _nuclear_exit():
+        import time, os as _os
+        time.sleep(3) # 3 segundos de gracia (suficiente para flush de logs)
+        log.warning("NUCLEAR EXIT: Forzando os._exit")
+        _os._exit(1)
+    
+    t_kill = threading.Thread(target=_nuclear_exit, daemon=True)
+    t_kill.start()
+
     controller.shutdown()
     lock.release()
     log.info(f"EVE iT cerrado (código {ret})")
-    # Forzar cierre completo de todos los procesos hijos residuales
+
+    # Forzar cierre completo de todos los procesos hijos residuales (Streamlit, etc.)
     try:
         import psutil, os as _os
         me = psutil.Process(_os.getpid())
         for ch in me.children(recursive=True):
             try: ch.kill()
             except: pass
-    except: pass
+    except Exception:
+        # Fallback si no hay psutil: usar taskkill de Windows para matar hijos
+        try:
+            import subprocess
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(os.getpid())], capture_output=True)
+        except: pass
+
     import os as _os
     _os._exit(ret)
 
