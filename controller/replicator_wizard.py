@@ -766,8 +766,8 @@ class ReplicatorHub:
         self.hdr.setStyleSheet("background: #000; border-bottom: 1px solid rgba(0,180,255,0.15);")
         hl = W.QHBoxLayout(self.hdr); hl.setContentsMargins(12,0,8,0); hl.setSpacing(6)
         from utils.i18n import t
-        self._lbl_title = W.QLabel(t('repl_control_panel', cfg.get('language', 'es')).upper())
-        self._lbl_title.setStyleSheet("font-weight: bold; color: rgba(0,180,255,0.8); letter-spacing: 1px; font-size: 10px;")
+        self._lbl_title = W.QLabel("Panel de control")
+        self._lbl_title.setStyleSheet("font-weight: bold; color: rgba(0,180,255,0.8); letter-spacing: 1px; font-size: 11px;")
         hl.addWidget(self._lbl_title); hl.addStretch()
         
         bm = W.QPushButton("\u2212"); bm.setFixedSize(18,18); bm.setStyleSheet(BTN_MIN_STYLE)
@@ -783,10 +783,12 @@ class ReplicatorHub:
         lay.addWidget(body)
         
         # Footer
-        footer = W.QWidget(); footer.setFixedHeight(40); fl = W.QHBoxLayout(footer); fl.setContentsMargins(12,0,12,0)
-        br = W.QPushButton("🔄"); br.setFixedSize(28, 24); br.setToolTip("Refrescar"); br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
+        footer = W.QWidget(); footer.setFixedHeight(45); fl = W.QHBoxLayout(footer); fl.setContentsMargins(12,0,12,0)
+        br = W.QPushButton("🔄"); br.setFixedSize(28, 28); br.setToolTip("Refrescar"); br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
         fl.addStretch()
-        bo = W.QPushButton("\u2715 CERRAR TODO"); bo.setFixedHeight(26); bo.setStyleSheet("color: #ff8888; border-color: rgba(255,50,50,0.3); font-size: 9px; padding: 0 8px;")
+        bo = W.QPushButton("\u2715 CERRAR TODO"); bo.setFixedHeight(28); 
+        bo.setStyleSheet("QPushButton { background: rgba(255,50,50,0.08); border: 1px solid rgba(255,60,60,0.25); color: rgba(255,120,120,0.7); font-size: 9px; padding: 4px 12px; font-weight:bold; } "
+                         "QPushButton:hover { background: rgba(255,50,50,0.22); border-color: #ff4444; color: #ff6666; }")
         bo.clicked.connect(self.close_all); fl.addWidget(bo)
         lay.addWidget(footer)
 
@@ -821,7 +823,7 @@ class ReplicatorHub:
     def retranslate_ui(self, lang):
         from utils.i18n import t
         if hasattr(self, '_lbl_title'):
-            self._lbl_title.setText(t('repl_control_panel', lang).upper())
+            self._lbl_title.setText("Panel de control")
         # Refrescar botones de la lista si es necesario
         self.refresh_windows()
 
@@ -929,29 +931,67 @@ class ReplicatorHub:
             active = force_titles if force_titles is not None else [t for t, ov in self._overlays.items()]
             
             self._list.clear()
+            self._custom_cards = []
+            
             for w in current:
                 title = w['title']
                 item = self._W.QListWidgetItem(self._list)
-                row = self._W.QWidget()
-                rl = self._W.QHBoxLayout(row); rl.setContentsMargins(5,5,5,5); rl.setSpacing(10)
                 
-                chk = self._W.QCheckBox()
-                chk.setChecked(title in active or title in self._overlays)
-                chk.toggled.connect(lambda v, t=title: self._toggle(t, v))
+                card = self._W.QWidget()
+                card.setStyleSheet(
+                    "QWidget#Card { background: rgba(0,180,255,0.03); border: 1px solid rgba(0,180,255,0.08); border-radius: 4px; }"
+                    "QWidget#Card:hover { background: rgba(0,180,255,0.06); border-color: rgba(0,180,255,0.2); }"
+                )
+                card.setObjectName("Card")
+                rl = self._W.QHBoxLayout(card); rl.setContentsMargins(10, 6, 10, 6); rl.setSpacing(10)
+                
+                # Checkbox Estilo Wizard
+                chk = self._W.QLabel()
+                chk.setFixedSize(16, 16)
+                AlignC = getattr(self._C.Qt, 'AlignCenter', getattr(self._C.Qt.AlignmentFlag, 'AlignCenter', 0x0084))
+                chk.setAlignment(AlignC)
+                
+                is_on = (title in active or title in self._overlays)
+                
+                def set_custom_chk(lbl, state):
+                    lbl.setProperty("is_checked", state)
+                    if state:
+                        lbl.setText("✔"); lbl.setStyleSheet("border: 1px solid #00ff9d; border-radius: 3px; background: rgba(0,255,157,0.1); color: #00ff9d; font-weight: bold; font-size: 12px;")
+                    else:
+                        lbl.setText(""); lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.4); border-radius: 3px; background: transparent;")
+                
+                set_custom_chk(chk, is_on)
                 rl.addWidget(chk)
                 
-                # Nombre completo
-                name = self._W.QLabel(title); name.setStyleSheet("font-weight: bold;")
+                # Nombre
+                name = self._W.QLabel(title)
+                name.setStyleSheet("font-weight: bold; color: #e1e9f5; font-size: 10px;")
                 rl.addWidget(name); rl.addStretch()
                 
-                b1 = self._W.QPushButton("-"); b1.setFixedSize(24, 24); b1.clicked.connect(lambda _, t=title: self._adj_op(t, -0.1))
-                b2 = self._W.QPushButton("+"); b2.setFixedSize(24, 24); b2.clicked.connect(lambda _, t=title: self._adj_op(t, 0.1))
+                # Botones de Opacidad
+                BTN_OP_STYLE = "QPushButton { background: rgba(0,180,255,0.05); border: 1px solid rgba(0,180,255,0.2); border-radius:3px; color: #00c8ff; font-weight:bold; } QPushButton:hover { background: rgba(0,180,255,0.15); }"
+                b1 = self._W.QPushButton("-"); b1.setFixedSize(20, 20); b1.setStyleSheet(BTN_OP_STYLE); b1.clicked.connect(lambda _, t=title: self._adj_op(t, -0.1))
+                b2 = self._W.QPushButton("+"); b2.setFixedSize(20, 20); b2.setStyleSheet(BTN_OP_STYLE); b2.clicked.connect(lambda _, t=title: self._adj_op(t, 0.1))
                 rl.addWidget(b1); rl.addWidget(b2)
                 
-                item.setSizeHint(row.sizeHint())
-                self._list.setItemWidget(item, row)
-                if chk.isChecked() and title not in self._overlays: self._launch_one(title)
-        except: pass
+                def _toggle_hub(ev, _t=title, _chk=chk):
+                    new_state = not _chk.property("is_checked")
+                    set_custom_chk(_chk, new_state)
+                    self._toggle(_t, new_state)
+                card.mousePressEvent = _toggle_hub
+                
+                item.setSizeHint(card.sizeHint())
+                self._list.setItemWidget(item, card)
+                if is_on and title not in self._overlays: self._launch_one(title)
+
+            # Ajuste de altura dinámico
+            item_count = len(current)
+            new_h = 30 + 45 + (item_count * 42) + 15 # header + footer + items + padding
+            new_h = max(150, min(600, new_h))
+            self.window.setFixedHeight(new_h)
+            
+        except Exception as e: 
+            logger.error(f"Error refresh HUB: {e}")
 
     def _toggle(self, title, active):
         if active: self._launch_one(title)
@@ -966,10 +1006,25 @@ class ReplicatorHub:
         ov = ReplicationOverlay(title=title, hwnd_getter=lambda t=title: self._handles.get(t),
                                 region_rel=self._region, cfg=self._cfg, 
                                 save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
+        # CONEXIÓN CRÍTICA: Re-selección de zona desde el HUB
+        try:
+            from controller.tray_manager import _GLOBAL_TRAY
+            if _GLOBAL_TRAY:
+                ov.selection_requested.connect(_GLOBAL_TRAY._on_reselect_region)
+        except: pass
+        
         ov.show(); self._overlays[title] = ov
 
     def _stop_one(self, title):
-        if title in self._overlays: self._overlays.pop(title).close()
+        try:
+            if title in self._overlays:
+                ov = self._overlays.pop(title)
+                # Desconectar señales antes de cerrar para evitar llamadas a objetos borrados
+                try: ov.selection_requested.disconnect()
+                except: pass
+                ov.close()
+        except Exception as e:
+            logger.error(f"Error al detener réplica {title}: {e}")
 
     def _adj_op(self, title, d):
         if title in self._overlays:

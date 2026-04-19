@@ -113,63 +113,78 @@ if IS_WINDOWS:
         return result
 
     def capture_window_region(hwnd: int, region_rel: dict, out_w: int = 400, out_h: int = 300):
-        """Captura optimizada y libre de fugas de memoria GDI."""
+        """Captura ultra-estable con priorización de rendimiento para evitar bloqueos."""
         if not hwnd or not user32.IsWindow(hwnd): return None
         
+        # 1. Obtener dimensiones y estado de la ventana
         cl = wt.RECT()
         if not user32.GetClientRect(hwnd, ctypes.byref(cl)): return None
         ww, wh = cl.right, cl.bottom
         if ww <= 0 or wh <= 0: return None
 
+        # 2. Calcular coordenadas de la región
         rx, ry = int(region_rel['x'] * ww), int(region_rel['y'] * wh)
         rw, rh = int(region_rel['w'] * ww), int(region_rel['h'] * wh)
         if rw <= 0 or rh <= 0: return None
 
-        # Inicializar recursos
-        hdc_window = None; mdc = None; bmp = None; hdc_screen = None
+        hdc_window = None; mdc = None; bmp = None; hdc_screen = None; old_obj = None
         data = None
         
         try:
+            # 3. Preparar DC de destino (memoria)
             hdc_window = user32.GetDC(hwnd)
-            if not hdc_window: return None
-            
             mdc = gdi32.CreateCompatibleDC(hdc_window)
             bmp = gdi32.CreateCompatibleBitmap(hdc_window, out_w, out_h)
-            old_mdc_obj = gdi32.SelectObject(mdc, bmp)
+            old_obj = gdi32.SelectObject(mdc, bmp)
+            gdi32.SetStretchBltMode(mdc, 4) # STRETCH_HALFTONE
+
+            # --- ESTRATEGIA DE CAPTURA DE ALTO RENDIMIENTO ---
+            captured = False
             
-            gdi32.SetStretchBltMode(mdc, 4) # HALFTONE
-
-            # --- ESTRATEGIA DE CAPTURA HÍBRIDA ---
-            # 1. Intentar BitBlt directo (Extremadamente rápido y eficiente)
-            # Solo funciona si la ventana está visible y no está minimizada.
-            ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY)
+            # A. Detectar si la ventana es la activa
+            fg_hwnd = user32.GetForegroundWindow()
+            is_foreground = (hwnd == fg_hwnd)
             
-            # 2. Comprobar si la captura ha sido exitosa (no negra)
-            # Si el BitBlt falló o devolvió negro (ventana tapada/fondo), usamos PrintWindow
-            needs_printwindow = True
-            if ok:
-                # Comprobación rápida de color en el primer píxel (o punto central)
-                # para evitar procesamiento de GetDIBits si sabemos que BitBlt falló
-                pix = gdi32.GetPixel(mdc, out_w // 2, out_h // 2)
-                if pix != 0: # Si no es negro puro en el centro, asumimos que BitBlt funcionó
-                    needs_printwindow = False
-
-            if needs_printwindow:
-                # 3. PrintWindow (Lento pero funciona con ventanas tapadas)
-                # Para evitar el crash por bitmap gigante, intentamos BitBlt desde un DC temporal
-                # que solo creamos si es estrictamente necesario.
-                full_mdc = gdi32.CreateCompatibleDC(hdc_window)
-                full_bmp = gdi32.CreateCompatibleBitmap(hdc_window, ww, wh)
-                old_full = gdi32.SelectObject(full_mdc, full_bmp)
+            # Si el foco está en el HUD, permitimos captura de pantalla solo si el juego está visible
+            if not is_foreground and fg_hwnd:
+                # Obtenemos el título de la ventana activa para ver si es nuestro HUD
+                length = user32.GetWindowTextLengthW(fg_hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(fg_hwnd, buf, length + 1)
+                    if "EVE Replica:" in buf.value or "Panel de control" in buf.value:
+                        # El usuario está tocando la interfaz, el juego debería estar justo debajo
+                        if not user32.IsIconic(hwnd):
+                            is_foreground = True
+            
+            if is_foreground:
+                hdc_screen = user32.GetDC(0)
+                pt = wt.POINT(0, 0)
+                user32.ClientToScreen(hwnd, ctypes.byref(pt))
+                # Validar que la ventana está realmente en el área visible (no minimizada ni fuera)
+                captured = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_screen, pt.x + rx, pt.y + ry, rw, rh, SRCCOPY)
+            
+            # B. Si no está en primer plano, USAR CAPTURA INTERNA (BitBlt o PrintWindow)
+            if not captured:
+                captured = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY)
                 
-                if user32.PrintWindow(hwnd, full_mdc, 0x3): # CLIENTONLY + RENDERFULLCONTENT
-                    ok = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, full_mdc, rx, ry, rw, rh, SRCCOPY)
+            # C. Fallback: Si sigue fallando (ventana oculta), usamos PrintWindow (con precaución)
+            if not captured or gdi32.GetPixel(mdc, out_w//2, out_h//2) == 0:
+                # Usar un DC intermedio para PrintWindow evita parpadeos y es más estable
+                tmp_mdc = gdi32.CreateCompatibleDC(hdc_window)
+                tmp_bmp = gdi32.CreateCompatibleBitmap(hdc_window, ww, wh)
+                tmp_old = gdi32.SelectObject(tmp_mdc, tmp_bmp)
                 
-                gdi32.SelectObject(full_mdc, old_full)
-                gdi32.DeleteObject(full_bmp)
-                gdi32.DeleteDC(full_mdc)
+                # PW_CLIENTONLY = 1, PW_RENDERFULLCONTENT = 2 -> 0x3
+                if user32.PrintWindow(hwnd, tmp_mdc, 0x3):
+                    captured = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, tmp_mdc, rx, ry, rw, rh, SRCCOPY)
+                
+                gdi32.SelectObject(tmp_mdc, tmp_old)
+                gdi32.DeleteObject(tmp_bmp)
+                gdi32.DeleteDC(tmp_mdc)
 
-            if ok:
+            # 4. Extraer bits
+            if captured:
                 bmi = BITMAPINFO()
                 bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
                 bmi.bmiHeader.biWidth = out_w
@@ -177,35 +192,19 @@ if IS_WINDOWS:
                 bmi.bmiHeader.biPlanes = 1
                 bmi.bmiHeader.biBitCount = 32
                 buf = ctypes.create_string_buffer(out_w * out_h * 4)
-                gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
-                
-                # Comprobar si la captura es negra (fallback final)
-                raw_bytes = buf.raw
-                mid = len(raw_bytes) // 2
-                is_black = (raw_bytes[mid] == 0 and raw_bytes[mid+1] == 0 and raw_bytes[mid+2] == 0)
-                
-                if is_black and hwnd == user32.GetForegroundWindow():
-                    # Fallback final: Captura de pantalla si está al frente pero sale negro (DPI/DX12)
-                    hdc_screen = user32.GetDC(0)
-                    pt = wt.POINT(0, 0)
-                    user32.ClientToScreen(hwnd, ctypes.byref(pt))
-                    gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_screen, pt.x + rx, pt.y + ry, rw, rh, SRCCOPY)
-                    gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS)
-                    raw_bytes = buf.raw
+                if gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS):
+                    # Forzar Alfa a 255 (Optimizado)
+                    ba = bytearray(buf.raw)
+                    ba[3::4] = b'\xff' * (len(ba) // 4)
+                    data = bytes(ba)
 
-                # FORZAR ALFA A 255 para que sea visible en ventanas con WA_TranslucentBackground
-                # Optimizado mediante rebanado (mucho más rápido que un bucle for)
-                ba = bytearray(raw_bytes)
-                ba[3::4] = b'\xff' * (len(ba) // 4)
-                data = bytes(ba)
-                    
         except Exception as e:
-            logger.debug(f"Error captura Win32: {e}")
+            logger.error(f"Error crítico en captura: {e}")
         finally:
-            if mdc:
-                if 'old_mdc_obj' in locals(): gdi32.SelectObject(mdc, old_mdc_obj)
-                gdi32.DeleteDC(mdc)
+            # LIMPIEZA TOTAL DE RECURSOS (Vital para evitar fugas y cuelgues)
+            if old_obj: gdi32.SelectObject(mdc, old_obj)
             if bmp: gdi32.DeleteObject(bmp)
+            if mdc: gdi32.DeleteDC(mdc)
             if hdc_window: user32.ReleaseDC(hwnd, hdc_window)
             if hdc_screen: user32.ReleaseDC(0, hdc_screen)
             

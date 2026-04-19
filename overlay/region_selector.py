@@ -122,38 +122,34 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
     # ── Botón confirmar ───────────────────────────────────────────────────────
 
     def _btn_rect(self):
-        """
-        Botón CONFIRMAR — siempre DENTRO de la selección, esquina inferior.
-        Así nunca se superpone con el texto de instrucciones exterior.
-        """
-        if not self._selection:
-            return None
+        """Botón CONFIRMAR y CANCELAR en una sola fila compacta."""
+        if not self._selection: return None
         sel = self._selection
-        bw, bh = 180, 36
-        # Centrado horizontalmente dentro de la selección
-        bx = sel.left() + (sel.width() - bw - 100) // 2  # dejar espacio al cancelar
-        # Dentro del borde inferior de la selección (con margen de 8px)
-        by = sel.bottom() - bh - 8
-        # Si la selección es demasiado pequeña, poner encima del centro
-        if sel.height() < bh * 2 + 20:
-            by = sel.top() + 4
-        # Garantizar que queda dentro de pantalla
-        by = max(sel.top() + 2, min(by, self.height() - bh - 2))
-        bx = max(0, min(bx, self.width() - bw - 2))
-        return _QRect(bx, by, bw, bh)
+        # Dimensiones de los botones (más pequeños y proporcionales)
+        bw_ok, bw_can, bh = 110, 85, 28
+        total_w = bw_ok + bw_can + 8
+        
+        # Centrar el bloque de botones debajo de la selección (o dentro si no hay espacio)
+        bx = sel.left() + (sel.width() - total_w) // 2
+        by = sel.bottom() + 6
+        
+        # Si se sale por abajo de la pantalla, ponerlo dentro de la selección arriba
+        if by + bh > self.height() - 40:
+            by = sel.bottom() - bh - 6
+        # Si la selección es muy pequeña verticalmente, ponerlo encima
+        if sel.height() < 60:
+            by = sel.top() - bh - 6
+            
+        # Clamp a bordes de pantalla
+        bx = max(10, min(bx, self.width() - total_w - 10))
+        by = max(10, min(by, self.height() - bh - 10))
+        
+        return _QRect(bx, by, bw_ok, bh)
 
     def _cancel_btn_rect(self):
-        """Botón CANCELAR — a la derecha del CONFIRMAR, dentro de la selección."""
         br = self._btn_rect()
-        if not br:
-            return None
-        bw, bh = 90, br.height()
-        bx = br.right() + 8
-        # Si se sale por la derecha, poner a la izquierda del confirmar
-        if bx + bw > self._selection.right() - 2:
-            bx = br.left() - bw - 8
-        bx = max(self._selection.left() + 2, bx)
-        return _QRect(bx, br.top(), bw, bh)
+        if not br: return None
+        return _QRect(br.right() + 8, br.top(), 85, br.height())
 
     # ── Pintura ───────────────────────────────────────────────────────────────
 
@@ -227,7 +223,8 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
                 align = (getattr(getattr(Qt, 'AlignmentFlag', Qt),
                                  'AlignCenter', None) or
                          getattr(Qt, 'AlignCenter', 4))
-                p.drawText(br, align, "✓  CONFIRMAR")
+                p.drawText(br, align, "✓ OK")
+
 
             # Botón CANCELAR
             cr = self._cancel_btn_rect()
@@ -240,7 +237,7 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
                 align = (getattr(getattr(Qt, 'AlignmentFlag', Qt),
                                  'AlignCenter', None) or
                          getattr(Qt, 'AlignCenter', 4))
-                p.drawText(cr, align, "✕  Cancelar")
+                p.drawText(cr, align, "✕ Cancelar")
 
         # Instrucciones
         Qt = _Qt

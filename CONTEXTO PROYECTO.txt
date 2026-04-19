@@ -4,45 +4,48 @@ Este documento sirve como contexto para que una IA comprenda rápidamente la est
 
 ## 1. Propósito General
 EVE iT es una suite de herramientas de asistencia para el juego EVE Online, diseñada para funcionar como un overlay no intrusivo. Sus tres pilares son:
-1. **ISK Tracker:** Monitorización en tiempo real de ingresos (Bounties, ESS, Mining) mediante el parseo de logs de juego.
-2. **Chat Translator:** Traducción automática de canales de chat de EVE (Local, Alianza, Corp, etc.) con overlays personalizables.
-3. **Window Replicator:** Sistema de duplicación de ventanas de EVE (multi-boxing) con controles de opacidad y redimensionado.
+1. **ISK Tracker:** Monitorización en tiempo real de ingresos mediante el parseo de logs.
+2. **Chat Translator:** Traducción automática de canales de chat con soporte para Zkillboard.
+3. **EVE Replicator Hub:** Sistema avanzado de duplicación de ventanas (multi-boxing) con captura de alto rendimiento.
 
 ## 2. Tecnologías Principales
 * **Lenguaje:** Python 3.10+.
-* **Interfaz Gráfica:** PySide6 (Qt para Python) para los overlays y ventanas de control.
-* **Dashboard:** Streamlit (ejecutado como subproceso) para análisis de datos avanzado.
-* **Comunicación Interna:** Sockets (puerto 47288 para singleton y comunicación HUD-Controller).
-* **Captura de Ventanas:** Win32 API (para el replicador y detección de procesos).
+* **Interfaz Gráfica:** PySide6 (Qt para Python) con estilos "Premium Neon".
+* **Captura:** Win32 API avanzada (GDI, User32, PrintWindow).
+* **Comunicación:** Señales de Qt para interactividad entre componentes.
 
-## 3. Estructura de Carpetas
-* `/controller`: Lógica de negocio y gestión de ventanas (TrayManager, AppController, ReplicatorWizard).
-* `/overlay`: Definiciones de las ventanas flotantes (HUD de ISK, Overlays de Replicación).
-* `/translator`: Motor de lectura de logs de chat y conexión con APIs de traducción.
-* `/core`: Motores de cálculo (SessionTracker, TickCalculator, LogParser).
-* `/utils`: Herramientas auxiliares, especialmente `i18n.py` para la localización (ES/EN).
-* `/assets`: Iconos, banderas y recursos visuales.
+## 3. Mejoras Recientes (Replicator 2.0)
+El sistema de replicación ha sido rediseñado para ofrecer una experiencia fluida y profesional:
 
-## 4. Funcionamiento del ISK Tracker
-* **Entrada:** Lee archivos `.txt` de la carpeta `Documents/EVE/logs/Gamelogs`.
-* **Procesamiento:** `LogParser` identifica líneas de ISK. `MultiAccountTracker` gestiona sesiones activas, pausas y cálculos de ISK/h.
-* **Salida:** HUD minimalista en pantalla y Dashboard detallado en navegador.
+### A. Motor de Captura Híbrido y Fluidez
+* **Captura Inteligente:** Prioriza la captura directa del escritorio (GDI `StretchBlt`) cuando el juego está al frente para alcanzar FPS nativos, volviendo automáticamente a la captura interna si el juego se tapa.
+* **Estabilidad Win32:** Limpieza estricta de descriptores (GDI Objects) para evitar fugas de memoria y crasheos en sesiones de larga duración.
+* **Gestión de Foco:** Sistema de enfoque dinámico que evita que las réplicas "congelen" el renderizado de EVE Online al interactuar con ellas.
 
-## 5. Funcionamiento del Chat Translator
-* **Entrada:** Vigilancia (`ChatWatcher`) de archivos en `Documents/EVE/logs/Chatlogs`.
-* **Filtro:** Solo procesa logs de los últimos 20 minutos para evitar sobrecarga.
-* **Overlays:** Ventanas individuales por canal con soporte para copiar texto y enlaces directos a Zkillboard.
+### B. UI/UX y Diseño Dinámico
+* **Panel de Control Adaptativo:** Rediseño estilo "Tarjetas Neón" que ajusta su altura automáticamente según la cantidad de personajes detectados.
+* **Interfaz Ultra-Limpia:** Eliminación de marcos internos y HUDs intrusivos. Todas las opciones de control se han trasladado al menú contextual (click derecho).
+* **Asistente de 2 Pasos:** Simplificación radical del flujo de configuración, eliminando pasos redundantes.
 
-## 6. Funcionamiento del Replicator
-* **Captura:** Identifica ventanas con nombre "EVE - [Nombre Personaje]".
-* **Overlays:** Crea ventanas `Frameless` que replican el área de juego seleccionada.
-* **Control:** El "Panel de Control" (ReplicatorHub) permite gestionar todas las réplicas desde un punto único.
+### C. Controles de Precisión y Atajos
+* **Dynamic Trimming (NUEVO):** 
+    * `Ctrl + Scroll`: Recorta o amplía los bordes superior e inferior simultáneamente.
+    * `Alt + Scroll`: Recorta o amplía los bordes laterales de forma simétrica.
+* **Interacción Directa (Portal):** Cambio de modificador a `Alt + Click` para enviar acciones directas al juego a través de la réplica.
+* **Re-selección en Caliente:** Opción `⚡ (Cambiar Zona)` que permite reajustar la región de captura instantáneamente desde el menú de la réplica.
+* **Joystick Contextual:** Movimiento de la región con pasos ultra-finos (0.5%) mediante el menú derecho.
 
-## 7. Notas para Desarrollo (Mantenimiento)
-* **Localización:** Siempre añadir nuevas etiquetas a `utils/i18n.py`. Usar la función `t('key', lang)`.
-* **Estética:** La suite utiliza un estilo "Premium Dark/Neon" con colores Cian (#00c8ff) y Verde Neón (#00ff9d).
-* **Cierre:** La app es muy estricta con los procesos residuales. `AppController.shutdown()` debe limpiar sockets, trackers y matar subprocesos como Streamlit usando `taskkill`.
-* **Singleton:** `main.py` usa un lock de socket para evitar instancias duplicadas.
+## 4. Estructura del Proyecto
+* `/controller`: Lógica central, `TrayManager` y `ReplicatorHub`.
+* `/overlay`: Motor de renderizado `ReplicationOverlay` y selector de región.
+* `/translator`: Motores de lectura y traducción de logs.
+* `/core`: Trackers de sesión y lógica de ISK.
+* `update_github.bat`: Script de automatización para despliegue rápido.
+
+## 5. Notas para Mantenimiento
+* **Estética:** Mantener siempre el esquema de colores Cian (#00c8ff) y Verde Neón (#00ff9d).
+* **Cierre de Recursos:** Al cerrar una réplica, es CRÍTICO desconectar señales y detener el hilo de captura para evitar accesos a memoria inválida.
+* **Localización:** Usar `i18n.py` para todas las cadenas de texto nuevas.
 
 ---
-**Documento generado para transferencia de contexto entre modelos de IA.**
+**Documento actualizado tras la optimización del Replicator Hub (Abril 2026).**

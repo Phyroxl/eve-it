@@ -122,17 +122,21 @@ class CaptureThread(QThread):
                             hwnd, self._region, out_w, out_h
                         )
                         if raw:
-                            img = QImage(raw, out_w, out_h,
-                                         out_w * 4,
-                                         QImage.Format.Format_RGB32
-                                         if hasattr(QImage, 'Format') else QImage.Format_RGB32)
+                            # Crear QImage directamente desde los bytes (sin copia si es posible)
+                            # Nota: QImage mantiene una referencia al buffer 'raw' mientras exista
+                            img = QImage(raw, out_w, out_h, out_w * 4, QImage.Format_ARGB32)
+                            # Emitimos una copia ligera para que el hilo de UI la use de forma segura
                             self.frame_ready.emit(img.copy())
-                except Exception:
-                    pass
+                        else:
+                            # Si falla la captura, esperar un poco más para no saturar
+                            time.sleep(0.1)
+                except Exception as e:
+                    logger.debug(f"Error en hilo de captura: {e}")
+                    time.sleep(0.1)
+            
             elapsed = time.perf_counter() - t0
-            sleep_t = max(0, interval - elapsed)
-            if sleep_t > 0:
-                time.sleep(sleep_t)
+            sleep_t = max(0.01, interval - elapsed) # Mínimo 10ms de respiro
+            time.sleep(sleep_t)
 
 
 class ResizeHandle:
@@ -218,61 +222,14 @@ class ReplicationOverlay(QWidget):
         ov_cfg = self._cfg.get('overlays', {}).get(self._title, {})
         self._offset_calib = ov_cfg.get('offset_calib', {'x': 0, 'y': 0})
         
-        # UI de Controles (HUD flotante) - Al final para asegurar que esté encima
-        self._setup_hud()
+        # UI de Controles (HUD flotante) - ELIMINADA SEGÚN SOLICITUD
+        # self._setup_hud() - Ya no se crea la barra superior
 
         # Timer de Persistencia Always-on-Top (Nivel Win32)
         import ctypes
         self._topmost_timer = QTimer(self)
         self._topmost_timer.timeout.connect(self._reassert_topmost)
         self._topmost_timer.start(1500)
-
-    def _setup_hud(self):
-        self._hud = QFrame(self)
-        self._hud.setFixedHeight(CTRL_BAR_H)
-        # Fondo ultra-minimalista sin bordes molestos
-        self._hud.setStyleSheet("QFrame { background: rgba(0, 20, 40, 180); border: none; border-radius: 4px; }")
-        self._hud.move(5, 5)
-        self._hud.hide() # Solo se muestra al hacer hover
-        
-        hl = QHBoxLayout(self._hud)
-        hl.setContentsMargins(5, 0, 5, 0); hl.setSpacing(8)
-        
-        # Título removido según solicitud del usuario
-        hl.addStretch()
-        
-        hl.addStretch()
-        
-        btn_style = "QPushButton { background: transparent; border: none; color: #fff; font-size: 12px; font-weight: bold; } QPushButton:hover { color: #00ff9d; }"
-        
-        # Controles de opacidad
-        BTN_STYLE = "QPushButton { background: transparent; border: none; color: #fff; font-size: 12px; font-weight: bold; } QPushButton:hover { color: #00ff9d; }"
-        
-        self._btn_op_up = QPushButton("+", self._hud); self._btn_op_up.setFixedSize(22, 22)
-        self._btn_op_up.setStyleSheet(BTN_STYLE); self._btn_op_up.clicked.connect(lambda: self._adj_opacity(0.1))
-        hl.addWidget(self._btn_op_up)
-        
-        self._btn_op_down = QPushButton("-", self._hud); self._btn_op_down.setFixedSize(22, 22)
-        self._btn_op_down.setStyleSheet(BTN_STYLE); self._btn_op_down.clicked.connect(lambda: self._adj_opacity(-0.1))
-        hl.addWidget(self._btn_op_down)
-        
-        hl.addStretch()
-        
-        # Botón Interactivo (Portal) [NUEVO]
-        self._btn_interact = QPushButton("🔗", self._hud); self._btn_interact.setFixedSize(22, 22)
-        self._btn_interact.setToolTip("Activar Modo Portal (Click-through al juego)")
-        self._btn_interact.setStyleSheet("QPushButton { background: transparent; border: none; color: #888; font-size: 14px; }")
-        self._btn_interact.clicked.connect(self._toggle_interactive)
-        hl.addWidget(self._btn_interact)
-        
-        # Botón cerrar
-        self._btn_close = QPushButton("\u00d7", self._hud); self._btn_close.setFixedSize(22, 22)
-        self._btn_close.setStyleSheet("QPushButton { background: transparent; border: none; color: #ff6666; font-size: 18px; } QPushButton:hover { color: #ff0000; }")
-        self._btn_close.clicked.connect(self.close)
-        hl.addWidget(self._btn_close)
-        
-        self._hud.hide()
-        self._hud.raise_() # Asegurar que esté encima de la pintura de fondo
 
         # [NUEVO] Marcador visual de redimensionado (Triángulo Neón)
         self._resizer_marker = QLabel(self)
@@ -282,6 +239,10 @@ class ReplicationOverlay(QWidget):
         # WA_TransparentForMouseEvents para que no bloquee el resize real
         self._resizer_marker.setAttribute(Qt.WA_TransparentForMouseEvents if hasattr(Qt, 'WA_TransparentForMouseEvents') else Qt.WidgetAttribute(0x4000000))
         self._resizer_marker.hide() # Solo se ve en hover
+
+    def _setup_hud(self):
+        # Deshabilitado para limpiar la interfaz
+        pass
 
     def _toggle_interactive(self):
         self._interactive = not self._interactive
@@ -334,6 +295,9 @@ class ReplicationOverlay(QWidget):
                 int(self.winId()), DWMWA_WINDOW_CORNER_PREFERENCE, 
                 ctypes.byref(ctypes.c_int(DWMWCP_DONOTROUND)), 4
             )
+            # Forzar no activación a nivel Win32
+            from overlay.win32_capture import set_no_activate
+            set_no_activate(int(self.winId()))
         except: pass
 
     def _restore_state(self):
@@ -413,11 +377,8 @@ class ReplicationOverlay(QWidget):
         # Fin de zona crítica de frame_lock
         # Fin de zona crítica de frame_lock
 
-        # Borde (se ve si hay hover O si estamos operando la ventana)
-        if self._hovering or self._is_moving_or_resizing:
-            border_color = C['hover']
-            p.setPen(QPen(border_color, 2))
-            p.drawRect(r.adjusted(0, 0, -1, -1))
+        # Borde eliminado según solicitud
+        pass
 
         # Feedback de click
         if hasattr(self, '_flash_pos') and self._flash_pos:
@@ -466,18 +427,16 @@ class ReplicationOverlay(QWidget):
     # ── Drag & resize ─────────────────────────────────────────────────────────
 
     def mousePressEvent(self, event):
-        # Si el click es sobre el HUD, dejar que Qt lo maneje normalmente (para los botones)
-        if self._hud.isVisible() and self._hud.geometry().contains(event.pos()):
-            super().mousePressEvent(event)
-            return
-
+        # Asegurar foco al hacer click para que las flechas funcionen
+        self.setFocus(Qt.MouseFocusReason if hasattr(Qt, 'MouseFocusReason') else Qt.OtherFocusReason)
+        
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         if event.button() == left:
-            # Si estamos en modo interactivo O se pulsa Shift (cambiado de Ctrl), enviamos el click al juego
+            # Si estamos en modo interactivo O se pulsa Alt (cambiado de Shift), enviamos el click al juego
             modifiers = QApplication.keyboardModifiers()
-            shift = Qt.KeyboardModifier.ShiftModifier if hasattr(Qt, 'KeyboardModifier') else 0x02000000
+            alt = Qt.KeyboardModifier.AltModifier if hasattr(Qt, 'KeyboardModifier') else 0x08000000
             
-            if self._interactive or (modifiers & shift):
+            if self._interactive or (modifiers & alt):
                 self._broadcast_click(event.pos())
                 return
 
@@ -601,9 +560,10 @@ class ReplicationOverlay(QWidget):
         menu.addSeparator()
         
         # Reset
-        restart_cap = menu.addAction("(Cambiar Zona)")
+        restart_cap = menu.addAction("⚡ (Cambiar Zona)")
         reset_reg = menu.addAction("🔄 Resetear Zona (100%)")
-        # Compacto eliminado según solicitud
+        menu.addSeparator()
+        close_act = menu.addAction("❌ Cerrar Réplica")
         
         # Ejecutar menú
         action = menu.exec(event.globalPos())
@@ -617,6 +577,7 @@ class ReplicationOverlay(QWidget):
         elif action == zoom_out: self._zoom_region(1.1)
         elif action == restart_cap: self.selection_requested.emit(self)
         elif action == reset_reg: self._reset_region()
+        elif action == close_act: self.close()
         
         # Acciones de Calibración
         c_step = 5 # píxeles
@@ -678,13 +639,47 @@ class ReplicationOverlay(QWidget):
             super().keyPressEvent(event)
 
     def wheelEvent(self, event):
-        """Zoom con scroll del ratón."""
-        # Detectar dirección del scroll
+        """Zoom y Recorte dinámico con Scroll."""
         delta = event.angleDelta().y() if hasattr(event, 'angleDelta') else event.delta()
-        if delta > 0:
-            self._zoom_region(0.95) # Acercar
+        modifiers = QApplication.keyboardModifiers()
+        
+        # Atajos Qt
+        CTRL = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, 'KeyboardModifier') else 0x04000000
+        ALT  = Qt.KeyboardModifier.AltModifier     if hasattr(Qt, 'KeyboardModifier') else 0x08000000
+        
+        step = 0.005 # 0.5% por cada "tick" de rueda
+        
+        if modifiers & CTRL:
+            # RECORTE VERTICAL (Arriba y Abajo simultáneamente)
+            change = step if delta > 0 else -step
+            self._region['y'] = max(0.0, min(1.0, self._region['y'] + change))
+            self._region['h'] = max(0.01, min(1.0 - self._region['y'], self._region['h'] - 2*change))
+            self._save_state()
+        elif modifiers & ALT:
+            # RECORTE HORIZONTAL (Lados simultáneamente)
+            change = step if delta > 0 else -step
+            
+            # Cálculo flexible para permitir expandir incluso cerca de bordes
+            old_x, old_w = self._region['x'], self._region['w']
+            
+            # Intentar expandir/contraer X
+            new_x = max(0.0, min(1.0 - 0.01, old_x + change))
+            # Ajustar W para que sea simétrico respecto al cambio de X
+            # (Si X se movió 'd', W debe cambiar '-2d')
+            actual_change = new_x - old_x
+            new_w = max(0.01, min(1.0 - new_x, old_w - 2 * actual_change))
+            
+            if new_w != old_w or new_x != old_x:
+                self._region['x'] = new_x
+                self._region['w'] = new_w
+                self._save_state()
         else:
-            self._zoom_region(1.05) # Alejar
+            # ZOOM CLÁSICO (Proporcional)
+            if delta > 0:
+                self._zoom_region(0.95)
+            else:
+                self._zoom_region(1.05)
+        
         event.accept()
 
     def mouseMoveEvent(self, event):
@@ -739,15 +734,14 @@ class ReplicationOverlay(QWidget):
 
     def enterEvent(self, event):
         self._hovering = True
-        # Enfoque automático para permitir interacción con 1 solo click
+        # Enfoque automático reforzado
+        self.setFocusPolicy(Qt.WheelFocus if hasattr(Qt, 'WheelFocus') else Qt.StrongFocus)
         self.setFocus(Qt.MouseFocusReason if hasattr(Qt, 'MouseFocusReason') else Qt.OtherFocusReason)
-        if hasattr(self, '_hud'): self._hud.show()
         if hasattr(self, '_resizer_marker'): self._resizer_marker.show()
         self.update()
 
     def leaveEvent(self, event):
         self._hovering = False
-        if hasattr(self, '_hud'): self._hud.hide()
         if hasattr(self, '_resizer_marker'): self._resizer_marker.hide()
         self.update()
 

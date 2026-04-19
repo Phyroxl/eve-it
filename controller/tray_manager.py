@@ -501,18 +501,21 @@ class TrayManager:
     def _on_reselect_region(self, overlay):
         """Reabre el selector de región para una réplica específica o para el conjunto."""
         logger.info(f"Petición de re-selección de región para: {overlay._title}")
+        
+        # Asegurarnos de que el wizard se cree o reinicie correctamente
+        if not self._replicator_dialog:
+            self._launch_replicator_wizard()
+        
         if self._replicator_dialog:
+            # Si estaba aceptado/cerrado, volverlo a mostrar
             self._replicator_dialog.show()
             self._replicator_dialog.raise_()
-            # Ir al paso 2 directamente y activar selección visual
+            # Ir al paso 2 y forzar selección visual
             self._replicator_dialog.stack.setCurrentIndex(1)
-            self._replicator_dialog.retranslate_ui(self._ctrl.state.language)
+            # Asegurar que el wizard sepa qué ventana estamos tratando (si es posible)
             self._replicator_dialog.start_visual_selection()
         else:
-            self._launch_replicator_wizard()
-            if self._replicator_dialog:
-                self._replicator_dialog.stack.setCurrentIndex(1)
-                self._replicator_dialog.start_visual_selection()
+            logger.error("No se pudo iniciar el asistente de replicación")
 
     def set_control_window(self, win):
         self._control_window = win
