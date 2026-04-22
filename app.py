@@ -57,215 +57,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# CSS global — solo estilos de Streamlit nativo, nunca de iframes
-st.markdown("""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;900&family=Share+Tech+Mono&display=swap');
+# ─── Imports Modularizados ──────────────────────────────────────────────────
+from ui.dashboard.theme import render_theme
+from ui.dashboard.state import init_session_state
+from ui.dashboard.sidebar import render_sidebar
+from ui.dashboard.welcome import render_welcome
+from ui.dashboard.dashboard_view import render_dashboard_layout
 
-  .stApp {
-    background: #030810;
-    background-image:
-      radial-gradient(ellipse at 20% 50%, rgba(0,180,255,0.04) 0%, transparent 60%),
-      radial-gradient(ellipse at 80% 20%, rgba(0,255,157,0.03) 0%, transparent 50%);
-  }
-  [data-testid="stSidebar"] {
-    background: #060e1a !important;
-    border-right: 1px solid rgba(0,180,255,0.2);
-  }
-  [data-testid="stMetric"] {
-    background: rgba(0,20,40,0.8);
-    border: 1px solid rgba(0,180,255,0.25);
-    border-radius: 8px;
-    padding: 16px 20px;
-  }
-  [data-testid="stMetricValue"] {
-    font-family: 'Orbitron', monospace !important;
-    font-size: 1.4rem !important;
-    color: #00c8ff !important;
-    font-weight: 600 !important;
-  }
-  [data-testid="stMetricLabel"] {
-    font-family: 'Share Tech Mono', monospace !important;
-    color: rgba(0,200,255,0.6) !important;
-    font-size: 0.75rem !important;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  [data-testid="stMetricDelta"] {
-    font-family: 'Share Tech Mono', monospace !important;
-    font-size: 0.8rem !important;
-  }
-  h1, h2, h3 {
-    font-family: 'Orbitron', monospace !important;
-    color: #00c8ff !important;
-    letter-spacing: 2px;
-  }
-  h1 { text-shadow: 0 0 20px rgba(0,200,255,0.5); }
-  p, label, .stMarkdown {
-    font-family: 'Share Tech Mono', monospace;
-    color: rgba(200,230,255,0.85);
-  }
-  .stButton > button {
-    background: rgba(0,180,255,0.1) !important;
-    border: 1px solid rgba(0,180,255,0.4) !important;
-    color: #00c8ff !important;
-    font-family: 'Orbitron', monospace !important;
-    font-size: 0.75rem !important;
-    letter-spacing: 1px;
-    border-radius: 4px;
-    transition: all 0.2s;
-  }
-  .stButton > button:hover {
-    background: rgba(0,180,255,0.25) !important;
-    border-color: #00c8ff !important;
-    box-shadow: 0 0 15px rgba(0,200,255,0.3);
-  }
-  /* Forzar emojis en radio buttons de idioma */
-  div[data-testid="stRadio"] label span {
-    font-family: "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","Twemoji Mozilla",sans-serif !important;
-    font-size: 1.05rem !important;
-  }
-  div[data-testid="stRadio"] > div {
-    gap: 6px !important;
-  }
-  hr { border-color: rgba(0,180,255,0.15) !important; }
-  footer { visibility: hidden; }
-  #MainMenu { visibility: hidden; }
-  /* Ocultar toolbar nativa de Streamlit (botones Stop/Deploy) */
-  [data-testid="stToolbar"] { display: none !important; }
-  header[data-testid="stHeader"] { display: none !important; }
-  /* Toggle del sidebar — siempre visible en todas las versiones de Streamlit */
-  /* Versiones recientes usan collapsedControl */
-  [data-testid="collapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    pointer-events: auto !important;
-    position: fixed !important;
-    top: 10px !important;
-    left: 10px !important;
-    z-index: 99999 !important;
-    background: rgba(3,8,16,0.97) !important;
-    border: 1px solid rgba(0,180,255,0.5) !important;
-    border-radius: 7px !important;
-    padding: 3px 5px !important;
-    backdrop-filter: blur(12px) !important;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.7), 0 0 8px rgba(0,180,255,0.15) !important;
-  }
-  [data-testid="collapsedControl"]:hover {
-    border-color: #00c8ff !important;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.7), 0 0 14px rgba(0,200,255,0.4) !important;
-  }
-  [data-testid="collapsedControl"] button,
-  [data-testid="collapsedControl"] svg {
-    display: flex !important;
-    visibility: visible !important;
-    color: #00c8ff !important;
-    opacity: 1 !important;
-  }
-</style>
-""", unsafe_allow_html=True)
+# Aplicar Estilos Globales
+render_theme()
 
-
-# ─── Estado ────────────────────────────────────────────────────────────────────
-
-def init_session_state():
-    defaults = {
-        'tracker': None,
-        'watcher': None,
-        'demo_gen': None,
-        'initialized': False,
-        'demo_mode': False,
-        'ess_retention': 1.0,
-        'inactivity_threshold': 2.5,
-        'log_dir': '',
-        'skip_existing': False,
-        'session_start': None,
-        'last_save_path': None,
-        'activity_type': 'ratting_null',
-        'demo_characters': 1,
-        'lang': 'es',
-        'char_resolved': set(),
-        # Token de versión para el iframe estático — cambia SOLO cuando inicia/resetea sesión
-        'chart_session_token': 0,
-        'chart_window_minutes': 0,  # 0 = toda la sesión
-        'active_window_minutes': 30,  # ventana de actividad para logs
-        'overlay_server': None,       # OverlayServer instance
-    }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
-
-    # Leer idioma desde query_params (set por el selector)
-    params = st.query_params
-    if 'lang' in params and params['lang'] in LANGUAGE_OPTIONS:
-        st.session_state.lang = params['lang']
-
-
-def _launch_overlay():
-    """
-    Lanza el overlay HUD como proceso independiente.
-    Si ya está activo, le envía señal de focus (singleton socket).
-    No bloquea la UI de Streamlit.
-    """
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    overlay_script = Path(__file__).parent / 'overlay' / 'overlay_app.py'
-    if not overlay_script.exists():
-        st.error("overlay_app.py no encontrado")
-        return
-
-    # Intentar señalizar instancia existente primero
-    try:
-        import socket as _sock
-        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-        s.settimeout(0.5)
-        s.connect(('127.0.0.1', 47290))
-        s.send(b'FOCUS\n')
-        s.close()
-        return   # ya había instancia, foco enviado
-    except Exception:
-        pass    # no hay instancia → lanzar nueva
-
-    try:
-        subprocess.Popen(
-            [sys.executable, str(overlay_script)],
-            creationflags=subprocess.CREATE_NO_WINDOW
-            if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
-        )
-    except Exception as e:
-        st.error(f"Error lanzando overlay: {e}")
-
-
-def _launch_replicator():
-    """Lanza el window replicator con diagnostico de errores visible."""
-    import subprocess as _sp
-    import sys as _sys
-    import time as _time
-    from pathlib import Path as _Path
-
-    script = _Path(__file__).parent / 'overlay' / 'window_replicator.py'
-    if not script.exists():
-        st.error("No se encontro overlay/window_replicator.py")
-        return
-    try:
-        proc = _sp.Popen(
-            [_sys.executable, str(script)],
-            stdout=_sp.PIPE, stderr=_sp.PIPE,
-            creationflags=_sp.CREATE_NO_WINDOW if hasattr(_sp, 'CREATE_NO_WINDOW') else 0,
-        )
-        _time.sleep(1.2)
-        if proc.poll() is not None:
-            _, err = proc.communicate()
-            msg = err.decode('utf-8', errors='ignore')[:400]
-            st.error("El replicador cerro con error. Verifica: pip install PySide6 | " + msg)
-        else:
-            st.success("Replicador iniciado. Busca la ventana en pantalla.")
-    except Exception as e:
-        st.error("Error lanzando replicador: " + str(e))
-
+# ─── Funciones de Lógica (Permanecen en app.py por ahora) ───────────────────────
 
 def start_tracker(log_dir: str, demo_mode: bool = False):
     if st.session_state.watcher:
@@ -325,11 +127,7 @@ def reset_session():
 
 
 def ensure_chars_resolved(char_ids: list[str]):
-    """
-    Resuelve IDs en background. No bloquea la UI.
-    NO marca como resuelto hasta que ESI confirme — permite reintentos
-    automáticos cada RETRY_INTERVAL_SECS si la primera llamada falló.
-    """
+    """Resuelve IDs en background."""
     from utils.eve_api import _failed_ids, RETRY_INTERVAL_SECS
     import time as _t
     pending = []
@@ -338,57 +136,19 @@ def ensure_chars_resolved(char_ids: list[str]):
             continue
         cached = get_cached(c)
         if cached and cached.get('resolved'):
-            continue  # ya resuelto con éxito
-        # Comprobar si está en fallidos y si es tiempo de reintentar
+            continue
         import threading as _th
         with __import__('utils.eve_api', fromlist=['_cache_lock'])._cache_lock:
             failed_ts = _failed_ids.get(c, 0)
         if failed_ts and _t.time() - failed_ts < RETRY_INTERVAL_SECS:
-            continue  # esperar al retry window
+            continue
         pending.append(c)
     if pending:
         resolve_characters_async(pending)
 
 
-# ─── Selector de idioma ────────────────────────────────────────────────────────
-
-def get_flag_b64(lang: str):
-    """Carga una bandera de assets y la devuelve en base64."""
-    path = os.path.join("assets", f"flag_{lang}.png")
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    return ""
-
-def render_language_selector(lang: str):
-    """
-    Selector con st.radio() horizontal.
-    Los emojis se renderizan via CSS font-family forzado (definido en el CSS global).
-    Es la única solución 100% compatible con Streamlit sin depender de iframes.
-    """
-    options = LANGUAGE_OPTIONS
-    cols = st.columns(len(options))
-    for i, (code, label) in enumerate(options.items()):
-        with cols[i]:
-            b64 = get_flag_b64(code)
-            border = "2px solid #00c8ff" if lang == code else "1px solid rgba(0,180,255,0.2)"
-            opacity = "1.0" if lang == code else "0.5"
-            st.markdown(f"""
-                <div style="text-align:center; cursor:pointer;" onclick="document.querySelector('button[key=lang_{code}]').click()">
-                    <img src="data:image/png;base64,{b64}" style="width:24px; height:16px; border-radius:2px; border:{border}; opacity:{opacity};">
-                </div>
-            """, unsafe_allow_html=True)
-            if st.button(label.split()[-1], key=f"lang_{code}", use_container_width=True):
-                if code != st.session_state.lang:
-                    st.session_state.lang = code
-                    st.query_params['lang'] = code
-                    st.rerun()
-
-
 # ─── Gráficos: iframe estático + postMessage ──────────────────────────────────
 
-# HTML del iframe de gráficos — se genera UNA sola vez por sesión.
-# Los datos llegan via postMessage en cada ciclo de actualización.
 _CHARTS_IFRAME_HTML = """
 <html><head>
 <meta charset="UTF-8">
@@ -465,21 +225,11 @@ window.addEventListener('message', function(e) {
 """
 
 def render_charts_iframe(token: int):
-    """
-    Sin key (compatibilidad Streamlit < 1.36).
-    El HTML es una constante → Streamlit reutiliza el mismo nodo DOM → sin parpadeo.
-    """
     components.html(_CHARTS_IFRAME_HTML, height=545, scrolling=False)
 
 
 def send_chart_data(tracker: MultiAccountTracker, lang: str):
-    """
-    Envía datos actualizados al iframe via postMessage.
-    Este componente es minimalista (solo JS), cambia en cada ciclo pero
-    es invisible → no produce parpadeo visual.
-    """
     history = tracker.get_isk_history_for_chart()
-    # Filtrar por ventana temporal si está configurada (0 = toda la sesión)
     window_minutes = st.session_state.get('chart_window_minutes', 0)
     if window_minutes > 0 and history:
         cutoff_ts = datetime.now() - timedelta(minutes=window_minutes)
@@ -521,7 +271,6 @@ def send_chart_data(tracker: MultiAccountTracker, lang: str):
     msg_js = f"""
     <script>
     (function() {{
-      // Buscar el iframe de gráficos por su contenido y enviarle los datos
       const frames = window.parent.document.querySelectorAll('iframe');
       const payload = {json.dumps(payload)};
       frames.forEach(function(f) {{
@@ -532,20 +281,10 @@ def send_chart_data(tracker: MultiAccountTracker, lang: str):
     }})();
     </script>
     """
-    # Componente invisible (height=0) que ejecuta el JS de postMessage
     components.html(msg_js, height=0, scrolling=False)
 
 
 # ─── Cards de personaje ──────────────────────────────────────────────────────
-#
-# Arquitectura anti-parpadeo (mismo patrón que los gráficos):
-#   _CHARS_STATIC_HTML  → iframe con estructura HTML fija, sin datos embebidos.
-#                         Streamlit reutiliza el mismo nodo DOM entre reruns
-#                         porque el HTML nunca cambia.
-#   send_chars_data()   → componente height=0 invisible que envía los datos
-#                         cambiantes via postMessage.
-#   JS en el iframe     → actualiza solo los nodos de texto específicos
-#                         (sin reconstruir el DOM), eliminando el parpadeo.
 
 _CHARS_STATIC_HTML = """
 <html><head>
@@ -662,15 +401,12 @@ function _updateCard(c) {
   var cls = function(id, cn) { var el = document.getElementById(id); if (el) { el.className = el.className.replace(/ (active|idle|inactive)/g, ''); el.className += ' ' + cn; } };
   var evClass = c.hasEvents ? (c.status === 'active' ? 'sv grn' : 'sv dim') : 'sv dim';
 
-  // Semáforo
   cls('dot_' + c.id, c.status);
-  // Badge
   var badge = document.getElementById('badge_' + c.id);
   if (badge) {
     badge.textContent = STATUS_LABEL[c.status] || c.status;
     badge.className = 'badge ' + c.status;
   }
-  // Card border class
   var card = document.getElementById('card_' + c.id);
   if (card) {
     card.className = 'card';
@@ -693,9 +429,6 @@ function _updateCard(c) {
   set('val_tk_' + c.id,     c.ticket20m || '—');
   set('wal_' + c.id,        c.sessionIsk || '—');
 
-  // Countdown: usar secsUntilNext (calculado en Python, timezone-correcto)
-  // NO usar nextTickEpoch — los logs de EVE son UTC pero Python los parsea
-  // como naive, causando desfase con Date.now() del browser.
   var sus = parseInt(c.secsUntilNext);
   var tis = parseInt(c.tickIntervalSecs);
   if (!isNaN(sus) && sus > 0 && !isNaN(tis) && tis > 0) {
@@ -714,11 +447,8 @@ function _updateCard(c) {
   if (evEl) { evEl.textContent = c.events; evEl.className = evClass; }
 }
 
-// Mapa char_id → { target: epochMs, intervalMs: number }
-// target se establece como Date.now() + secsUntilNext*1000 (timezone-safe)
 var _tickTargets = {};
 
-// Timer local — actualiza el countdown cada segundo sin Python
 setInterval(function() {
   var now = Date.now();
   Object.keys(_tickTargets).forEach(function(cid) {
@@ -726,7 +456,6 @@ setInterval(function() {
     if (!td || typeof td !== 'object') { delete _tickTargets[cid]; return; }
     var targetMs  = Number(td.target);
     var intervalMs = Number(td.intervalMs);
-    // Protección anti-NaN
     if (isNaN(targetMs) || isNaN(intervalMs) || intervalMs <= 0) {
       delete _tickTargets[cid];
       var el = document.getElementById('cd_' + cid);
@@ -742,7 +471,6 @@ setInterval(function() {
       el.textContent = str;
       el.className = remaining <= 60 ? 'countdown soon' : 'countdown';
     }
-    // Auto-avanzar cuando expira: añadir un intervalo completo
     if (now >= targetMs) {
       td.target = targetMs + intervalMs;
       _tickTargets[cid] = td;
@@ -773,32 +501,13 @@ window.addEventListener('message', function(e) {
 </body></html>
 """
 
-
-def _secs_since_event(cd: dict) -> int:
-    """Segundos desde el último evento (wall clock). -1 si no hay eventos."""
-    if not cd.get('has_events'):
-        return -1
-    last = cd.get('last_processed_at')
-    if last is None:
-        return -1
-    return max(0, int((datetime.now() - last).total_seconds()))
-
-
 def send_chars_data(chars_data: list[dict], lang: str):
-    """
-    Envía datos de personajes al iframe estático via postMessage.
-    Incluye estado semáforo (active/idle/inactive) y flag has_events.
-    """
     chars_payload = []
-    # chars_data ya viene ordenado por get_summary (activos primero)
     for cd in chars_data:
         cid       = cd['character']
         esi       = get_cached(cid)
-        # Si no hay cache, intentar resolver (no bloquea — resolve_characters_async
-        # ya está corriendo en background; esto solo lee el resultado)
         if esi is None and is_character_id(cid):
-            esi = get_cached(cid)  # intentar leer de nuevo
-        # Prioridad: ESI API → nombre del log (Listener:) → ID como fallback
+            esi = get_cached(cid)
         if esi and esi.get('resolved') and esi.get('name'):
             name = esi['name']
         elif cd['display_name'] and cd['display_name'] != cid:
@@ -827,15 +536,13 @@ def send_chars_data(chars_data: list[dict], lang: str):
             'lblEv':      t('events', lang),
             'ticket20m':  format_isk(cd['isk_per_hour'] / 3, short=True),
             'lblTicket':  '🎫 Ticket 20m',
-            # Countdown del próximo tick ESS
             'tickCount':    cd['tick_info']['tick_count'],
-            'nextTickEpoch':    0,  # no usado — ver secsUntilNext
+            'nextTickEpoch':    0,
             'secsUntilNext':    cd['tick_info']['secs_until_next']
                                 if cd['tick_info']['secs_until_next'] >= 0 else 0,
             'tickIntervalSecs': cd['tick_info']['interval_secs'] or 0,
             'isEstimated':      cd['tick_info'].get('is_estimated', False),
             'countdownStr':     cd['tick_info']['countdown_str'],
-            # ISK acumulado de la sesión actual
             'sessionIsk':   format_isk(cd['session_isk'], short=True),
             'lblWallet':    '💰 ISK sesión',
         })
@@ -854,305 +561,10 @@ def send_chars_data(chars_data: list[dict], lang: str):
 
 
 def render_chars_section(chars_data: list[dict], lang: str):
-    """
-    Renderiza la sección de personajes.
-    El iframe usa _CHARS_STATIC_HTML (constante) → Streamlit no lo destruye.
-    Los datos llegan via postMessage desde send_chars_data().
-    """
     n = len(chars_data)
     card_h = max(n * 185 + 20, 185)
     components.html(_CHARS_STATIC_HTML, height=card_h, scrolling=False)
     send_chars_data(chars_data, lang)
-
-
-
-# ─── Sidebar ──────────────────────────────────────────────────────────────────
-
-def render_sidebar():
-    lang = st.session_state.lang
-
-    with st.sidebar:
-        # ── Controles (primero para acceso rápido) ──
-        _c1, _c2 = st.columns(2)
-        with _c1:
-            if st.button(t('btn_start', lang), use_container_width=True, key="btn_s"):
-                _dm = st.session_state.get('demo_mode', False)
-                start_tracker(st.session_state.log_dir, demo_mode=_dm)
-                st.rerun()
-        with _c2:
-            if st.button(t('btn_stop', lang), use_container_width=True, key="btn_x"):
-                if st.session_state.watcher: st.session_state.watcher.stop()
-                if st.session_state.demo_gen: st.session_state.demo_gen.stop()
-                st.session_state.initialized = False
-                st.rerun()
-        if st.button(t('btn_reset', lang), use_container_width=True, key="btn_r"):
-            reset_session()
-            st.rerun()
-        st.markdown("---")
-
-        st.markdown(f"## {t('config_title', lang)}")
-        st.markdown("---")
-
-        st.markdown(f"### {t('language', lang)}")
-        render_language_selector(lang)
-
-        st.markdown("---")
-        st.markdown(f"### {t('demo_mode', lang)}")
-        demo_mode = st.toggle(t('demo_toggle', lang), value=False, key="demo_tog")
-
-        if demo_mode:
-            am = {
-                'ratting_null': t('ratting_null', lang),
-                'ratting_low':  t('ratting_low', lang),
-                'mission_l4':   t('mission_l4', lang),
-                'abyss':        t('abyss', lang),
-            }
-            sel = st.selectbox(t('demo_activity', lang), list(am.values()), key="demo_act")
-            st.session_state.activity_type = next(k for k, v in am.items() if v == sel)
-            st.session_state.demo_characters = st.slider(t('demo_chars', lang), 1, 3, 1, key="demo_ch")
-
-        st.markdown("---")
-
-        if not demo_mode:
-            st.markdown(f"### {t('logs_title', lang)}")
-            from core.log_parser import find_all_log_dirs, find_log_files
-            dirs = find_all_log_dirs()
-            if dirs["Chatlogs"]:
-                st.success(t('logs_detected', lang))
-                st.caption(f"📂 `{dirs['Chatlogs'][0]}`")
-            else:
-                st.warning(t('logs_not_found', lang))
-                st.caption(t('logs_hint', lang))
-            if dirs["Gamelogs"]:
-                st.success(t('gamelogs_detected', lang))
-                st.caption(f"📂 `{dirs['Gamelogs'][0]}`")
-            nf = len(find_log_files())
-            if nf > 0:
-                st.caption(f"📄 {nf} {t('logs_total', lang)}")
-            custom_dir = st.text_input(t('logs_manual', lang), placeholder=r"C:\...\Gamelogs", key="log_dir_in")
-            st.session_state.log_dir = custom_dir
-            st.session_state.skip_existing = st.toggle(
-                t('new_events_only', lang), value=False, help=t('new_events_help', lang), key="skip_tog"
-            )
-            st.session_state.active_window_minutes = st.slider(
-                "⏱ Ventana activa (min)",
-                min_value=5, max_value=120, value=30, step=5,
-                help="Ignorar logs no modificados en este tiempo.",
-                key="active_window_sl"
-            )
-
-        st.markdown("---")
-        st.markdown(f"### {t('ess_title', lang)}")
-        ess_pct = st.slider(t('ess_label', lang), 0, 100, 100, step=1, key="ess_sl")
-        new_ess = ess_pct / 100.0
-        if new_ess != st.session_state.ess_retention:
-            st.session_state.ess_retention = new_ess
-            if st.session_state.watcher:
-                st.session_state.watcher.update_ess_retention(new_ess)
-
-        st.markdown(f"### {t('inactivity_title', lang)}")
-        st.session_state.inactivity_threshold = st.slider(
-            t('inactivity_label', lang), 1.0, 10.0, 2.5, step=0.5, key="inact_sl"
-        )
-
-
-
-        st.markdown("---")
-        # Botón de overlay HUD
-        if _OVERLAY_AVAILABLE:
-            st.markdown(f"### 🎮 Herramientas HUD")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("🖥️ Abrir Overlay", use_container_width=True, key="btn_overlay"):
-                    _launch_overlay()
-                st.caption("Métricas flotantes")
-            with col_b:
-                if st.button("🪟 Replicar ventanas", use_container_width=True, key="btn_replicator"):
-                    _launch_replicator()
-                st.caption("Clonar zona de otras cuentas")
-        else:
-            st.caption("💡 Instala PySide6 para overlay y replicador: `pip install PySide6`")
-
-        st.markdown("---")
-        st.markdown(f"### {t('save_title', lang)}")
-        if st.button(t('btn_save', lang), use_container_width=True, key="btn_sv"):
-            if st.session_state.tracker:
-                sp = f"isk_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                st.session_state.tracker.save_history(sp)
-                st.session_state.last_save_path = sp
-                st.success(f"{t('last_save', lang)}: {sp}")
-        if st.session_state.last_save_path:
-            st.caption(f"{t('last_save', lang)}: {st.session_state.last_save_path}")
-
-        if st.session_state.watcher:
-            status = st.session_state.watcher.get_status()
-            st.markdown("---")
-            st.markdown(f"### {t('monitor_title', lang)}")
-
-            # ── Indicador de sincronización ──
-            discovery_done = status.get('initial_discovery_done', False)
-            init_chars = status.get('initial_char_count', 0)
-            current_chars = len(st.session_state.tracker.sessions) if st.session_state.tracker else 0
-
-            if not discovery_done:
-                st.markdown("""
-                <div style="background:rgba(255,180,0,0.12);border:1px solid rgba(255,180,0,0.5);
-                     border-left:4px solid #ffb400;border-radius:6px;padding:8px 12px;margin:4px 0">
-                  <span style="color:#ffb400;font-family:Share Tech Mono,monospace;font-size:0.8rem">
-                    ⏳ Detectando cuentas...
-                  </span>
-                </div>""", unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style="background:rgba(0,255,157,0.08);border:1px solid rgba(0,255,157,0.4);
-                     border-left:4px solid #00ff9d;border-radius:6px;padding:8px 12px;margin:4px 0">
-                  <span style="color:#00ff9d;font-family:Share Tech Mono,monospace;font-size:0.8rem">
-                    ✅ Sincronización completa — {current_chars} cuenta(s)
-                  </span>
-                </div>""", unsafe_allow_html=True)
-
-            st.caption(f"{t('monitor_files', lang)}: **{status['files_monitored']}**")
-            st.caption(f"{t('monitor_events', lang)}: **{status['total_events']}**")
-            names = status.get('monitored_file_names', [])
-            if names:
-                with st.expander(f"{t('monitor_active', lang)} ({len(names)})"):
-                    for n in names: st.caption(f"• {n}")
-            elif status['running']:
-                st.warning(t('monitor_no_files', lang))
-                st.caption(t('monitor_no_files_hint', lang))
-            if status['recent_errors']:
-                with st.expander(t('monitor_errors', lang)):
-                    for e in status['recent_errors']: st.caption(e)
-
-
-# ─── Dashboard ─────────────────────────────────────────────────────────────────
-
-def render_dashboard():
-    tracker: MultiAccountTracker = st.session_state.tracker
-    lang = st.session_state.lang
-
-    if tracker is None:
-        render_welcome(lang)
-        return
-
-    now = datetime.now()
-    summary = tracker.get_summary(now)
-
-    # Resolución asíncrona de personajes
-    char_ids = [cd['character'] for cd in summary['per_character']]
-    ensure_chars_resolved(char_ids)
-
-    # ── Indicador de sincronización (banner temporal) ──
-    watcher = st.session_state.watcher
-    if watcher:
-        wstatus = watcher.get_status()
-        discovery_done = wstatus.get('initial_discovery_done', True)
-        if not discovery_done:
-            st.markdown("""
-            <div style="background:rgba(255,180,0,0.1);border:1px solid rgba(255,180,0,0.45);
-                 border-radius:8px;padding:10px 18px;margin-bottom:12px;
-                 font-family:Share Tech Mono,monospace">
-              <span style="color:#ffb400">⏳</span>
-              <span style="color:rgba(255,200,100,0.9);font-size:0.85rem;margin-left:8px">
-                Detectando cuentas activas — las métricas se sincronizarán al completar...
-              </span>
-            </div>""", unsafe_allow_html=True)
-
-    # ── Header ──
-    mode_badge = "🎮 DEMO" if st.session_state.demo_mode else "🛸 LIVE"
-    st.markdown(
-        f"<h1 style='margin-bottom:0'>⚡ EVE ISK TRACKER &nbsp;"
-        f"<span style='font-size:0.6rem;color:#00ff9d;border:1px solid #00ff9d;"
-        f"padding:3px 8px;border-radius:3px'>{mode_badge}</span></h1>",
-        unsafe_allow_html=True
-    )
-    st.caption(f"{t('session_started', lang)}: "
-               f"{st.session_state.session_start.strftime('%H:%M:%S') if st.session_state.session_start else 'N/A'}")
-    st.markdown("---")
-
-    # ── Métricas ──
-    total_isk     = summary['total_isk']
-    isk_h_rolling = summary['isk_per_hour_rolling']
-    isk_h_session = summary['isk_per_hour_total']
-    isk_m         = summary['isk_per_minute']
-    duration      = summary['session_duration']
-    m1, m2, m3, m4, m5 = st.columns(5)
-    with m1:
-        st.metric(t('metric_isk_total', lang), format_isk(total_isk, short=True),
-                  delta=f"+{format_isk(total_isk, short=True)}" if total_isk > 0 else None)
-    with m2:
-        st.metric(t('metric_isk_h_rolling', lang), format_isk(isk_h_rolling, short=True))
-    with m3:
-        st.metric(t('metric_isk_h_session', lang), format_isk(isk_h_session, short=True))
-    with m4:
-        st.metric(t('metric_isk_min', lang), format_isk(isk_m, short=True))
-    with m5:
-        st.metric(t('metric_session', lang), format_duration(duration),
-                  delta=f"{summary['character_count']} {t('personajes', lang)}")
-
-    st.markdown("---")
-
-    # ── Gráficos: iframe estático (no parpadea) + mensajero de datos ──
-    # Selector de ventana temporal — solo afecta visualización, no borra historial
-    _win_opts = {'5 min': 5, '20 min': 20, '1 h': 60, '24 h': 1440, 'Todo': 0}
-    _cur_win = st.session_state.get('chart_window_minutes', 0)
-    _cur_idx = next((i for i, v in enumerate(_win_opts.values()) if v == _cur_win), len(_win_opts)-1)
-    _sel = st.radio("📊 Vista", list(_win_opts.keys()), index=_cur_idx, horizontal=True, key="chart_win_r", label_visibility="collapsed")
-    st.session_state.chart_window_minutes = _win_opts[_sel]
-    token = st.session_state.chart_session_token
-    render_charts_iframe(token)   # iframe estático — mismo DOM entre reruns
-    send_chart_data(tracker, lang)  # JS invisible que envía datos vía postMessage
-
-    # ── Por personaje ──
-    if summary['per_character']:
-        st.markdown(f"### {t('by_character', lang)}")
-        render_chars_section(summary['per_character'], lang)
-    elif st.session_state.initialized:
-        # Mostrar solo si no acabamos de renderizar ya este mensaje en este ciclo
-        # Usamos un counter en session_state para detectar el doble render
-        _render_key = f"_search_msg_{st.session_state.chart_session_token}"
-        if not st.session_state.get(_render_key, False):
-            st.session_state[_render_key] = True
-            st.info("🔍 Buscando personajes activos en los logs de EVE...")
-        else:
-            # Segundo render del mismo ciclo: limpiar el flag para el próximo ciclo
-            st.session_state[_render_key] = False
-
-
-
-
-def render_welcome(lang: str):
-    st.markdown(f"""
-    <div style="text-align:center;padding:40px 20px 20px 20px">
-      <h1 style="font-size:2.5rem;margin-bottom:8px">⚡ EVE ISK TRACKER</h1>
-      <p style="color:rgba(0,200,255,0.6);font-family:'Share Tech Mono',monospace;font-size:1rem">
-        {t('welcome_subtitle', lang)}
-      </p>
-    </div>""", unsafe_allow_html=True)
-    _, c2, _ = st.columns([1, 2, 1])
-    with c2:
-        st.markdown(f"""
-        <div style="background:rgba(0,20,50,0.8);border:1px solid rgba(0,180,255,0.3);
-                    border-radius:12px;padding:28px 32px 20px 32px">
-          <h3 style="text-align:center;margin-bottom:16px">{t('quick_start', lang)}</h3>
-          <p>{t('qs_1', lang)}</p><p>{t('qs_2', lang)}</p>
-          <p>{t('qs_3', lang)}</p>
-          <br>
-          <p style="color:rgba(200,220,255,0.5);font-size:0.8rem">
-            {t('qs_path', lang)}<br>
-            <code style="color:#00c8ff">Documentos/EVE/logs/Gamelogs/</code>
-          </p>
-        </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-        # Botón INICIAR funcional directamente en el panel de bienvenida
-        if st.button(
-            f"▶ {t('btn_start', lang)}",
-            use_container_width=True,
-            key="btn_welcome_start",
-            type="primary",
-        ):
-            start_tracker(st.session_state.get('log_dir', ''), demo_mode=False)
-            st.rerun()
 
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
@@ -1180,7 +592,6 @@ def render_gear_button():
                 'button[aria-label="Abrir barra lateral"]',
                 'button[aria-label="Cerrar barra lateral"]'];
       for(var i=0;i<sels.length;i++){var b=p.querySelector(sels[i]);if(b){b.click();return;}}
-      // Fallback geométrico: buscar botón en la zona superior izquierda
       var btns=p.querySelectorAll('button');
       for(var j=0;j<btns.length;j++){
         var r=btns[j].getBoundingClientRect();
@@ -1194,11 +605,25 @@ def render_gear_button():
 def main():
     init_session_state()
     render_gear_button()
-    render_sidebar()
-    render_dashboard()
+    
+    # Orquestación de la UI modularizada
+    render_sidebar(
+        start_tracker_func=start_tracker,
+        reset_session_func=reset_session,
+        overlay_available=_OVERLAY_AVAILABLE
+    )
+    
+    render_dashboard_layout(
+        tracker=st.session_state.tracker,
+        lang=st.session_state.lang,
+        render_welcome_func=render_welcome,
+        ensure_chars_resolved_func=ensure_chars_resolved,
+        render_charts_func=render_charts_iframe,
+        send_chart_data_func=send_chart_data,
+        render_chars_func=render_chars_section
+    )
 
     if st.session_state.initialized and st.session_state.tracker:
-        # Enviar datos al overlay HUD si está activo
         if _OVERLAY_AVAILABLE and st.session_state.overlay_server:
             try:
                 payload = build_overlay_payload(st.session_state.tracker)
@@ -1211,3 +636,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
