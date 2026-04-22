@@ -54,7 +54,7 @@ class MainSuiteWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget); self.main_layout.setContentsMargins(0, 0, 0, 0); self.main_layout.setSpacing(0)
         
-        # 1. Sidebar (Compacta)
+        # 1. Sidebar (Más robusta)
         self.nav_bar = QFrame(); self.nav_bar.setObjectName("NavBar")
         self.nav_layout = QVBoxLayout(self.nav_bar); self.nav_layout.setContentsMargins(0, 0, 0, 0); self.nav_layout.setSpacing(0)
         
@@ -67,9 +67,9 @@ class MainSuiteWindow(QMainWindow):
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_settings)
         
-        # 2. Content Area (Polished)
+        # 2. Content Area (Densa y Equilibrada)
         self.content_frame = QFrame(); self.content_frame.setObjectName("ContentFrame")
-        self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(25, 25, 25, 25); self.content_layout.setSpacing(15)
+        self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(35, 30, 35, 30); self.content_layout.setSpacing(20)
         
         header = QHBoxLayout()
         self.section_title = QLabel("CENTRO DE MANDO"); self.section_title.setObjectName("SectionTitle")
@@ -104,13 +104,13 @@ class MainSuiteWindow(QMainWindow):
     def create_dashboard_page(self):
         p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setStyleSheet("background: transparent;")
-        cont = QWidget(); self.accounts_layout = QGridLayout(cont); self.accounts_layout.setContentsMargins(0, 0, 10, 10); self.accounts_layout.setSpacing(15)
+        cont = QWidget(); self.accounts_layout = QGridLayout(cont); self.accounts_layout.setContentsMargins(0, 0, 10, 10); self.accounts_layout.setSpacing(12)
         scroll.setWidget(cont); l.addWidget(scroll); return p
 
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
-        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(280, 140); card.setCursor(Qt.PointingHandCursor)
-        l = QHBoxLayout(card); l.setContentsMargins(15, 15, 15, 15); l.setSpacing(15)
+        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(260, 130); card.setCursor(Qt.PointingHandCursor)
+        l = QHBoxLayout(card); l.setContentsMargins(15, 15, 15, 15); l.setSpacing(12)
         avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(64, 64); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
         info = QVBoxLayout(); name_lbl = QLabel(name); name_lbl.setObjectName("CharName")
         status = QLabel("● ONLINE" if acc.get('status') == 'active' else "○ IDLE")
@@ -216,14 +216,17 @@ class MainSuiteWindow(QMainWindow):
                 self.activity_feed.addItem(f"[{ts_str}] SEÑAL DETECTADA: +{format_isk(ev['isk'], short=True)}")
 
     def create_tools_page(self):
-        p = QWidget(); l = QVBoxLayout(p); g = QGridLayout(); g.setSpacing(20)
+        p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(0)
+        center_cont = QWidget(); center_l = QVBoxLayout(center_cont); center_l.setContentsMargins(0, 0, 0, 0)
+        g = QGridLayout(); g.setSpacing(20); g.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         g.addWidget(self.create_tool_card("HUD OVERLAY", "Control visual táctico en juego.", "🕹️", self._on_hud_clicked), 0, 0)
         g.addWidget(self.create_tool_card("TRADUCTOR", "Inteligencia lingüística para chats locales.", "🌐", self._on_translator_clicked), 0, 1)
         g.addWidget(self.create_tool_card("REPLICADOR", "Sincronización masiva de ventanas.", "🪟", self._on_replicator_clicked), 1, 0)
-        l.addLayout(g); l.addStretch(); return p
+        center_l.addLayout(g); center_l.addStretch()
+        l.addWidget(center_cont); return p
 
     def create_tool_card(self, title, desc, icon, callback):
-        c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(360, 140); c.setCursor(Qt.PointingHandCursor)
+        c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(340, 130); c.setCursor(Qt.PointingHandCursor)
         l = QHBoxLayout(c); l.setContentsMargins(20,20,20,20)
         ico = QLabel(icon); ico.setStyleSheet("font-size: 40px;"); l.addWidget(ico)
         v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 10px; word-wrap: true;")
