@@ -474,50 +474,19 @@ class MainSuiteWindow(QMainWindow):
         container_lay.setContentsMargins(0, 0, 0, 0)
         container_lay.setSpacing(30)
         
-        # Section 1: Tracker Settings
-        tracker_group = self.create_settings_group("TRACKER DE LOGS", "Configuración del motor de lectura de EVE Online.")
-        t_lay = QVBoxLayout(tracker_group)
+        # Section 1
+        g1, l1 = self.create_settings_group("TRACKER DE LOGS", "Configuración del motor de lectura.")
+        l1.addWidget(QLabel("DIRECTORIO DE LOGS", styleSheet="font-family: 'Share Tech Mono'; color: #00c8ff; font-size: 10px; margin-top: 10px;"))
+        ph = QHBoxLayout(); self.edit_log_dir = QLineEdit(); self.edit_log_dir.setPlaceholderText("Detección automática...")
+        bb = QPushButton("EXAMINAR"); bb.clicked.connect(self._on_browse_logs); ph.addWidget(self.edit_log_dir); ph.addWidget(bb); l1.addLayout(ph)
+        self.check_skip_logs = QCheckBox("Ignorar logs antiguos"); l1.addWidget(self.check_skip_logs)
+        l1.addWidget(QLabel("RETENCIÓN ESS", styleSheet="font-family: 'Share Tech Mono'; color: #00c8ff; font-size: 10px;"))
+        self.spin_ess_retention = QDoubleSpinBox(); self.spin_ess_retention.setRange(0, 1); self.spin_ess_retention.setValue(1); l1.addWidget(self.spin_ess_retention)
+        c_l.addWidget(g1)
         
-        # Log Directory
-        t_lay.addWidget(QLabel("DIRECTORIO DE LOGS DE EVE", objectName="SettingsLabel"))
-        path_lay = QHBoxLayout()
-        self.edit_log_dir = QLineEdit()
-        self.edit_log_dir.setPlaceholderText("Dejar vacío para detección automática...")
-        btn_browse = QPushButton("EXAMINAR")
-        btn_browse.setStyleSheet("padding: 6px 15px; font-size: 10px; background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3);")
-        btn_browse.clicked.connect(self._on_browse_logs)
-        path_lay.addWidget(self.edit_log_dir)
-        path_lay.addWidget(btn_browse)
-        t_lay.addLayout(path_lay)
-        
-        t_lay.addSpacing(10)
-        
-        # Skip Logs Checkbox
-        self.check_skip_logs = QCheckBox("Ignorar logs antiguos al arrancar (Recomendado)")
-        t_lay.addWidget(self.check_skip_logs)
-        
-        t_lay.addSpacing(10)
-        
-        # ESS Retention
-        t_lay.addWidget(QLabel("FACTOR DE RETENCIÓN ESS (0.0 - 1.0)", objectName="SettingsLabel"))
-        self.spin_ess_retention = QDoubleSpinBox()
-        self.spin_ess_retention.setRange(0.0, 1.0)
-        self.spin_ess_retention.setSingleStep(0.05)
-        self.spin_ess_retention.setValue(1.0)
-        t_lay.addWidget(self.spin_ess_retention)
-        
-        container_lay.addWidget(tracker_group)
-        
-        # Section 2: General Settings
-        gen_group = self.create_settings_group("GENERAL", "Preferencias globales de la aplicación.")
-        g_lay = QVBoxLayout(gen_group)
-        
-        g_lay.addWidget(QLabel("IDIOMA DE LA INTERFAZ", objectName="SettingsLabel"))
-        self.combo_lang = QComboBox()
-        self.combo_lang.addItems(["Español", "English", "Deutsch", "Français", "Русский", "中文"])
-        g_lay.addWidget(self.combo_lang)
-        
-        container_lay.addWidget(gen_group)
+        # Section 2
+        g2, l2 = self.create_settings_group("GENERAL", "Preferencias globales.")
+        self.combo_lang = QComboBox(); self.combo_lang.addItems(["es", "en", "de", "fr", "ru", "zh"]); l2.addWidget(self.combo_lang); c_l.addWidget(g2)
         
         container_lay.addStretch()
         
@@ -533,19 +502,10 @@ class MainSuiteWindow(QMainWindow):
         return page
 
     def create_settings_group(self, title, subtitle):
-        group = QFrame()
-        group.setStyleSheet("background: rgba(0, 20, 45, 0.3); border: 1px solid rgba(0, 180, 255, 0.1); border-radius: 8px; padding: 20px;")
-        l = QVBoxLayout(group)
-        
-        t = QLabel(title)
-        t.setStyleSheet("font-family: 'Orbitron'; font-size: 14px; color: #00c8ff; font-weight: bold; border: none;")
-        
-        s = QLabel(subtitle)
-        s.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 10px; color: rgba(200,230,255,0.4); border: none; margin-bottom: 10px;")
-        
-        l.addWidget(t)
-        l.addWidget(s)
-        return group
+        g = QFrame(); g.setStyleSheet("background: rgba(0, 20, 45, 0.3); border: 1px solid rgba(0, 180, 255, 0.1); border-radius: 8px; padding: 20px;")
+        l = QVBoxLayout(g); t = QLabel(title); t.setStyleSheet("font-family: 'Orbitron'; font-size: 14px; color: #00c8ff; font-weight: bold; border: none;")
+        s = QLabel(subtitle); s.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 10px; color: rgba(200,230,255,0.4); border: none; margin-bottom: 10px;")
+        l.addWidget(t); l.addWidget(s); return g, l
 
     def _on_browse_logs(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Seleccionar Directorio de Logs de EVE")
