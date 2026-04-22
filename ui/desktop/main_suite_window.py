@@ -33,12 +33,30 @@ class MainSuiteWindow(QMainWindow):
         self.setup_ui()
         self.apply_styles()
         self.load_settings()
+        self.restore_geometry()
         
-        # Timer for real-time updates
+        # Timer for real-time updates (Metrics & Accounts)
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.refresh_data)
         self.update_timer.start(1500)
         
+        # Timer for the clock (Header)
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self.update_clock)
+        self.clock_timer.start(1000)
+        
+    def update_clock(self):
+        """Actualiza el reloj de sesión cada segundo para que se sienta vivo."""
+        if not self.controller or not self.controller._tracker:
+            return
+        try:
+            from datetime import datetime
+            now = datetime.now()
+            summary = self.controller._tracker.get_summary(now)
+            from utils.formatters import format_duration
+            self.session_info.setText(f"SESIÓN: {format_duration(summary.get('session_duration'))}")
+        except: pass
+
     def setup_ui(self):
         # Central Widget
         self.central_widget = QWidget()
@@ -160,6 +178,23 @@ class MainSuiteWindow(QMainWindow):
         self.btn_stop.clicked.connect(self._on_stop_clicked)
         self.btn_reset.clicked.connect(self._on_reset_clicked)
 
+    def closeEvent(self, event):
+        """Guardar posición y ocultar en lugar de cerrar."""
+        try:
+            settings = QSettings("EVE_iT", "Suite")
+            settings.setValue("geometry", self.saveGeometry())
+        except: pass
+        event.ignore()
+        self.hide()
+
+    def restore_geometry(self):
+        try:
+            settings = QSettings("EVE_iT", "Suite")
+            saved_geo = settings.value("geometry")
+            if saved_geo:
+                self.restoreGeometry(saved_geo)
+        except: pass
+
     def _on_nav_dashboard(self):
         self.stack.setCurrentIndex(0)
         self.section_title.setText("PANEL DE CONTROL")
@@ -253,9 +288,6 @@ class MainSuiteWindow(QMainWindow):
             if self.val_accounts:
                 count = summary.get('character_count', 0)
                 self.val_accounts.setText(f"{count} ACTIVAS")
-            
-            from utils.formatters import format_duration
-            self.session_info.setText(f"SESIÓN: {format_duration(summary.get('session_duration'))}")
             
             # 2. Update Account List
             self.update_accounts_view(summary.get('per_character', []))
@@ -390,8 +422,18 @@ class MainSuiteWindow(QMainWindow):
         last_val = card.findChild(QLabel, "AccLast")
         if last_val:
             le = acc.get('last_event')
-            time_str = le.strftime('%H:%M:%S') if le else "---"
-            last_val.setText(f"ÚLTIMO: {time_str}")
+            if le:
+                from datetime import datetime
+                diff = (datetime.now() - le).total_seconds()
+                if diff < 60:
+                    time_str = f"HACE {int(diff)}s"
+                elif diff < 3600:
+                    time_str = f"HACE {int(diff/60)}m"
+                else:
+                    time_str = le.strftime('%H:%M:%S')
+            else:
+                time_str = "---"
+            last_val.setText(f"ACTIVIDAD: {time_str}")
             
         status_dot = card.findChild(QLabel, "AccStatus")
         if status_dot:
