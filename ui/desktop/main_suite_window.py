@@ -251,7 +251,7 @@ class MainSuiteWindow(QMainWindow):
         if self.controller:
             self.controller.reset_tracker()
 
-    def _on_hud_clicked(self):
+    def update_accounts_view(self, accounts):
         """Crea o actualiza las tarjetas de cuenta."""
         if not self.accounts_layout:
             return
