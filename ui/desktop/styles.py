@@ -1,198 +1,178 @@
 """
-ui/desktop/styles.py — Sistema de Diseño "Tactical Deep-Space".
-Unificación total con la atmósfera de EVE Online.
+ui/desktop/styles.py — Sistema de Diseño Sobrio y Profesional.
+Enfoque: Legibilidad, Jerarquía y Estabilidad.
 """
 
 MAIN_STYLE = """
-/* BASE: DEEP SPACE ATMOSPHERE */
+/* BASE: DARK THEME PROFESSIONAL */
 QMainWindow, QWidget#CentralWidget {
-    background-color: #010205; /* Deeper black */
-    color: #b0c4de;
+    background-color: #0f1115;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
 }
 
-/* SIDEBAR: INTEGRATED COMMAND BRIDGE */
+/* SIDEBAR: CLEAN & NAVIGATION-FOCUSED */
 QFrame#NavBar {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #05080f, stop:1 #080b14);
-    border-right: 1px solid rgba(0, 200, 255, 0.1);
+    background-color: #161a1f;
+    border-right: 1px solid #2d3748;
 }
 
 QLabel#LogoLabel {
-    font-family: 'Orbitron';
-    font-size: 20px;
-    font-weight: 900;
-    color: #00c8ff;
-    padding: 30px 20px;
-    letter-spacing: 5px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #3182ce;
+    padding: 24px 20px;
     background: transparent;
-    /* Glow effect */
-    text-shadow: 0 0 10px rgba(0, 200, 255, 0.5);
 }
 
 QPushButton.NavButton {
     background: transparent;
     border: none;
-    border-left: 3px solid transparent;
-    color: rgba(0, 180, 255, 0.3);
-    font-family: 'Share Tech Mono';
-    font-size: 10px;
+    color: #a0aec0;
+    font-size: 13px;
+    font-weight: 500;
     text-align: left;
     padding-left: 20px;
-    height: 52px;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    transition: all 0.2s ease;
+    height: 44px;
 }
 
 QPushButton.NavButton:hover {
-    background: rgba(0, 200, 255, 0.03);
-    color: #00c8ff;
+    background: rgba(255, 255, 255, 0.05);
+    color: #edf2f7;
 }
 
 QPushButton.NavButton[active="true"] {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(0, 200, 255, 0.1), stop:1 transparent);
-    color: #ffffff;
-    border-left: 3px solid #00c8ff;
+    background: rgba(49, 130, 206, 0.1);
+    color: #63b3ed;
+    border-right: 3px solid #3182ce;
 }
 
-/* CONTENT AREA: TACTICAL TERMINAL */
+/* CONTENT AREA */
 QFrame#ContentFrame {
-    background-color: #010205;
+    background-color: #0f1115;
 }
 
 QLabel#SectionTitle {
-    font-family: 'Orbitron';
-    font-size: 14px;
-    font-weight: bold;
-    color: #00c8ff;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-    border-bottom: 1px solid rgba(0, 200, 255, 0.1);
-    padding-bottom: 8px;
-    margin-bottom: 10px;
+    font-size: 20px;
+    font-weight: 600;
+    color: #f7fafc;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
 }
 
-/* CHARACTER MODULES: INDUSTRIAL TELEMETRY */
+/* CHARACTER CARDS: CLEAN & PROPORTIONAL */
 QFrame#CharacterCard {
-    background: rgba(13, 18, 29, 0.6); /* Glassmorphism */
-    border: 1px solid rgba(0, 200, 255, 0.1);
-    border-radius: 4px;
+    background-color: #1a202c;
+    border: 1px solid #2d3748;
+    border-radius: 8px;
 }
 
 QFrame#CharacterCard:hover {
-    background: rgba(20, 28, 45, 0.8);
-    border-color: rgba(0, 200, 255, 0.5);
+    border-color: #4a5568;
+    background-color: #232a37;
 }
 
 QLabel#CharName {
-    font-family: 'Orbitron';
-    font-size: 13px;
-    font-weight: 800;
-    color: #ffffff;
-    letter-spacing: 1px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #f7fafc;
 }
 
 QLabel#CharAvatar {
-    background-color: #05080f;
-    color: #ffd700;
-    border: 1px solid rgba(255, 215, 0, 0.15);
-    font-family: 'Orbitron';
-    font-size: 20px;
-    font-weight: bold;
-    border-radius: 2px;
+    background-color: #2d3748;
+    color: #63b3ed;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: 600;
 }
 
-/* METRICS: AMBER & NEON GLOW */
-QLabel#GlowValue {
-    font-family: 'Share Tech Mono';
-    font-size: 24px;
-    font-weight: bold;
-    color: #ffd700;
+/* METRICS & VALUES */
+QLabel#IskValue {
+    font-size: 15px;
+    font-weight: 600;
+    color: #ecc94b;
 }
 
-QLabel#GlowValueGreen {
-    font-family: 'Share Tech Mono';
-    font-size: 24px;
-    font-weight: bold;
-    color: #00ff9d;
+QLabel#MetricLabel {
+    color: #718096;
+    font-size: 11px;
+    font-weight: 500;
 }
 
-/* ANALYTIC BOXES: CONSOLE BLOCKS */
+/* ANALYTIC BOXES */
 QFrame#AnalyticBox {
-    background: rgba(5, 8, 15, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.02);
-    border-top: 2px solid rgba(0, 180, 255, 0.15);
+    background-color: #1a202c;
+    border: 1px solid #2d3748;
+    border-radius: 6px;
+    padding: 12px;
 }
 
 QLabel#AnalyticVal {
-    font-family: 'Share Tech Mono';
-    font-size: 16px;
+    font-size: 18px;
+    font-weight: 600;
     color: #ffffff;
 }
 
-/* SETTINGS: SYSTEM OVERRIDE */
+/* SETTINGS & INPUTS */
 QFrame#SettingsGroup {
-    background: rgba(5, 8, 15, 0.4);
-    border: 1px solid rgba(0, 180, 255, 0.05);
-    border-left: 3px solid #00c8ff;
-    padding: 15px;
+    background-color: #161a1f;
+    border: 1px solid #2d3748;
+    border-radius: 8px;
+    padding: 20px;
 }
 
 QLineEdit, QDoubleSpinBox, QComboBox {
-    background-color: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(0, 180, 255, 0.1);
-    color: #00c8ff;
-    font-family: 'Share Tech Mono';
-    padding: 6px;
-    border-radius: 2px;
+    background-color: #0f1115;
+    border: 1px solid #4a5568;
+    color: #e2e8f0;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 13px;
 }
 
-QComboBox::drop-down { border: none; }
+QLineEdit:focus, QComboBox:focus {
+    border-color: #3182ce;
+}
 
 QPushButton#SaveButton {
-    background: rgba(0, 200, 255, 0.05);
-    border: 1px solid rgba(0, 200, 255, 0.4);
-    color: #00c8ff;
-    font-family: 'Orbitron';
-    font-weight: bold;
-    letter-spacing: 2px;
-    height: 44px;
-    border-radius: 2px;
+    background-color: #3182ce;
+    border: none;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    height: 40px;
+    border-radius: 4px;
 }
 
 QPushButton#SaveButton:hover {
-    background: rgba(0, 200, 255, 0.15);
-    border-color: #00c8ff;
-    color: #ffffff;
+    background-color: #2b6cb0;
 }
 
 QPushButton#BackButton {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.3);
-    font-family: 'Share Tech Mono';
-    font-size: 9px;
-    padding: 6px 18px;
+    background-color: transparent;
+    border: 1px solid #4a5568;
+    color: #a0aec0;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 4px;
 }
 
 QPushButton#BackButton:hover {
-    border-color: #00c8ff;
-    color: #00c8ff;
+    color: #ffffff;
+    border-color: #cbd5e0;
 }
 
-/* SCROLLBARS: MINIMALIST TECH */
+/* SCROLLBARS */
 QScrollBar:vertical {
     border: none;
     background: transparent;
-    width: 4px;
-    margin: 0;
+    width: 8px;
 }
 QScrollBar::handle:vertical {
-    background: rgba(0, 200, 255, 0.1);
-    min-height: 30px;
-    border-radius: 2px;
+    background: #2d3748;
+    border-radius: 4px;
 }
 QScrollBar::handle:vertical:hover {
-    background: rgba(0, 200, 255, 0.3);
+    background: #4a5568;
 }
-
 """

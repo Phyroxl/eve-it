@@ -1,74 +1,45 @@
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
-    QGraphicsDropShadowEffect, QPushButton
+    QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, Property
-from PySide6.QtGui import QColor, QFont, QCursor
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 
 class AnimatedCard(QFrame):
     """
-    Una tarjeta con efectos de iluminación y micro-animaciones al pasar el mouse.
+    Una tarjeta simple y limpia con un sutil efecto de hover.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("CharacterCard")
-        self._setup_animation()
-        
-    def _setup_animation(self):
-        # Animación de escala/posicionamiento suave
-        self._anim = QPropertyAnimation(self, b"geometry")
-        self._anim.setDuration(200)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
-        
-        # Efecto de sombra (glow) dinámico
-        self.shadow = QGraphicsDropShadowEffect(self)
-        self.shadow.BlurRadius = 15
-        self.shadow.setColor(QColor(0, 200, 255, 0))
-        self.shadow.setOffset(0, 0)
-        self.setGraphicsEffect(self.shadow)
-        
-        self._shadow_anim = QPropertyAnimation(self.shadow, b"color")
-        self._shadow_anim.setDuration(300)
         
     def enterEvent(self, event):
-        self._shadow_anim.setEndValue(QColor(0, 200, 255, 100))
-        self._shadow_anim.start()
-        # Mover ligeramente hacia arriba (efecto lift)
-        geom = self.geometry()
-        self._original_geom = QRect(geom)
-        self._anim.setEndValue(QRect(geom.x(), geom.y() - 3, geom.width(), geom.height()))
-        self._anim.start()
+        # Efecto visual manejado principalmente por CSS para simplicidad
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._shadow_anim.setEndValue(QColor(0, 200, 255, 0))
-        self._shadow_anim.start()
-        if hasattr(self, '_original_geom'):
-            self._anim.setEndValue(self._original_geom)
-            self._anim.start()
         super().leaveEvent(event)
 
 class IndustrialBadge(QLabel):
     """
-    Un badge con estilo militar/industrial para estados y etiquetas.
+    Un badge de estado simple y profesional.
     """
-    def __init__(self, text, color="#00c8ff", parent=None):
+    def __init__(self, text, color="#3182ce", parent=None):
         super().__init__(text, parent)
         self.setStyleSheet(f\"\"\"
             QLabel {{
-                background: rgba({self._hex_to_rgb(color)}, 0.1);
+                background-color: rgba({self._hex_to_rgb(color)}, 0.1);
                 color: {color};
-                border: 1px solid {color};
-                padding: 2px 6px;
-                font-family: 'Share Tech Mono';
-                font-size: 9px;
-                font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                border-radius: 2px;
+                border: 1px solid rgba({self._hex_to_rgb(color)}, 0.3);
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: 600;
+                border-radius: 10px;
             }}
         \"\"\")
 
     def _hex_to_rgb(self, hex_color):
         hex_color = hex_color.lstrip('#')
+        if len(hex_color) == 3:
+            hex_color = ''.join([c*2 for c in hex_color])
         return f\"{int(hex_color[0:2], 16)}, {int(hex_color[2:4], 16)}, {int(hex_color[4:6], 16)}\"
