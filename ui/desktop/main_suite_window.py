@@ -214,7 +214,7 @@ class MainSuiteWindow(QMainWindow):
 
     def create_tools_page(self):
         p = QWidget(); l = QVBoxLayout(p); g = QGridLayout(); g.setSpacing(20)
-        g.addWidget(self.create_tool_card("HUD OVERLAY", "Control visual táctico en tiempo real.", "🕹️", self._on_hud_clicked), 0, 0)
+        g.addWidget(self.create_tool_card("HUD OVERLAY", "Control visual táctico en juego.", "🕹️", self._on_hud_clicked), 0, 0)
         g.addWidget(self.create_tool_card("TRADUCTOR", "Inteligencia lingüística para chats locales.", "🌐", self._on_translator_clicked), 0, 1)
         g.addWidget(self.create_tool_card("REPLICADOR", "Sincronización masiva de ventanas.", "🪟", self._on_replicator_clicked), 1, 0)
         l.addLayout(g); l.addStretch(); return p
@@ -292,6 +292,7 @@ class MainSuiteWindow(QMainWindow):
         if self.tray_manager: self.tray_manager._on_replicator()
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
+
     def load_settings(self):
         s = QSettings("EVE_iT", "Suite")
         if self.edit_log_dir: self.edit_log_dir.setText(s.value("log_dir", ""))
@@ -301,6 +302,7 @@ class MainSuiteWindow(QMainWindow):
         if self.combo_translator_lang:
             idx = self.combo_translator_lang.findText(s.value("translator_lang", "ESPAÑOL"))
             if idx >= 0: self.combo_translator_lang.setCurrentIndex(idx)
+
     def save_settings(self):
         s = QSettings("EVE_iT", "Suite")
         if self.edit_log_dir: s.setValue("log_dir", self.edit_log_dir.text())
@@ -309,15 +311,31 @@ class MainSuiteWindow(QMainWindow):
         if self.check_hide_hud: s.setValue("auto_hide_hud", "true" if self.check_hide_hud.isChecked() else "false")
         if self.combo_translator_lang: s.setValue("translator_lang", self.combo_translator_lang.currentText())
         self.section_title.setText("SISTEMA SINCRONIZADO"); QTimer.singleShot(2000, lambda: self.section_title.setText("CONFIGURACIÓN DEL SISTEMA"))
+
     def closeEvent(self, event):
         try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
         except: pass
         event.ignore(); self.hide()
     def restore_geometry(self):
         try:
-            geo = QSettings("EVE_iT", "Suite").value("geometry")
-            if geo: self.restoreGeometry(geo)
-        except: pass
+            s = QSettings("EVE_iT", "Suite")
+            geo = s.value("geometry")
+            if geo:
+                self.restoreGeometry(geo)
+                
+            # Validación de visibilidad: ¿Está la ventana en algún monitor?
+            screen = self.screen()
+            if screen:
+                geom = self.geometry()
+                available = screen.availableGeometry()
+                if not available.intersects(geom):
+                    self.setGeometry(available.center().x() - self.width()//2,
+                                    available.center().y() - self.height()//2,
+                                    self.width(), self.height())
+            
+            self.showNormal()
+        except Exception:
+            pass
     def apply_styles(self): self.setStyleSheet(MAIN_STYLE)
 
 if __name__ == "__main__":

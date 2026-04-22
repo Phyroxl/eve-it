@@ -1,13 +1,5 @@
 """
 main.py — Punto de entrada único de EVE ISK Tracker.
-
-Arquitectura:
-  1. Singleton lock (puerto 47288) — evita múltiples instancias
-  2. Logging a archivo con rotación
-  3. QApplication en hilo principal
-  4. AppController en background threads
-  5. TrayManager gestiona el system tray y ventanas Qt
-  6. SuiteWindow como panel principal premium
 """
 
 from __future__ import annotations
@@ -104,39 +96,41 @@ def main():
         sys.exit(0)
 
     log = setup_logging()
-    log.info("--- ARRANQUE ELITE ---")
+    log.info("--- ARRANQUE ELITE (SÚRGICO) ---")
 
     from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
     from controller.app_controller import AppController
-    controller = AppController()
-
     from controller.tray_manager import TrayManager
     from controller.control_window import ControlWindow
     from ui.desktop.main_suite_window import MainSuiteWindow
 
+    controller = AppController()
     tray = TrayManager(app, controller)
     ctrl_win = ControlWindow(app, controller, tray)
     suite_win = MainSuiteWindow(controller)
 
+    # Registro de referencias
     global _suite_window_ref
     _suite_window_ref = suite_win
+    
+    tray.set_control_window(ctrl_win)
     tray.set_suite_window(suite_win)
     suite_win.set_tray_manager(tray)
 
     # REFUERZO VISUAL DIFERIDO
     def force_visibility():
         try:
-            log.info("Segundo impulso de visibilidad...")
+            log.info("Refuerzo visual diferido activado...")
             suite_win.showNormal()
             suite_win.show()
             suite_win.raise_()
             suite_win.activateWindow()
         except: pass
 
-    log.info("Desplegando Suite...")
+    log.info("Desplegando Interfaz Principal...")
     suite_win.show()
     suite_win.raise_()
     suite_win.activateWindow()
@@ -144,7 +138,7 @@ def main():
     from PySide6.QtCore import QTimer
     QTimer.singleShot(1000, force_visibility)
 
-    # Auto-start
+    # Auto-start con todos los parámetros
     try:
         from PySide6.QtCore import QSettings
         settings = QSettings("EVE_iT", "Suite")
@@ -152,8 +146,16 @@ def main():
         skip_logs = settings.value("skip_logs", "true") == "true"
         ess = float(settings.value("ess_retention", 1.0))
         controller.start_tracker(log_dir=log_dir, skip_existing=skip_logs, ess_retention=ess)
-    except:
+    except Exception as e:
+        log.warning(f"Modo seguro en auto-start: {e}")
         controller.start_tracker()
+
+    import signal
+    def handle_sigint(*args):
+        log.info("SIGINT detectado, cerrando sistema...")
+        controller.shutdown(); lock.release(); app.quit()
+    
+    signal.signal(signal.SIGINT, handle_sigint)
 
     exec_fn = getattr(app, 'exec', None) or app.exec_
     ret = exec_fn()
