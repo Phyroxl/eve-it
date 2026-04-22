@@ -163,8 +163,9 @@ class TrayManager:
         self._act_title.setEnabled(False)
         self._menu.addSeparator()
 
-        self._act_suite   = add_action("🚀 PANEL DE SUITE", self._on_show_suite)
-        self._act_panel   = add_action(t('tray_panel', self._lang),  self._on_show_panel)
+        from utils.i18n import t
+        self._act_suite   = add_action(t('tray_suite', self._lang), self._on_show_suite)
+        self._act_panel   = add_action(t('tray_panel', self._lang), self._on_show_panel)
         self._menu.addSeparator()
         self._act_dash    = add_action(t('tray_dashboard', self._lang),   self._on_dashboard)
         self._menu.addSeparator()
@@ -493,6 +494,7 @@ class TrayManager:
     def retranslate_ui(self, lang: str):
         """Traduce los textos de los menús del Tray."""
         self._lang = lang
+        self._act_suite.setText(t('tray_suite', lang))
         self._act_panel.setText(t('tray_panel', lang))
         self._act_dash.setText(t('tray_dashboard', lang))
         self._act_overlay.setText(t('tray_overlay', lang))

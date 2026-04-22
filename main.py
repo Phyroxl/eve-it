@@ -301,7 +301,7 @@ def main():
 
     # ── Arranque automático del tracker ───────────────────────────────────────
     QTimer = _C.QTimer
-    QTimer.singleShot(500, lambda: _auto_start(controller, tray, ctrl_win, log))
+    QTimer.singleShot(500, lambda: _auto_start(controller, tray, suite_win, ctrl_win, log))
 
     # ── Manejo limpio de Ctrl+C en desarrollo ─────────────────────────────────
     import signal
@@ -351,7 +351,7 @@ def main():
     _os._exit(ret)
 
 
-def _auto_start(controller, tray, ctrl_win, log):
+def _auto_start(controller, tray, suite_win, ctrl_win, log):
     """Acciones automáticas al arrancar."""
     log.info("Auto-start: cargando configuración y arrancando tracker")
     
@@ -371,8 +371,9 @@ def _auto_start(controller, tray, ctrl_win, log):
         log.error(f"Error en auto-start loading settings: {e}")
         controller.start_tracker()
 
-    # Mostrar la ventana de control al arrancar (ventana clásica por ahora)
-    ctrl_win.show()
+    # Mostrar la Suite como ventana principal al arrancar
+    suite_win.show()
+    # La ventana clásica (ctrl_win) se mantiene oculta por defecto pero disponible en el tray
 
 
 def _on_sigint(controller, app, lock):
