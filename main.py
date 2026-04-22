@@ -144,22 +144,40 @@ def main():
 def _auto_start(controller, tray, suite_win, ctrl_win, log):
     from PySide6.QtCore import QSettings
     s = QSettings("EVE_iT", "Suite")
-    
-    # 1. Cargar Log Dir si existe
+
+    # 1. Cargar Log Dir guardado si existe y es válido
     saved_log_dir = s.value("log_dir", "")
     if saved_log_dir and os.path.exists(saved_log_dir):
-        log.info(f"Auto-start: Configurando log_dir: {saved_log_dir}")
+        log.info(f"Auto-start: Usando log_dir guardado: {saved_log_dir}")
         controller.set_log_directory(saved_log_dir)
-        
-        # Cargar retención si existe
-        retention = float(s.value("ess_retention", 1.0))
-        controller.set_ess_retention(retention)
-    
-    # 2. Iniciar Tracker si hay dir
-    if controller.log_directory:
-        skip = s.value("skip_logs", "true") == "true"
-        log.info(f"Auto-start: Iniciando tracker (skip={skip})")
-        controller.start_tracker(skip_existing=skip)
+    else:
+        # Auto-detección: buscar directorios de logs de EVE en el sistema
+        try:
+            from core.log_parser import find_all_log_dirs
+            dirs = find_all_log_dirs()
+            gamelogs = dirs.get('Gamelogs', [])
+            if gamelogs:
+                detected = str(gamelogs[0])
+                log.info(f"Auto-start: Directorio detectado automáticamente: {detected}")
+                controller.set_log_directory(detected)
+                # Guardar para futuras sesiones
+                s.setValue("log_dir", detected)
+                # Mostrar en la UI si está disponible
+                if suite_win and suite_win.edit_log_dir:
+                    suite_win.edit_log_dir.setText(detected)
+            else:
+                log.info("Auto-start: No se encontraron logs de EVE. Tracker iniciará en modo auto-scan.")
+        except Exception as e:
+            log.warning(f"Auto-start: Error en auto-detección de logs: {e}")
+
+    # 2. Cargar retención ESS
+    retention = float(s.value("ess_retention", 1.0))
+    controller.set_ess_retention(retention)
+
+    # 3. Iniciar Tracker SIEMPRE (con log_dir o sin él, en modo auto-scan)
+    skip = s.value("skip_logs", "true") == "true"
+    log.info(f"Auto-start: Iniciando tracker (log_dir='{controller.log_directory}', skip={skip})")
+    controller.start_tracker(skip_existing=skip)
 
 def _on_sigint(controller, app, lock):
     controller.shutdown(); lock.release(); app.quit()

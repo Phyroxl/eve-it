@@ -462,21 +462,47 @@ class MainSuiteWindow(QMainWindow):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
     def load_settings(self):
         s = QSettings("EVE_iT", "Suite")
-        if self.edit_log_dir: self.edit_log_dir.setText(s.value("log_dir", ""))
+        saved_dir = s.value("log_dir", "")
+
+        # Si no hay directorio guardado, intentar auto-detección
+        if not saved_dir:
+            try:
+                from core.log_parser import find_all_log_dirs
+                dirs = find_all_log_dirs()
+                gamelogs = dirs.get('Gamelogs', [])
+                if gamelogs:
+                    saved_dir = str(gamelogs[0])
+            except Exception:
+                pass
+
+        if self.edit_log_dir: self.edit_log_dir.setText(saved_dir)
         if self.check_skip_logs: self.check_skip_logs.setChecked(s.value("skip_logs", "true") == "true")
         if self.check_blur: self.check_blur.setChecked(s.value("enable_blur", "false") == "true")
         if self.check_hide_hud: self.check_hide_hud.setChecked(s.value("auto_hide_hud", "false") == "true")
         if self.combo_translator_lang:
             idx = self.combo_translator_lang.findText(s.value("translator_lang", "Español"))
             if idx >= 0: self.combo_translator_lang.setCurrentIndex(idx)
+
     def save_settings(self):
         s = QSettings("EVE_iT", "Suite")
-        if self.edit_log_dir: s.setValue("log_dir", self.edit_log_dir.text())
+        new_log_dir = self.edit_log_dir.text() if self.edit_log_dir else ""
+        if self.edit_log_dir: s.setValue("log_dir", new_log_dir)
         if self.check_skip_logs: s.setValue("skip_logs", "true" if self.check_skip_logs.isChecked() else "false")
         if self.check_blur: s.setValue("enable_blur", "true" if self.check_blur.isChecked() else "false")
         if self.check_hide_hud: s.setValue("auto_hide_hud", "true" if self.check_hide_hud.isChecked() else "false")
         if self.combo_translator_lang: s.setValue("translator_lang", self.combo_translator_lang.currentText())
-        self.section_title.setText("Configuración Guardada"); QTimer.singleShot(2000, lambda: self.section_title.setText("Configuración"))
+
+        # Relanzar tracker si el directorio cambió
+        if self.controller and new_log_dir:
+            try:
+                self.controller.set_log_directory(new_log_dir)
+                skip = s.value("skip_logs", "true") == "true"
+                self.controller.start_tracker(skip_existing=skip)
+            except Exception as e:
+                self.diag_log.error(f"Error relanzando tracker: {e}")
+
+        self.section_title.setText("Configuración Guardada")
+        QTimer.singleShot(2000, lambda: self.section_title.setText("Configuración"))
     def closeEvent(self, event):
         try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
         except: pass
