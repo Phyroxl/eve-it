@@ -4,10 +4,11 @@ from utils.i18n import t
 from utils.formatters import format_isk, format_duration
 
 def render_dashboard_layout(tracker, lang, render_welcome_func, ensure_chars_resolved_func, 
-                           render_charts_func, send_chart_data_func, render_chars_func):
+                           render_charts_func, send_chart_data_func, render_chars_func,
+                           start_tracker_func):
     """Render principal del Dashboard."""
     if tracker is None:
-        render_welcome_func(lang)
+        render_welcome_func(lang, start_tracker_func)
         return
 
     now = datetime.now()

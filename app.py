@@ -1,55 +1,30 @@
 """
 app.py — EVE ISK Tracker dashboard (Streamlit).
-
-ARQUITECTURA ANTI-REGRESIÓN:
-
-El problema raíz de todos los bugs anteriores era mezclar datos variables con
-estructura HTML estática en components.html(). Cada vez que cambian los datos,
-el hash del componente cambia → Streamlit destruye y recrea el iframe → parpadeo.
-
-SOLUCIÓN ARQUITECTURAL:
-  1. El iframe de gráficos es ESTÁTICO (su HTML nunca cambia).
-     Los datos llegan via postMessage desde Python→JS en cada ciclo.
-     Plotly.react() actualiza trazas in-place sin destruir canvas.
-
-  2. Las cards de personaje se renderizan en un iframe separado estático
-     que recibe datos via postMessage. Cero HTML escaping issues.
-
-  3. El selector de idioma usa st.radio() nativo con CSS que fuerza
-     font-family emoji en las opciones — solución probada que no depende
-     de iframe communication (que Streamlit bloquea via CSP).
-
-  4. postMessage funciona porque Streamlit permite comunicación
-     iframe→parent via window.addEventListener('message').
-     Un componente receptor minimalista escucha y actualiza query_params.
+Orquestador principal modularizado.
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import json
 from datetime import datetime, timedelta
 import time
 import tempfile
-import base64
 import os
 
 from core.session_tracker import MultiAccountTracker
 from core.file_watcher import EVELogWatcher
-from utils.formatters import format_isk, format_duration, format_inactivity
 from utils.demo_mode import DemoLogGenerator
-from utils.i18n import t, LANGUAGE_OPTIONS
-from utils.eve_api import resolve_characters_async, get_cached, is_character_id, resolve_character_name_only
+from utils.i18n import t
+from utils.eve_api import resolve_characters_async, get_cached, is_character_id
 
-# Overlay HUD (importación lazy — no falla si PyQt no está instalado)
+# Overlay HUD (importación lazy)
 try:
     from overlay.overlay_server import OverlayServer, build_overlay_payload
     _OVERLAY_AVAILABLE = True
 except ImportError:
     _OVERLAY_AVAILABLE = False
 
-# ─── Config ────────────────────────────────────────────────────────────────────
-
+# ─── Configuración Streamlit ──────────────────────────────────────────────────
 st.set_page_config(
     page_title="EVE ISK Tracker",
     page_icon="🚀",
@@ -63,11 +38,13 @@ from ui.dashboard.state import init_session_state
 from ui.dashboard.sidebar import render_sidebar
 from ui.dashboard.welcome import render_welcome
 from ui.dashboard.dashboard_view import render_dashboard_layout
+from ui.dashboard.components.charts import render_charts_iframe, send_chart_data
+from ui.dashboard.components.characters import render_chars_section
 
 # Aplicar Estilos Globales
 render_theme()
 
-# ─── Funciones de Lógica (Permanecen en app.py por ahora) ───────────────────────
+# ─── Funciones de Lógica de Negocio ───────────────────────────────────────────
 
 def start_tracker(log_dir: str, demo_mode: bool = False):
     if st.session_state.watcher:
@@ -81,7 +58,6 @@ def start_tracker(log_dir: str, demo_mode: bool = False):
     st.session_state.tracker = tracker
     st.session_state.session_start = datetime.now()
     st.session_state.char_resolved = set()
-    # Nuevo token → los iframes estáticos se recrean una sola vez al iniciar sesión
     st.session_state.chart_session_token += 1
 
     if demo_mode:
@@ -109,14 +85,12 @@ def start_tracker(log_dir: str, demo_mode: bool = False):
     st.session_state.initialized = True
     st.session_state.demo_mode = demo_mode
 
-    # Iniciar servidor overlay si disponible
     if _OVERLAY_AVAILABLE:
         if st.session_state.overlay_server:
             st.session_state.overlay_server.stop()
         srv = OverlayServer()
         srv.start()
         st.session_state.overlay_server = srv
-
 
 def reset_session():
     if st.session_state.tracker:
@@ -125,452 +99,27 @@ def reset_session():
     st.session_state.char_resolved = set()
     st.session_state.chart_session_token += 1
 
-
 def ensure_chars_resolved(char_ids: list[str]):
-    """Resuelve IDs en background."""
+    """Resuelve IDs en background mediante ESI."""
     from utils.eve_api import _failed_ids, RETRY_INTERVAL_SECS
     import time as _t
     pending = []
     for c in char_ids:
-        if not is_character_id(c):
-            continue
+        if not is_character_id(c): continue
         cached = get_cached(c)
-        if cached and cached.get('resolved'):
-            continue
-        import threading as _th
+        if cached and cached.get('resolved'): continue
         with __import__('utils.eve_api', fromlist=['_cache_lock'])._cache_lock:
             failed_ts = _failed_ids.get(c, 0)
-        if failed_ts and _t.time() - failed_ts < RETRY_INTERVAL_SECS:
-            continue
+        if failed_ts and _t.time() - failed_ts < RETRY_INTERVAL_SECS: continue
         pending.append(c)
     if pending:
         resolve_characters_async(pending)
 
-
-# ─── Gráficos: iframe estático + postMessage ──────────────────────────────────
-
-_CHARTS_IFRAME_HTML = """
-<html><head>
-<meta charset="UTF-8">
-<script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:transparent; overflow:hidden; }
-  #c1 { width:100%; height:310px; }
-  #c2 { width:100%; height:215px; margin-top:6px; }
-</style>
-</head><body>
-<div id="c1"></div>
-<div id="c2"></div>
-<script>
-const CFG = { displayModeBar: false, responsive: true };
-
-const L1 = {
-  paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,5,15,0.88)',
-  font:{ family:'Share Tech Mono,monospace', color:'#00c8ff', size:10 },
-  margin:{ l:50, r:14, t:34, b:38 },
-  xaxis:{ gridcolor:'rgba(0,100,180,0.12)', tickfont:{ size:9, color:'rgba(0,200,255,0.45)' } },
-  yaxis:{ gridcolor:'rgba(0,100,180,0.12)', tickfont:{ size:9, color:'rgba(0,200,255,0.45)' }, tickformat:'.3s' },
-  hovermode:'x unified',
-  legend:{ font:{ size:9 }, bgcolor:'rgba(0,0,0,0)' },
-  uirevision: 'c1'
-};
-const L2 = {
-  paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,5,15,0.88)',
-  font:{ family:'Share Tech Mono,monospace', color:'#00ff9d', size:9 },
-  margin:{ l:50, r:14, t:28, b:38 },
-  xaxis:{ gridcolor:'rgba(0,120,60,0.12)', tickfont:{ size:8, color:'rgba(0,255,157,0.4)' } },
-  yaxis:{ gridcolor:'rgba(0,120,60,0.12)', tickfont:{ size:8, color:'rgba(0,255,157,0.4)' }, tickformat:'.2s' },
-  showlegend: false,
-  uirevision: 'c2'
-};
-
-let init1 = false, init2 = false;
-
-function updateCharts(d) {
-  const t1 = [
-    { type:'scatter', mode:'lines', x:d.xm, y:d.ym,
-      fill:'tozeroy', fillcolor:'rgba(0,180,255,0.07)',
-      line:{ color:'#00c8ff', width:2, shape:'spline', smoothing:0.5 }, name:'ISK Total',
-      hovertemplate:'<b>%{y:,.0f} ISK</b><extra></extra>' },
-    { type:'scatter', mode:'markers', x:d.xm, y:d.ym,
-      marker:{ color:d.ye, colorscale:[['0','#003060'],['0.5','#0080ff'],['1','#00ff9d']], size:5, opacity:0.7 },
-      name:'Evento', customdata:d.ye,
-      hovertemplate:'<b>+%{customdata:,.0f} ISK</b><extra></extra>' }
-  ];
-  const lay1 = Object.assign({}, L1, {
-    title:{ text:d.ct, font:{ family:'Orbitron,monospace', size:11, color:'rgba(0,200,255,0.5)' }, x:0.5 }
-  });
-  init1 ? Plotly.react('c1', t1, lay1, CFG) : (Plotly.newPlot('c1', t1, lay1, CFG), init1=true);
-
-
-  const t2 = [
-    { type:'scatter', mode:'lines', x:d.xr, y:d.yr,
-      fill:'tozeroy', fillcolor:'rgba(0,255,157,0.06)',
-      line:{ color:'#00ff9d', width:1.5, shape:'spline', smoothing:0.7 },
-      hovertemplate:'<b>%{y:,.0f} ISK/h</b><extra></extra>' },
-
-  ];
-  const lay2 = Object.assign({}, L2, {
-    title:{ text:d.rt, font:{ family:'Orbitron,monospace', size:10, color:'rgba(0,255,157,0.5)' }, x:0.5 }
-  });
-  init2 ? Plotly.react('c2', t2, lay2, CFG) : (Plotly.newPlot('c2', t2, lay2, CFG), init2=true);
-}
-
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'chartData') updateCharts(e.data.payload);
-});
-</script>
-</body></html>
-"""
-
-def render_charts_iframe(token: int):
-    components.html(_CHARTS_IFRAME_HTML, height=545, scrolling=False)
-
-
-def send_chart_data(tracker: MultiAccountTracker, lang: str):
-    history = tracker.get_isk_history_for_chart()
-    window_minutes = st.session_state.get('chart_window_minutes', 0)
-    if window_minutes > 0 and history:
-        cutoff_ts = datetime.now() - timedelta(minutes=window_minutes)
-        history = [h for h in history if h['timestamp'] >= cutoff_ts]
-
-    if len(history) >= 2:
-        df = pd.DataFrame(history)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        xm = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S').tolist()
-        ym = df['total_isk'].tolist()
-        ye = df['event_isk'].tolist()
-    else:
-        xm, ym, ye = [], [], []
-
-    if len(history) >= 3:
-        recent = history[-120:]
-        dfr = pd.DataFrame(recent)
-        dfr['timestamp'] = pd.to_datetime(dfr['timestamp'])
-        dfr = dfr.sort_values('timestamp').reset_index(drop=True)
-        rolling = []
-        for _, row in dfr.iterrows():
-            cutoff = row['timestamp'] - timedelta(minutes=5)
-            window = dfr[dfr['timestamp'] >= cutoff]
-            w_isk = window['event_isk'].sum()
-            w_secs = max((row['timestamp'] - window['timestamp'].min()).total_seconds(), 60.0)
-            rolling.append((row['timestamp'].strftime('%Y-%m-%dT%H:%M:%S'), round((w_isk / w_secs) * 3600)))
-        xr = [r[0] for r in rolling]
-        yr = [r[1] for r in rolling]
-    else:
-        xr, yr = [], []
-
-    payload = {
-        'xm': xm, 'ym': ym, 'ye': ye,
-        'xr': xr, 'yr': yr,
-        'ct': t('chart_title', lang),
-        'rt': t('chart_rolling_title', lang),
-    }
-
-    msg_js = f"""
-    <script>
-    (function() {{
-      const frames = window.parent.document.querySelectorAll('iframe');
-      const payload = {json.dumps(payload)};
-      frames.forEach(function(f) {{
-        try {{
-          f.contentWindow.postMessage({{ type: 'chartData', payload: payload }}, '*');
-        }} catch(e) {{}}
-      }});
-    }})();
-    </script>
-    """
-    components.html(msg_js, height=0, scrolling=False)
-
-
-# ─── Cards de personaje ──────────────────────────────────────────────────────
-
-_CHARS_STATIC_HTML = """
-<html><head>
-<meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:transparent;font-family:'Share Tech Mono',monospace;padding:4px 2px;overflow:hidden}
-  .card{background:rgba(0,20,45,.75);border:1px solid rgba(0,180,255,.22);border-radius:8px;padding:12px 16px;margin-bottom:8px;transition:border-color .2s,opacity .3s}
-  .card:hover{border-color:rgba(0,180,255,.5)}
-  .card.idle{border-color:rgba(255,200,0,.25);opacity:.85}
-  .card.inactive{border-color:rgba(255,60,60,.25);opacity:.7}
-  .ch{display:flex;align-items:center;gap:12px;margin-bottom:10px}
-  .avl{flex-shrink:0;display:block;position:relative}
-  .av{width:52px;height:52px;border-radius:7px;border:1px solid rgba(0,180,255,.35);object-fit:cover;display:block;transition:border-color .2s}
-  .av:hover{border-color:#00c8ff}
-  .avp{width:52px;height:52px;border-radius:7px;border:1px solid rgba(0,180,255,.3);background:rgba(0,30,60,.9);display:flex;align-items:center;justify-content:center;font-size:1.5rem}
-  /* Semáforo: punto en esquina del avatar */
-  .dot{position:absolute;bottom:2px;right:2px;width:10px;height:10px;border-radius:50%;border:1.5px solid rgba(0,0,0,.6);transition:background .4s}
-  .dot.active{background:#00ff9d;box-shadow:0 0 6px #00ff9d}
-  .dot.idle{background:#ffd700;box-shadow:0 0 5px #ffd700}
-  .dot.inactive{background:#ff4444;box-shadow:0 0 5px #ff4444}
-  .ci{display:flex;flex-direction:column;gap:3px}
-  .cn{font-family:'Orbitron',monospace;color:#00c8ff;font-size:.82rem;font-weight:600;text-decoration:none;transition:color .15s}
-  .cn:hover{color:#00ff9d}
-  .badge{display:inline-block;font-size:.62rem;padding:1px 6px;border-radius:3px;margin-left:6px;vertical-align:middle;font-family:'Share Tech Mono',monospace}
-  .badge.active{background:rgba(0,255,157,.12);color:#00ff9d;border:1px solid rgba(0,255,157,.3)}
-  .badge.idle{background:rgba(255,215,0,.12);color:#ffd700;border:1px solid rgba(255,215,0,.3)}
-  .badge.inactive{background:rgba(255,60,60,.12);color:#ff8888;border:1px solid rgba(255,60,60,.3)}
-  .li{color:rgba(200,230,255,.4);font-size:.7rem}
-  .st{display:flex;gap:20px;flex-wrap:wrap}
-  .s{display:flex;flex-direction:column;gap:2px}
-  .sl{color:rgba(200,230,255,.45);font-size:.7rem}
-  .sv{font-size:.88rem;font-weight:bold}
-  .gold{color:#ffd700}.grn{color:#00ff9d}.blu{color:#88ccff}
-  .dim{color:rgba(200,230,255,.3)}
-  /* Countdown del siguiente tick */
-  .countdown{font-family:'Orbitron',monospace;font-size:1.1rem;font-weight:700;
-              letter-spacing:2px;color:#ffd700;text-shadow:0 0 8px rgba(255,215,0,0.5)}
-  .countdown.soon{color:#ff4444;text-shadow:0 0 8px rgba(255,80,80,0.6);animation:pulse 1s infinite}
-  .tick-row{display:flex;align-items:center;gap:12px;margin-top:8px;padding-top:8px;
-            border-top:1px solid rgba(0,180,255,0.1)}
-  .tick-label{color:rgba(200,230,255,.45);font-size:.7rem}
-  .tick-interval{color:rgba(200,230,255,.3);font-size:.65rem;margin-left:4px}
-  .wallet-row{display:flex;align-items:center;gap:8px;margin-top:4px}
-  .wallet-val{color:#00ff9d;font-size:.82rem;font-weight:bold}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-</style>
-</head><body>
-<div id="root"></div>
-<script>
-var _nodes = {};
-var _initialized = false;
-
-var STATUS_LABEL = { active: 'ACTIVO', idle: 'DETECTADO', inactive: 'INACTIVO' };
-
-function _makeCard(c) {
-  var zkill = 'https://zkillboard.com/character/' + c.id + '/';
-  var portrait = 'https://images.evetech.net/characters/' + c.id + '/portrait?size=64';
-  var card = document.createElement('div');
-  card.className = 'card';
-  card.id = 'card_' + c.id;
-
-  var avHtml = c.isNum
-    ? '<a href="' + zkill + '" target="_blank" class="avl"><img src="' + portrait + '" class="av" id="img_' + c.id + '" /><div class="dot" id="dot_' + c.id + '"></div></a>'
-    : '<a href="' + zkill + '" target="_blank" class="avl"><div class="avp">&#x1F464;</div><div class="dot" id="dot_' + c.id + '"></div></a>';
-
-  card.innerHTML = [
-    '<div class="ch">',
-      avHtml,
-      '<div class="ci">',
-        '<div style="display:flex;align-items:center;gap:4px">',
-          '<a href="' + zkill + '" target="_blank" class="cn">' + c.name + '</a>',
-          '<span class="badge" id="badge_' + c.id + '"></span>',
-        '</div>',
-        '<div class="li" id="li_' + c.id + '"></div>',
-      '</div>',
-    '</div>',
-    '<div class="st">',
-      '<div class="s"><div class="sl" id="lbl_total_' + c.id + '"></div><div class="sv gold" id="val_total_' + c.id + '"></div></div>',
-      '<div class="s"><div class="sl" id="lbl_roll_' + c.id + '"></div><div class="sv grn" id="val_roll_' + c.id + '"></div></div>',
-      '<div class="s"><div class="sl" id="lbl_sess_' + c.id + '"></div><div class="sv blu" id="val_sess_' + c.id + '"></div></div>',
-      '<div class="s"><div class="sl">ISK/min</div><div class="sv blu" id="val_min_' + c.id + '"></div></div>',
-      '<div class="s"><div class="sl" id="lbl_ev_' + c.id + '"></div><div class="sv" id="val_ev_' + c.id + '"></div></div>',
-      '<div class="s"><div class="sl" id="lbl_tk_' + c.id + '"></div><div class="sv" style="color:#ffa040" id="val_tk_' + c.id + '"></div></div>',
-    '</div>',
-    '<div class="tick-row">',
-      '<div class="tick-label">⏱ Próximo tick</div>',
-      '<div class="countdown" id="cd_' + c.id + '">--:--</div>',
-      '<div class="tick-interval" id="cd_int_' + c.id + '"></div>',
-    '</div>',
-    '<div class="wallet-row">',
-      '<div class="tick-label">💰 ISK acumulado</div>',
-      '<div class="wallet-val" id="wal_' + c.id + '">—</div>',
-    '</div>',
-  ].join('');
-
-  var img = card.querySelector('#img_' + c.id);
-  if (img) {
-    img.addEventListener('error', function() {
-      var ph = document.createElement('div');
-      ph.className = 'avp';
-      ph.innerHTML = '&#x1F464;';
-      var dot = img.nextSibling;
-      img.parentNode.replaceChild(ph, img);
-      ph.parentNode.appendChild(dot);
-    });
-  }
-  return card;
-}
-
-function _updateCard(c) {
-  var set = function(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; };
-  var cls = function(id, cn) { var el = document.getElementById(id); if (el) { el.className = el.className.replace(/ (active|idle|inactive)/g, ''); el.className += ' ' + cn; } };
-  var evClass = c.hasEvents ? (c.status === 'active' ? 'sv grn' : 'sv dim') : 'sv dim';
-
-  cls('dot_' + c.id, c.status);
-  var badge = document.getElementById('badge_' + c.id);
-  if (badge) {
-    badge.textContent = STATUS_LABEL[c.status] || c.status;
-    badge.className = 'badge ' + c.status;
-  }
-  var card = document.getElementById('card_' + c.id);
-  if (card) {
-    card.className = 'card';
-    if (c.status !== 'active') card.className += ' ' + c.status;
-  }
-
-  var liTxt = c.hasEvents
-    ? (c.lblLast + ': ' + c.lastEvent + (c.secsSinceEvent >= 0 ? ' (hace ' + c.secsSinceEvent + 's)' : ''))
-    : c.lblNoEvents;
-  set('li_' + c.id, liTxt);
-  set('lbl_total_' + c.id,  c.lblTotal);
-  set('val_total_' + c.id,  c.iskTotal);
-  set('lbl_roll_' + c.id,   c.lblRoll);
-  set('val_roll_' + c.id,   c.iskRoll + '/h');
-  set('lbl_sess_' + c.id,   c.lblSess);
-  set('val_sess_' + c.id,   c.iskSess + '/h');
-  set('val_min_' + c.id,    c.iskMin + '/min');
-  set('lbl_ev_' + c.id,     c.lblEv);
-  set('lbl_tk_' + c.id,     c.lblTicket || '🎫 Ticket 20m');
-  set('val_tk_' + c.id,     c.ticket20m || '—');
-  set('wal_' + c.id,        c.sessionIsk || '—');
-
-  var sus = parseInt(c.secsUntilNext);
-  var tis = parseInt(c.tickIntervalSecs);
-  if (!isNaN(sus) && sus > 0 && !isNaN(tis) && tis > 0) {
-    var targetMs = Date.now() + sus * 1000;
-    _tickTargets[c.id] = { target: targetMs, intervalMs: tis * 1000 };
-    var intMins = Math.round(tis / 60);
-    var intLabel = c.isEstimated ? '(~' + intMins + 'min est.)' : '(cada ' + intMins + 'min)';
-    set('cd_int_' + c.id, intLabel);
-  } else {
-    set('cd_' + c.id, '--:--');
-    set('cd_int_' + c.id, '');
-    delete _tickTargets[c.id];
-  }
-
-  var evEl = document.getElementById('val_ev_' + c.id);
-  if (evEl) { evEl.textContent = c.events; evEl.className = evClass; }
-}
-
-var _tickTargets = {};
-
-setInterval(function() {
-  var now = Date.now();
-  Object.keys(_tickTargets).forEach(function(cid) {
-    var td = _tickTargets[cid];
-    if (!td || typeof td !== 'object') { delete _tickTargets[cid]; return; }
-    var targetMs  = Number(td.target);
-    var intervalMs = Number(td.intervalMs);
-    if (isNaN(targetMs) || isNaN(intervalMs) || intervalMs <= 0) {
-      delete _tickTargets[cid];
-      var el = document.getElementById('cd_' + cid);
-      if (el) el.textContent = '--:--';
-      return;
-    }
-    var remaining = Math.max(0, Math.floor((targetMs - now) / 1000));
-    var mins = Math.floor(remaining / 60);
-    var secs = remaining % 60;
-    var str = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
-    var el = document.getElementById('cd_' + cid);
-    if (el) {
-      el.textContent = str;
-      el.className = remaining <= 60 ? 'countdown soon' : 'countdown';
-    }
-    if (now >= targetMs) {
-      td.target = targetMs + intervalMs;
-      _tickTargets[cid] = td;
-    }
-  });
-}, 1000);
-
-function handleCharData(chars) {
-  var root = document.getElementById('root');
-  var incomingIds = chars.map(function(c) { return c.id; });
-  chars.forEach(function(c) {
-    if (!_nodes[c.id]) {
-      var card = _makeCard(c);
-      root.appendChild(card);
-      _nodes[c.id] = card;
-    }
-    _updateCard(c);
-  });
-  Object.keys(_nodes).forEach(function(id) {
-    _nodes[id].style.display = incomingIds.indexOf(id) >= 0 ? '' : 'none';
-  });
-}
-
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'charUpdate') handleCharData(e.data.chars);
-});
-</script>
-</body></html>
-"""
-
-def send_chars_data(chars_data: list[dict], lang: str):
-    chars_payload = []
-    for cd in chars_data:
-        cid       = cd['character']
-        esi       = get_cached(cid)
-        if esi is None and is_character_id(cid):
-            esi = get_cached(cid)
-        if esi and esi.get('resolved') and esi.get('name'):
-            name = esi['name']
-        elif cd['display_name'] and cd['display_name'] != cid:
-            name = cd['display_name']
-        else:
-            name = cid
-        has_events = cd.get('has_events', cd['event_count'] > 0)
-        status    = cd.get('status', 'idle')
-        chars_payload.append({
-            'id':         cid,
-            'name':       name,
-            'isNum':      is_character_id(cid),
-            'status':     status,
-            'hasEvents':  has_events,
-            'iskTotal':   format_isk(cd['total_isk'], short=True),
-            'iskRoll':    format_isk(cd['isk_per_hour'], short=True),
-            'iskSess':    format_isk(cd['isk_per_hour_session'], short=True),
-            'iskMin':     format_isk(cd['isk_per_minute'], short=True),
-            'events':     f"{cd['event_count']:,}",
-            'lastEvent':  cd['last_event'].strftime('%H:%M:%S') if cd['last_event'] else '—',
-            'lblLast':    t('last_income', lang),
-            'lblNoEvents': 'Esperando primer bounty...' if lang == 'es' else 'Waiting for first bounty...',
-            'lblTotal':   t('isk_total', lang),
-            'lblRoll':    f"{t('isk_h', lang)} rolling",
-            'lblSess':    f"{t('isk_h', lang)} sesion",
-            'lblEv':      t('events', lang),
-            'ticket20m':  format_isk(cd['isk_per_hour'] / 3, short=True),
-            'lblTicket':  '🎫 Ticket 20m',
-            'tickCount':    cd['tick_info']['tick_count'],
-            'nextTickEpoch':    0,
-            'secsUntilNext':    cd['tick_info']['secs_until_next']
-                                if cd['tick_info']['secs_until_next'] >= 0 else 0,
-            'tickIntervalSecs': cd['tick_info']['interval_secs'] or 0,
-            'isEstimated':      cd['tick_info'].get('is_estimated', False),
-            'countdownStr':     cd['tick_info']['countdown_str'],
-            'sessionIsk':   format_isk(cd['session_isk'], short=True),
-            'lblWallet':    '💰 ISK sesión',
-        })
-
-    msg_js = f"""<script>
-(function() {{
-  var chars = {json.dumps(chars_payload)};
-  var frames = window.parent.document.querySelectorAll('iframe');
-  frames.forEach(function(f) {{
-    try {{ f.contentWindow.postMessage({{ type: 'charUpdate', chars: chars }}, '*'); }}
-    catch(e) {{}}
-  }});
-}})();
-</script>"""
-    components.html(msg_js, height=0, scrolling=False)
-
-
-def render_chars_section(chars_data: list[dict], lang: str):
-    n = len(chars_data)
-    card_h = max(n * 185 + 20, 185)
-    components.html(_CHARS_STATIC_HTML, height=card_h, scrolling=False)
-    send_chars_data(chars_data, lang)
-
-
-# ─── Main ──────────────────────────────────────────────────────────────────────
+# ─── Helpers de UI ───────────────────────────────────────────────────────────
 
 def render_gear_button():
-    """Botón ⚙️ siempre visible para toggle del sidebar."""
+    """Botón de configuración flotante."""
+    import streamlit.components.v1 as components
     components.html("""
     <style>
       #gb{position:fixed;top:14px;left:14px;z-index:999999;width:38px;height:38px;
@@ -585,12 +134,7 @@ def render_gear_button():
     <script>
     function tgl(){
       var p=window.parent.document;
-      var sels=['[data-testid="collapsedControl"] button',
-                '[data-testid="stSidebarCollapsedControl"] button',
-                'button[aria-label="Open sidebar"]',
-                'button[aria-label="Close sidebar"]',
-                'button[aria-label="Abrir barra lateral"]',
-                'button[aria-label="Cerrar barra lateral"]'];
+      var sels=['[data-testid="collapsedControl"] button', 'button[aria-label="Open sidebar"]', 'button[aria-label="Close sidebar"]'];
       for(var i=0;i<sels.length;i++){var b=p.querySelector(sels[i]);if(b){b.click();return;}}
       var btns=p.querySelectorAll('button');
       for(var j=0;j<btns.length;j++){
@@ -601,12 +145,13 @@ def render_gear_button():
     </script>
     """, height=0, scrolling=False)
 
+# ─── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     init_session_state()
     render_gear_button()
     
-    # Orquestación de la UI modularizada
+    # Renderizado Modular
     render_sidebar(
         start_tracker_func=start_tracker,
         reset_session_func=reset_session,
@@ -623,17 +168,15 @@ def main():
         render_chars_func=render_chars_section
     )
 
+    # Bucle de actualización (Rerun)
     if st.session_state.initialized and st.session_state.tracker:
         if _OVERLAY_AVAILABLE and st.session_state.overlay_server:
             try:
                 payload = build_overlay_payload(st.session_state.tracker)
                 st.session_state.overlay_server.push(payload)
-            except Exception:
-                pass
+            except Exception: pass
         time.sleep(1.5)
         st.rerun()
 
-
 if __name__ == "__main__":
     main()
-
