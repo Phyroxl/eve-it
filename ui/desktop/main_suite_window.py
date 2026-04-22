@@ -16,7 +16,7 @@ from utils.formatters import format_isk
 class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
-        print("DEBUG: Finalizando Suite Elite...")
+        print("DEBUG: Restaurando Integridad Funcional Elite...")
         self.controller = controller
         self.tray_manager = None
         self.setWindowTitle("EVE iT — Desktop Suite Premium")
@@ -25,13 +25,20 @@ class MainSuiteWindow(QMainWindow):
         self.account_cards = {}
         self.current_character = None 
         
+        # Refs para persistencia
+        self.edit_log_dir = None
+        self.check_skip_logs = None
+        self.check_blur = None
+        self.check_hide_hud = None
+        self.combo_translator_lang = None
+        
         try:
             self.setup_ui()
             self.apply_styles()
-            print("DEBUG: UI Elite cargada con éxito.")
+            print("DEBUG: UI Elite Restaurada.")
         except Exception as e:
             import traceback
-            print(f"ERROR CRÍTICO: {e}"); traceback.print_exc()
+            print(f"ERROR: {e}"); traceback.print_exc()
 
         self.load_settings()
         self.restore_geometry()
@@ -129,7 +136,7 @@ class MainSuiteWindow(QMainWindow):
         self.detail_meta = QLabel("SISTEMA DE ANÁLISIS VIVIDO — EVE iT ALPHA"); self.detail_meta.setStyleSheet("color: rgba(255,255,255,0.2); font-family: 'Share Tech Mono'; font-size: 11px;")
         v.addWidget(self.detail_name); v.addWidget(self.detail_status); v.addWidget(self.detail_meta); h.addWidget(self.detail_avatar); h.addLayout(v); h.addStretch(); c_l.addLayout(h)
         
-        # Impact Metrics (High Priority)
+        # Impact Metrics
         impact = QHBoxLayout(); impact.setSpacing(25)
         self.box_wallet = self.create_impact_box("WALLET ACUMULADA", "0.00 ISK", "#ffd700")
         self.box_1h = self.create_impact_box("RENDIMIENTO ACTUAL", "0.00 ISK/h", "#00ff9d")
@@ -148,7 +155,7 @@ class MainSuiteWindow(QMainWindow):
         matrix.addWidget(self.box_24h_proj, 1, 0); matrix.addWidget(self.box_events_count, 1, 1)
         c_l.addLayout(matrix)
         
-        # PI & Activity
+        # Bottom Split
         bottom = QHBoxLayout(); bottom.setSpacing(25)
         
         # Planetology
@@ -188,23 +195,18 @@ class MainSuiteWindow(QMainWindow):
         self.detail_name.setText(name.upper()); self.detail_avatar.setText(name[0].upper())
         self.detail_status.setText("● SISTEMA ACTIVO" if acc.get('status') == 'active' else "○ EN ESPERA")
         
-        # Primary
         self.box_wallet.findChild(QLabel).setText(format_isk(acc.get('total_isk', 0), short=True))
         self.box_1h.findChild(QLabel).setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
-        
-        # Matrix
         self.box_session_avg.findChild(QLabel, "AnalyticVal").setText(format_isk(acc.get('isk_per_hour_session', 0), short=True) + "/h")
-        # Peak: Simplified as highest event found in this session
+        
         events = acc.get('events', [])
         peak = max([e['isk'] for e in events]) if events else 0
         self.box_session_peak.findChild(QLabel, "AnalyticVal").setText(format_isk(peak, short=True))
         self.box_events_count.findChild(QLabel, "AnalyticVal").setText(str(len(events)))
         
-        # Projection (24h)
         proj_24h = acc.get('isk_per_hour', 0) * 24
         self.box_24h_proj.findChild(QLabel, "AnalyticVal").setText(format_isk(proj_24h, short=True))
         
-        # Feed
         self.activity_feed.clear()
         if not events:
             self.activity_feed.hide(); self.activity_empty.show()
@@ -212,7 +214,7 @@ class MainSuiteWindow(QMainWindow):
             self.activity_empty.hide(); self.activity_feed.show()
             for ev in reversed(events[-15:]):
                 ts = ev['timestamp']; ts_str = ts.strftime('%H:%M:%S') if isinstance(ts, datetime) else ts[11:19]
-                self.activity_feed.addItem(f"[{ts_str}] RECOMPENSA DETECTADA: +{format_isk(ev['isk'], short=True)}")
+                self.activity_feed.addItem(f"[{ts_str}] RECOMPENSA: +{format_isk(ev['isk'], short=True)}")
 
     def create_tools_page(self):
         p = QWidget(); l = QVBoxLayout(p); g = QGridLayout(); g.setSpacing(25)
@@ -242,16 +244,20 @@ class MainSuiteWindow(QMainWindow):
         
         # HUD Appearance
         g2, l2 = self.create_settings_group("HUD & APARIENCIA", "Personalización de la interfaz en juego.")
-        l2.addWidget(QCheckBox("HABILITAR DESENFOQUE (BLUR) PROFUNDO")); l2.addWidget(QCheckBox("AUTO-OCULTAR HUD SIN ACTIVIDAD")); l2.addWidget(QCheckBox("MOSTRAR NOMBRES DE PERSONAJES"))
+        self.check_blur = QCheckBox("HABILITAR DESENFOQUE (BLUR) PROFUNDO"); l2.addWidget(self.check_blur)
+        self.check_hide_hud = QCheckBox("AUTO-OCULTAR HUD SIN ACTIVIDAD"); l2.addWidget(self.check_hide_hud)
         c_l.addWidget(g2)
         
         # Tools & Automation
         g3, l3 = self.create_settings_group("HERRAMIENTAS & AUTOMATIZACIÓN", "Ajustes de traducción y replicación.")
-        l3.addWidget(QLabel("IDIOMA DESTINO (TRADUCTOR):")); cb = QComboBox(); cb.addItems(["ESPAÑOL", "ENGLISH", "DEUTSCH"]); l3.addWidget(cb)
+        l3.addWidget(QLabel("IDIOMA DESTINO (TRADUCTOR):"))
+        self.combo_translator_lang = QComboBox()
+        self.combo_translator_lang.addItems(["ESPAÑOL", "ENGLISH", "DEUTSCH", "FRANÇAIS", "RUSSIAN"])
+        l3.addWidget(self.combo_translator_lang)
         c_l.addWidget(g3)
         
         c_l.addStretch()
-        save = QPushButton("APLICAR CONFIGURACIÓN ELITE"); save.setObjectName("SaveButton"); save.clicked.connect(self.save_settings); c_l.addWidget(save)
+        save = QPushButton("GUARDAR Y SINCRONIZAR SUITE"); save.setObjectName("SaveButton"); save.clicked.connect(self.save_settings); c_l.addWidget(save)
         scroll.setWidget(cont); l.addWidget(scroll); return p
 
     def create_settings_group(self, title, subtitle):
@@ -293,12 +299,26 @@ class MainSuiteWindow(QMainWindow):
         if self.tray_manager: self.tray_manager._on_replicator()
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
+
     def load_settings(self):
-        s = QSettings("EVE_iT", "Suite"); self.edit_log_dir.setText(s.value("log_dir", ""))
-        self.check_skip_logs.setChecked(s.value("skip_logs", "true") == "true")
+        s = QSettings("EVE_iT", "Suite")
+        if self.edit_log_dir: self.edit_log_dir.setText(s.value("log_dir", ""))
+        if self.check_skip_logs: self.check_skip_logs.setChecked(s.value("skip_logs", "true") == "true")
+        if self.check_blur: self.check_blur.setChecked(s.value("enable_blur", "false") == "true")
+        if self.check_hide_hud: self.check_hide_hud.setChecked(s.value("auto_hide_hud", "false") == "true")
+        if self.combo_translator_lang:
+            idx = self.combo_translator_lang.findText(s.value("translator_lang", "ESPAÑOL"))
+            if idx >= 0: self.combo_translator_lang.setCurrentIndex(idx)
+
     def save_settings(self):
-        s = QSettings("EVE_iT", "Suite"); s.setValue("log_dir", self.edit_log_dir.text()); s.setValue("skip_logs", "true" if self.check_skip_logs.isChecked() else "false")
-        self.section_title.setText("CONFIGURACIÓN APLICADA"); QTimer.singleShot(2000, lambda: self.section_title.setText("CONFIGURACIÓN"))
+        s = QSettings("EVE_iT", "Suite")
+        if self.edit_log_dir: s.setValue("log_dir", self.edit_log_dir.text())
+        if self.check_skip_logs: s.setValue("skip_logs", "true" if self.check_skip_logs.isChecked() else "false")
+        if self.check_blur: s.setValue("enable_blur", "true" if self.check_blur.isChecked() else "false")
+        if self.check_hide_hud: s.setValue("auto_hide_hud", "true" if self.check_hide_hud.isChecked() else "false")
+        if self.combo_translator_lang: s.setValue("translator_lang", self.combo_translator_lang.currentText())
+        self.section_title.setText("SISTEMA ACTUALIZADO"); QTimer.singleShot(2000, lambda: self.section_title.setText("CONFIGURACIÓN"))
+
     def closeEvent(self, event):
         try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
         except: pass
