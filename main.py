@@ -353,9 +353,25 @@ def main():
 
 def _auto_start(controller, tray, ctrl_win, log):
     """Acciones automáticas al arrancar."""
-    log.info("Auto-start: iniciando tracker de logs")
-    controller.start_tracker()
-    # Mostrar la ventana de control al arrancar
+    log.info("Auto-start: cargando configuración y arrancando tracker")
+    
+    try:
+        from PySide6.QtCore import QSettings
+        settings = QSettings("EVE_iT", "Suite")
+        log_dir = settings.value("log_dir", "")
+        skip_logs = settings.value("skip_logs", "true") == "true"
+        ess = float(settings.value("ess_retention", 1.0))
+        
+        controller.start_tracker(
+            log_dir=log_dir,
+            skip_existing=skip_logs,
+            ess_retention=ess
+        )
+    except Exception as e:
+        log.error(f"Error en auto-start loading settings: {e}")
+        controller.start_tracker()
+
+    # Mostrar la ventana de control al arrancar (ventana clásica por ahora)
     ctrl_win.show()
 
 

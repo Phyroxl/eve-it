@@ -109,4 +109,73 @@ QLabel#ToolDesc {
     color: rgba(200, 230, 255, 0.5);
     font-size: 12px;
 }
+/* Input Controls (Settings) */
+QLineEdit, QDoubleSpinBox, QComboBox {
+    background-color: rgba(0, 180, 255, 0.03);
+    border: 1px solid rgba(0, 180, 255, 0.15);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: #ffffff;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+}
+
+QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border-color: rgba(0, 180, 255, 0.5);
+    background-color: rgba(0, 180, 255, 0.08);
+}
+
+QCheckBox {
+    color: rgba(200, 230, 255, 0.8);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    background-color: rgba(0, 180, 255, 0.05);
+    border: 1px solid rgba(0, 180, 255, 0.2);
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #00c8ff;
+    border-color: #00c8ff;
+}
+
+QComboBox::drop-down {
+    border: none;
+    background: transparent;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #060e1a;
+    border: 1px solid rgba(0, 180, 255, 0.2);
+    color: #ffffff;
+    selection-background-color: rgba(0, 180, 255, 0.2);
+}
+
+QLabel#SettingsLabel {
+    color: rgba(0, 180, 255, 0.8);
+    font-family: 'Share Tech Mono';
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+QPushButton#SaveButton {
+    background-color: rgba(0, 255, 157, 0.1);
+    border: 1px solid rgba(0, 255, 157, 0.3);
+    color: #00ff9d;
+    font-family: 'Orbitron';
+    font-size: 12px;
+    font-weight: bold;
+    padding: 10px 20px;
+    border-radius: 5px;
+}
+
+QPushButton#SaveButton:hover {
+    background-color: rgba(0, 255, 157, 0.2);
+    border-color: #00ff9d;
+}
 """

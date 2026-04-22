@@ -1,10 +1,10 @@
-import sys
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QFrame, QLabel, QPushButton, QStackedWidget,
-    QGraphicsDropShadowEffect, QSizeGrip, QScrollArea, QGridLayout
+    QGraphicsDropShadowEffect, QSizeGrip, QScrollArea, QGridLayout,
+    QLineEdit, QCheckBox, QDoubleSpinBox, QComboBox, QFileDialog
 )
-from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QSettings
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient
 
 from ui.desktop.styles import MAIN_STYLE
@@ -24,8 +24,15 @@ class MainSuiteWindow(QMainWindow):
         self.accounts_layout = None
         self.account_cards = {} # {char_name: card_widget}
         
+        # Settings UI Refs
+        self.edit_log_dir = None
+        self.check_skip_logs = None
+        self.spin_ess_retention = None
+        self.combo_lang = None
+        
         self.setup_ui()
         self.apply_styles()
+        self.load_settings()
         
         # Timer for real-time updates
         self.update_timer = QTimer(self)
@@ -132,16 +139,19 @@ class MainSuiteWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.content_layout.addWidget(self.stack)
         
-        # Page: Dashboard
+        # Pages
         self.page_dashboard = self.create_dashboard_page()
+        self.page_settings = self.create_settings_page()
         self.stack.addWidget(self.page_dashboard)
+        self.stack.addWidget(self.page_settings)
         
         # Add NavBar and Content to Main Layout
         self.main_layout.addWidget(self.nav_bar)
         self.main_layout.addWidget(self.content_frame, 1)
 
         # Connect Signals
-        self.btn_dashboard.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        self.btn_dashboard.clicked.connect(self._on_nav_dashboard)
+        self.btn_settings.clicked.connect(self._on_nav_settings)
         self.btn_hud.clicked.connect(self._on_hud_clicked)
         self.btn_translator.clicked.connect(self._on_translator_clicked)
         self.btn_replicator.clicked.connect(self._on_replicator_clicked)
@@ -149,6 +159,21 @@ class MainSuiteWindow(QMainWindow):
         self.btn_start.clicked.connect(self._on_start_clicked)
         self.btn_stop.clicked.connect(self._on_stop_clicked)
         self.btn_reset.clicked.connect(self._on_reset_clicked)
+
+    def _on_nav_dashboard(self):
+        self.stack.setCurrentIndex(0)
+        self.section_title.setText("PANEL DE CONTROL")
+        self._update_nav_active(self.btn_dashboard)
+
+    def _on_nav_settings(self):
+        self.stack.setCurrentIndex(1)
+        self.section_title.setText("AJUSTES")
+        self._update_nav_active(self.btn_settings)
+
+    def _update_nav_active(self, active_btn):
+        for btn in [self.btn_dashboard, self.btn_hud, self.btn_translator, self.btn_replicator, self.btn_settings]:
+            btn.setProperty("active", "true" if btn == active_btn else "false")
+            btn.setStyle(btn.style()) # Trigger restyle
 
     def create_control_button(self, text, color):
         btn = QPushButton(text)
@@ -241,7 +266,16 @@ class MainSuiteWindow(QMainWindow):
 
     def _on_start_clicked(self):
         if self.controller:
-            self.controller.start_tracker()
+            settings = QSettings("EVE_iT", "Suite")
+            log_dir = settings.value("log_dir", "")
+            skip_logs = settings.value("skip_logs", "true") == "true"
+            ess = float(settings.value("ess_retention", 1.0))
+            
+            self.controller.start_tracker(
+                log_dir=log_dir,
+                skip_existing=skip_logs,
+                ess_retention=ess
+            )
 
     def _on_stop_clicked(self):
         if self.controller:
@@ -383,6 +417,139 @@ class MainSuiteWindow(QMainWindow):
                     _tray_manager_ref._on_replicator()
             except Exception as e:
                 print(f"Error lanzando replicador desde Suite: {e}")
+
+    def create_settings_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(25)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+        
+        container = QWidget()
+        container_lay = QVBoxLayout(container)
+        container_lay.setContentsMargins(0, 0, 0, 0)
+        container_lay.setSpacing(30)
+        
+        # Section 1: Tracker Settings
+        tracker_group = self.create_settings_group("TRACKER DE LOGS", "Configuración del motor de lectura de EVE Online.")
+        t_lay = QVBoxLayout(tracker_group)
+        
+        # Log Directory
+        t_lay.addWidget(QLabel("DIRECTORIO DE LOGS DE EVE", objectName="SettingsLabel"))
+        path_lay = QHBoxLayout()
+        self.edit_log_dir = QLineEdit()
+        self.edit_log_dir.setPlaceholderText("Dejar vacío para detección automática...")
+        btn_browse = QPushButton("EXAMINAR")
+        btn_browse.setStyleSheet("padding: 6px 15px; font-size: 10px; background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3);")
+        btn_browse.clicked.connect(self._on_browse_logs)
+        path_lay.addWidget(self.edit_log_dir)
+        path_lay.addWidget(btn_browse)
+        t_lay.addLayout(path_lay)
+        
+        t_lay.addSpacing(10)
+        
+        # Skip Logs Checkbox
+        self.check_skip_logs = QCheckBox("Ignorar logs antiguos al arrancar (Recomendado)")
+        t_lay.addWidget(self.check_skip_logs)
+        
+        t_lay.addSpacing(10)
+        
+        # ESS Retention
+        t_lay.addWidget(QLabel("FACTOR DE RETENCIÓN ESS (0.0 - 1.0)", objectName="SettingsLabel"))
+        self.spin_ess_retention = QDoubleSpinBox()
+        self.spin_ess_retention.setRange(0.0, 1.0)
+        self.spin_ess_retention.setSingleStep(0.05)
+        self.spin_ess_retention.setValue(1.0)
+        t_lay.addWidget(self.spin_ess_retention)
+        
+        container_lay.addWidget(tracker_group)
+        
+        # Section 2: General Settings
+        gen_group = self.create_settings_group("GENERAL", "Preferencias globales de la aplicación.")
+        g_lay = QVBoxLayout(gen_group)
+        
+        g_lay.addWidget(QLabel("IDIOMA DE LA INTERFAZ", objectName="SettingsLabel"))
+        self.combo_lang = QComboBox()
+        self.combo_lang.addItems(["Español", "English", "Deutsch", "Français", "Русский", "中文"])
+        g_lay.addWidget(self.combo_lang)
+        
+        container_lay.addWidget(gen_group)
+        
+        container_lay.addStretch()
+        
+        # Save Button
+        btn_save = QPushButton("GUARDAR Y APLICAR CAMBIOS", objectName="SaveButton")
+        btn_save.setCursor(Qt.PointingHandCursor)
+        btn_save.clicked.connect(self.save_settings)
+        container_lay.addWidget(btn_save)
+        
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+        
+        return page
+
+    def create_settings_group(self, title, subtitle):
+        group = QFrame()
+        group.setStyleSheet("background: rgba(0, 20, 45, 0.3); border: 1px solid rgba(0, 180, 255, 0.1); border-radius: 8px; padding: 20px;")
+        l = QVBoxLayout(group)
+        
+        t = QLabel(title)
+        t.setStyleSheet("font-family: 'Orbitron'; font-size: 14px; color: #00c8ff; font-weight: bold; border: none;")
+        
+        s = QLabel(subtitle)
+        s.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 10px; color: rgba(200,230,255,0.4); border: none; margin-bottom: 10px;")
+        
+        l.addWidget(t)
+        l.addWidget(s)
+        return group
+
+    def _on_browse_logs(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Seleccionar Directorio de Logs de EVE")
+        if dir_path:
+            self.edit_log_dir.setText(dir_path)
+
+    def load_settings(self):
+        settings = QSettings("EVE_iT", "Suite")
+        self.edit_log_dir.setText(settings.value("log_dir", ""))
+        self.check_skip_logs.setChecked(settings.value("skip_logs", "true") == "true")
+        self.spin_ess_retention.setValue(float(settings.value("ess_retention", 1.0)))
+        
+        lang_idx = ["es", "en", "de", "fr", "ru", "zh"].index(settings.value("language", "es"))
+        self.combo_lang.setCurrentIndex(lang_idx)
+
+    def save_settings(self):
+        settings = QSettings("EVE_iT", "Suite")
+        log_dir = self.edit_log_dir.text()
+        skip_logs = self.check_skip_logs.isChecked()
+        ess = self.spin_ess_retention.value()
+        
+        langs = ["es", "en", "de", "fr", "ru", "zh"]
+        lang = langs[self.combo_lang.currentIndex()]
+        
+        settings.setValue("log_dir", log_dir)
+        settings.setValue("skip_logs", "true" if skip_logs else "false")
+        settings.setValue("ess_retention", ess)
+        settings.setValue("language", lang)
+        
+        # Apply language
+        if self.controller:
+            self.controller.state.update(language=lang)
+            
+        # Restart tracker if running
+        if self.controller and self.controller.state.tracker_running:
+            self.controller.start_tracker(
+                log_dir=log_dir,
+                skip_existing=skip_logs,
+                ess_retention=ess
+            )
+            
+        # UI Feedback
+        self.section_title.setText("AJUSTES GUARDADOS")
+        QTimer.singleShot(2000, lambda: self.section_title.setText("AJUSTES"))
 
     def create_nav_button(self, text, active=False):
         btn = QPushButton(text)
