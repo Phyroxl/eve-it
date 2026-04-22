@@ -1,45 +1,111 @@
-import os
-import sys
-import logging
-from pathlib import Path
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
+"""
+main.py — Punto de entrada único de EVE ISK Tracker.
+"""
 
-from controller.app_controller import AppController
-from controller.tray_manager import TrayManager
-from controller.control_window import ControlWindow
-from ui.desktop.main_suite_window import MainSuiteWindow
+from __future__ import annotations
+import logging
+import logging.handlers
+import os
+import socket
+import threading
+import sys
+from pathlib import Path
+
+# -- DPI Awareness --
+if os.name == 'nt':
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+# -- Redirección para pythonw (Headless) --
+if sys.executable.endswith("pythonw.exe"):
+    try:
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+    except: pass
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+APP_DATA = Path(os.environ.get('APPDATA', Path.home())) / 'EVEISKTracker'
+APP_DATA.mkdir(parents=True, exist_ok=True)
 
 def setup_logging():
-    log_dir = Path(os.environ.get('APPDATA', '')) / 'EVEISKTracker'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'eve_isk_tracker.log'
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-    return logging.getLogger('eve')
+    log_file = APP_DATA / 'eve_isk_tracker.log'
+    fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s — %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    try:
+        fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except: pass
+    return logging.getLogger('eve.main')
+
+SINGLETON_PORT = 47288
+class SingletonLock:
+    def __init__(self): self._sock = None
+    def acquire(self) -> bool:
+        try:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+            self._sock.bind(('127.0.0.1', SINGLETON_PORT))
+            self._sock.listen(1)
+            t = threading.Thread(target=self._listen, daemon=True)
+            t.start()
+            return True
+        except: return False
+    def _listen(self):
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+                data = conn.recv(64).decode('utf-8', errors='ignore').strip()
+                if data == 'FOCUS': _signal_focus()
+                conn.close()
+            except: break
+    def signal_existing(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1.0)
+            s.connect(('127.0.0.1', SINGLETON_PORT)); s.send(b'FOCUS\n'); s.close()
+        except: pass
+    def release(self):
+        if self._sock: self._sock.close()
+
+_suite_window_ref = None
+
+def _signal_focus():
+    global _suite_window_ref
+    if _suite_window_ref:
+        try:
+            _suite_window_ref.showNormal()
+            _suite_window_ref.show()
+            _suite_window_ref.raise_()
+            _suite_window_ref.activateWindow()
+        except: pass
 
 def main():
-    log = setup_logging()
-    log.info("--- INICIO DE APLICACIÓN (MODO ESTÁNDAR) ---")
-    
-    # Singleton check simple
-    import socket
-    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        lock.bind(('127.0.0.1', 47288))
-    except:
-        log.warning("Ya existe una instancia de EVE iT ejecutándose.")
+    lock = SingletonLock()
+    if not lock.acquire():
+        lock.signal_existing()
         sys.exit(0)
 
+    log = setup_logging()
+    log.info("--- INICIANDO EVE iT ELITE ---")
+
+    from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    from controller.app_controller import AppController
+    from controller.tray_manager import TrayManager
+    from controller.control_window import ControlWindow
+    from ui.desktop.main_suite_window import MainSuiteWindow
 
     controller = AppController()
     tray = TrayManager(app, controller)
@@ -85,11 +151,9 @@ def _auto_start(controller, tray, suite_win, ctrl_win, log):
         log.info(f"Auto-start: Configurando log_dir: {saved_log_dir}")
         controller.set_log_directory(saved_log_dir)
         
-        # Cargar retención si existe (restaurado quirúrgicamente)
-        try:
-            retention = float(s.value("ess_retention", 1.0))
-            controller.set_ess_retention(retention)
-        except: pass
+        # Cargar retención si existe
+        retention = float(s.value("ess_retention", 1.0))
+        controller.set_ess_retention(retention)
     
     # 2. Iniciar Tracker si hay dir
     if controller.log_directory:
@@ -98,10 +162,7 @@ def _auto_start(controller, tray, suite_win, ctrl_win, log):
         controller.start_tracker(skip_existing=skip)
 
 def _on_sigint(controller, app, lock):
-    logging.info("SIGINT recibido. Cerrando...")
-    controller.shutdown()
-    lock.release()
-    app.quit()
+    controller.shutdown(); lock.release(); app.quit()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -317,6 +317,7 @@ class MultiAccountTracker:
                 'has_events': len(s.events) > 0,
                 'tick_info': s.get_tick_info(now),
                 'session_isk': s.total_isk,  # wallet de sesión
+                'events': s.events[-20:], # Últimos 20 eventos para el feed
             })
 
         # Ordenar: primero activos con más ISK, luego idle, luego inactivos

@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QTimer, QSettings
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient, QPixmap
 import sys
-import logging
 from datetime import datetime, timedelta
 
 from ui.desktop.styles import MAIN_STYLE
@@ -17,12 +16,13 @@ from utils.formatters import format_isk
 class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
+        import logging
         self.diag_log = logging.getLogger('eve.suite.diag')
         self.diag_log.info("DIAG: Instanciando MainSuiteWindow...")
         
         self.controller = controller
         self.tray_manager = None
-        self.setWindowTitle("EVE iT — Tactical Command Suite")
+        self.setWindowTitle("EVE iT — Desktop Suite Premium")
         self.resize(1100, 800)
         
         self.account_cards = {}
@@ -40,7 +40,7 @@ class MainSuiteWindow(QMainWindow):
             self.apply_styles()
         except Exception as e:
             import traceback
-            self.diag_log.error(f"DIAG: Error en setup_ui: {e}\n{traceback.format_exc()}")
+            print(f"ERROR: {e}"); traceback.print_exc()
 
         self.load_settings()
         self.restore_geometry()
@@ -171,7 +171,7 @@ class MainSuiteWindow(QMainWindow):
         pi_l = QVBoxLayout(pi_frame); pi_l.setContentsMargins(25,25,25,25)
         pi_t = QLabel("PLANETOLOGÍA (PI)"); pi_t.setStyleSheet("font-family: 'Orbitron'; color: #00c8ff; font-weight: bold; font-size: 11px;")
         pi_s = QLabel("MODO: STANDBY — ESPERANDO ESI"); pi_s.setObjectName("PISubtitle")
-        pi_desc = QLabel("Módulo táctico en espera. Requiere sincronización con la API de EVE para monitorizar extractores y silos."); pi_desc.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-size: 10px; word-wrap: true; margin-top: 8px;")
+        pi_desc = QLabel("Módulo táctico en espera. Requiere sincronización con la API de EVE para monitorizar extractores y silos."); pi_desc.setStyleSheet("color: rgba(255,255,255,0.15); font-size: 10px; word-wrap: true; margin-top: 8px;")
         pi_l.addWidget(pi_t); pi_l.addWidget(pi_s); pi_l.addWidget(pi_desc); pi_l.addStretch(); bottom.addWidget(pi_frame, 1)
         
         # Activity Feed (Tactical Event Log)
@@ -184,10 +184,10 @@ class MainSuiteWindow(QMainWindow):
         c_l.addLayout(bottom); scroll.setWidget(cont); l.addWidget(scroll); return p
 
     def create_impact_box(self, label, value, color_hex):
-        b = QFrame(); b.setStyleSheet(f"background: #080808; border: 1px solid rgba(0, 180, 255, 0.15); border-radius: 4px; padding: 15px;")
+        b = QFrame(); b.setStyleSheet(f"background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 15px;")
         b.setMinimumHeight(110)
         l = QVBoxLayout(b)
-        l.addWidget(QLabel(label, styleSheet="color: rgba(0, 180, 255, 0.4); font-family: 'Share Tech Mono'; font-size: 9px;"))
+        l.addWidget(QLabel(label, styleSheet="color: rgba(255,255,255,0.25); font-family: 'Share Tech Mono'; font-size: 10px;"))
         v = QLabel(value); v.setObjectName("GlowValue" if color_hex == "#ffd700" else "GlowValueGreen")
         l.addWidget(v); return b
 
@@ -201,7 +201,7 @@ class MainSuiteWindow(QMainWindow):
         if not self.current_character: return
         acc = self.current_character; name = acc.get('display_name', acc.get('character'))
         self.detail_name.setText(name.upper()); self.detail_avatar.setText(name[0].upper())
-        self.detail_status.setText("SUBSYSTEM_LINK: STABLE" if acc.get('status') == 'active' else "SUBSYSTEM_LINK: IDLE")
+        self.detail_status.setText("● SENSORES ACTIVOS" if acc.get('status') == 'active' else "○ SISTEMA IDLE")
         
         self.box_wallet.findChild(QLabel).setText(format_isk(acc.get('total_isk', 0), short=True))
         self.box_1h.findChild(QLabel).setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
@@ -226,21 +226,27 @@ class MainSuiteWindow(QMainWindow):
 
     def create_tools_page(self):
         p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(0)
+        
+        # Wrapper centrado con ancho máximo real para cohesión
         wrapper = QWidget(); wrapper_l = QHBoxLayout(wrapper); wrapper_l.setContentsMargins(0, 20, 0, 0)
+        
         center_cont = QWidget(); center_cont.setMaximumWidth(750); center_l = QVBoxLayout(center_cont); center_l.setContentsMargins(0, 0, 0, 0)
         g = QGridLayout(); g.setSpacing(20); g.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
         g.addWidget(self.create_tool_card("HUD OVERLAY", "Control visual táctico en juego.", "🕹️", self._on_hud_clicked), 0, 0)
         g.addWidget(self.create_tool_card("TRADUCTOR", "Inteligencia lingüística para chats locales.", "🌐", self._on_translator_clicked), 0, 1)
         g.addWidget(self.create_tool_card("REPLICADOR", "Sincronización masiva de ventanas.", "🪟", self._on_replicator_clicked), 1, 0)
+        
         center_l.addLayout(g); center_l.addStretch()
-        wrapper_l.addWidget(center_cont); wrapper_l.addStretch()
+        wrapper_l.addWidget(center_cont); wrapper_l.addStretch() # Ancla el bloque a la izquierda-centro
+        
         l.addWidget(wrapper); return p
 
     def create_tool_card(self, title, desc, icon, callback):
         c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(340, 130); c.setCursor(Qt.PointingHandCursor)
         l = QHBoxLayout(c); l.setContentsMargins(20,20,20,20)
         ico = QLabel(icon); ico.setStyleSheet("font-size: 40px;"); l.addWidget(ico)
-        v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(0, 200, 255, 0.4); font-family: 'Share Tech Mono'; font-size: 10px; word-wrap: true;")
+        v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 10px; word-wrap: true;")
         v.addWidget(t); v.addWidget(d); l.addLayout(v); c.mousePressEvent = lambda e: callback(); return c
 
     def create_settings_page(self):
@@ -273,7 +279,7 @@ class MainSuiteWindow(QMainWindow):
     def create_settings_group(self, title, subtitle):
         g = QFrame(); g.setObjectName("SettingsGroup"); l = QVBoxLayout(g); l.setContentsMargins(20,20,20,20)
         t = QLabel(title); t.setStyleSheet("font-family: 'Orbitron'; font-size: 13px; color: #00c8ff; font-weight: bold;")
-        s = QLabel(subtitle); s.setStyleSheet("color: rgba(0, 180, 255, 0.4); font-family: 'Share Tech Mono'; font-size: 10px; margin-bottom: 12px;")
+        s = QLabel(subtitle); s.setStyleSheet("color: rgba(255,255,255,0.2); font-size: 10px; margin-bottom: 12px;")
         l.addWidget(t); l.addWidget(s); return g, l
 
     def refresh_data(self):
@@ -294,7 +300,7 @@ class MainSuiteWindow(QMainWindow):
         for i, acc in enumerate(accounts):
             name = acc.get('display_name', acc.get('character'))
             if name not in self.account_cards:
-                card = self.account_cards[name] = self.create_account_card(acc)
+                card = self.create_account_card(acc); self.account_cards[name] = card
                 self.accounts_layout.addWidget(card, i // 3, i % 3)
             else:
                 card = self.account_cards[name]; labels = card.findChildren(QLabel)
@@ -309,7 +315,6 @@ class MainSuiteWindow(QMainWindow):
         if self.tray_manager: self.tray_manager._on_replicator()
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
-
     def load_settings(self):
         s = QSettings("EVE_iT", "Suite")
         if self.edit_log_dir: self.edit_log_dir.setText(s.value("log_dir", ""))
@@ -319,7 +324,6 @@ class MainSuiteWindow(QMainWindow):
         if self.combo_translator_lang:
             idx = self.combo_translator_lang.findText(s.value("translator_lang", "ESPAÑOL"))
             if idx >= 0: self.combo_translator_lang.setCurrentIndex(idx)
-
     def save_settings(self):
         s = QSettings("EVE_iT", "Suite")
         if self.edit_log_dir: s.setValue("log_dir", self.edit_log_dir.text())
@@ -328,18 +332,10 @@ class MainSuiteWindow(QMainWindow):
         if self.check_hide_hud: s.setValue("auto_hide_hud", "true" if self.check_hide_hud.isChecked() else "false")
         if self.combo_translator_lang: s.setValue("translator_lang", self.combo_translator_lang.currentText())
         self.section_title.setText("SISTEMA SINCRONIZADO"); QTimer.singleShot(2000, lambda: self.section_title.setText("CONFIGURACIÓN DEL SISTEMA"))
-
     def closeEvent(self, event):
-        self.diag_log.info("DIAG: closeEvent detectado.")
         try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
         except: pass
-        if self.tray_manager:
-            self.diag_log.info("DIAG: Redirigiendo close a hide (Tray activo).")
-            event.ignore(); self.hide()
-        else:
-            self.diag_log.info("DIAG: Cerrando aplicación (Sin Tray).")
-            event.accept()
-
+        event.ignore(); self.hide()
     def restore_geometry(self):
         try:
             self.diag_log.info("DIAG: Restaurando geometría...")
@@ -347,41 +343,54 @@ class MainSuiteWindow(QMainWindow):
             geo = s.value("geometry")
             if geo:
                 self.restoreGeometry(geo)
-                self.diag_log.info(f"DIAG: Geometría cargada. Posición: {self.pos()}")
-            
+                self.diag_log.info(f"DIAG: Geometría cargada. Posición actual: {self.pos()}")
+                
+            # Validación de visibilidad: ¿Está la ventana en algún monitor?
             screen = self.screen()
             if screen:
-                geom = self.geometry(); avail = screen.availableGeometry()
-                self.diag_log.info(f"DIAG: Ventana: {geom} | Monitor: {avail}")
-                if not avail.intersects(geom):
-                    self.diag_log.warning("DIAG: Fuera de límites. Reseteando.")
-                    self.setGeometry(avail.center().x() - self.width()//2,
-                                    avail.center().y() - self.height()//2,
+                geom = self.geometry()
+                available = screen.availableGeometry()
+                self.diag_log.info(f"DIAG: Geometría ventana: {geom} | Disponible: {available}")
+                
+                # Si la ventana está totalmente fuera o es invisible por geometría corrupta
+                if not available.intersects(geom):
+                    self.diag_log.warning("DIAG: Ventana fuera de límites. Reseteando al centro.")
+                    self.setGeometry(available.center().x() - self.width()//2,
+                                    available.center().y() - self.height()//2,
                                     self.width(), self.height())
+            
             self.showNormal()
-            self.diag_log.info(f"DIAG: showNormal ejecutado. Visible={self.isVisible()}, Min={self.isMinimized()}")
+            self.diag_log.info(f"DIAG: showNormal() ejecutado. Visible={self.isVisible()}, Min={self.isMinimized()}")
         except Exception as e:
             self.diag_log.error(f"DIAG: Error en restore_geometry: {e}")
 
     def show(self):
-        self.diag_log.info(f"DIAG: show() llamado. Estado previo: Visible={self.isVisible()}, Min={self.isMinimized()}")
+        self.diag_log.info(f"DIAG: Llamada a show(). Estado previo: Visible={self.isVisible()}, Min={self.isMinimized()}")
         super().show()
-        self.diag_log.info(f"DIAG: show() fin. Visible={self.isVisible()}, Geom={self.geometry()}")
+        self.diag_log.info(f"DIAG: show() completado. Estado actual: Visible={self.isVisible()}, Geom={self.geometry()}")
 
     def showNormal(self):
-        self.diag_log.info("DIAG: showNormal() llamado.")
+        self.diag_log.info("DIAG: Llamada a showNormal()")
         super().showNormal()
 
     def showEvent(self, event):
-        self.diag_log.info("DIAG: showEvent disparado.")
+        self.diag_log.info("DIAG: showEvent disparado por el sistema.")
         super().showEvent(event)
 
     def hideEvent(self, event):
-        self.diag_log.info("DIAG: hideEvent disparado.")
+        self.diag_log.info("DIAG: hideEvent disparado por el sistema.")
         super().hideEvent(event)
 
-    def apply_styles(self): self.setStyleSheet(MAIN_STYLE)
-
-if __name__ == "__main__":
-    from PySide6.QtWidgets import QApplication
-    app = QApplication(sys.argv); window = MainSuiteWindow(); window.show(); sys.exit(app.exec())
+    def closeEvent(self, event):
+        self.diag_log.info("DIAG: closeEvent detectado.")
+        try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
+        except: pass
+        
+        # Si el tray está activo, ocultar en lugar de cerrar
+        if self.tray_manager:
+            self.diag_log.info("DIAG: Redirigiendo close a hide (Tray activo).")
+            event.ignore()
+            self.hide()
+        else:
+            self.diag_log.info("DIAG: Cerrando aplicación (Sin Tray).")
+            event.accept()
