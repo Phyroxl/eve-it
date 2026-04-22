@@ -277,7 +277,7 @@ class MainSuiteWindow(QMainWindow):
         self.det_isk_total = self.create_detail_box("ISK TOTAL", "0 ISK", "#ecc94b")
         self.det_isk_h = self.create_detail_box("ISK / HORA", "0/h", "#63b3ed")
         self.det_events = self.create_detail_box("SEÑALES", "0", "#48bb78")
-        metrics_l.addLayout(self.det_isk_total); metrics_l.addLayout(self.det_isk_h); metrics_l.addLayout(self.det_events)
+        metrics_l.addWidget(self.det_isk_total); metrics_l.addWidget(self.det_isk_h); metrics_l.addWidget(self.det_events)
         l.addLayout(metrics_l)
         
         # Modules Split
@@ -306,14 +306,12 @@ class MainSuiteWindow(QMainWindow):
         return p
 
     def create_detail_box(self, label, value, color="#718096"):
-        box = QVBoxLayout(); box.setSpacing(2)
-        lbl = QLabel(label); lbl.setObjectName("MetricLabel"); lbl.setStyleSheet(f"color: {color};")
+        f = QFrame(); f.setObjectName("AnalyticBox"); f.setFixedHeight(55)
+        l = QVBoxLayout(f); l.setContentsMargins(10, 5, 10, 5); l.setSpacing(0)
+        lbl = QLabel(label); lbl.setObjectName("MetricLabel"); lbl.setStyleSheet(f"color: {color}; font-size: 8px;")
         val = QLabel(value); val.setObjectName("AnalyticVal"); val.setStyleSheet("font-size: 13px;")
-        box.addWidget(lbl); box.addWidget(val)
-        
-        f = QFrame(); f.setObjectName("AnalyticBox"); f.setLayout(box); f.setFixedHeight(55)
-        container = QVBoxLayout(); container.addWidget(f); container.setContentsMargins(0,0,0,0)
-        return container
+        l.addWidget(lbl); l.addWidget(val)
+        return f
 
     def update_detail_view(self):
         if not self.current_character: return
