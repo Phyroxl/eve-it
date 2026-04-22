@@ -275,9 +275,13 @@ def main():
     tray = TrayManager(app, controller)
     _tray_manager_ref = tray
 
-    # ── Ventana de control principal ─────────────────────────────────────────
+    # ── Ventana de control principal (Legacy) ────────────────────────────────
     from controller.control_window import ControlWindow, save_icon_png
     ctrl_win = ControlWindow(app, controller, tray)
+
+    # ── Panel Principal de la Suite (Nueva Arquitectura) ──────────────────────
+    from ui.desktop.main_suite_window import MainSuiteWindow
+    suite_win = MainSuiteWindow(controller)
 
     # Guardar icon.png para que el tray lo use
     icon_path = PROJECT_ROOT / 'icon.png'
@@ -287,8 +291,9 @@ def main():
         except Exception:
             pass
 
-    # Pasar referencia al tray para toggle desde menú
+    # Pasar referencias al tray para toggle desde menú
     tray.set_control_window(ctrl_win)
+    tray.set_suite_window(suite_win)
 
     # Señal de focus → mostrar la ventana de control
     global _control_window_ref

@@ -163,6 +163,7 @@ class TrayManager:
         self._act_title.setEnabled(False)
         self._menu.addSeparator()
 
+        self._act_suite   = add_action("🚀 PANEL DE SUITE", self._on_show_suite)
         self._act_panel   = add_action(t('tray_panel', self._lang),  self._on_show_panel)
         self._menu.addSeparator()
         self._act_dash    = add_action(t('tray_dashboard', self._lang),   self._on_dashboard)
@@ -207,6 +208,12 @@ class TrayManager:
             self._tray.setVisible(False)
         except Exception:
             pass
+
+    def _on_show_suite(self):
+        if hasattr(self, '_suite_window') and self._suite_window:
+            self._suite_window.show()
+            self._suite_window.raise_()
+            self._suite_window.activateWindow()
 
     def _on_show_panel(self):
         if self._control_window:
@@ -278,7 +285,9 @@ class TrayManager:
         DblClick = getattr(Trigger, 'DoubleClick', None)
         Click    = getattr(Trigger, 'Trigger', None)
         if reason in (DblClick, Click):
-            if self._control_window:
+            if hasattr(self, '_suite_window') and self._suite_window:
+                self._on_show_suite()
+            elif self._control_window:
                 self._control_window.show()
             else:
                 self._on_dashboard()
@@ -519,6 +528,9 @@ class TrayManager:
 
     def set_control_window(self, win):
         self._control_window = win
+
+    def set_suite_window(self, win):
+        self._suite_window = win
 
     def show_notification(self, title: str, msg: str, duration_ms: int = 3000):
         """Muestra una notificación del tray."""
