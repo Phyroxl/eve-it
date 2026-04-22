@@ -4,10 +4,11 @@ from PySide6.QtWidgets import (
     QFrame, QLabel, QPushButton, QStackedWidget,
     QGraphicsDropShadowEffect, QSizeGrip
 )
-from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient
 
 from ui.desktop.styles import MAIN_STYLE
+from utils.formatters import format_isk
 
 class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
@@ -16,12 +17,18 @@ class MainSuiteWindow(QMainWindow):
         self.setWindowTitle("EVE iT — Suite Control Panel")
         self.resize(1100, 700)
         
-        # Frameless window configuration (Optional, for now keeping it standard but stylized)
-        # self.setWindowFlags(Qt.FramelessWindowHint)
-        # self.setAttribute(Qt.WA_TranslucentBackground)
+        # UI References for updating
+        self.val_total_isk = None
+        self.val_isk_h = None
+        self.val_accounts = None
         
         self.setup_ui()
         self.apply_styles()
+        
+        # Timer for real-time updates
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.refresh_data)
+        self.update_timer.start(1500) # Refresh every 1.5s
         
     def setup_ui(self):
         # Central Widget
@@ -87,35 +94,43 @@ class MainSuiteWindow(QMainWindow):
         self.btn_translator.clicked.connect(self._on_translator_clicked)
         self.btn_replicator.clicked.connect(self._on_replicator_clicked)
 
+    def refresh_data(self):
+        """Actualiza las métricas con datos reales del controlador."""
+        if not self.controller or not self.controller._tracker:
+            return
+            
+        try:
+            from overlay.overlay_server import build_overlay_payload
+            payload = build_overlay_payload(self.controller._tracker)
+            
+            # Actualizar labels
+            if self.val_total_isk:
+                self.val_total_isk.setText(format_isk(payload.get('total_isk', 0), short=True))
+            if self.val_isk_h:
+                self.val_isk_h.setText(format_isk(payload.get('isk_h_rolling', 0), short=True) + "/h")
+            if self.val_accounts:
+                count = payload.get('char_count', 0)
+                self.val_accounts.setText(f"{count} ACTIVAS")
+                
+        except Exception as e:
+            print(f"Error actualizando métricas en Suite: {e}")
+
     def _on_hud_clicked(self):
         if self.controller:
-            # Si el controlador tiene el tray, usamos su lógica de toggle
-            # O llamamos directamente al controlador
             self.controller.toggle_overlay()
             
     def _on_translator_clicked(self):
-        # El traductor aún no tiene una UI de escritorio unificada, 
-        # pero podemos mostrar un mensaje o abrir el dashboard
         if self.controller:
-            self.controller.open_dashboard_browser()
+            # Lanzar el traductor real
+            self.controller.start_translator()
 
     def _on_replicator_clicked(self):
         if self.controller:
-            # Intentar lanzar el replicador usando el tray_manager si está disponible
-            # El tray manager ya tiene toda la lógica de carga de PySide6 y prevención de GC
             try:
                 # Intentamos acceder al tray manager desde el controlador o vía global
                 from main import _tray_manager_ref
                 if _tray_manager_ref:
                     _tray_manager_ref._on_replicator()
-                else:
-                    # Fallback directo si no hay tray manager
-                    from controller.replicator_wizard import ReplicatorWizard
-                    from PySide6 import QtWidgets, QtCore, QtGui
-                    from overlay import replicator_config as cfg_mod
-                    cfg = cfg_mod.load_config()
-                    self.wizard = ReplicatorWizard(QtWidgets, QtCore, QtGui, cfg, cfg_mod)
-                    self.wizard.show()
             except Exception as e:
                 print(f"Error lanzando replicador desde Suite: {e}")
 
@@ -142,9 +157,19 @@ class MainSuiteWindow(QMainWindow):
         metrics_layout = QHBoxLayout()
         metrics_layout.setSpacing(15)
         
-        metrics_layout.addWidget(self.create_metric_card("ISK TOTAL", "0.00 ISK", "#00c8ff"))
-        metrics_layout.addWidget(self.create_metric_card("ISK / HORA", "0.00 ISK/h", "#00ff9d"))
-        metrics_layout.addWidget(self.create_metric_card("CUENTAS", "0 ACTIVAS", "#ffffff"))
+        # Guardar referencias para actualización
+        card_isk = self.create_metric_card("ISK TOTAL", "0.00 ISK", "#00c8ff")
+        self.val_total_isk = card_isk.findChild(QLabel, "MetricValue")
+        
+        card_h = self.create_metric_card("ISK / HORA", "0.00 ISK/h", "#00ff9d")
+        self.val_isk_h = card_h.findChild(QLabel, "MetricValue")
+        
+        card_acc = self.create_metric_card("CUENTAS", "0 ACTIVAS", "#ffffff")
+        self.val_accounts = card_acc.findChild(QLabel, "MetricValue")
+        
+        metrics_layout.addWidget(card_isk)
+        metrics_layout.addWidget(card_h)
+        metrics_layout.addWidget(card_acc)
         
         layout.addLayout(metrics_layout)
         
@@ -159,16 +184,25 @@ class MainSuiteWindow(QMainWindow):
         tools_layout = QHBoxLayout()
         tools_layout.setSpacing(20)
         
-        tools_layout.addWidget(self.create_tool_card("HUD OVERLAY", "Monitoriza ISK y ticks en tiempo real sobre el juego.", "🕹️"))
-        tools_layout.addWidget(self.create_tool_card("TRADUCTOR", "Traduce chats de EVE automáticamente.", "🌐"))
-        tools_layout.addWidget(self.create_tool_card("REPLICADOR", "Clona y escala zonas de pantalla para multiboxing.", "🪟"))
+        self.card_hud = self.create_tool_card("HUD OVERLAY", "Monitoriza ISK y ticks en tiempo real sobre el juego.", "🕹️")
+        self.card_hud.mousePressEvent = lambda e: self._on_hud_clicked()
+        
+        self.card_trans = self.create_tool_card("TRADUCTOR", "Traduce chats de EVE automáticamente.", "🌐")
+        self.card_trans.mousePressEvent = lambda e: self._on_translator_clicked()
+        
+        self.card_repl = self.create_tool_card("REPLICADOR", "Clona y escala zonas de pantalla para multiboxing.", "🪟")
+        self.card_repl.mousePressEvent = lambda e: self._on_replicator_clicked()
+        
+        tools_layout.addWidget(self.card_hud)
+        tools_layout.addWidget(self.card_trans)
+        tools_layout.addWidget(self.card_repl)
         
         layout.addLayout(tools_layout)
         
         layout.addStretch()
         
         # Status Footer
-        footer = QLabel("SISTEMA OPERATIVO | LATENCIA: 14ms | LOGS: OK")
+        footer = QLabel("SISTEMA OPERATIVO | LATENCIA: --ms | LOGS: OK")
         footer.setStyleSheet("font-family: 'Share Tech Mono'; color: rgba(0, 200, 255, 0.3); font-size: 10px;")
         layout.addWidget(footer)
         
@@ -183,6 +217,7 @@ class MainSuiteWindow(QMainWindow):
         lbl.setProperty("class", "MetricLabel")
         
         val = QLabel(value)
+        val.setObjectName("MetricValue") # Usar objectName para búsqueda
         val.setProperty("class", "MetricValue")
         val.setStyleSheet(f"color: {color};")
         
