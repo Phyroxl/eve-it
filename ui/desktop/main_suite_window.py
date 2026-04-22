@@ -54,8 +54,9 @@ class MainSuiteWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget); self.main_layout.setContentsMargins(0, 0, 0, 0); self.main_layout.setSpacing(0)
         
-        # 1. Sidebar (Más robusta)
+        # 1. Sidebar (Ancho forzado y verificable)
         self.nav_bar = QFrame(); self.nav_bar.setObjectName("NavBar")
+        self.nav_bar.setFixedWidth(240)
         self.nav_layout = QVBoxLayout(self.nav_bar); self.nav_layout.setContentsMargins(0, 0, 0, 0); self.nav_layout.setSpacing(0)
         
         logo = QLabel("EVE iT"); logo.setObjectName("LogoLabel"); self.nav_layout.addWidget(logo)
@@ -67,9 +68,9 @@ class MainSuiteWindow(QMainWindow):
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_settings)
         
-        # 2. Content Area (Densa y Equilibrada)
+        # 2. Content Area (Densidad Máxima)
         self.content_frame = QFrame(); self.content_frame.setObjectName("ContentFrame")
-        self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(35, 30, 35, 30); self.content_layout.setSpacing(20)
+        self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(20, 20, 20, 20); self.content_layout.setSpacing(15)
         
         header = QHBoxLayout()
         self.section_title = QLabel("CENTRO DE MANDO"); self.section_title.setObjectName("SectionTitle")
@@ -217,13 +218,21 @@ class MainSuiteWindow(QMainWindow):
 
     def create_tools_page(self):
         p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(0)
-        center_cont = QWidget(); center_l = QVBoxLayout(center_cont); center_l.setContentsMargins(0, 0, 0, 0)
+        
+        # Wrapper centrado con ancho máximo real para cohesión
+        wrapper = QWidget(); wrapper_l = QHBoxLayout(wrapper); wrapper_l.setContentsMargins(0, 20, 0, 0)
+        
+        center_cont = QWidget(); center_cont.setMaximumWidth(750); center_l = QVBoxLayout(center_cont); center_l.setContentsMargins(0, 0, 0, 0)
         g = QGridLayout(); g.setSpacing(20); g.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
         g.addWidget(self.create_tool_card("HUD OVERLAY", "Control visual táctico en juego.", "🕹️", self._on_hud_clicked), 0, 0)
         g.addWidget(self.create_tool_card("TRADUCTOR", "Inteligencia lingüística para chats locales.", "🌐", self._on_translator_clicked), 0, 1)
         g.addWidget(self.create_tool_card("REPLICADOR", "Sincronización masiva de ventanas.", "🪟", self._on_replicator_clicked), 1, 0)
+        
         center_l.addLayout(g); center_l.addStretch()
-        l.addWidget(center_cont); return p
+        wrapper_l.addWidget(center_cont); wrapper_l.addStretch() # Ancla el bloque a la izquierda-centro
+        
+        l.addWidget(wrapper); return p
 
     def create_tool_card(self, title, desc, icon, callback):
         c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(340, 130); c.setCursor(Qt.PointingHandCursor)
