@@ -218,40 +218,34 @@ class MainSuiteWindow(QMainWindow):
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
         card = AnimatedCard()
-        card.setFixedSize(200, 105) # Ligeramente más grande para mejor jerarquía
+        card.setFixedSize(200, 105)
         card.setCursor(Qt.PointingHandCursor)
         
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(0)
         
-        # Header (Densa)
+        # Top: ID
         top = QHBoxLayout()
         avatar = QLabel(name[0].upper())
-        avatar.setObjectName("CharAvatar"); avatar.setFixedSize(32, 32); avatar.setAlignment(Qt.AlignCenter)
+        avatar.setObjectName("CharAvatar"); avatar.setFixedSize(30, 30); avatar.setAlignment(Qt.AlignCenter)
         
-        info = QVBoxLayout(); info.setSpacing(1); info.setContentsMargins(5, 0, 0, 0)
+        info = QVBoxLayout(); info.setSpacing(1); info.setContentsMargins(6, 0, 0, 0)
         name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
-        
-        status = acc.get('status', 'idle')
-        status_badge = IndustrialBadge("...", "#718096")
-        status_badge.setObjectName("StatusBadge")
+        status_badge = IndustrialBadge("...", "#718096"); status_badge.setObjectName("StatusBadge")
         
         info.addWidget(name_lbl); info.addWidget(status_badge)
         top.addWidget(avatar); top.addLayout(info); top.addStretch()
         layout.addLayout(top)
         
-        layout.addStretch() # Separador visual natural
+        layout.addStretch()
         
-        # Data
-        bot = QHBoxLayout()
-        v_l = QVBoxLayout(); v_l.setSpacing(0)
+        # Bottom: Telemetry
+        bot = QVBoxLayout(); bot.setSpacing(0)
         lbl = QLabel("RENDIMIENTO ACTUAL"); lbl.setObjectName("MetricLabel")
         val = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
         val.setObjectName("IskValue")
-        v_l.addWidget(lbl); v_l.addWidget(val)
-        
-        bot.addLayout(v_l); bot.addStretch()
+        bot.addWidget(lbl); bot.addWidget(val)
         layout.addLayout(bot)
         
         card.mousePressEvent = lambda e: self.open_character_detail(acc)
@@ -331,11 +325,11 @@ class MainSuiteWindow(QMainWindow):
         
         status = acc.get('status', 'idle')
         if status == 'active':
-            self.detail_status_lbl.setText("ESTADO: OPERATIVO"); self.detail_status_lbl.setStyleSheet("color: #48bb78; font-size: 9px; font-weight: bold;")
+            self.detail_status_lbl.setText("SISTEMA: OPERATIVO"); self.detail_status_lbl.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800;")
         elif status == 'idle':
-            self.detail_status_lbl.setText("ESTADO: EN ESPERA"); self.detail_status_lbl.setStyleSheet("color: #ecc94b; font-size: 9px; font-weight: bold;")
+            self.detail_status_lbl.setText("SISTEMA: EN ESPERA"); self.detail_status_lbl.setStyleSheet("color: #f59e0b; font-size: 9px; font-weight: 800;")
         else:
-            self.detail_status_lbl.setText("ESTADO: INACTIVO"); self.detail_status_lbl.setStyleSheet("color: #718096; font-size: 9px; font-weight: bold;")
+            self.detail_status_lbl.setText("SISTEMA: INACTIVO"); self.detail_status_lbl.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800;")
 
         # Actualizar cajas de métricas
         self.det_isk_total.findChild(QLabel, "AnalyticVal").setText(format_isk(acc.get('total_isk', 0), short=True))
@@ -379,36 +373,35 @@ class MainSuiteWindow(QMainWindow):
 
     def create_settings_page(self):
         p = QWidget(); l = QVBoxLayout(p); scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
-        cont = QWidget(); c_l = QVBoxLayout(cont); c_l.setSpacing(20)
+        cont = QWidget(); c_l = QVBoxLayout(cont); c_l.setSpacing(15); c_l.setContentsMargins(0, 5, 5, 5)
         
-        g1, l1 = self.create_settings_group("Motor EVE iT (Core)", "Gestión de datos y registros.")
-        l1.addWidget(QLabel("Directorio de Logs:", styleSheet="color: #cbd5e0; font-size: 12px; margin-bottom: 5px;"))
-        path_l = QHBoxLayout(); self.edit_log_dir = QLineEdit(); btn_b = QPushButton("..."); btn_b.setFixedWidth(35); btn_b.clicked.connect(self._on_browse_logs)
-        path_l.addWidget(self.edit_log_dir); path_l.addWidget(btn_b); l1.addLayout(path_l)
-        self.check_skip_logs = QCheckBox("Ignorar registros antiguos"); l1.addWidget(self.check_skip_logs)
+        # Grupo 1
+        g1 = QFrame(); g1.setObjectName("SettingsGroup"); g1_l = QVBoxLayout(g1)
+        g1_l.addWidget(QLabel("NÚCLEO OPERATIVO", objectName="ModuleHeader"))
+        g1_l.addWidget(QLabel("Ruta de logs de EVE Online:", styleSheet="color: #64748b; font-size: 10px; margin-top: 5px;"))
+        path_l = QHBoxLayout(); self.edit_log_dir = QLineEdit(); btn_b = QPushButton("..."); btn_b.setFixedWidth(30); btn_b.clicked.connect(self._on_browse_logs)
+        path_l.addWidget(self.edit_log_dir); path_l.addWidget(btn_b); g1_l.addLayout(path_l)
+        self.check_skip_logs = QCheckBox("Ignorar registros históricos"); g1_l.addWidget(self.check_skip_logs)
         c_l.addWidget(g1)
         
-        g2, l2 = self.create_settings_group("Interfaz y HUD", "Ajustes de visibilidad y efectos.")
-        self.check_blur = QCheckBox("Habilitar efectos de desenfoque"); l2.addWidget(self.check_blur)
-        self.check_hide_hud = QCheckBox("Ocultar HUD automáticamente"); l2.addWidget(self.check_hide_hud)
+        # Grupo 2
+        g2 = QFrame(); g2.setObjectName("SettingsGroup"); g2_l = QVBoxLayout(g2)
+        g2_l.addWidget(QLabel("TELEMETRÍA Y HUD", objectName="ModuleHeader"))
+        self.check_blur = QCheckBox("Efecto de transparencia avanzado"); g2_l.addWidget(self.check_blur)
+        self.check_hide_hud = QCheckBox("Ocultación automática de HUD"); g2_l.addWidget(self.check_hide_hud)
         c_l.addWidget(g2)
         
-        g3, l3 = self.create_settings_group("Automatización y Traductor", "Configuración de idiomas.")
-        l3.addWidget(QLabel("Idioma Destino:", styleSheet="color: #cbd5e0; font-size: 12px; margin-bottom: 5px;"))
+        # Grupo 3
+        g3 = QFrame(); g3.setObjectName("SettingsGroup"); g3_l = QVBoxLayout(g3)
+        g3_l.addWidget(QLabel("MOTOR DE TRADUCCIÓN", objectName="ModuleHeader"))
         self.combo_translator_lang = QComboBox()
         self.combo_translator_lang.addItems(["Español", "English", "Deutsch", "Français", "Russian"])
-        l3.addWidget(self.combo_translator_lang)
+        g3_l.addWidget(self.combo_translator_lang)
         c_l.addWidget(g3)
         
         c_l.addStretch()
-        save = QPushButton("Guardar Configuración"); save.setObjectName("SaveButton"); save.clicked.connect(self.save_settings); c_l.addWidget(save)
+        save = QPushButton("Guardar Cambios"); save.setObjectName("SaveButton"); save.clicked.connect(self.save_settings); c_l.addWidget(save)
         scroll.setWidget(cont); l.addWidget(scroll); return p
-
-    def create_settings_group(self, title, subtitle):
-        g = QFrame(); g.setObjectName("SettingsGroup"); l = QVBoxLayout(g); l.setContentsMargins(20,20,20,20)
-        t = QLabel(title); t.setStyleSheet("font-size: 16px; color: #ffffff; font-weight: bold;")
-        s = QLabel(subtitle); s.setStyleSheet("color: #718096; font-size: 12px; margin-bottom: 12px;")
-        l.addWidget(t); l.addWidget(s); return g, l
 
     def refresh_data(self):
         try:
@@ -497,14 +490,14 @@ class MainSuiteWindow(QMainWindow):
                 badge = card.findChild(QLabel, "StatusBadge")
                 if badge:
                     if status == 'active':
-                        badge.setText("Activo")
-                        badge.setStyleSheet("background-color: rgba(72,187,120,0.1); color: #48bb78; border: 1px solid rgba(72,187,120,0.3); padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 10px;")
+                        badge.setText("OPERATIVO")
+                        badge.setStyleSheet("background-color: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2); padding: 1px 6px; font-size: 9px; font-weight: 800; border-radius: 2px;")
                     elif status == 'idle':
-                        badge.setText("En espera")
-                        badge.setStyleSheet("background-color: rgba(236,201,75,0.1); color: #ecc94b; border: 1px solid rgba(236,201,75,0.3); padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 10px;")
+                        badge.setText("EN ESPERA")
+                        badge.setStyleSheet("background-color: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); padding: 1px 6px; font-size: 9px; font-weight: 800; border-radius: 2px;")
                     else:
-                        badge.setText("Inactivo")
-                        badge.setStyleSheet("background-color: rgba(113,128,150,0.1); color: #718096; border: 1px solid rgba(113,128,150,0.3); padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 10px;")
+                        badge.setText("INACTIVO")
+                        badge.setStyleSheet("background-color: rgba(100,116,139,0.1); color: #64748b; border: 1px solid rgba(100,116,139,0.2); padding: 1px 6px; font-size: 9px; font-weight: 800; border-radius: 2px;")
 
     def set_tray_manager(self, tm): self.tray_manager = tm
     def _on_hud_clicked(self):
