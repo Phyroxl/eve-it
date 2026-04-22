@@ -132,18 +132,18 @@ class MainSuiteWindow(QMainWindow):
         summary_panel.addWidget(self.signals_box)
         outer.addLayout(summary_panel)
 
-        # --- Panel de estado ---
+        # --- Panel de estado (Command Center Style) ---
         self.status_bar = QFrame()
         self.status_bar.setObjectName("AnalyticBox")
-        self.status_bar.setFixedHeight(35)
+        self.status_bar.setFixedHeight(30)
         sb_l = QHBoxLayout(self.status_bar)
-        sb_l.setContentsMargins(10, 0, 10, 0)
+        sb_l.setContentsMargins(12, 0, 12, 0)
 
-        self.lbl_tracker_status = QLabel("● Tracker: Inactivo")
-        self.lbl_tracker_status.setStyleSheet("color: #718096; font-size: 10px; font-weight: 600;")
+        self.lbl_tracker_status = QLabel("● SISTEMA ACTIVO")
+        self.lbl_tracker_status.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800; letter-spacing: 1px;")
 
-        self.lbl_last_update = QLabel("Sin datos")
-        self.lbl_last_update.setStyleSheet("color: #4a5568; font-size: 9px;")
+        self.lbl_last_update = QLabel("SINCRONIZACIÓN: --:--:--")
+        self.lbl_last_update.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 600;")
 
         sb_l.addWidget(self.lbl_tracker_status)
         sb_l.addStretch()
@@ -221,50 +221,50 @@ class MainSuiteWindow(QMainWindow):
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
         card = AnimatedCard()
-        card.setFixedSize(210, 110)
+        card.setFixedSize(210, 105)
         card.setCursor(Qt.PointingHandCursor)
         
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(0)
         
-        # Top: Avatar + ID (Mejorado)
-        top = QHBoxLayout()
-        top.setSpacing(10)
+        # Header: Identidad
+        top = QHBoxLayout(); top.setSpacing(12)
         
-        # Contenedor de Avatar (Foto de perfil)
-        self.avatar_lbl = QLabel()
-        self.avatar_lbl.setObjectName("CharAvatar")
-        self.avatar_lbl.setFixedSize(42, 42)
-        self.avatar_lbl.setAlignment(Qt.AlignCenter)
-        self.avatar_lbl.setText(name[0].upper()) # Fallback
-        # Aquí se cargaría la imagen real:
-        # pixmap = QPixmap(path_to_image).scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        # self.avatar_lbl.setPixmap(pixmap)
+        # Avatar Técnico (Estructura preparada para imagen real)
+        self.avatar_frame = QFrame()
+        self.avatar_frame.setObjectName("CharAvatar")
+        self.avatar_frame.setFixedSize(38, 38)
+        af_l = QVBoxLayout(self.avatar_frame); af_l.setContentsMargins(0,0,0,0)
         
-        info = QVBoxLayout(); info.setSpacing(2); info.setContentsMargins(0, 2, 0, 0)
+        self.avatar_img = QLabel()
+        self.avatar_img.setAlignment(Qt.AlignCenter)
+        self.avatar_img.setText(name[0].upper())
+        self.avatar_img.setStyleSheet("font-size: 14px; font-weight: 900; color: #60a5fa;")
+        # NOTA: Para implementar retrato real, usar:
+        # self.avatar_img.setPixmap(QPixmap(path).scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        
+        af_l.addWidget(self.avatar_img)
+        
+        info = QVBoxLayout(); info.setSpacing(1); info.setContentsMargins(0, 2, 0, 0)
         name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
-        name_lbl.setStyleSheet("font-size: 11px; font-weight: 900;")
         
-        perf_lbl = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
-        perf_lbl.setObjectName("IskValue"); perf_lbl.setStyleSheet("font-size: 11px; color: #fbbf24;")
+        isk_val = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
+        isk_val.setObjectName("IskValue"); isk_val.setStyleSheet("font-size: 11px;")
         
-        info.addWidget(name_lbl); info.addWidget(perf_lbl); info.addStretch()
-        top.addWidget(self.avatar_lbl); top.addLayout(info); top.addStretch()
+        info.addWidget(name_lbl); info.addWidget(isk_val); info.addStretch()
+        top.addWidget(self.avatar_frame); top.addLayout(info); top.addStretch()
         layout.addLayout(top)
         
         layout.addStretch()
         
-        # Bottom: Estado Operativo (ONLINE / OFFLINE)
-        bot = QHBoxLayout()
-        bot.setContentsMargins(0, 5, 0, 0)
-        
-        self.status_badge = IndustrialBadge("DETECTANDO...", "#718096")
+        # Footer: Telemetría de Estado
+        bot = QHBoxLayout(); bot.setContentsMargins(0, 5, 0, 0)
+        self.status_badge = IndustrialBadge("IDENTIFICANDO...", "#64748b")
         self.status_badge.setObjectName("StatusBadge")
-        
         bot.addWidget(self.status_badge); bot.addStretch()
-        layout.addLayout(bot)
         
+        layout.addLayout(bot)
         card.mousePressEvent = lambda e: self.open_character_detail(acc)
         return card
 
@@ -436,10 +436,7 @@ class MainSuiteWindow(QMainWindow):
         try:
             summary = self.controller._tracker.get_summary(datetime.now())
             accounts = summary.get('per_character', [])
-            online_count = sum(1 for acc in accounts if acc.get('status') in ['active', 'idle'])
-            
             # Actualizar Summary Global
-            self.fleet_status_box.findChild(QLabel, "AnalyticVal").setText(f"{online_count}/{len(accounts)} ONLINE")
             self.total_isk_box.findChild(QLabel, "AnalyticVal").setText(format_isk(summary.get('total_isk', 0), short=True))
             self.isk_h_box.findChild(QLabel, "AnalyticVal").setText(format_isk(summary.get('isk_per_hour_rolling', 0), short=True) + "/h")
             
@@ -490,7 +487,11 @@ class MainSuiteWindow(QMainWindow):
                 self.accounts_layout.removeWidget(card)
                 card.deleteLater()
 
-        # Añadir o actualizar tarjetas
+        # Actualizar Fleet Status
+        online_count = sum(1 for acc in accounts if acc.get('status') in ['active', 'idle'])
+        self.fleet_status_box.findChild(QLabel, "AnalyticVal").setText(f"{online_count}/{len(accounts)} ONLINE")
+        
+        # Sincronización de tarjetas
         for i, acc in enumerate(accounts):
             name = acc.get('display_name', acc.get('character'))
             status = acc.get('status', 'idle')
@@ -502,26 +503,23 @@ class MainSuiteWindow(QMainWindow):
             else:
                 card = self.account_cards[name]
                 
-            # Actualizar datos de la tarjeta
+            # Actualizar ISK/h
             isk_val = card.findChild(QLabel, "IskValue")
             if isk_val:
                 isk_val.setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
                 
-            # Actualizar badge de estado (ONLINE / OFFLINE)
+            # Actualizar Badge de Estado Operativo
             badge = card.findChild(QLabel, "StatusBadge")
             if badge:
                 if status == 'active':
-                    badge.setText("● ONLINE")
-                    badge.setStyleSheet("background-color: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2); padding: 2px 8px; font-size: 9px; font-weight: 900; border-radius: 3px;")
+                    badge.setText("● SISTEMA ONLINE")
+                    badge.setStyleSheet("background-color: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2); padding: 2px 8px; font-size: 8px; font-weight: 900; border-radius: 2px;")
                 elif status == 'idle':
-                    badge.setText("● ONLINE (IDLE)")
-                    badge.setStyleSheet("background-color: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); padding: 2px 8px; font-size: 9px; font-weight: 900; border-radius: 3px;")
+                    badge.setText("○ STANDBY")
+                    badge.setStyleSheet("background-color: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); padding: 2px 8px; font-size: 8px; font-weight: 900; border-radius: 2px;")
                 else:
-                    badge.setText("○ DESCONECTADO")
-                    badge.setStyleSheet("background-color: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); padding: 2px 8px; font-size: 9px; font-weight: 900; border-radius: 3px;")
-        
-        # Actualizar Fleet Status en Dashboard
-        self.fleet_status_box.findChild(QLabel, "AnalyticVal").setText(f"{online_count}/{len(accounts)} ONLINE")
+                    badge.setText("× DESCONECTADO")
+                    badge.setStyleSheet("background-color: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); padding: 2px 8px; font-size: 8px; font-weight: 900; border-radius: 2px;")
 
     def set_tray_manager(self, tm): self.tray_manager = tm
     def _on_hud_clicked(self):

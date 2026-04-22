@@ -84,13 +84,15 @@ QLabel#CharName {
     letter-spacing: 0.6px;
 }
 
-QLabel#CharAvatar {
-    background-color: #1a1e23;
-    color: #60a5fa;
-    border: 1px solid #2d3748;
+QFrame#CharAvatar {
+    background-color: #0b0d0f;
+    border: 1px solid #2563eb;
     border-radius: 2px;
-    font-size: 11px;
-    font-weight: 800;
+}
+
+QLabel#CharAvatar QLabel {
+    color: #60a5fa;
+    font-weight: 900;
 }
 
 /* METRICS */
