@@ -4,130 +4,144 @@ Enfoque: Legibilidad, Jerarquía y Estabilidad.
 """
 
 MAIN_STYLE = """
-/* BASE: DARK THEME PROFESSIONAL */
+/* BASE: DARK THEME PROFESSIONAL - COMPACT & POLISHED */
 QMainWindow, QWidget#CentralWidget {
-    background-color: #0f1115;
-    color: #e2e8f0;
-    font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+    background-color: #0d0f12;
+    color: #cbd5e0;
+    font-family: 'Segoe UI', 'Inter', sans-serif;
 }
 
-/* SIDEBAR: CLEAN & NAVIGATION-FOCUSED */
+/* SIDEBAR: TECHNICAL & INTEGRATED */
 QFrame#NavBar {
-    background-color: #161a1f;
-    border-right: 1px solid #2d3748;
+    background-color: #12151a;
+    border-right: 1px solid #1e242c;
 }
 
 QLabel#LogoLabel {
-    font-size: 18px;
-    font-weight: 700;
+    font-size: 14px;
+    font-weight: 800;
     color: #3182ce;
-    padding: 24px 20px;
-    background: transparent;
+    padding: 20px 12px;
+    letter-spacing: 2px;
+    border-bottom: 1px solid #1e242c;
+    margin-bottom: 10px;
 }
 
 QPushButton.NavButton {
     background: transparent;
     border: none;
-    color: #a0aec0;
-    font-size: 13px;
-    font-weight: 500;
+    color: #4a5568;
+    font-size: 10px;
+    font-weight: 700;
     text-align: left;
     padding-left: 20px;
-    height: 44px;
+    height: 36px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 QPushButton.NavButton:hover {
-    background: rgba(255, 255, 255, 0.05);
-    color: #edf2f7;
+    color: #a0aec0;
+    background: rgba(255, 255, 255, 0.02);
 }
 
 QPushButton.NavButton[active="true"] {
-    background: rgba(49, 130, 206, 0.1);
     color: #63b3ed;
-    border-right: 3px solid #3182ce;
+    background: linear-gradient(to right, rgba(49, 130, 206, 0.1), transparent);
+    border-left: 3px solid #3182ce;
 }
 
 /* CONTENT AREA */
 QFrame#ContentFrame {
-    background-color: #0f1115;
+    background-color: #0d0f12;
 }
 
 QLabel#SectionTitle {
-    font-size: 20px;
-    font-weight: 600;
-    color: #f7fafc;
-    padding-bottom: 10px;
-    margin-bottom: 20px;
+    font-size: 15px;
+    font-weight: 800;
+    color: #edf2f7;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding-bottom: 4px;
 }
 
-/* CHARACTER CARDS: CLEAN & PROPORTIONAL */
+/* CARDS: MODULAR & TECHNICAL */
 QFrame#CharacterCard {
-    background-color: #1a202c;
-    border: 1px solid #2d3748;
-    border-radius: 8px;
+    background-color: #161a20;
+    border: 1px solid #232931;
+    border-radius: 4px;
 }
 
 QFrame#CharacterCard:hover {
-    border-color: #4a5568;
-    background-color: #232a37;
+    border-color: #3182ce;
+    background-color: #1c222b;
 }
 
 QLabel#CharName {
-    font-size: 14px;
-    font-weight: 600;
-    color: #f7fafc;
+    font-size: 11px;
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: 0.5px;
 }
 
 QLabel#CharAvatar {
-    background-color: #2d3748;
+    background-color: #1e242c;
     color: #63b3ed;
-    border-radius: 4px;
-    font-size: 16px;
-    font-weight: 600;
+    border: 1px solid #2d3748;
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 800;
 }
 
-/* METRICS & VALUES */
+/* METRICS */
 QLabel#IskValue {
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 800;
     color: #ecc94b;
 }
 
 QLabel#MetricLabel {
-    color: #718096;
-    font-size: 11px;
-    font-weight: 500;
+    color: #4a5568;
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
 }
 
-/* ANALYTIC BOXES */
+/* ANALYTIC BLOCKS */
 QFrame#AnalyticBox {
-    background-color: #1a202c;
-    border: 1px solid #2d3748;
-    border-radius: 6px;
-    padding: 12px;
+    background-color: #12151a;
+    border: 1px solid #1e242c;
+    border-radius: 3px;
 }
 
 QLabel#AnalyticVal {
-    font-size: 18px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 800;
     color: #ffffff;
+    letter-spacing: 0.5px;
 }
 
-/* SETTINGS & INPUTS */
-QFrame#SettingsGroup {
-    background-color: #161a1f;
+/* MODULE HEADERS */
+QLabel#ModuleHeader {
+    color: #2b6cb0;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+/* INPUTS */
+QLineEdit, QComboBox {
+    background-color: #0d0f12;
     border: 1px solid #2d3748;
-    border-radius: 8px;
-    padding: 20px;
+    color: #a0aec0;
+    padding: 4px 8px;
+    border-radius: 2px;
+    font-size: 10px;
 }
 
-QLineEdit, QDoubleSpinBox, QComboBox {
-    background-color: #0f1115;
-    border: 1px solid #4a5568;
-    color: #e2e8f0;
-    padding: 8px;
-    border-radius: 4px;
-    font-size: 13px;
+QLineEdit:focus {
+    border-color: #3182ce;
 }
 
 QLineEdit:focus, QComboBox:focus {
