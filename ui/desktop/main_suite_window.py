@@ -41,7 +41,8 @@ class MainSuiteWindow(QMainWindow):
             self.apply_styles()
         except Exception as e:
             import traceback
-            print(f"ERROR: {e}"); traceback.print_exc()
+            self.diag_log.error(f"ERROR en setup_ui/apply_styles: {e}")
+            traceback.print_exc()
 
         self.load_settings()
         self.restore_geometry()
@@ -49,6 +50,10 @@ class MainSuiteWindow(QMainWindow):
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.refresh_data)
         self.update_timer.start(2000)
+
+    def apply_styles(self):
+        """Aplica la hoja de estilos global a la ventana."""
+        self.setStyleSheet(MAIN_STYLE)
         
     def setup_ui(self):
         self.central_widget = QWidget(); self.central_widget.setObjectName("CentralWidget")
@@ -405,8 +410,8 @@ class MainSuiteWindow(QMainWindow):
             self.lbl_last_update.setText(f"Actualizado: {datetime.now().strftime('%H:%M:%S')}")
             self.update_accounts_view(accounts)
             if self.stack.currentIndex() == 3: self.update_detail_view()
-        except Exception:
-            pass
+        except Exception as e:
+            self.diag_log.error(f"DIAG: Error en refresh_data: {e}")
 
     def _show_empty_state(self, show: bool):
         """Muestra u oculta el estado vacío y el contenedor de tarjetas."""
