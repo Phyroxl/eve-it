@@ -1,162 +1,187 @@
 """
-ui/desktop/styles.py — Sistema de Diseño Táctico (ADN HUD Unificado).
+ui/desktop/styles.py — Sistema de Diseño "Tactical Deep-Space".
+Unificación total con la atmósfera de EVE Online.
 """
 
 MAIN_STYLE = """
-/* BASE TÁCTICA */
-QMainWindow, QWidget#CentralWidget, QFrame#ContentFrame, QFrame#DetailView {
-    background-color: #000000;
-    color: #e0f0ff;
+/* BASE: DEEP SPACE ATMOSPHERE */
+QMainWindow, QWidget#CentralWidget {
+    background-color: #020408;
+    color: #b0c4de;
 }
 
-/* SIDEBAR / CONTROL PANEL */
+/* SIDEBAR: INTEGRATED COMMAND BRIDGE */
 QFrame#NavBar {
-    background-color: #050505;
-    border-right: 1px solid rgba(0, 180, 255, 0.15);
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #05080f, stop:1 #080b14);
+    border-right: 1px solid rgba(0, 200, 255, 0.15);
 }
 
 QLabel#LogoLabel {
     font-family: 'Orbitron';
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 900;
     color: #00c8ff;
-    padding: 35px 25px;
-    letter-spacing: 4px;
+    padding: 30px 20px;
+    letter-spacing: 5px;
+    background: transparent;
 }
 
-/* BOTONES DE NAVEGACIÓN (ESTILO HUD) */
 QPushButton.NavButton {
     background: transparent;
     border: none;
     border-left: 3px solid transparent;
     color: rgba(0, 180, 255, 0.4);
     font-family: 'Share Tech Mono';
-    font-size: 11px;
+    font-size: 10px;
     text-align: left;
-    padding-left: 25px;
-    height: 50px;
+    padding-left: 20px;
+    height: 48px;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 2px;
 }
 
 QPushButton.NavButton:hover {
-    background: rgba(0, 180, 255, 0.05);
+    background: rgba(0, 200, 255, 0.05);
     color: #00c8ff;
 }
 
 QPushButton.NavButton[active="true"] {
-    background: rgba(0, 180, 255, 0.1);
-    color: #00c8ff;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(0, 200, 255, 0.12), stop:1 transparent);
+    color: #ffffff;
     border-left: 3px solid #00c8ff;
-    font-weight: bold;
 }
 
-/* TÍTULOS DE SECCIÓN */
+/* CONTENT AREA: TACTICAL TERMINAL */
+QFrame#ContentFrame {
+    background-color: #020408;
+}
+
 QLabel#SectionTitle {
     font-family: 'Orbitron';
-    font-size: 16px;
+    font-size: 15px;
     font-weight: bold;
-    color: #ffffff;
-    letter-spacing: 2px;
+    color: #00c8ff;
+    letter-spacing: 3px;
     text-transform: uppercase;
+    border-bottom: 1px solid rgba(0, 200, 255, 0.1);
+    padding-bottom: 5px;
 }
 
-/* TARJETAS DE PERSONAJE / HERRAMIENTAS (DISEÑO INDUSTRIAL) */
+/* CHARACTER MODULES: INDUSTRIAL TELEMETRY */
 QFrame#CharacterCard {
-    background: #0a0a0a;
-    border: 1px solid rgba(0, 180, 255, 0.2);
+    background: #080b14;
+    border: 1px solid rgba(0, 200, 255, 0.1);
     border-radius: 2px;
 }
 
 QFrame#CharacterCard:hover {
-    background: #0d0d0d;
-    border-color: #00c8ff;
+    background: #0d121d;
+    border-color: rgba(0, 200, 255, 0.6);
 }
 
 QLabel#CharName {
-    font-family: 'Share Tech Mono';
-    font-size: 14px;
-    font-weight: bold;
-    color: #00c8ff;
+    font-family: 'Orbitron';
+    font-size: 13px;
+    font-weight: 900;
+    color: #ffffff;
+    letter-spacing: 1px;
 }
 
 QLabel#CharAvatar {
-    background-color: #111111;
+    background-color: #05080f;
     color: #ffd700;
-    border: 1px solid rgba(255, 215, 0, 0.3);
-    border-radius: 0px;
+    border: 1px solid rgba(255, 215, 0, 0.2);
     font-family: 'Orbitron';
-    font-size: 24px;
+    font-size: 22px;
+    font-weight: bold;
 }
 
-/* MÉTRICAS GLOW (ESTILO HUD) */
+/* METRICS: AMBER & NEON */
 QLabel#GlowValue {
-    font-family: 'Orbitron';
-    font-size: 24px;
+    font-family: 'Share Tech Mono';
+    font-size: 26px;
     font-weight: bold;
     color: #ffd700;
 }
 
 QLabel#GlowValueGreen {
-    font-family: 'Orbitron';
-    font-size: 24px;
+    font-family: 'Share Tech Mono';
+    font-size: 26px;
     font-weight: bold;
     color: #00ff9d;
 }
 
-/* CAJAS ANALÍTICAS */
+/* ANALYTIC BOXES: CONSOLE BLOCKS */
 QFrame#AnalyticBox {
-    background: #080808;
-    border: 1px solid rgba(0, 180, 255, 0.1);
-    border-radius: 0px;
+    background: #05080f;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-top: 2px solid rgba(0, 180, 255, 0.2);
 }
 
 QLabel#AnalyticVal {
     font-family: 'Share Tech Mono';
-    font-size: 18px;
+    font-size: 17px;
     color: #ffffff;
 }
 
-/* SETTINGS & COMPONENTES */
+/* SETTINGS: SYSTEM OVERRIDE */
 QFrame#SettingsGroup {
-    background: #050505;
-    border: 1px solid rgba(0, 180, 255, 0.1);
+    background: #05080f;
+    border: 1px solid rgba(0, 180, 255, 0.05);
     border-left: 4px solid #00c8ff;
     padding: 15px;
 }
 
 QLineEdit, QDoubleSpinBox, QComboBox {
-    background-color: #0a0a0a;
+    background-color: #020408;
     border: 1px solid rgba(0, 180, 255, 0.2);
     color: #00c8ff;
     font-family: 'Share Tech Mono';
-    padding: 6px;
+    padding: 5px;
 }
 
+QComboBox::drop-down { border: none; }
+
 QPushButton#SaveButton {
-    background: rgba(0, 200, 255, 0.1);
+    background: rgba(0, 200, 255, 0.08);
     border: 1px solid #00c8ff;
     color: #00c8ff;
     font-family: 'Orbitron';
     font-weight: bold;
-    height: 40px;
-    text-transform: uppercase;
+    letter-spacing: 2px;
+    height: 42px;
 }
 
 QPushButton#SaveButton:hover {
-    background: rgba(0, 200, 255, 0.2);
+    background: #00c8ff;
+    color: #000000;
 }
 
 QPushButton#BackButton {
     background: transparent;
-    border: 1px solid rgba(0, 180, 255, 0.3);
-    color: #00c8ff;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.4);
     font-family: 'Share Tech Mono';
-    font-size: 10px;
+    font-size: 9px;
+    padding: 5px 15px;
 }
 
-QScrollArea {
+QPushButton#BackButton:hover {
+    border-color: #00c8ff;
+    color: #00c8ff;
+}
+
+/* SCROLLBARS: MINIMALIST TECH */
+QScrollBar:vertical {
     border: none;
-    background: transparent;
+    background: #020408;
+    width: 6px;
+}
+QScrollBar::handle:vertical {
+    background: rgba(0, 200, 255, 0.15);
+    min-height: 20px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #00c8ff;
 }
 """

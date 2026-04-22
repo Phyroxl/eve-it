@@ -22,7 +22,7 @@ class MainSuiteWindow(QMainWindow):
         
         self.controller = controller
         self.tray_manager = None
-        self.setWindowTitle("EVE iT — Desktop Suite Premium")
+        self.setWindowTitle("EVE iT — Tactical Command Suite")
         self.resize(1100, 800)
         
         self.account_cards = {}
@@ -68,12 +68,12 @@ class MainSuiteWindow(QMainWindow):
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_settings)
         
-        # 2. Content Area (Arquitectura de Consola)
+        # 2. Content Area (Command Deck Interface)
         self.content_frame = QFrame(); self.content_frame.setObjectName("ContentFrame")
-        self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(20, 20, 20, 20); self.content_layout.setSpacing(15)
+        self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(30, 25, 30, 25); self.content_layout.setSpacing(15)
         
         header = QHBoxLayout()
-        self.section_title = QLabel("SISTEMA DE CONTROL TÁCTICO"); self.section_title.setObjectName("SectionTitle")
+        self.section_title = QLabel("OPERATIONAL_STATUS_MONITOR"); self.section_title.setObjectName("SectionTitle")
         header.addWidget(self.section_title); header.addStretch()
         self.content_layout.addLayout(header)
         
@@ -110,15 +110,23 @@ class MainSuiteWindow(QMainWindow):
 
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
-        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(250, 120); card.setCursor(Qt.PointingHandCursor)
-        l = QHBoxLayout(card); l.setContentsMargins(12, 12, 12, 12); l.setSpacing(12)
-        avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(50, 50); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
-        info = QVBoxLayout(); name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
-        status = QLabel("● LINK ACTIVE" if acc.get('status') == 'active' else "○ LINK IDLE")
-        status.setStyleSheet(f"color: {'#00ff9d' if acc.get('status') == 'active' else '#ffd700'}; font-family: 'Share Tech Mono'; font-size: 9px;")
-        isk_h = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h"); isk_h.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 11px; font-weight: bold;")
-        info.addWidget(name_lbl); info.addWidget(status); info.addStretch(); info.addWidget(isk_h)
-        l.addWidget(avatar); l.addLayout(info); card.mousePressEvent = lambda e: self.open_character_detail(acc); return card
+        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(250, 115); card.setCursor(Qt.PointingHandCursor)
+        l = QVBoxLayout(card); l.setContentsMargins(15, 12, 15, 12); l.setSpacing(8)
+        
+        top = QHBoxLayout()
+        avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(38, 38); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
+        v = QVBoxLayout(); name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
+        status_badge = QLabel("SYNC_ACTIVE" if acc.get('status') == 'active' else "SYNC_IDLE")
+        status_badge.setStyleSheet(f"color: {'#00c8ff' if acc.get('status') == 'active' else '#808080'}; font-family: 'Share Tech Mono'; font-size: 8px; border: 1px solid {'#00c8ff' if acc.get('status') == 'active' else '#333'}; padding: 2px 4px;")
+        v.addWidget(name_lbl); v.addWidget(status_badge); top.addWidget(avatar); top.addLayout(v); top.addStretch()
+        
+        bot = QHBoxLayout()
+        isk_lbl = QLabel("EST_REVENUE:"); isk_lbl.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-family: 'Share Tech Mono'; font-size: 8px;")
+        isk_val = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
+        isk_val.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 11px; font-weight: bold;")
+        bot.addWidget(isk_lbl); bot.addStretch(); bot.addWidget(isk_val)
+        
+        l.addLayout(top); l.addStretch(); l.addLayout(bot); card.mousePressEvent = lambda e: self.open_character_detail(acc); return card
 
     def open_character_detail(self, acc):
         self.current_character = acc; self.update_detail_view(); self.stack.setCurrentIndex(3); self.section_title.setText("PERFIL ESTRATÉGICO")
@@ -131,12 +139,12 @@ class MainSuiteWindow(QMainWindow):
         back = QPushButton("← VOLVER AL MANDO"); back.setObjectName("BackButton"); back.clicked.connect(lambda: self.switch_page(0, "CENTRO DE MANDO"))
         c_l.addWidget(back, 0, Qt.AlignLeft)
         
-        # Profile Header (Consola)
+        # Profile Header (Console Diagnostic Panel)
         h = QHBoxLayout(); h.setSpacing(20)
-        self.detail_avatar = QLabel(); self.detail_avatar.setObjectName("CharAvatar"); self.detail_avatar.setFixedSize(100, 100); self.detail_avatar.setAlignment(Qt.AlignCenter)
-        v = QVBoxLayout(); self.detail_name = QLabel("NAME"); self.detail_name.setObjectName("DetailTitle")
-        self.detail_status = QLabel("SYSTEM LINK STATUS: ACTIVE"); self.detail_status.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 12px; color: #00ff9d;")
-        self.detail_meta = QLabel("DIRECT ACCESS INTERFACE — CORE_VERSION_4.0"); self.detail_meta.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-family: 'Share Tech Mono'; font-size: 9px;")
+        self.detail_avatar = QLabel(); self.detail_avatar.setObjectName("CharAvatar"); self.detail_avatar.setFixedSize(90, 90); self.detail_avatar.setAlignment(Qt.AlignCenter)
+        v = QVBoxLayout(); self.detail_name = QLabel("IDENT_NAME"); self.detail_name.setObjectName("DetailTitle")
+        self.detail_status = QLabel("SUBSYSTEM_LINK: STABLE"); self.detail_status.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 11px; color: #00ff9d; letter-spacing: 1px;")
+        self.detail_meta = QLabel("OPERATIONAL_TELEMETRY — DATA_STREAM_v4.0"); self.detail_meta.setStyleSheet("color: rgba(0, 200, 255, 0.25); font-family: 'Share Tech Mono'; font-size: 8px;")
         v.addWidget(self.detail_name); v.addWidget(self.detail_status); v.addWidget(self.detail_meta); h.addWidget(self.detail_avatar); h.addLayout(v); h.addStretch(); c_l.addLayout(h)
         
         # Impact Metrics
@@ -166,11 +174,11 @@ class MainSuiteWindow(QMainWindow):
         pi_desc = QLabel("Módulo táctico en espera. Requiere sincronización con la API de EVE para monitorizar extractores y silos."); pi_desc.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-size: 10px; word-wrap: true; margin-top: 8px;")
         pi_l.addWidget(pi_t); pi_l.addWidget(pi_s); pi_l.addWidget(pi_desc); pi_l.addStretch(); bottom.addWidget(pi_frame, 1)
         
-        # Activity Feed
-        act_frame = QFrame(); act_frame.setStyleSheet("background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(0, 180, 255, 0.1); border-radius: 4px; padding: 20px;")
-        act_l = QVBoxLayout(act_frame); act_l.addWidget(QLabel("REGISTRO DE SEÑALES", styleSheet="font-family: 'Orbitron'; color: #ffffff; font-size: 11px; margin-bottom: 5px;"))
-        self.activity_feed = QListWidget(); self.activity_feed.setStyleSheet("background: transparent; border: none; color: rgba(0, 255, 157, 0.6); font-family: 'Share Tech Mono'; font-size: 11px;")
-        self.activity_empty = QLabel("SIN ACTIVIDAD DETECTADA EN LOS SENSORES."); self.activity_empty.setObjectName("EmptyStateText"); self.activity_empty.setAlignment(Qt.AlignCenter); self.activity_empty.setWordWrap(True)
+        # Activity Feed (Tactical Event Log)
+        act_frame = QFrame(); act_frame.setStyleSheet("background: rgba(5, 8, 15, 0.8); border: 1px solid rgba(0, 200, 255, 0.1); border-radius: 2px;")
+        act_l = QVBoxLayout(act_frame); act_l.addWidget(QLabel("EVENT_SIGNALS_LOG", styleSheet="font-family: 'Orbitron'; color: #00c8ff; font-size: 10px; margin-bottom: 5px;"))
+        self.activity_feed = QListWidget(); self.activity_feed.setStyleSheet("background: transparent; border: none; color: #00ff9d; font-family: 'Share Tech Mono'; font-size: 10px;")
+        self.activity_empty = QLabel("NO_SIGNAL_DETECTED_IN_SECTOR"); self.activity_empty.setObjectName("EmptyStateText"); self.activity_empty.setAlignment(Qt.AlignCenter)
         act_l.addWidget(self.activity_feed); act_l.addWidget(self.activity_empty); bottom.addWidget(act_frame, 1)
         
         c_l.addLayout(bottom); scroll.setWidget(cont); l.addWidget(scroll); return p
@@ -193,7 +201,7 @@ class MainSuiteWindow(QMainWindow):
         if not self.current_character: return
         acc = self.current_character; name = acc.get('display_name', acc.get('character'))
         self.detail_name.setText(name.upper()); self.detail_avatar.setText(name[0].upper())
-        self.detail_status.setText("SYSTEM LINK STATUS: ACTIVE" if acc.get('status') == 'active' else "SYSTEM LINK STATUS: IDLE")
+        self.detail_status.setText("SUBSYSTEM_LINK: STABLE" if acc.get('status') == 'active' else "SUBSYSTEM_LINK: IDLE")
         
         self.box_wallet.findChild(QLabel).setText(format_isk(acc.get('total_isk', 0), short=True))
         self.box_1h.findChild(QLabel).setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
