@@ -14,6 +14,7 @@ class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
         self.controller = controller
+        self.tray_manager = None
         self.setWindowTitle("EVE iT — Suite Control Panel")
         self.resize(1100, 750)
         
@@ -441,9 +442,12 @@ class MainSuiteWindow(QMainWindow):
             color = "#00ff9d" if status == 'active' else "#ffd700" if status == 'idle' else "#ff4444"
             status_dot.setStyleSheet(f"font-size: 14px; color: {color};")
 
+    def set_tray_manager(self, tm):
+        self.tray_manager = tm
+
     def _on_hud_clicked(self):
-        if self.controller:
-            self.controller.toggle_overlay()
+        if self.tray_manager:
+            self.tray_manager._on_overlay()
             
     def _on_translator_clicked(self):
         if self.controller:
@@ -451,14 +455,8 @@ class MainSuiteWindow(QMainWindow):
             self.controller.start_translator()
 
     def _on_replicator_clicked(self):
-        if self.controller:
-            try:
-                # Intentamos acceder al tray manager desde el controlador o vía global
-                from main import _tray_manager_ref
-                if _tray_manager_ref:
-                    _tray_manager_ref._on_replicator()
-            except Exception as e:
-                print(f"Error lanzando replicador desde Suite: {e}")
+        if self.tray_manager:
+            self.tray_manager._on_replicator()
 
     def create_settings_page(self):
         page = QWidget()

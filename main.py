@@ -294,6 +294,7 @@ def main():
     # Pasar referencias al tray para toggle desde menú
     tray.set_control_window(ctrl_win)
     tray.set_suite_window(suite_win)
+    suite_win.set_tray_manager(tray)
 
     # Señal de focus → mostrar la ventana de control
     global _control_window_ref
