@@ -87,13 +87,28 @@ class AppController:
         # Referencia al manager del replicador (gestionado externamente)
         self.replicator_mgr  = None
 
+        # Configuración persistente
+        self.log_directory = ""
+        self.ess_retention = 1.0
+
+    def set_log_directory(self, path: str):
+        self.log_directory = path
+        logger.info(f"Log directory set to: {path}")
+
+    def set_ess_retention(self, val: float):
+        self.ess_retention = val
+        logger.info(f"ESS retention set to: {val}")
+
     # ══════════════════════════════════════════════════════════════════════════
     # Arranque y parada del tracker de logs
     # ══════════════════════════════════════════════════════════════════════════
 
     def start_tracker(self, log_dir: str = '', skip_existing: bool = True,
-                      ess_retention: float = 1.0):
+                      ess_retention: float = 0):
         """Inicia el tracker de logs y el servidor overlay en background."""
+        # Usar valores guardados si no se pasan como argumento
+        log_dir = log_dir or self.log_directory
+        ess_retention = ess_retention or self.ess_retention
         with self._lock:
             if self.state.tracker_running:
                 logger.info("Tracker ya activo — reiniciando")
