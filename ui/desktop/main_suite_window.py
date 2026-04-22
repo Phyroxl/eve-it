@@ -90,9 +90,9 @@ class MainSuiteWindow(QMainWindow):
         self.content_layout.addWidget(self.stack)
         self.main_layout.addWidget(self.nav_bar); self.main_layout.addWidget(self.content_frame, 1)
 
-        self.btn_dashboard.clicked.connect(lambda: self.switch_page(0, "CENTRO DE MANDO"))
-        self.btn_tools.clicked.connect(lambda: self.switch_page(1, "SUITE OPERATIVA"))
-        self.btn_settings.clicked.connect(lambda: self.switch_page(2, "CONFIGURACIÓN DEL SISTEMA"))
+        self.btn_dashboard.clicked.connect(lambda: self.switch_page(0, "Dashboard"))
+        self.btn_tools.clicked.connect(lambda: self.switch_page(1, "Herramientas"))
+        self.btn_settings.clicked.connect(lambda: self.switch_page(2, "Configuración"))
 
     def switch_page(self, index, title):
         self.stack.setCurrentIndex(index); self.section_title.setText(title)
@@ -104,10 +104,78 @@ class MainSuiteWindow(QMainWindow):
         b = QPushButton(text); b.setProperty("class", "NavButton"); b.setProperty("active", str(active).lower()); b.setCursor(Qt.PointingHandCursor); b.setFixedHeight(44); return b
 
     def create_dashboard_page(self):
-        p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setStyleSheet("background: transparent;")
-        cont = QWidget(); self.accounts_layout = QGridLayout(cont); self.accounts_layout.setContentsMargins(0, 0, 10, 10); self.accounts_layout.setSpacing(12)
-        scroll.setWidget(cont); l.addWidget(scroll); return p
+        p = QWidget()
+        outer = QVBoxLayout(p)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(16)
+
+        # --- Panel de estado del sistema (siempre visible) ---
+        self.status_bar = QFrame()
+        self.status_bar.setObjectName("AnalyticBox")
+        self.status_bar.setFixedHeight(60)
+        sb_l = QHBoxLayout(self.status_bar)
+        sb_l.setContentsMargins(16, 8, 16, 8)
+
+        self.lbl_tracker_status = QLabel("● Tracker: Inactivo")
+        self.lbl_tracker_status.setStyleSheet("color: #718096; font-size: 12px; font-weight: 600;")
+
+        self.lbl_chars_count = QLabel("Personajes: 0")
+        self.lbl_chars_count.setStyleSheet("color: #a0aec0; font-size: 12px;")
+
+        self.lbl_last_update = QLabel("Sin datos")
+        self.lbl_last_update.setStyleSheet("color: #4a5568; font-size: 11px;")
+
+        sb_l.addWidget(self.lbl_tracker_status)
+        sb_l.addSpacing(30)
+        sb_l.addWidget(self.lbl_chars_count)
+        sb_l.addStretch()
+        sb_l.addWidget(self.lbl_last_update)
+        outer.addWidget(self.status_bar)
+
+        # --- Área scrollable de tarjetas ---
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+
+        cont = QWidget()
+        cont_l = QVBoxLayout(cont)
+        cont_l.setContentsMargins(0, 0, 10, 10)
+        cont_l.setSpacing(12)
+
+        # Grid de tarjetas de personajes
+        self.cards_container = QWidget()
+        self.accounts_layout = QGridLayout(self.cards_container)
+        self.accounts_layout.setContentsMargins(0, 0, 0, 0)
+        self.accounts_layout.setSpacing(12)
+        self.accounts_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        cont_l.addWidget(self.cards_container)
+
+        # Estado vacío (visible cuando no hay personajes)
+        self.empty_state = QWidget()
+        es_l = QVBoxLayout(self.empty_state)
+        es_l.setAlignment(Qt.AlignCenter)
+        es_icon = QLabel("📋")
+        es_icon.setStyleSheet("font-size: 40px;")
+        es_icon.setAlignment(Qt.AlignCenter)
+        es_title = QLabel("No hay personajes detectados")
+        es_title.setStyleSheet("font-size: 16px; font-weight: 600; color: #a0aec0;")
+        es_title.setAlignment(Qt.AlignCenter)
+        es_desc = QLabel("Configura el directorio de logs de EVE en la pestaña Configuración\npara comenzar a monitorizar tus personajes.")
+        es_desc.setStyleSheet("font-size: 12px; color: #4a5568; line-height: 1.6;")
+        es_desc.setAlignment(Qt.AlignCenter)
+        es_desc.setWordWrap(True)
+        es_l.addWidget(es_icon)
+        es_l.addSpacing(8)
+        es_l.addWidget(es_title)
+        es_l.addSpacing(4)
+        es_l.addWidget(es_desc)
+        cont_l.addWidget(self.empty_state)
+        cont_l.addStretch()
+
+        scroll.setWidget(cont)
+        outer.addWidget(scroll)
+        return p
 
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
@@ -315,34 +383,66 @@ class MainSuiteWindow(QMainWindow):
         l.addWidget(t); l.addWidget(s); return g, l
 
     def refresh_data(self):
-        if not self.controller or not self.controller._tracker: return
+        # Actualizar estado del sistema en el status bar
+        try:
+            tracker_running = self.controller and self.controller._tracker is not None
+            if tracker_running:
+                self.lbl_tracker_status.setText("● Tracker: Activo")
+                self.lbl_tracker_status.setStyleSheet("color: #48bb78; font-size: 12px; font-weight: 600;")
+            else:
+                self.lbl_tracker_status.setText("● Tracker: Inactivo")
+                self.lbl_tracker_status.setStyleSheet("color: #718096; font-size: 12px; font-weight: 600;")
+        except Exception:
+            pass
+
+        if not self.controller or not self.controller._tracker:
+            self._show_empty_state(True)
+            return
         try:
             summary = self.controller._tracker.get_summary(datetime.now())
             accounts = summary.get('per_character', [])
+            self.lbl_chars_count.setText(f"Personajes: {len(accounts)}")
+            self.lbl_last_update.setText(f"Actualizado: {datetime.now().strftime('%H:%M:%S')}")
             self.update_accounts_view(accounts)
             if self.stack.currentIndex() == 3: self.update_detail_view()
-        except: pass
+        except Exception:
+            pass
+
+    def _show_empty_state(self, show: bool):
+        """Muestra u oculta el estado vacío y el contenedor de tarjetas."""
+        try:
+            self.empty_state.setVisible(show)
+            self.cards_container.setVisible(not show)
+        except Exception:
+            pass
 
     def update_accounts_view(self, accounts):
         if not self.accounts_layout: return
+
+        if not accounts:
+            self._show_empty_state(True)
+            return
+
+        self._show_empty_state(False)
         names = [acc.get('display_name', acc.get('character')) for acc in accounts]
+
+        # Eliminar tarjetas de personajes que ya no existen
         for name in list(self.account_cards.keys()):
             if name not in names:
-                card = self.account_cards.pop(name); self.accounts_layout.removeWidget(card); card.deleteLater()
+                card = self.account_cards.pop(name)
+                self.accounts_layout.removeWidget(card)
+                card.deleteLater()
+
+        # Añadir o actualizar tarjetas
         for i, acc in enumerate(accounts):
             name = acc.get('display_name', acc.get('character'))
             if name not in self.account_cards:
-                card = self.create_account_card(acc); self.account_cards[name] = card
+                card = self.create_account_card(acc)
+                self.account_cards[name] = card
                 self.accounts_layout.addWidget(card, i // 3, i % 3)
             else:
                 card = self.account_cards[name]
-                # Buscar por nombre de objeto para mayor robustez
                 isk_val = card.findChild(QLabel, "IskValue")
-                if not isk_val:
-                    # Fallback si no tiene nombre (para compatibilidad o si olvidé ponerlo)
-                    labels = card.findChildren(QLabel)
-                    if len(labels) >= 5: isk_val = labels[4]
-                
                 if isk_val:
                     isk_val.setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
 
