@@ -4,18 +4,13 @@ Orquestador principal modularizado.
 """
 
 import streamlit as st
-import pandas as pd
-import json
 from datetime import datetime, timedelta
 import time
 import tempfile
-import os
 
 from core.session_tracker import MultiAccountTracker
 from core.file_watcher import EVELogWatcher
 from utils.demo_mode import DemoLogGenerator
-from utils.i18n import t
-from utils.eve_api import resolve_characters_async, get_cached, is_character_id
 
 # Overlay HUD (importación lazy)
 try:
@@ -31,15 +26,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
 # ─── Imports Modularizados ──────────────────────────────────────────────────
-from ui.dashboard.theme import render_theme
+from ui.dashboard.theme import render_theme, render_gear_button
 from ui.dashboard.state import init_session_state
 from ui.dashboard.sidebar import render_sidebar
 from ui.dashboard.welcome import render_welcome
 from ui.dashboard.dashboard_view import render_dashboard_layout
 from ui.dashboard.components.charts import render_charts_iframe, send_chart_data
-from ui.dashboard.components.characters import render_chars_section
+from ui.dashboard.components.characters import render_chars_section, ensure_chars_resolved
 
 # Aplicar Estilos Globales
 render_theme()
@@ -98,52 +92,6 @@ def reset_session():
     st.session_state.session_start = datetime.now()
     st.session_state.char_resolved = set()
     st.session_state.chart_session_token += 1
-
-def ensure_chars_resolved(char_ids: list[str]):
-    """Resuelve IDs en background mediante ESI."""
-    from utils.eve_api import _failed_ids, RETRY_INTERVAL_SECS
-    import time as _t
-    pending = []
-    for c in char_ids:
-        if not is_character_id(c): continue
-        cached = get_cached(c)
-        if cached and cached.get('resolved'): continue
-        with __import__('utils.eve_api', fromlist=['_cache_lock'])._cache_lock:
-            failed_ts = _failed_ids.get(c, 0)
-        if failed_ts and _t.time() - failed_ts < RETRY_INTERVAL_SECS: continue
-        pending.append(c)
-    if pending:
-        resolve_characters_async(pending)
-
-# ─── Helpers de UI ───────────────────────────────────────────────────────────
-
-def render_gear_button():
-    """Botón de configuración flotante."""
-    import streamlit.components.v1 as components
-    components.html("""
-    <style>
-      #gb{position:fixed;top:14px;left:14px;z-index:999999;width:38px;height:38px;
-          background:rgba(3,8,20,0.97);border:1.5px solid rgba(0,180,255,0.55);
-          border-radius:8px;display:flex;align-items:center;justify-content:center;
-          cursor:pointer;font-size:18px;backdrop-filter:blur(12px);
-          box-shadow:0 2px 18px rgba(0,0,0,0.6),0 0 8px rgba(0,180,255,0.15);
-          transition:border-color 0.2s,box-shadow 0.2s;user-select:none;}
-      #gb:hover{border-color:#00c8ff;box-shadow:0 2px 18px rgba(0,0,0,0.7),0 0 14px rgba(0,200,255,0.4);}
-    </style>
-    <div id="gb" title="Configuración" onclick="tgl()">⚙️</div>
-    <script>
-    function tgl(){
-      var p=window.parent.document;
-      var sels=['[data-testid="collapsedControl"] button', 'button[aria-label="Open sidebar"]', 'button[aria-label="Close sidebar"]'];
-      for(var i=0;i<sels.length;i++){var b=p.querySelector(sels[i]);if(b){b.click();return;}}
-      var btns=p.querySelectorAll('button');
-      for(var j=0;j<btns.length;j++){
-        var r=btns[j].getBoundingClientRect();
-        if(r.left<80&&r.top<80&&r.width<60){btns[j].click();return;}
-      }
-    }
-    </script>
-    """, height=0, scrolling=False)
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
 

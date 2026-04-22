@@ -4,7 +4,23 @@ import json
 from datetime import datetime
 from utils.i18n import t
 from utils.formatters import format_isk
-from utils.eve_api import get_cached, is_character_id
+from utils.eve_api import resolve_characters_async, get_cached, is_character_id
+
+def ensure_chars_resolved(char_ids: list[str]):
+    """Resuelve IDs en background mediante ESI."""
+    from utils.eve_api import _failed_ids, RETRY_INTERVAL_SECS
+    import time as _t
+    pending = []
+    for c in char_ids:
+        if not is_character_id(c): continue
+        cached = get_cached(c)
+        if cached and cached.get('resolved'): continue
+        with __import__('utils.eve_api', fromlist=['_cache_lock'])._cache_lock:
+            failed_ts = _failed_ids.get(c, 0)
+        if failed_ts and _t.time() - failed_ts < RETRY_INTERVAL_SECS: continue
+        pending.append(c)
+    if pending:
+        resolve_characters_async(pending)
 
 # HTML para las cards de personaje (estático)
 _CHARS_STATIC_HTML = """
