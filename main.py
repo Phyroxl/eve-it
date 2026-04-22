@@ -96,7 +96,7 @@ def main():
         sys.exit(0)
 
     log = setup_logging()
-    log.info("--- ARRANQUE ELITE (SÚRGICO) ---")
+    log.info("--- ARRANQUE INSTRUMENTADO (DIAGNÓSTICO) ---")
 
     from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
@@ -123,22 +123,25 @@ def main():
     # REFUERZO VISUAL DIFERIDO
     def force_visibility():
         try:
-            log.info("Refuerzo visual diferido activado...")
+            log.info(f"DIAG: Refuerzo diferido (1000ms). Estado actual: Visible={suite_win.isVisible()}, Min={suite_win.isMinimized()}")
             suite_win.showNormal()
             suite_win.show()
             suite_win.raise_()
             suite_win.activateWindow()
-        except: pass
+            log.info(f"DIAG: Refuerzo completado. Visible={suite_win.isVisible()}, Geom={suite_win.geometry()}")
+        except Exception as e:
+            log.error(f"DIAG: Error en refuerzo visual: {e}")
 
-    log.info("Desplegando Interfaz Principal...")
+    log.info(f"DIAG: Desplegando Suite inicial. Visible={suite_win.isVisible()}")
     suite_win.show()
     suite_win.raise_()
     suite_win.activateWindow()
+    log.info(f"DIAG: Suite desplegada. Visible={suite_win.isVisible()}, Geom={suite_win.geometry()}")
     
     from PySide6.QtCore import QTimer
     QTimer.singleShot(1000, force_visibility)
 
-    # Auto-start con todos los parámetros
+    # Auto-start
     try:
         from PySide6.QtCore import QSettings
         settings = QSettings("EVE_iT", "Suite")

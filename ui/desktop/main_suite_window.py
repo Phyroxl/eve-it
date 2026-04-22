@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QTimer, QSettings
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient, QPixmap
 import sys
+import logging
 from datetime import datetime, timedelta
 
 from ui.desktop.styles import MAIN_STYLE
@@ -16,7 +17,9 @@ from utils.formatters import format_isk
 class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
-        print("DEBUG: Iniciando Varnish Final...")
+        self.diag_log = logging.getLogger('eve.suite.diag')
+        self.diag_log.info("DIAG: Instanciando MainSuiteWindow...")
+        
         self.controller = controller
         self.tray_manager = None
         self.setWindowTitle("EVE iT — Desktop Suite Premium")
@@ -37,7 +40,7 @@ class MainSuiteWindow(QMainWindow):
             self.apply_styles()
         except Exception as e:
             import traceback
-            print(f"ERROR: {e}"); traceback.print_exc()
+            self.diag_log.error(f"DIAG: Error en setup_ui: {e}\n{traceback.format_exc()}")
 
         self.load_settings()
         self.restore_geometry()
@@ -277,7 +280,7 @@ class MainSuiteWindow(QMainWindow):
         for i, acc in enumerate(accounts):
             name = acc.get('display_name', acc.get('character'))
             if name not in self.account_cards:
-                card = self.create_account_card(acc); self.account_cards[name] = card
+                card = self.account_cards[name] = self.create_account_card(acc)
                 self.accounts_layout.addWidget(card, i // 3, i % 3)
             else:
                 card = self.account_cards[name]; labels = card.findChildren(QLabel)
@@ -313,29 +316,56 @@ class MainSuiteWindow(QMainWindow):
         self.section_title.setText("SISTEMA SINCRONIZADO"); QTimer.singleShot(2000, lambda: self.section_title.setText("CONFIGURACIÓN DEL SISTEMA"))
 
     def closeEvent(self, event):
+        self.diag_log.info("DIAG: closeEvent detectado.")
         try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
         except: pass
-        event.ignore(); self.hide()
+        if self.tray_manager:
+            self.diag_log.info("DIAG: Redirigiendo close a hide (Tray activo).")
+            event.ignore(); self.hide()
+        else:
+            self.diag_log.info("DIAG: Cerrando aplicación (Sin Tray).")
+            event.accept()
+
     def restore_geometry(self):
         try:
+            self.diag_log.info("DIAG: Restaurando geometría...")
             s = QSettings("EVE_iT", "Suite")
             geo = s.value("geometry")
             if geo:
                 self.restoreGeometry(geo)
-                
-            # Validación de visibilidad: ¿Está la ventana en algún monitor?
+                self.diag_log.info(f"DIAG: Geometría cargada. Posición: {self.pos()}")
+            
             screen = self.screen()
             if screen:
-                geom = self.geometry()
-                available = screen.availableGeometry()
-                if not available.intersects(geom):
-                    self.setGeometry(available.center().x() - self.width()//2,
-                                    available.center().y() - self.height()//2,
+                geom = self.geometry(); avail = screen.availableGeometry()
+                self.diag_log.info(f"DIAG: Ventana: {geom} | Monitor: {avail}")
+                if not avail.intersects(geom):
+                    self.diag_log.warning("DIAG: Fuera de límites. Reseteando.")
+                    self.setGeometry(avail.center().x() - self.width()//2,
+                                    avail.center().y() - self.height()//2,
                                     self.width(), self.height())
-            
             self.showNormal()
-        except Exception:
-            pass
+            self.diag_log.info(f"DIAG: showNormal ejecutado. Visible={self.isVisible()}, Min={self.isMinimized()}")
+        except Exception as e:
+            self.diag_log.error(f"DIAG: Error en restore_geometry: {e}")
+
+    def show(self):
+        self.diag_log.info(f"DIAG: show() llamado. Estado previo: Visible={self.isVisible()}, Min={self.isMinimized()}")
+        super().show()
+        self.diag_log.info(f"DIAG: show() fin. Visible={self.isVisible()}, Geom={self.geometry()}")
+
+    def showNormal(self):
+        self.diag_log.info("DIAG: showNormal() llamado.")
+        super().showNormal()
+
+    def showEvent(self, event):
+        self.diag_log.info("DIAG: showEvent disparado.")
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self.diag_log.info("DIAG: hideEvent disparado.")
+        super().hideEvent(event)
+
     def apply_styles(self): self.setStyleSheet(MAIN_STYLE)
 
 if __name__ == "__main__":
