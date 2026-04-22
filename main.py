@@ -19,7 +19,7 @@ import threading
 import sys
 from pathlib import Path
 
-# -- Alta Densidad de Píxeles (DPI Awareness) --
+# -- DPI Awareness --
 if os.name == 'nt':
     try:
         import ctypes
@@ -30,7 +30,7 @@ if os.name == 'nt':
         except Exception:
             pass
 
-# -- Redirección de consola para pythonw (Headless) --
+# -- Redirección para pythonw (Headless) --
 if sys.executable.endswith("pythonw.exe"):
     try:
         sys.stdout = open(os.devnull, "w")
@@ -49,18 +49,11 @@ def setup_logging():
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s — %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    
     try:
         fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
         fh.setFormatter(fmt)
         root.addHandler(fh)
-    except Exception:
-        pass # Fallback: solo consola si el archivo está bloqueado
-        
-    if '--debug' in sys.argv or os.environ.get('EVE_DEBUG'):
-        ch = logging.StreamHandler()
-        ch.setFormatter(fmt)
-        root.addHandler(ch)
+    except: pass
     return logging.getLogger('eve.main')
 
 SINGLETON_PORT = 47288
@@ -75,7 +68,7 @@ class SingletonLock:
             t = threading.Thread(target=self._listen, daemon=True)
             t.start()
             return True
-        except OSError: return False
+        except: return False
     def _listen(self):
         while True:
             try:
@@ -90,17 +83,15 @@ class SingletonLock:
             s.connect(('127.0.0.1', SINGLETON_PORT)); s.send(b'FOCUS\n'); s.close()
         except: pass
     def release(self):
-        if self._sock:
-            try: self._sock.close()
-            except: pass
+        if self._sock: self._sock.close()
 
 _suite_window_ref = None
 
 def _signal_focus():
-    """Trae la Suite al frente cuando otra instancia intenta arrancar."""
     global _suite_window_ref
     if _suite_window_ref:
         try:
+            _suite_window_ref.showNormal()
             _suite_window_ref.show()
             _suite_window_ref.raise_()
             _suite_window_ref.activateWindow()
@@ -113,7 +104,7 @@ def main():
         sys.exit(0)
 
     log = setup_logging()
-    log.info("--- INICIANDO EVE iT ELITE (MODO ROBUSTO) ---")
+    log.info("--- ARRANQUE ELITE ---")
 
     from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
@@ -130,28 +121,39 @@ def main():
     ctrl_win = ControlWindow(app, controller, tray)
     suite_win = MainSuiteWindow(controller)
 
-    # Registro de referencias globales
     global _suite_window_ref
     _suite_window_ref = suite_win
-    
-    tray.set_control_window(ctrl_win)
     tray.set_suite_window(suite_win)
     suite_win.set_tray_manager(tray)
 
-    # Mostrar Suite con prioridad
-    log.info("Desplegando Interfaz Principal...")
+    # REFUERZO VISUAL DIFERIDO
+    def force_visibility():
+        try:
+            log.info("Segundo impulso de visibilidad...")
+            suite_win.showNormal()
+            suite_win.show()
+            suite_win.raise_()
+            suite_win.activateWindow()
+        except: pass
+
+    log.info("Desplegando Suite...")
     suite_win.show()
     suite_win.raise_()
     suite_win.activateWindow()
+    
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(1000, force_visibility)
 
-    # Auto-start con persistencia completa
+    # Auto-start
     try:
-        _auto_start(controller, tray, suite_win, ctrl_win, log)
-    except Exception as e:
-        log.error(f"Error en secuencia de auto-arranque: {e}")
-
-    import signal
-    signal.signal(signal.SIGINT, lambda *_: _on_sigint(controller, app, lock))
+        from PySide6.QtCore import QSettings
+        settings = QSettings("EVE_iT", "Suite")
+        log_dir = settings.value("log_dir", "")
+        skip_logs = settings.value("skip_logs", "true") == "true"
+        ess = float(settings.value("ess_retention", 1.0))
+        controller.start_tracker(log_dir=log_dir, skip_existing=skip_logs, ess_retention=ess)
+    except:
+        controller.start_tracker()
 
     exec_fn = getattr(app, 'exec', None) or app.exec_
     ret = exec_fn()
@@ -159,23 +161,6 @@ def main():
     controller.shutdown()
     lock.release()
     os._exit(ret)
-
-def _auto_start(controller, tray, suite_win, ctrl_win, log):
-    try:
-        from PySide6.QtCore import QSettings
-        settings = QSettings("EVE_iT", "Suite")
-        log_dir = settings.value("log_dir", "")
-        skip_logs = settings.value("skip_logs", "true") == "true"
-        ess = float(settings.value("ess_retention", 1.0))
-        
-        log.info(f"Auto-iniciando motor con directorio: {log_dir}")
-        controller.start_tracker(log_dir=log_dir, skip_existing=skip_logs, ess_retention=ess)
-    except Exception as e:
-        log.warning(f"Fallo en carga de ajustes de arranque: {e}. Iniciando modo seguro.")
-        controller.start_tracker()
-
-def _on_sigint(controller, app, lock):
-    controller.shutdown(); lock.release(); app.quit()
 
 if __name__ == '__main__':
     main()
