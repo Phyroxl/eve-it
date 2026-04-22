@@ -84,6 +84,12 @@ def _auto_start(controller, tray, suite_win, ctrl_win, log):
     if saved_log_dir and os.path.exists(saved_log_dir):
         log.info(f"Auto-start: Configurando log_dir: {saved_log_dir}")
         controller.set_log_directory(saved_log_dir)
+        
+        # Cargar retención si existe (restaurado quirúrgicamente)
+        try:
+            retention = float(s.value("ess_retention", 1.0))
+            controller.set_ess_retention(retention)
+        except: pass
     
     # 2. Iniciar Tracker si hay dir
     if controller.log_directory:
