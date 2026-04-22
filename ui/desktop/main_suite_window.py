@@ -84,7 +84,42 @@ class MainSuiteWindow(QMainWindow):
         self.section_title = QLabel("PANEL DE CONTROL")
         self.section_title.setObjectName("SectionTitle")
         header_layout.addWidget(self.section_title)
+        
+        header_layout.addSpacing(30)
+        
+        # Status Badge
+        self.status_badge = QLabel("DETENIDO")
+        self.status_badge.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255, 68, 68, 0.1);
+                color: #ff4444;
+                border: 1px solid rgba(255, 68, 68, 0.3);
+                border-radius: 10px;
+                padding: 2px 12px;
+                font-family: 'Share Tech Mono';
+                font-size: 10px;
+                font-weight: bold;
+            }
+        """)
+        header_layout.addWidget(self.status_badge)
+        
         header_layout.addStretch()
+        
+        # Session Controls
+        self.controls_layout = QHBoxLayout()
+        self.controls_layout.setSpacing(8)
+        
+        self.btn_start = self.create_control_button("▶ INICIAR", "#00ff9d")
+        self.btn_stop = self.create_control_button("⏹ PARAR", "#ff4444")
+        self.btn_reset = self.create_control_button("🔄 RESET", "#ffffff")
+        
+        self.controls_layout.addWidget(self.btn_start)
+        self.controls_layout.addWidget(self.btn_stop)
+        self.controls_layout.addWidget(self.btn_reset)
+        
+        header_layout.addLayout(self.controls_layout)
+        
+        header_layout.addSpacing(20)
         
         # Session info
         self.session_info = QLabel("SESIÓN: --:--:--")
@@ -110,15 +145,79 @@ class MainSuiteWindow(QMainWindow):
         self.btn_hud.clicked.connect(self._on_hud_clicked)
         self.btn_translator.clicked.connect(self._on_translator_clicked)
         self.btn_replicator.clicked.connect(self._on_replicator_clicked)
+        
+        self.btn_start.clicked.connect(self._on_start_clicked)
+        self.btn_stop.clicked.connect(self._on_stop_clicked)
+        self.btn_reset.clicked.connect(self._on_reset_clicked)
+
+    def create_control_button(self, text, color):
+        btn = QPushButton(text)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(90, 28)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 4px;
+                color: {color};
+                font-family: 'Share Tech Mono';
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.1);
+                border-color: {color};
+            }}
+            QPushButton:disabled {{
+                color: rgba(255,255,255,0.1);
+                border-color: transparent;
+                background-color: transparent;
+            }}
+        """)
+        return btn
 
     def refresh_data(self):
         """Actualiza las métricas y la lista de cuentas con datos reales."""
-        if not self.controller or not self.controller._tracker:
+        if not self.controller:
             return
             
         try:
             from datetime import datetime
             now = datetime.now()
+            
+            # Sync Controls State
+            is_running = self.controller.state.tracker_running
+            self.btn_start.setEnabled(not is_running)
+            self.btn_stop.setEnabled(is_running)
+            
+            if is_running:
+                self.status_badge.setText("EN EJECUCIÓN")
+                self.status_badge.setStyleSheet("""
+                    background-color: rgba(0, 255, 157, 0.1);
+                    color: #00ff9d;
+                    border: 1px solid rgba(0, 255, 157, 0.3);
+                    border-radius: 10px; padding: 2px 12px;
+                    font-family: 'Share Tech Mono'; font-size: 10px; font-weight: bold;
+                """)
+            else:
+                self.status_badge.setText("DETENIDO")
+                self.status_badge.setStyleSheet("""
+                    background-color: rgba(255, 68, 68, 0.1);
+                    color: #ff4444;
+                    border: 1px solid rgba(255, 68, 68, 0.3);
+                    border-radius: 10px; padding: 2px 12px;
+                    font-family: 'Share Tech Mono'; font-size: 10px; font-weight: bold;
+                """)
+
+            if not self.controller._tracker:
+                # Si no hay tracker, poner métricas a cero pero seguir actualizando controles
+                if self.val_total_isk: self.val_total_isk.setText("0.00 ISK")
+                if self.val_isk_h: self.val_isk_h.setText("0.00 ISK/h")
+                if self.val_accounts: self.val_accounts.setText("0 ACTIVAS")
+                self.session_info.setText("SESIÓN: --:--:--")
+                self.update_accounts_view([])
+                return
+
             summary = self.controller._tracker.get_summary(now)
             
             # 1. Update Global Metrics
@@ -139,9 +238,20 @@ class MainSuiteWindow(QMainWindow):
         except Exception as e:
             import traceback
             # print(f"Error actualizando métricas en Suite: {e}")
-            # traceback.print_exc()
 
-    def update_accounts_view(self, accounts):
+    def _on_start_clicked(self):
+        if self.controller:
+            self.controller.start_tracker()
+
+    def _on_stop_clicked(self):
+        if self.controller:
+            self.controller.stop_tracker()
+
+    def _on_reset_clicked(self):
+        if self.controller:
+            self.controller.reset_tracker()
+
+    def _on_hud_clicked(self):
         """Crea o actualiza las tarjetas de cuenta."""
         if not self.accounts_layout:
             return
