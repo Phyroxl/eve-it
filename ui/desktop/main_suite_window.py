@@ -2,7 +2,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QFrame, QLabel, QPushButton, QStackedWidget,
     QScrollArea, QGridLayout, QLineEdit, QCheckBox, 
-    QDoubleSpinBox, QComboBox, QFileDialog, QSpacerItem, QSizePolicy
+    QDoubleSpinBox, QComboBox, QFileDialog, QSpacerItem, QSizePolicy,
+    QListWidget, QProgressBar
 )
 from PySide6.QtCore import Qt, QSize, QTimer, QSettings
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient, QPixmap
@@ -14,11 +15,11 @@ from utils.formatters import format_isk
 class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
-        print("DEBUG: Inicializando MainSuiteWindow Premium...")
+        print("DEBUG: Inicializando Suite Ultra Premium...")
         self.controller = controller
         self.tray_manager = None
         self.setWindowTitle("EVE iT — Desktop Suite Premium")
-        self.resize(1100, 750)
+        self.resize(1100, 800)
         
         self.account_cards = {}
         self.current_character = None 
@@ -26,11 +27,10 @@ class MainSuiteWindow(QMainWindow):
         try:
             self.setup_ui()
             self.apply_styles()
-            print("DEBUG: UI Premium cargada correctamente.")
+            print("DEBUG: UI Ultra Premium cargada.")
         except Exception as e:
             import traceback
-            print(f"ERROR CRÍTICO EN UI: {e}")
-            traceback.print_exc()
+            print(f"ERROR: {e}"); traceback.print_exc()
 
         self.load_settings()
         self.restore_geometry()
@@ -62,7 +62,7 @@ class MainSuiteWindow(QMainWindow):
         self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(30, 30, 30, 30); self.content_layout.setSpacing(20)
         
         header = QHBoxLayout()
-        self.section_title = QLabel("PERSONAJES ACTIVOS"); self.section_title.setObjectName("SectionTitle")
+        self.section_title = QLabel("DASHBOARD"); self.section_title.setObjectName("SectionTitle")
         header.addWidget(self.section_title); header.addStretch()
         self.content_layout.addLayout(header)
         
@@ -79,8 +79,8 @@ class MainSuiteWindow(QMainWindow):
         self.main_layout.addWidget(self.nav_bar); self.main_layout.addWidget(self.content_frame, 1)
 
         self.btn_dashboard.clicked.connect(lambda: self.switch_page(0, "PERSONAJES ACTIVOS"))
-        self.btn_tools.clicked.connect(lambda: self.switch_page(1, "HERRAMIENTAS"))
-        self.btn_settings.clicked.connect(lambda: self.switch_page(2, "CONFIGURACIÓN"))
+        self.btn_tools.clicked.connect(lambda: self.switch_page(1, "SUITE DE HERRAMIENTAS"))
+        self.btn_settings.clicked.connect(lambda: self.switch_page(2, "CENTRO DE CONFIGURACIÓN"))
 
     def switch_page(self, index, title):
         self.stack.setCurrentIndex(index); self.section_title.setText(title)
@@ -93,73 +93,141 @@ class MainSuiteWindow(QMainWindow):
 
     def create_dashboard_page(self):
         p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setStyleSheet("background: transparent;")
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoShape); scroll.setStyleSheet("background: transparent;")
         cont = QWidget(); self.accounts_layout = QGridLayout(cont); self.accounts_layout.setContentsMargins(0, 0, 10, 10); self.accounts_layout.setSpacing(20)
         scroll.setWidget(cont); l.addWidget(scroll); return p
 
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
-        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(300, 140); card.setCursor(Qt.PointingHandCursor)
-        l = QHBoxLayout(card); l.setContentsMargins(15, 15, 15, 15); l.setSpacing(15)
+        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(300, 150); card.setCursor(Qt.PointingHandCursor)
+        l = QHBoxLayout(card); l.setContentsMargins(20, 20, 20, 20); l.setSpacing(15)
         avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(64, 64); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
         info = QVBoxLayout(); name_lbl = QLabel(name); name_lbl.setObjectName("CharName")
         status = QLabel("● ONLINE" if acc.get('status') == 'active' else "○ IDLE")
         status.setStyleSheet(f"color: {'#00ff9d' if acc.get('status') == 'active' else '#ffd700'}; font-family: 'Share Tech Mono'; font-size: 10px;")
-        isk_h = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h"); isk_h.setStyleSheet("color: rgba(255,255,255,0.4); font-family: 'Share Tech Mono'; font-size: 12px;")
+        isk_h = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h"); isk_h.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 12px; font-weight: bold;")
         info.addWidget(name_lbl); info.addWidget(status); info.addStretch(); info.addWidget(isk_h)
         l.addWidget(avatar); l.addLayout(info); card.mousePressEvent = lambda e: self.open_character_detail(acc); return card
 
     def open_character_detail(self, acc):
-        self.current_character = acc; self.update_detail_view(); self.stack.setCurrentIndex(3); self.section_title.setText("PERFIL DE PERSONAJE")
+        self.current_character = acc; self.update_detail_view(); self.stack.setCurrentIndex(3); self.section_title.setText("PERFIL ESTRATÉGICO")
 
     def create_detail_page(self):
         p = QFrame(); p.setObjectName("DetailView"); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(25)
-        back = QPushButton("← VOLVER"); back.setObjectName("BackButton"); back.clicked.connect(lambda: self.switch_page(0, "PERSONAJES ACTIVOS"))
-        l.addWidget(back, 0, Qt.AlignLeft); h = QHBoxLayout()
-        self.detail_avatar = QLabel(); self.detail_avatar.setObjectName("CharAvatar"); self.detail_avatar.setFixedSize(100, 100); self.detail_avatar.setAlignment(Qt.AlignCenter)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoShape); scroll.setStyleSheet("background: transparent;")
+        cont = QWidget(); c_l = QVBoxLayout(cont); c_l.setContentsMargins(0, 0, 0, 0); c_l.setSpacing(30)
+        
+        back = QPushButton("← VOLVER AL DASHBOARD"); back.setObjectName("BackButton"); back.clicked.connect(lambda: self.switch_page(0, "PERSONAJES ACTIVOS"))
+        c_l.addWidget(back, 0, Qt.AlignLeft)
+        
+        # Profile Header
+        h = QHBoxLayout(); h.setSpacing(25)
+        self.detail_avatar = QLabel(); self.detail_avatar.setObjectName("CharAvatar"); self.detail_avatar.setFixedSize(120, 120); self.detail_avatar.setAlignment(Qt.AlignCenter)
         v = QVBoxLayout(); self.detail_name = QLabel("NAME"); self.detail_name.setObjectName("DetailTitle")
         self.detail_status = QLabel("STATUS"); self.detail_status.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 14px; color: #00ff9d;")
-        v.addWidget(self.detail_name); v.addWidget(self.detail_status); h.addWidget(self.detail_avatar); h.addLayout(v); h.addStretch(); l.addLayout(h)
-        grid = QGridLayout(); self.box_1h = self.create_analytic_box("Rendimiento 1h", "0.00 ISK")
-        grid.addWidget(self.box_1h, 0, 0); grid.addWidget(self.create_analytic_box("Rendimiento 24h", "PROXIMAMENTE"), 0, 1); l.addLayout(grid); l.addStretch(); return p
+        self.detail_corp = QLabel("CORPORATION: [PENDIENTE SINCRONIZACIÓN]"); self.detail_corp.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 11px;")
+        v.addWidget(self.detail_name); v.addWidget(self.detail_status); v.addWidget(self.detail_corp); h.addWidget(self.detail_avatar); h.addLayout(v); h.addStretch(); c_l.addLayout(h)
+        
+        # Primary Metrics (Large)
+        metrics = QHBoxLayout(); metrics.setSpacing(20)
+        self.box_wallet = self.create_analytic_box("WALLET TOTAL (EST.)", "0.00 ISK", True)
+        self.box_1h = self.create_analytic_box("RENDIMIENTO (1H)", "0.00 ISK", True)
+        metrics.addWidget(self.box_wallet); metrics.addWidget(self.box_1h); c_l.addLayout(metrics)
+        
+        # Secondary Metrics Grid
+        grid = QGridLayout(); grid.setSpacing(15)
+        self.box_24h = self.create_analytic_box("RENDIMIENTO 24H", "SINC...")
+        self.box_7d = self.create_analytic_box("RENDIMIENTO 7D", "SINC...")
+        self.box_30d = self.create_analytic_box("RENDIMIENTO 30D", "SINC...")
+        self.box_lifetime = self.create_analytic_box("RENDIMIENTO TOTAL", "SINC...")
+        grid.addWidget(self.box_24h, 0, 0); grid.addWidget(self.box_7d, 0, 1); grid.addWidget(self.box_30d, 1, 0); grid.addWidget(self.box_lifetime, 1, 1)
+        c_l.addLayout(grid)
+        
+        # Activity & PI Split
+        split = QHBoxLayout(); split.setSpacing(20)
+        
+        # PI Section
+        pi_box = QFrame(); pi_box.setStyleSheet("background: rgba(0, 20, 45, 0.4); border: 1px solid rgba(0,180,255,0.15); border-radius: 8px; padding: 20px;")
+        pi_l = QVBoxLayout(pi_box); pi_l.addWidget(QLabel("PLANETOLOGÍA (PI)", styleSheet="font-family: 'Orbitron'; color: #00c8ff; font-weight: bold;"))
+        self.pi_list = QVBoxLayout(); self.pi_list.addWidget(QLabel("SIN PLANETAS DETECTADOS", styleSheet="color: rgba(255,255,255,0.2); font-size: 10px; margin-top: 10px;"))
+        pi_l.addLayout(self.pi_list); pi_l.addStretch(); split.addWidget(pi_box, 1)
+        
+        # Activity Feed
+        act_box = QFrame(); act_box.setStyleSheet("background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 20px;")
+        act_l = QVBoxLayout(act_box); act_l.addWidget(QLabel("ACTIVIDAD RECIENTE", styleSheet="font-family: 'Orbitron'; color: #ffffff; font-weight: bold;"))
+        self.activity_feed = QListWidget(); self.activity_feed.setStyleSheet("background: transparent; border: none; color: rgba(255,255,255,0.6); font-family: 'Share Tech Mono'; font-size: 11px;")
+        act_l.addWidget(self.activity_feed); split.addWidget(act_box, 1)
+        
+        c_l.addLayout(split); scroll.setWidget(cont); l.addWidget(scroll); return p
 
-    def create_analytic_box(self, label, value):
-        b = QFrame(); b.setObjectName("AnalyticBox"); l = QVBoxLayout(b)
-        l.addWidget(QLabel(label, styleSheet="color: rgba(0, 180, 255, 0.5); font-family: 'Share Tech Mono'; font-size: 11px;"))
-        v = QLabel(value); v.setObjectName("AnalyticVal"); l.addWidget(v); return b
+    def create_analytic_box(self, label, value, large=False):
+        b = QFrame(); b.setObjectName("AnalyticBox")
+        if large: b.setMinimumHeight(100); b.setStyleSheet("background: rgba(0, 180, 255, 0.05); border-color: rgba(0, 180, 255, 0.3);")
+        l = QVBoxLayout(b)
+        l.addWidget(QLabel(label, styleSheet="color: rgba(0, 180, 255, 0.6); font-family: 'Share Tech Mono'; font-size: 10px;"))
+        v = QLabel(value); v.setObjectName("AnalyticVal")
+        if large: v.setStyleSheet("font-size: 22px; color: #ffd700;")
+        l.addWidget(v); return b
 
     def update_detail_view(self):
         if not self.current_character: return
         acc = self.current_character; name = acc.get('display_name', acc.get('character'))
         self.detail_name.setText(name.upper()); self.detail_avatar.setText(name[0].upper())
-        self.detail_status.setText("● SISTEMA ACTIVO" if acc.get('status') == 'active' else "○ EN ESPERA")
+        self.detail_status.setText("● SISTEMA VIGILADO" if acc.get('status') == 'active' else "○ EN ESPERA")
         self.box_1h.findChild(QLabel, "AnalyticVal").setText(format_isk(acc.get('isk_per_hour', 0), short=True))
+        self.box_wallet.findChild(QLabel, "AnalyticVal").setText(format_isk(acc.get('total_isk', 0), short=True))
+        # Feed demo
+        from datetime import datetime
+        self.activity_feed.clear()
+        self.activity_feed.addItem(f"[{datetime.now().strftime('%H:%M:%S')}] SEGUIMIENTO INICIADO")
+        if acc.get('total_isk', 0) > 0: self.activity_feed.addItem(f"[{datetime.now().strftime('%H:%M:%S')}] RECOMPENSA DETECTADA")
 
     def create_tools_page(self):
-        p = QWidget(); l = QVBoxLayout(p); g = QGridLayout()
-        g.addWidget(self.create_tool_card("HUD OVERLAY", "Control en vivo.", "🕹️", self._on_hud_clicked), 0, 0)
-        g.addWidget(self.create_tool_card("TRADUCTOR", "Traducción chat.", "🌐", self._on_translator_clicked), 0, 1)
+        p = QWidget(); l = QVBoxLayout(p); g = QGridLayout(); g.setSpacing(25)
+        g.addWidget(self.create_tool_card("HUD OVERLAY", "Alertas visuales y métricas en tiempo real.", "🕹️", self._on_hud_clicked), 0, 0)
+        g.addWidget(self.create_tool_card("TRADUCTOR", "Traducción de chats locales (ESI/Logs).", "🌐", self._on_translator_clicked), 0, 1)
+        g.addWidget(self.create_tool_card("REPLICADOR", "Sincronización masiva de ventanas y clics.", "🪟", self._on_replicator_clicked), 1, 0)
         l.addLayout(g); l.addStretch(); return p
 
     def create_tool_card(self, title, desc, icon, callback):
-        c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(320, 120); c.setCursor(Qt.PointingHandCursor)
-        l = QHBoxLayout(c); ico = QLabel(icon); ico.setStyleSheet("font-size: 32px;"); l.addWidget(ico)
-        v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 11px;")
+        c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(350, 140); c.setCursor(Qt.PointingHandCursor)
+        l = QHBoxLayout(c); l.setContentsMargins(20,20,20,20)
+        ico = QLabel(icon); ico.setStyleSheet("font-size: 40px;"); l.addWidget(ico)
+        v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 11px; word-wrap: true;")
         v.addWidget(t); v.addWidget(d); l.addLayout(v); c.mousePressEvent = lambda e: callback(); return c
 
     def create_settings_page(self):
-        p = QWidget(); l = QVBoxLayout(p); scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
-        cont = QWidget(); c_l = QVBoxLayout(cont); c_l.setSpacing(15)
-        g1, l1 = self.create_settings_group("TRACKER & LOGS", "Gestión de datos.")
-        self.edit_log_dir = QLineEdit(); l1.addWidget(self.edit_log_dir); self.check_skip_logs = QCheckBox("Omitir históricos"); l1.addWidget(self.check_skip_logs)
-        c_l.addWidget(g1); c_l.addStretch()
-        save = QPushButton("GUARDAR CONFIGURACIÓN"); save.setObjectName("SaveButton"); save.clicked.connect(self.save_settings); c_l.addWidget(save)
+        p = QWidget(); l = QVBoxLayout(p); scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoShape)
+        cont = QWidget(); c_l = QVBoxLayout(cont); c_l.setSpacing(20)
+        
+        # Bloque Motor
+        g_eng, l_eng = self.create_settings_group("MOTOR EVE iT (CORE)", "Configuración del tracker de logs.")
+        l_eng.addWidget(QLabel("RUTA DE LOGS:", styleSheet="font-family: 'Share Tech Mono'; color: #00c8ff; font-size: 10px;"))
+        path_l = QHBoxLayout(); self.edit_log_dir = QLineEdit(); btn_b = QPushButton("..."); btn_b.setFixedWidth(40); btn_b.clicked.connect(self._on_browse_logs)
+        path_l.addWidget(self.edit_log_dir); path_l.addWidget(btn_b); l_eng.addLayout(path_l)
+        self.check_skip_logs = QCheckBox("IGNORAR HISTORIAL AL ARRANCAR"); l_eng.addWidget(self.check_skip_logs)
+        c_l.addWidget(g_eng)
+        
+        # Bloque Visual
+        g_vis, l_vis = self.create_settings_group("VISUALIZACIÓN & HUD", "Ajustes de transparencia y temas.")
+        l_vis.addWidget(QCheckBox("ACTIVAR DESENFOQUE (BLUR) EN OVERLAYS")); l_vis.addWidget(QCheckBox("OCULTAR HUD SI NO HAY ACTIVIDAD"))
+        c_l.addWidget(g_vis)
+        
+        # Bloque Herramientas
+        g_tool, l_tool = self.create_settings_group("HERRAMIENTAS & AUTOMATIZACIÓN", "Ajustes de Traductor y Replicador.")
+        l_tool.addWidget(QLabel("IDIOMA DESTINO TRADUCCIÓN:")); cb_lang = QComboBox(); cb_lang.addItems(["ES", "EN", "DE", "FR"]); l_tool.addWidget(cb_lang)
+        c_l.addWidget(g_tool)
+        
+        c_l.addStretch()
+        save = QPushButton("APLICAR CONFIGURACIÓN GLOBAL"); save.setObjectName("SaveButton"); save.clicked.connect(self.save_settings)
+        c_l.addWidget(save)
+        
         scroll.setWidget(cont); l.addWidget(scroll); return p
 
     def create_settings_group(self, title, subtitle):
-        g = QFrame(); g.setObjectName("SettingsGroup"); l = QVBoxLayout(g)
-        t = QLabel(title); t.setStyleSheet("font-family: 'Orbitron'; font-size: 13px; color: #00c8ff; font-weight: bold;")
-        s = QLabel(subtitle); s.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 10px; margin-bottom: 10px;")
+        g = QFrame(); g.setObjectName("SettingsGroup"); l = QVBoxLayout(g); l.setContentsMargins(20,20,20,20)
+        t = QLabel(title); t.setStyleSheet("font-family: 'Orbitron'; font-size: 14px; color: #00c8ff; font-weight: bold;")
+        s = QLabel(subtitle); s.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 10px; margin-bottom: 15px;")
         l.addWidget(t); l.addWidget(s); return g, l
 
     def refresh_data(self):
@@ -197,9 +265,8 @@ class MainSuiteWindow(QMainWindow):
         s = QSettings("EVE_iT", "Suite"); self.edit_log_dir.setText(s.value("log_dir", ""))
         self.check_skip_logs.setChecked(s.value("skip_logs", "true") == "true")
     def save_settings(self):
-        s = QSettings("EVE_iT", "Suite"); s.setValue("log_dir", self.edit_log_dir.text())
-        s.setValue("skip_logs", "true" if self.check_skip_logs.isChecked() else "false")
-        self.section_title.setText("CONFIGURACIÓN GUARDADA"); QTimer.singleShot(2000, lambda: self.section_title.setText("CONFIGURACIÓN"))
+        s = QSettings("EVE_iT", "Suite"); s.setValue("log_dir", self.edit_log_dir.text()); s.setValue("skip_logs", "true" if self.check_skip_logs.isChecked() else "false")
+        self.section_title.setText("SISTEMA CONFIGURADO"); QTimer.singleShot(2000, lambda: self.section_title.setText("CENTRO DE CONFIGURACIÓN"))
     def closeEvent(self, event):
         try: QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
         except: pass
