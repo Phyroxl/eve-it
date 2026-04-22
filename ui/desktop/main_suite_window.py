@@ -68,12 +68,12 @@ class MainSuiteWindow(QMainWindow):
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_settings)
         
-        # 2. Content Area (Densidad Máxima)
+        # 2. Content Area (Arquitectura de Consola)
         self.content_frame = QFrame(); self.content_frame.setObjectName("ContentFrame")
         self.content_layout = QVBoxLayout(self.content_frame); self.content_layout.setContentsMargins(20, 20, 20, 20); self.content_layout.setSpacing(15)
         
         header = QHBoxLayout()
-        self.section_title = QLabel("CENTRO DE MANDO"); self.section_title.setObjectName("SectionTitle")
+        self.section_title = QLabel("SISTEMA DE CONTROL TÁCTICO"); self.section_title.setObjectName("SectionTitle")
         header.addWidget(self.section_title); header.addStretch()
         self.content_layout.addLayout(header)
         
@@ -110,13 +110,13 @@ class MainSuiteWindow(QMainWindow):
 
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
-        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(260, 130); card.setCursor(Qt.PointingHandCursor)
-        l = QHBoxLayout(card); l.setContentsMargins(15, 15, 15, 15); l.setSpacing(12)
-        avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(64, 64); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
-        info = QVBoxLayout(); name_lbl = QLabel(name); name_lbl.setObjectName("CharName")
-        status = QLabel("● ONLINE" if acc.get('status') == 'active' else "○ IDLE")
-        status.setStyleSheet(f"color: {'#00ff9d' if acc.get('status') == 'active' else '#ffd700'}; font-family: 'Share Tech Mono'; font-size: 10px;")
-        isk_h = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h"); isk_h.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 12px; font-weight: bold;")
+        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(250, 120); card.setCursor(Qt.PointingHandCursor)
+        l = QHBoxLayout(card); l.setContentsMargins(12, 12, 12, 12); l.setSpacing(12)
+        avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(50, 50); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
+        info = QVBoxLayout(); name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
+        status = QLabel("● LINK ACTIVE" if acc.get('status') == 'active' else "○ LINK IDLE")
+        status.setStyleSheet(f"color: {'#00ff9d' if acc.get('status') == 'active' else '#ffd700'}; font-family: 'Share Tech Mono'; font-size: 9px;")
+        isk_h = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h"); isk_h.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 11px; font-weight: bold;")
         info.addWidget(name_lbl); info.addWidget(status); info.addStretch(); info.addWidget(isk_h)
         l.addWidget(avatar); l.addLayout(info); card.mousePressEvent = lambda e: self.open_character_detail(acc); return card
 
@@ -131,12 +131,12 @@ class MainSuiteWindow(QMainWindow):
         back = QPushButton("← VOLVER AL MANDO"); back.setObjectName("BackButton"); back.clicked.connect(lambda: self.switch_page(0, "CENTRO DE MANDO"))
         c_l.addWidget(back, 0, Qt.AlignLeft)
         
-        # Profile Header (Compact)
-        h = QHBoxLayout(); h.setSpacing(25)
-        self.detail_avatar = QLabel(); self.detail_avatar.setObjectName("CharAvatar"); self.detail_avatar.setFixedSize(110, 110); self.detail_avatar.setAlignment(Qt.AlignCenter)
+        # Profile Header (Consola)
+        h = QHBoxLayout(); h.setSpacing(20)
+        self.detail_avatar = QLabel(); self.detail_avatar.setObjectName("CharAvatar"); self.detail_avatar.setFixedSize(100, 100); self.detail_avatar.setAlignment(Qt.AlignCenter)
         v = QVBoxLayout(); self.detail_name = QLabel("NAME"); self.detail_name.setObjectName("DetailTitle")
-        self.detail_status = QLabel("STATUS"); self.detail_status.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 13px; color: #00ff9d;")
-        self.detail_meta = QLabel("SISTEMA DE ANÁLISIS VIVIDO — EVE iT ELITE"); self.detail_meta.setStyleSheet("color: rgba(255,255,255,0.15); font-family: 'Share Tech Mono'; font-size: 10px;")
+        self.detail_status = QLabel("SYSTEM LINK STATUS: ACTIVE"); self.detail_status.setStyleSheet("font-family: 'Share Tech Mono'; font-size: 12px; color: #00ff9d;")
+        self.detail_meta = QLabel("DIRECT ACCESS INTERFACE — CORE_VERSION_4.0"); self.detail_meta.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-family: 'Share Tech Mono'; font-size: 9px;")
         v.addWidget(self.detail_name); v.addWidget(self.detail_status); v.addWidget(self.detail_meta); h.addWidget(self.detail_avatar); h.addLayout(v); h.addStretch(); c_l.addLayout(h)
         
         # Impact Metrics
@@ -163,11 +163,11 @@ class MainSuiteWindow(QMainWindow):
         pi_l = QVBoxLayout(pi_frame); pi_l.setContentsMargins(25,25,25,25)
         pi_t = QLabel("PLANETOLOGÍA (PI)"); pi_t.setStyleSheet("font-family: 'Orbitron'; color: #00c8ff; font-weight: bold; font-size: 11px;")
         pi_s = QLabel("MODO: STANDBY — ESPERANDO ESI"); pi_s.setObjectName("PISubtitle")
-        pi_desc = QLabel("Módulo táctico en espera. Requiere sincronización con la API de EVE para monitorizar extractores y silos."); pi_desc.setStyleSheet("color: rgba(255,255,255,0.15); font-size: 10px; word-wrap: true; margin-top: 8px;")
+        pi_desc = QLabel("Módulo táctico en espera. Requiere sincronización con la API de EVE para monitorizar extractores y silos."); pi_desc.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-size: 10px; word-wrap: true; margin-top: 8px;")
         pi_l.addWidget(pi_t); pi_l.addWidget(pi_s); pi_l.addWidget(pi_desc); pi_l.addStretch(); bottom.addWidget(pi_frame, 1)
         
         # Activity Feed
-        act_frame = QFrame(); act_frame.setStyleSheet("background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255,255,255,0.03); border-radius: 10px; padding: 20px;")
+        act_frame = QFrame(); act_frame.setStyleSheet("background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(0, 180, 255, 0.1); border-radius: 4px; padding: 20px;")
         act_l = QVBoxLayout(act_frame); act_l.addWidget(QLabel("REGISTRO DE SEÑALES", styleSheet="font-family: 'Orbitron'; color: #ffffff; font-size: 11px; margin-bottom: 5px;"))
         self.activity_feed = QListWidget(); self.activity_feed.setStyleSheet("background: transparent; border: none; color: rgba(0, 255, 157, 0.6); font-family: 'Share Tech Mono'; font-size: 11px;")
         self.activity_empty = QLabel("SIN ACTIVIDAD DETECTADA EN LOS SENSORES."); self.activity_empty.setObjectName("EmptyStateText"); self.activity_empty.setAlignment(Qt.AlignCenter); self.activity_empty.setWordWrap(True)
@@ -176,10 +176,10 @@ class MainSuiteWindow(QMainWindow):
         c_l.addLayout(bottom); scroll.setWidget(cont); l.addWidget(scroll); return p
 
     def create_impact_box(self, label, value, color_hex):
-        b = QFrame(); b.setStyleSheet(f"background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 15px;")
+        b = QFrame(); b.setStyleSheet(f"background: #080808; border: 1px solid rgba(0, 180, 255, 0.15); border-radius: 4px; padding: 15px;")
         b.setMinimumHeight(110)
         l = QVBoxLayout(b)
-        l.addWidget(QLabel(label, styleSheet="color: rgba(255,255,255,0.25); font-family: 'Share Tech Mono'; font-size: 10px;"))
+        l.addWidget(QLabel(label, styleSheet="color: rgba(0, 180, 255, 0.4); font-family: 'Share Tech Mono'; font-size: 9px;"))
         v = QLabel(value); v.setObjectName("GlowValue" if color_hex == "#ffd700" else "GlowValueGreen")
         l.addWidget(v); return b
 
@@ -193,7 +193,7 @@ class MainSuiteWindow(QMainWindow):
         if not self.current_character: return
         acc = self.current_character; name = acc.get('display_name', acc.get('character'))
         self.detail_name.setText(name.upper()); self.detail_avatar.setText(name[0].upper())
-        self.detail_status.setText("● SENSORES ACTIVOS" if acc.get('status') == 'active' else "○ SISTEMA IDLE")
+        self.detail_status.setText("SYSTEM LINK STATUS: ACTIVE" if acc.get('status') == 'active' else "SYSTEM LINK STATUS: IDLE")
         
         self.box_wallet.findChild(QLabel).setText(format_isk(acc.get('total_isk', 0), short=True))
         self.box_1h.findChild(QLabel).setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
@@ -218,27 +218,21 @@ class MainSuiteWindow(QMainWindow):
 
     def create_tools_page(self):
         p = QWidget(); l = QVBoxLayout(p); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(0)
-        
-        # Wrapper centrado con ancho máximo real para cohesión
         wrapper = QWidget(); wrapper_l = QHBoxLayout(wrapper); wrapper_l.setContentsMargins(0, 20, 0, 0)
-        
         center_cont = QWidget(); center_cont.setMaximumWidth(750); center_l = QVBoxLayout(center_cont); center_l.setContentsMargins(0, 0, 0, 0)
         g = QGridLayout(); g.setSpacing(20); g.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        
         g.addWidget(self.create_tool_card("HUD OVERLAY", "Control visual táctico en juego.", "🕹️", self._on_hud_clicked), 0, 0)
         g.addWidget(self.create_tool_card("TRADUCTOR", "Inteligencia lingüística para chats locales.", "🌐", self._on_translator_clicked), 0, 1)
         g.addWidget(self.create_tool_card("REPLICADOR", "Sincronización masiva de ventanas.", "🪟", self._on_replicator_clicked), 1, 0)
-        
         center_l.addLayout(g); center_l.addStretch()
-        wrapper_l.addWidget(center_cont); wrapper_l.addStretch() # Ancla el bloque a la izquierda-centro
-        
+        wrapper_l.addWidget(center_cont); wrapper_l.addStretch()
         l.addWidget(wrapper); return p
 
     def create_tool_card(self, title, desc, icon, callback):
         c = QFrame(); c.setObjectName("CharacterCard"); c.setFixedSize(340, 130); c.setCursor(Qt.PointingHandCursor)
         l = QHBoxLayout(c); l.setContentsMargins(20,20,20,20)
         ico = QLabel(icon); ico.setStyleSheet("font-size: 40px;"); l.addWidget(ico)
-        v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 10px; word-wrap: true;")
+        v = QVBoxLayout(); t = QLabel(title); t.setObjectName("CharName"); d = QLabel(desc); d.setStyleSheet("color: rgba(0, 200, 255, 0.4); font-family: 'Share Tech Mono'; font-size: 10px; word-wrap: true;")
         v.addWidget(t); v.addWidget(d); l.addLayout(v); c.mousePressEvent = lambda e: callback(); return c
 
     def create_settings_page(self):
@@ -271,7 +265,7 @@ class MainSuiteWindow(QMainWindow):
     def create_settings_group(self, title, subtitle):
         g = QFrame(); g.setObjectName("SettingsGroup"); l = QVBoxLayout(g); l.setContentsMargins(20,20,20,20)
         t = QLabel(title); t.setStyleSheet("font-family: 'Orbitron'; font-size: 13px; color: #00c8ff; font-weight: bold;")
-        s = QLabel(subtitle); s.setStyleSheet("color: rgba(255,255,255,0.2); font-size: 10px; margin-bottom: 12px;")
+        s = QLabel(subtitle); s.setStyleSheet("color: rgba(0, 180, 255, 0.4); font-family: 'Share Tech Mono'; font-size: 10px; margin-bottom: 12px;")
         l.addWidget(t); l.addWidget(s); return g, l
 
     def refresh_data(self):

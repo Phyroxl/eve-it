@@ -1,213 +1,162 @@
 """
-ui/desktop/styles.py — Design system for EVE iT Desktop Suite.
+ui/desktop/styles.py — Sistema de Diseño Táctico (ADN HUD Unificado).
 """
 
 MAIN_STYLE = """
-QMainWindow {
-    background-color: #030810;
-    color: #ffffff;
+/* BASE TÁCTICA */
+QMainWindow, QWidget#CentralWidget, QFrame#ContentFrame, QFrame#DetailView {
+    background-color: #000000;
+    color: #e0f0ff;
 }
 
-QWidget#CentralWidget {
-    background-color: #030810;
-}
-
-/* Sidebar / Navigation */
+/* SIDEBAR / CONTROL PANEL */
 QFrame#NavBar {
-    background-color: #02060c;
-    border-right: 1px solid rgba(255, 255, 255, 0.03);
-    min-width: 200px;
-    max-width: 200px;
+    background-color: #050505;
+    border-right: 1px solid rgba(0, 180, 255, 0.15);
 }
 
 QLabel#LogoLabel {
     font-family: 'Orbitron';
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 900;
     color: #00c8ff;
-    padding: 30px 20px;
-    letter-spacing: 3px;
+    padding: 35px 25px;
+    letter-spacing: 4px;
 }
 
+/* BOTONES DE NAVEGACIÓN (ESTILO HUD) */
 QPushButton.NavButton {
-    background-color: transparent;
+    background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.4);
-    text-align: left;
-    padding: 15px 25px;
-    font-family: 'Orbitron';
+    border-left: 3px solid transparent;
+    color: rgba(0, 180, 255, 0.4);
+    font-family: 'Share Tech Mono';
     font-size: 11px;
+    text-align: left;
+    padding-left: 25px;
+    height: 50px;
+    text-transform: uppercase;
     letter-spacing: 1px;
 }
 
 QPushButton.NavButton:hover {
-    color: #ffffff;
-    background-color: rgba(0, 200, 255, 0.05);
+    background: rgba(0, 180, 255, 0.05);
+    color: #00c8ff;
 }
 
 QPushButton.NavButton[active="true"] {
+    background: rgba(0, 180, 255, 0.1);
     color: #00c8ff;
-    background-color: rgba(0, 200, 255, 0.08);
     border-left: 3px solid #00c8ff;
+    font-weight: bold;
 }
 
-/* Content Area */
-QFrame#ContentFrame {
-    background-color: #030810;
-}
-
+/* TÍTULOS DE SECCIÓN */
 QLabel#SectionTitle {
     font-family: 'Orbitron';
-    font-size: 18px;
-    font-weight: 800;
+    font-size: 16px;
+    font-weight: bold;
     color: #ffffff;
-    letter-spacing: 1px;
-    margin-bottom: 5px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
 }
 
-/* Character Cards */
+/* TARJETAS DE PERSONAJE / HERRAMIENTAS (DISEÑO INDUSTRIAL) */
 QFrame#CharacterCard {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 10px;
+    background: #0a0a0a;
+    border: 1px solid rgba(0, 180, 255, 0.2);
+    border-radius: 2px;
 }
 
 QFrame#CharacterCard:hover {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(0, 180, 255, 0.2);
+    background: #0d0d0d;
+    border-color: #00c8ff;
 }
 
 QLabel#CharName {
-    font-family: 'Orbitron';
-    font-size: 13px;
+    font-family: 'Share Tech Mono';
+    font-size: 14px;
     font-weight: bold;
-    color: #ffffff;
+    color: #00c8ff;
 }
 
 QLabel#CharAvatar {
-    background-color: rgba(0, 180, 255, 0.1);
-    color: #00c8ff;
-    border-radius: 35px;
+    background-color: #111111;
+    color: #ffd700;
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    border-radius: 0px;
     font-family: 'Orbitron';
     font-size: 24px;
-    font-weight: bold;
 }
 
-/* Character Detail View */
-QFrame#DetailView {
-    background-color: #030810;
-}
-
-QLabel#DetailTitle {
-    font-family: 'Orbitron';
-    font-size: 26px;
-    font-weight: bold;
-    color: #ffffff;
-    letter-spacing: 1px;
-}
-
-/* Glowing Metrics */
+/* MÉTRICAS GLOW (ESTILO HUD) */
 QLabel#GlowValue {
-    font-family: 'Share Tech Mono';
-    font-size: 28px;
+    font-family: 'Orbitron';
+    font-size: 24px;
     font-weight: bold;
     color: #ffd700;
 }
 
 QLabel#GlowValueGreen {
-    font-family: 'Share Tech Mono';
-    font-size: 28px;
+    font-family: 'Orbitron';
+    font-size: 24px;
     font-weight: bold;
     color: #00ff9d;
 }
 
-/* Analytics Grid */
+/* CAJAS ANALÍTICAS */
 QFrame#AnalyticBox {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1 solid rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    padding: 12px;
+    background: #080808;
+    border: 1px solid rgba(0, 180, 255, 0.1);
+    border-radius: 0px;
 }
 
-QFrame#AnalyticBox:hover {
-    border-color: rgba(0, 180, 255, 0.15);
-}
-
-/* Empty States */
-QLabel#EmptyStateText {
-    color: rgba(255, 255, 255, 0.1);
+QLabel#AnalyticVal {
     font-family: 'Share Tech Mono';
-    font-size: 11px;
-    font-style: italic;
-}
-
-/* Modular PI Placeholder */
-QFrame#ModularPI {
-    background: repeating-linear-gradient(45deg, rgba(0, 180, 255, 0.01), rgba(0, 180, 255, 0.01) 10px, rgba(0, 180, 255, 0.02) 10px, rgba(0, 180, 255, 0.02) 20px);
-    border: 1px dashed rgba(0, 180, 255, 0.15);
-    border-radius: 12px;
-}
-
-QLabel#PISubtitle {
-    color: rgba(0, 180, 255, 0.3);
-    font-family: 'Share Tech Mono';
-    font-size: 10px;
-    text-transform: uppercase;
-}
-
-/* Settings Grouping */
-QFrame#SettingsGroup {
-    background: rgba(255, 255, 255, 0.01);
-    border: 1px solid rgba(255, 255, 255, 0.03);
-    border-left: 3px solid #00c8ff;
-    border-radius: 4px;
-    padding: 20px;
-}
-
-/* Common Components */
-QLineEdit, QDoubleSpinBox, QComboBox {
-    background-color: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    padding: 8px 12px;
+    font-size: 18px;
     color: #ffffff;
+}
+
+/* SETTINGS & COMPONENTES */
+QFrame#SettingsGroup {
+    background: #050505;
+    border: 1px solid rgba(0, 180, 255, 0.1);
+    border-left: 4px solid #00c8ff;
+    padding: 15px;
+}
+
+QLineEdit, QDoubleSpinBox, QComboBox {
+    background-color: #0a0a0a;
+    border: 1px solid rgba(0, 180, 255, 0.2);
+    color: #00c8ff;
     font-family: 'Share Tech Mono';
+    padding: 6px;
 }
 
 QPushButton#SaveButton {
-    background-color: rgba(0, 255, 157, 0.1);
-    border: 1px solid rgba(0, 255, 157, 0.3);
-    color: #00ff9d;
+    background: rgba(0, 200, 255, 0.1);
+    border: 1px solid #00c8ff;
+    color: #00c8ff;
     font-family: 'Orbitron';
-    font-size: 11px;
     font-weight: bold;
-    padding: 12px;
-    border-radius: 6px;
+    height: 40px;
+    text-transform: uppercase;
 }
 
 QPushButton#SaveButton:hover {
-    background-color: rgba(0, 255, 157, 0.2);
-    border-color: #00ff9d;
+    background: rgba(0, 200, 255, 0.2);
 }
 
 QPushButton#BackButton {
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    color: rgba(255, 255, 255, 0.4);
+    border: 1px solid rgba(0, 180, 255, 0.3);
+    color: #00c8ff;
     font-family: 'Share Tech Mono';
     font-size: 10px;
-    padding: 6px 12px;
 }
 
-QPushButton#BackButton:hover {
-    color: #ffffff;
-    border-color: #ffffff;
-}
-
-QCheckBox {
-    color: rgba(255, 255, 255, 0.6);
-    font-family: 'Share Tech Mono';
-    font-size: 11px;
+QScrollArea {
+    border: none;
+    background: transparent;
 }
 """
