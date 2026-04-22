@@ -11,7 +11,7 @@ import threading
 import sys
 from pathlib import Path
 
-# -- Alta Densidad de Píxeles (DPI Awareness) --
+# -- DPI Awareness --
 if os.name == 'nt':
     try:
         import ctypes
@@ -22,7 +22,7 @@ if os.name == 'nt':
         except Exception:
             pass
 
-# -- Redirección de consola para pythonw --
+# -- Redirección para pythonw --
 if sys.executable.endswith("pythonw.exe"):
     sys.stdout = open(os.devnull, "w")
     sys.stderr = open(os.devnull, "w")
@@ -39,19 +39,11 @@ def setup_logging():
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s — %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    
-    # Asegurar que el log sea accesible
     try:
         fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
         fh.setFormatter(fmt)
         root.addHandler(fh)
-    except Exception as e:
-        pass
-        
-    if '--debug' in sys.argv or os.environ.get('EVE_DEBUG'):
-        ch = logging.StreamHandler()
-        ch.setFormatter(fmt)
-        root.addHandler(ch)
+    except: pass
     return logging.getLogger('eve.main')
 
 SINGLETON_PORT = 47288
@@ -66,7 +58,7 @@ class SingletonLock:
             t = threading.Thread(target=self._listen, daemon=True)
             t.start()
             return True
-        except OSError: return False
+        except: return False
     def _listen(self):
         while True:
             try:
@@ -77,15 +69,13 @@ class SingletonLock:
             except: break
     def signal_existing(self):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1.0)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
             s.connect(('127.0.0.1', SINGLETON_PORT)); s.send(b'FOCUS\n'); s.close()
         except: pass
     def release(self):
-        if self._sock:
-            try: self._sock.close()
-            except: pass
+        if self._sock: self._sock.close()
 
-_tray_manager_ref = None
 _suite_window_ref = None
 
 def _signal_focus():
@@ -104,7 +94,7 @@ def main():
         sys.exit(0)
 
     log = setup_logging()
-    log.info("--- INICIANDO EVE iT ELITE ---")
+    log.info("--- ARRANQUE ELITE ---")
 
     from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
@@ -121,15 +111,15 @@ def main():
 
     global _suite_window_ref
     _suite_window_ref = suite_win
-    
     tray.set_suite_window(suite_win)
     suite_win.set_tray_manager(tray)
 
+    # PRIORIDAD 1: MOSTRAR VENTANA
     suite_win.show()
     suite_win.raise_()
     suite_win.activateWindow()
 
-    # Auto-start
+    # PRIORIDAD 2: AUTO-ARRANQUE
     try:
         from PySide6.QtCore import QSettings
         settings = QSettings("EVE_iT", "Suite")
