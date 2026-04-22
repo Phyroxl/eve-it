@@ -203,10 +203,17 @@ class MainSuiteWindow(QMainWindow):
         name_lbl.setObjectName("CharName")
         
         is_active = acc.get('status') == 'active'
-        status_badge = IndustrialBadge(
-            "Activo" if is_active else "Inactivo",
-            "#48bb78" if is_active else "#a0aec0"
-        )
+        is_idle   = acc.get('status') == 'idle'
+
+        if is_active:
+            badge_text, badge_color = "Activo", "#48bb78"
+        elif is_idle:
+            badge_text, badge_color = "En espera", "#ecc94b"
+        else:
+            badge_text, badge_color = "Inactivo", "#718096"
+
+        status_badge = IndustrialBadge(badge_text, badge_color)
+        status_badge.setObjectName("StatusBadge")
         
         info.addWidget(name_lbl)
         info.addWidget(status_badge)
@@ -441,15 +448,30 @@ class MainSuiteWindow(QMainWindow):
         # Añadir o actualizar tarjetas
         for i, acc in enumerate(accounts):
             name = acc.get('display_name', acc.get('character'))
+            status = acc.get('status', 'idle')
+
             if name not in self.account_cards:
                 card = self.create_account_card(acc)
                 self.account_cards[name] = card
                 self.accounts_layout.addWidget(card, i // 3, i % 3)
             else:
                 card = self.account_cards[name]
+                # Actualizar ISK
                 isk_val = card.findChild(QLabel, "IskValue")
                 if isk_val:
                     isk_val.setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
+                # Actualizar badge de estado
+                badge = card.findChild(QLabel, "StatusBadge")
+                if badge:
+                    if status == 'active':
+                        badge.setText("Activo")
+                        badge.setStyleSheet("background-color: rgba(72,187,120,0.1); color: #48bb78; border: 1px solid rgba(72,187,120,0.3); padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 10px;")
+                    elif status == 'idle':
+                        badge.setText("En espera")
+                        badge.setStyleSheet("background-color: rgba(236,201,75,0.1); color: #ecc94b; border: 1px solid rgba(236,201,75,0.3); padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 10px;")
+                    else:
+                        badge.setText("Inactivo")
+                        badge.setStyleSheet("background-color: rgba(113,128,150,0.1); color: #718096; border: 1px solid rgba(113,128,150,0.3); padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 10px;")
 
     def set_tray_manager(self, tm): self.tray_manager = tm
     def _on_hud_clicked(self):
