@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timedelta
 
 from ui.desktop.styles import MAIN_STYLE
+from ui.desktop.components import AnimatedCard, IndustrialBadge
 from utils.formatters import format_isk
 
 class MainSuiteWindow(QMainWindow):
@@ -110,23 +111,55 @@ class MainSuiteWindow(QMainWindow):
 
     def create_account_card(self, acc):
         name = acc.get('display_name', acc.get('character'))
-        card = QFrame(); card.setObjectName("CharacterCard"); card.setFixedSize(250, 115); card.setCursor(Qt.PointingHandCursor)
-        l = QVBoxLayout(card); l.setContentsMargins(15, 12, 15, 12); l.setSpacing(8)
+        card = AnimatedCard()
+        card.setFixedSize(240, 120)
+        card.setCursor(Qt.PointingHandCursor)
         
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(15, 12, 15, 12)
+        
+        # Header: Avatar + Identificación
         top = QHBoxLayout()
-        avatar = QLabel(); avatar.setObjectName("CharAvatar"); avatar.setFixedSize(38, 38); avatar.setAlignment(Qt.AlignCenter); avatar.setText(name[0].upper())
-        v = QVBoxLayout(); name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
-        status_badge = QLabel("SYNC_ACTIVE" if acc.get('status') == 'active' else "SYNC_IDLE")
-        status_badge.setStyleSheet(f"color: {'#00c8ff' if acc.get('status') == 'active' else '#808080'}; font-family: 'Share Tech Mono'; font-size: 8px; border: 1px solid {'#00c8ff' if acc.get('status') == 'active' else '#333'}; padding: 2px 4px;")
-        v.addWidget(name_lbl); v.addWidget(status_badge); top.addWidget(avatar); top.addLayout(v); top.addStretch()
+        avatar = QLabel(name[0].upper())
+        avatar.setObjectName("CharAvatar")
+        avatar.setFixedSize(42, 42)
+        avatar.setAlignment(Qt.AlignCenter)
         
+        info = QVBoxLayout()
+        name_lbl = QLabel(name.upper())
+        name_lbl.setObjectName("CharName")
+        
+        is_active = acc.get('status') == 'active'
+        status_badge = IndustrialBadge(
+            "LINK_ACTIVE" if is_active else "LINK_IDLE",
+            "#00ff9d" if is_active else "#808080"
+        )
+        
+        info.addWidget(name_lbl)
+        info.addWidget(status_badge)
+        top.addWidget(avatar)
+        top.addLayout(info)
+        top.addStretch()
+        
+        # Body: Telemetría de Ingresos
         bot = QHBoxLayout()
-        isk_lbl = QLabel("EST_REVENUE:"); isk_lbl.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-family: 'Share Tech Mono'; font-size: 8px;")
-        isk_val = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
-        isk_val.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 11px; font-weight: bold;")
-        bot.addWidget(isk_lbl); bot.addStretch(); bot.addWidget(isk_val)
+        isk_lbl = QLabel("EST_NET_REVENUE:")
+        isk_lbl.setStyleSheet("color: rgba(0, 200, 255, 0.3); font-family: 'Share Tech Mono'; font-size: 8px;")
         
-        l.addLayout(top); l.addStretch(); l.addLayout(bot); card.mousePressEvent = lambda e: self.open_character_detail(acc); return card
+        isk_val = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
+        isk_val.setObjectName("IskValue")
+        isk_val.setStyleSheet("color: #ffd700; font-family: 'Share Tech Mono'; font-size: 13px; font-weight: bold;")
+        
+        bot.addWidget(isk_lbl)
+        bot.addStretch()
+        bot.addWidget(isk_val)
+        
+        layout.addLayout(top)
+        layout.addStretch()
+        layout.addLayout(bot)
+        
+        card.mousePressEvent = lambda e: self.open_character_detail(acc)
+        return card
 
     def open_character_detail(self, acc):
         self.current_character = acc; self.update_detail_view(); self.stack.setCurrentIndex(3); self.section_title.setText("PERFIL ESTRATÉGICO")
@@ -303,8 +336,16 @@ class MainSuiteWindow(QMainWindow):
                 card = self.create_account_card(acc); self.account_cards[name] = card
                 self.accounts_layout.addWidget(card, i // 3, i % 3)
             else:
-                card = self.account_cards[name]; labels = card.findChildren(QLabel)
-                labels[2].setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
+                card = self.account_cards[name]
+                # Buscar por nombre de objeto para mayor robustez
+                isk_val = card.findChild(QLabel, "IskValue")
+                if not isk_val:
+                    # Fallback si no tiene nombre (para compatibilidad o si olvidé ponerlo)
+                    labels = card.findChildren(QLabel)
+                    if len(labels) >= 5: isk_val = labels[4]
+                
+                if isk_val:
+                    isk_val.setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
 
     def set_tray_manager(self, tm): self.tray_manager = tm
     def _on_hud_clicked(self):
