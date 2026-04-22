@@ -165,7 +165,8 @@ def main():
         ensure_chars_resolved_func=ensure_chars_resolved,
         render_charts_func=render_charts_iframe,
         send_chart_data_func=send_chart_data,
-        render_chars_func=render_chars_section
+        render_chars_func=render_chars_section,
+        start_tracker_func=start_tracker
     )
 
     # Bucle de actualización (Rerun)
