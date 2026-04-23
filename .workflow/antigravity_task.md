@@ -26,3 +26,35 @@ La validación del frame capturado era "frágil": comprobaba un solo píxel en e
 
 ## NOTES
 El sistema es ahora "honesto": si por alguna razón externa la captura falla, el usuario lo sabrá inmediatamente mediante el indicador de "Señal Perdida" en lugar de ver un frame estático engañoso.
+
+
+---
+
+# Task: Fix Freeze Bug - Replica congela al reducir tamaño del overlay
+
+## STATUS: PENDING
+
+## CAUSA RAÍZ IDENTIFICADA
+La validación multi-punto en `win32_capture.py` opera sobre el bitmap ya escalado a `out_w x out_h`. Cuando el overlay es pequeño, StretchBlt comprime una región oscura de EVE a resolución baja → los 5 puntos de validación devuelven 0 (negro) → `captured = False` → no se emite frame → stale detector se activa → auto-recovery re-resuelve el HWND (que ya era válido) → no resuelve nada. El síntoma es: replica congelada en overlay pequeño, se descongela al hacer zoom in.
+
+## CAMBIOS REQUERIDOS
+
+### FILE 1: overlay/win32_capture.py
+En `capture_window_region`, bloque RUTA 1 (zona ~línea 227-240):
+- Añadir guard de tamaño antes de la validación de píxeles
+- - Si `out_w < 80` o `out_h < 80`: saltar validación, forzar `captured = True`
+  - - Mantener validación 5 puntos solo cuando `out_w >= 80` y `out_h >= 80`
+   
+    - ### FILE 2: overlay/replication_overlay.py
+    - En método `_on_stale` (~línea 400), cuando `is_stale == True`:
+    - - Añadir re-sync de output_size con dimensiones actuales del overlay:
+      -   `if hasattr(self, '_capture'): self._capture.set_output_size(self.width(), self.height())`
+     
+      -   ## CHECKS
+      -   - [ ] Replica no congela al reducir tamaño del overlay
+          - [ ] - [ ] Stale detection sigue funcionando para capturas genuinamente rotas
+          - [ ] - [ ] Sin cambios en otras réplicas ni en lógica global de captura
+          - [ ] - [ ] Validación multi-punto activa para tamaños normales (>= 80px)
+       
+          - [ ] ## NOTES
+          - [ ] No refactorizar. Cambios mínimos y quirúrgicos.
