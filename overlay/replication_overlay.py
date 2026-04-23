@@ -41,7 +41,7 @@ for _qt_try in [
                    'QLabel', 'QPushButton', 'QSizePolicy', 'QSlider',
                    'QFrame', 'QSizeGrip']:
             if hasattr(_w, _n): globals()[_n] = getattr(_w, _n)
-        for _n in ['Qt', 'QTimer', 'QThread', 'pyqtSignal', 'Signal',
+        for _n in ['Qt', 'QTimer', 'QThread', 'pyqtSignal', 'Signal', 'Slot', 'pyqtSlot',
                    'QPoint', 'QSize', 'QRect', 'QSettings']:
             if hasattr(_c, _n): globals()[_n] = getattr(_c, _n)
         for _n in ['QColor', 'QPainter', 'QBrush', 'QPen', 'QPixmap',
@@ -49,6 +49,8 @@ for _qt_try in [
             if hasattr(_g, _n): globals()[_n] = getattr(_g, _n)
         if 'Signal' not in globals() and 'pyqtSignal' in globals():
             Signal = pyqtSignal
+        if 'Slot' not in globals() and 'pyqtSlot' in globals():
+            Slot = pyqtSlot
         _qt_ok = True
         break
     except ImportError:
@@ -77,12 +79,14 @@ class CaptureThread(QThread):
     """
     Hilo de captura de frames. Thread-safe mediante Lock en set_output_size.
     """
-    frame_ready = Signal(object)   # QImage
+    # Señales tácticas
+    frame_ready = Signal(object)   # QImage o b"MINIMIZED"
+    stale_detected = Signal(bool) # True si el frame está congelado
 
-    def __init__(self, hwnd_getter: Callable[[], Optional[int]],
-                 region_rel: dict, fps: int = 10):
+    def __init__(self, title: str, hwnd: int, region_rel: dict, fps: int = 10):
         super().__init__()
-        self._hwnd_getter = hwnd_getter
+        self._title       = title
+        self._hwnd        = hwnd
         self._region      = region_rel
         self._fps         = fps
         self._running     = True
@@ -104,38 +108,93 @@ class CaptureThread(QThread):
     def pause(self):   self._paused = True
     def resume(self):  self._paused = False
 
+    def set_fps(self, fps: int):
+        with self._size_lock:
+            self._fps = max(1, min(120, fps)) # Aumentado a 120
+
     def stop(self):
         self._running = False
-        self.wait(2000)  # esperar hasta 2s antes de forzar
+        self.wait(2000)
 
     def run(self):
         import time
-        interval = 1.0 / max(1, self._fps)
+        from overlay.win32_capture import find_eve_windows
+        
+        # Diag info
+        self._frames_count = 0
+        self._t0 = time.time()
+        self._last_fps = 0
+        self._last_frame_time = time.time()
+        self._is_stale = False
+        
         while self._running:
             t0 = time.perf_counter()
+            
+            # Recalcular intervalo dinámicamente
+            with self._size_lock:
+                interval = 1.0 / self._fps
+
             if not self._paused:
                 try:
-                    hwnd = self._hwnd_getter()
+                    hwnd = self._hwnd
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    if not user32.IsWindow(hwnd):
+                        # AUTO-RECOVERY: Intentar resolver el handle usando el título
+                        from overlay.win32_capture import resolve_eve_window_handle
+                        new_h = resolve_eve_window_handle(self._title, None)
+                        if new_h:
+                            self._hwnd = new_h
+                            hwnd = new_h
                     if hwnd:
                         out_w, out_h = self._get_output_size()
                         raw = capture_window_region(
                             hwnd, self._region, out_w, out_h
                         )
-                        if raw:
-                            # Crear QImage directamente desde los bytes (sin copia si es posible)
-                            # Nota: QImage mantiene una referencia al buffer 'raw' mientras exista
-                            img = QImage(raw, out_w, out_h, out_w * 4, QImage.Format_ARGB32)
-                            # Emitimos una copia ligera para que el hilo de UI la use de forma segura
+                        if raw == b"MINIMIZED":
+                            self.frame_ready.emit(b"MINIMIZED")
+                            self._last_frame_time = time.time()
+                            if self._is_stale:
+                                self._is_stale = False
+                                self.stale_detected.emit(False)
+                        elif raw:
+                            # Usar Format_RGB32 para ignorar el canal alfa de GDI (que a veces es 0)
+                            # Esto garantiza que la imagen sea 100% opaca.
+                            img = QImage(raw, out_w, out_h, out_w * 4, QImage.Format_RGB32)
                             self.frame_ready.emit(img.copy())
+                            self._frames_count += 1
+                            self._last_frame_time = time.time()
+                            if self._is_stale:
+                                self._is_stale = False
+                                self.stale_detected.emit(False)
                         else:
-                            # Si falla la captura, esperar un poco más para no saturar
                             time.sleep(0.1)
                 except Exception as e:
                     logger.debug(f"Error en hilo de captura: {e}")
                     time.sleep(0.1)
             
+            # FPS Calculation
+            now = time.time()
+            if now - self._t0 >= 1.0:
+                self._last_fps = int(self._frames_count / (now - self._t0))
+                self._frames_count = 0
+                self._t0 = now
+
+            # Stale detection (2 segundos sin frames nuevos)
+            if time.time() - self._last_frame_time > 2.0:
+                if not self._is_stale:
+                    self._is_stale = True
+                    self.stale_detected.emit(True)
+                
+                # AUTO-RECOVERY AGRESIVO: Re-resolver handle si estamos congelados
+                from overlay.win32_capture import resolve_eve_window_handle
+                new_h = resolve_eve_window_handle(self._title, None)
+                if new_h:
+                    self._hwnd = new_h
+                    self._last_frame_time = time.time() # Reset para dar tiempo a capturar
+
             elapsed = time.perf_counter() - t0
-            sleep_t = max(0.01, interval - elapsed) # Mínimo 10ms de respiro
+            sleep_t = max(0.001, interval - elapsed)
             time.sleep(sleep_t)
 
 
@@ -178,53 +237,45 @@ class ResizeHandle:
 class ReplicationOverlay(QWidget):
     """
     Overlay individual que replica una región de una ventana EVE.
-
-    Ciclo de vida:
-      1. Creación con hwnd + región + config
-      2. CaptureThread captura frames y los envía via Signal
-      3. paintEvent dibuja el frame + borde + controles (si hover)
-      4. Al cerrar, emite closed(title) para que el manager limpie
     """
     closed = Signal(str)      # emite el título al cerrarse
-    selection_requested = Signal(object) # [NUEVO] para reabrir el selector de región
+    selection_requested = Signal(object) 
+    region_changed = Signal(str, dict)   
 
-    def __init__(self, title: str, hwnd_getter: Callable[[], Optional[int]],
+    def __init__(self, title: str, hwnd: int,
                  region_rel: dict, cfg: dict, save_callback: Callable):
         super().__init__()
         self._title        = title
-        self._hwnd_getter  = hwnd_getter
+        self._hwnd         = hwnd 
         self._region       = region_rel
         self._cfg          = cfg
         self._save_cb      = save_callback
-        self._frame_lock   = threading.Lock() # [NUEVO] Evitar crashes por concurrencia
+        self._frame_lock   = threading.Lock() 
         self._click_through = False
-        self._interactive    = False  # [NUEVO] Modo portal (broadcasting)
+        self._interactive    = False  
         self._hovering     = False
-        self._flash_pos    = None  # [NUEVO] Para feedback visual de click
-        self._offset_calib = {'x': 0, 'y': 0} # [NUEVO] Calibración manual
+        self._flash_pos    = None  
+        self._offset_calib = {'x': 0, 'y': 0} 
+        self._frame        = None             
+        self._is_stale     = False
 
         # Estado de drag/resize
         self._drag_pos    = None
         self._resize_dir  = ResizeHandle.NONE
         self._resize_origin_global = None
         self._resize_origin_geom   = None
-        self._is_moving_or_resizing = False # [NUEVO] Para mantener borde visible
+        self._is_moving_or_resizing = False 
         
-        # Modo compacto (oculta barra)
         self._is_compact = False
         
         self._restore_state()
-        self._start_capture()
-        
         self._setup_window()
+        self._start_capture()
         
         # Cargar calibración si existe
         ov_cfg = self._cfg.get('overlays', {}).get(self._title, {})
         self._offset_calib = ov_cfg.get('offset_calib', {'x': 0, 'y': 0})
         
-        # UI de Controles (HUD flotante) - ELIMINADA SEGÚN SOLICITUD
-        # self._setup_hud() - Ya no se crea la barra superior
-
         # Timer de Persistencia Always-on-Top (Nivel Win32)
         import ctypes
         self._topmost_timer = QTimer(self)
@@ -236,24 +287,13 @@ class ReplicationOverlay(QWidget):
         self._resizer_marker.setText("◢")
         self._resizer_marker.setStyleSheet("color: rgba(0, 200, 255, 0.7); font-size: 14px; background: transparent;")
         self._resizer_marker.setFixedSize(16, 16)
-        # WA_TransparentForMouseEvents para que no bloquee el resize real
         self._resizer_marker.setAttribute(Qt.WA_TransparentForMouseEvents if hasattr(Qt, 'WA_TransparentForMouseEvents') else Qt.WidgetAttribute(0x4000000))
-        self._resizer_marker.hide() # Solo se ve en hover
-
-    def _setup_hud(self):
-        # Deshabilitado para limpiar la interfaz
-        pass
+        self._resizer_marker.hide()
 
     def _toggle_interactive(self):
         self._interactive = not self._interactive
         logger.info(f"Portal [{self._title}]: {'ACTIVADO' if self._interactive else 'DESACTIVADO'}")
         color = "#00ff9d" if self._interactive else "#888"
-        self._btn_interact.setStyleSheet(f"QPushButton {{ background: transparent; border: none; color: {color}; font-size: 14px; }}")
-        # Cambiar el cursor si el modo está activo para dar feedback visual
-        if self._interactive:
-            self.setCursor(QCursor(Qt.CursorShape.CrossCursor if hasattr(Qt, 'CursorShape') else Qt.CrossCursor))
-        else:
-            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor if hasattr(Qt, 'CursorShape') else Qt.ArrowCursor))
         self.update()
 
     def _clear_flash(self):
@@ -268,7 +308,6 @@ class ReplicationOverlay(QWidget):
         try:
             import ctypes
             hwnd = int(self.winId())
-            # HWND_TOPMOST = -1, SWP_NOMOVE = 2, SWP_NOSIZE = 1, SWP_NOACTIVATE = 0x10
             ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
         except: pass
 
@@ -284,8 +323,8 @@ class ReplicationOverlay(QWidget):
         self.setMinimumSize(30, 30)
         self.setMouseTracking(True)
         self.setWindowTitle(f"EVE Replica: {self._title}")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground if hasattr(Qt, 'WidgetAttribute') else Qt.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground if hasattr(Qt, 'WidgetAttribute') else Qt.WA_TranslucentBackground, False)
+        self.setStyleSheet(f"background-color: {C['bg'].name()}; border: None;")
         
         try:
             import ctypes
@@ -295,7 +334,6 @@ class ReplicationOverlay(QWidget):
                 int(self.winId()), DWMWA_WINDOW_CORNER_PREFERENCE, 
                 ctypes.byref(ctypes.c_int(DWMWCP_DONOTROUND)), 4
             )
-            # Forzar no activación a nivel Win32
             from overlay.win32_capture import set_no_activate
             set_no_activate(int(self.winId()))
         except: pass
@@ -319,7 +357,6 @@ class ReplicationOverlay(QWidget):
     # ── Captura ───────────────────────────────────────────────────────────────
 
     def stop(self):
-        """Detiene la captura y cierra el hilo."""
         if hasattr(self, '_capture'):
             try:
                 self._capture.stop()
@@ -328,26 +365,47 @@ class ReplicationOverlay(QWidget):
         self.close()
 
     def closeEvent(self, event):
-        """Asegurar que el hilo se detiene al cerrar la ventana."""
+        self._save_state()
         if hasattr(self, '_capture'):
             try:
                 self._capture.stop()
                 self._capture.wait(300)
             except: pass
+        self.closed.emit(self._title)
         event.accept()
 
     def _start_capture(self):
-        # PrintWindow es más lento que BitBlt — límite de 5fps por defecto
         fps = min(self._cfg.get('global', {}).get('capture_fps', 10), 10)
-        self._capture = CaptureThread(self._hwnd_getter, self._region, fps)
+        self._capture = CaptureThread(self._title, self._hwnd, self._region, fps)
         self._capture.set_output_size(self.width(), self.height())
-        self._capture.frame_ready.connect(self._on_frame)
+        self._capture.frame_ready.connect(self._on_capture_signal)
+        self._capture.stale_detected.connect(self._on_stale)
         self._capture.start()
-
     def _on_frame(self, img: 'QImage'):
         """Recibe frame del hilo de captura y fuerza redibujado."""
         with self._frame_lock:
             self._frame = QPixmap.fromImage(img)
+        self.update()
+
+    @Slot(object)
+    def _on_capture_signal(self, data):
+        """Maneja señales especiales del hilo de captura (como MINIMIZED)."""
+        if data == b"MINIMIZED":
+            self._last_raw_status = b"MINIMIZED"
+            with self._frame_lock: self._frame = None
+            self.update()
+        elif isinstance(data, QImage):
+            self._on_frame(data)
+
+    def _on_stale(self, is_stale):
+        """Maneja la detección de congelamiento."""
+        self._is_stale = is_stale
+        if is_stale:
+            self.lbl_title.setText(f"⚠️ {self._title} (CONGELADO)")
+            self.lbl_title.setStyleSheet("background: rgba(255,0,0,0.6); color: #ffffff; padding: 2px 8px; font-weight: bold; border-radius: 4px;")
+        else:
+            self.lbl_title.setText(self._title)
+            self.lbl_title.setStyleSheet("background: rgba(0,0,0,0.5); color: #00c8ff; padding: 2px 8px; border-radius: 4px;")
         self.update()
 
     # ── Pintura ───────────────────────────────────────────────────────────────
@@ -361,20 +419,25 @@ class ReplicationOverlay(QWidget):
 
         r = self.rect()
 
-        # Fondo sutil para asegurar que el widget reciba clicks (algunas GPUs ignoran clicks en 100% transparente)
-        p.fillRect(r, QColor(0, 0, 0, 1))
+        # Fondo sólido para evitar "ghosting" de transparencia
+        p.fillRect(r, C['bg'])
 
         with self._frame_lock:
             if self._frame:
-                # USAR STRETCH para permitir "libre ajuste" y que el mapeo de clicks sea 100% exacto
-                # Dibujamos ocupando todo el rectángulo interior (ajustado por el borde de 1px)
                 p.drawPixmap(r.adjusted(1, 1, -1, -1), self._frame)
             else:
                 p.setPen(QPen(C['text']))
                 p.setFont(QFont('Consolas', 9))
                 align = Qt.AlignmentFlag.AlignCenter if hasattr(Qt, 'AlignmentFlag') else Qt.AlignCenter
-                p.drawText(r, align, f"Buscando ventana...\n{self._title}")
-        # Fin de zona crítica de frame_lock
+                
+                # [NUEVO] Mensaje de estado específico
+                msg = f"Buscando ventana...\n{self._title}"
+                if hasattr(self, '_last_raw_status') and self._last_raw_status == b"MINIMIZED":
+                    msg = f"VENTANA MINIMIZADA\n{self._title}"
+                elif self._is_stale:
+                    msg = f"⚠️ SEÑAL PERDIDA\nIntentando reconexión..."
+                
+                p.drawText(r, align, msg)
         # Fin de zona crítica de frame_lock
 
         # Borde eliminado según solicitud
@@ -429,6 +492,7 @@ class ReplicationOverlay(QWidget):
     def mousePressEvent(self, event):
         # Asegurar foco al hacer click para que las flechas funcionen
         self.setFocus(Qt.MouseFocusReason if hasattr(Qt, 'MouseFocusReason') else Qt.OtherFocusReason)
+        super().mousePressEvent(event) # Propagar para que Qt gestione el foco internamente
         
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         if event.button() == left:
@@ -455,10 +519,13 @@ class ReplicationOverlay(QWidget):
                     event.globalPosition().toPoint()
                     if hasattr(event, 'globalPosition') else event.globalPos()
                 )
+            
+            # Asegurar foco al hacer click para habilitar flechas de teclado
+            self.setFocus(Qt.MouseFocusReason if hasattr(Qt, 'MouseFocusReason') else Qt.OtherFocusReason)
 
     def _broadcast_click(self, pos: QPoint):
         """Mapea y envía el click a la ventana original con máxima precisión."""
-        hwnd = self._hwnd_getter()
+        hwnd = self._hwnd
         if not hwnd or not IS_WINDOWS: return
         
         try:
@@ -560,8 +627,22 @@ class ReplicationOverlay(QWidget):
         menu.addSeparator()
         
         # Reset
+        # Reset y FPS
         restart_cap = menu.addAction("⚡ (Cambiar Zona)")
         reset_reg = menu.addAction("🔄 Resetear Zona (100%)")
+        
+        fps_menu = menu.addMenu("⚡ Ajustar FPS (Fluidez)")
+        f1 = fps_menu.addAction("1 FPS (Ahorro)")
+        f5 = fps_menu.addAction("5 FPS (Estándar)")
+        f15 = fps_menu.addAction("15 FPS (Fluido)")
+        f30 = fps_menu.addAction("30 FPS (Gaming)")
+        f60 = fps_menu.addAction("60 FPS (Máximo)")
+        f120 = fps_menu.addAction("120 FPS (Ultra)")
+        # Diagnóstico (NUEVO)
+        fps = getattr(self._capture, '_last_fps', 0) if hasattr(self, '_capture') else 0
+        diag = menu.addAction(f"📊 Estado: {fps} FPS | ROI: {int(self._region['w']*100)}x{int(self._region['h']*100)}%")
+        diag.setEnabled(False)
+        
         menu.addSeparator()
         close_act = menu.addAction("❌ Cerrar Réplica")
         
@@ -578,6 +659,14 @@ class ReplicationOverlay(QWidget):
         elif action == restart_cap: self.selection_requested.emit(self)
         elif action == reset_reg: self._reset_region()
         elif action == close_act: self.close()
+        
+        # Acciones de FPS
+        if   action == f1:  self._set_runtime_fps(1)
+        elif action == f5:  self._set_runtime_fps(5)
+        elif action == f15: self._set_runtime_fps(15)
+        elif action == f30: self._set_runtime_fps(30)
+        elif action == f60: self._set_runtime_fps(60)
+        elif action == f120: self._set_runtime_fps(120)
         
         # Acciones de Calibración
         c_step = 5 # píxeles
@@ -603,6 +692,7 @@ class ReplicationOverlay(QWidget):
         self._region['x'] = max(0.0, min(1.0 - self._region['w'], self._region['x'] + dx))
         self._region['y'] = max(0.0, min(1.0 - self._region['h'], self._region['y'] + dy))
         self._save_state()
+        self.region_changed.emit(self._title, self._region)
 
     def _zoom_region(self, factor):
         # Zoom centrado
@@ -620,21 +710,31 @@ class ReplicationOverlay(QWidget):
         self._region['y'] = max(0.0, min(1.0 - new_h, self._region['y']))
         
         self._save_state()
+        self.region_changed.emit(self._title, self._region)
 
     def _reset_region(self):
         self._region.update({'x': 0.0, 'y': 0.0, 'w': 1.0, 'h': 1.0})
         self._save_state()
+        self.region_changed.emit(self._title, self._region)
+
+    def set_region(self, new_region: dict, emit_signal: bool = True):
+        """Aplica una nueva región (usado para sincronización desde el Hub)."""
+        self._region.update(new_region)
+        self._save_state()
+        if emit_signal:
+            self.region_changed.emit(self._title, self._region)
+        self.update()
 
     def keyPressEvent(self, event):
         """Atajos de teclado para mover la región con alta precisión."""
         step = 0.005 # Paso ultra-fino
         k = event.key()
-        Key = Qt.Key if hasattr(Qt, 'Key') else Qt
         
-        if k == getattr(Key, 'Key_Up', 0x01000013):    self._move_region(0, -step)
-        elif k == getattr(Key, 'Key_Down', 0x01000015):  self._move_region(0, step)
-        elif k == getattr(Key, 'Key_Left', 0x01000012):  self._move_region(-step, 0)
-        elif k == getattr(Key, 'Key_Right', 0x01000014): self._move_region(step, 0)
+        # Atajos directos usando el shim de Qt
+        if k == Qt.Key_Up:    self._move_region(0, -step)
+        elif k == Qt.Key_Down:  self._move_region(0, step)
+        elif k == Qt.Key_Left:  self._move_region(-step, 0)
+        elif k == Qt.Key_Right: self._move_region(step, 0)
         else:
             super().keyPressEvent(event)
 
@@ -680,6 +780,7 @@ class ReplicationOverlay(QWidget):
             else:
                 self._zoom_region(1.05)
         
+        self.region_changed.emit(self._title, self._region)
         event.accept()
 
     def mouseMoveEvent(self, event):
@@ -770,9 +871,11 @@ class ReplicationOverlay(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
 
-    def closeEvent(self, event):
-        self._save_state()
+    def _set_runtime_fps(self, fps: int):
         if hasattr(self, '_capture'):
-            self._capture.stop()
-        self.closed.emit(self._title)
-        event.accept()
+            self._capture.set_fps(fps)
+            logger.info(f"FPS de [{self._title}] ajustado a {fps}")
+            # Persistir en config
+            if 'overlays' not in self._cfg: self._cfg['overlays'] = {}
+            if self._title not in self._cfg['overlays']: self._cfg['overlays'][self._title] = {}
+            self._cfg['overlays'][self._title]['fps'] = fps

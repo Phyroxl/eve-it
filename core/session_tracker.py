@@ -4,14 +4,14 @@ session_tracker.py — Motor de cálculo ISK en tiempo real.
 
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Set
 import json
+import threading
 
 from core.tick_calculator import TickCalculator
 import logging
 
 logger = logging.getLogger('eve.tracker')
-
 
 # ── Estados de personaje (semáforo) ──────────────────────────────────────────
 class CharStatus:
@@ -19,16 +19,29 @@ class CharStatus:
     IDLE     = 'idle'      # 🟡 detectado pero sin eventos aún / inactivo
     INACTIVE = 'inactive'  # 🔴 sin eventos en mucho tiempo (configurable)
 
+class IdentityStatus:
+    PENDING   = 'pending'
+    RESOLVING = 'resolving'
+    RESOLVED  = 'resolved'
+    FAILED    = 'failed'
+
 
 class CharacterSession:
 
     def __init__(self, character_name: str, wall_start: datetime):
         self.character = character_name
+        self.character_id: Optional[int] = None
+        self.portrait_url: Optional[str] = None
+        self.id_status = IdentityStatus.PENDING
         self.total_isk = 0
         self.events: list[dict] = []
         self.wall_start: datetime = wall_start
         self.last_event_time: Optional[datetime] = None
         self.detected_at: datetime = datetime.now()
+        
+        # Iniciar resolución de identidad en background
+        self._trigger_identity_resolution()
+        
         # Wall clock del último evento procesado — para calcular inactividad real.
         # Independiente del timestamp del log (que puede estar en el pasado).
         self.last_processed_at: Optional[datetime] = None
@@ -37,6 +50,30 @@ class CharacterSession:
         self._latest_event_ts: Optional[datetime] = None
         # Motor de cálculo de ticks ESS (módulo separado)
         self._tick_calc: TickCalculator = TickCalculator()
+        
+    def _trigger_identity_resolution(self):
+        """Intenta resolver el Character ID y Portrait URL de forma asíncrona."""
+        if self.id_status != IdentityStatus.PENDING:
+            return
+
+        def worker():
+            from utils.eve_api import resolve_character_id, build_character_portrait_url
+            self.id_status = IdentityStatus.RESOLVING
+            try:
+                char_id = resolve_character_id(self.character)
+                if char_id:
+                    self.character_id = char_id
+                    self.portrait_url = build_character_portrait_url(char_id)
+                    self.id_status = IdentityStatus.RESOLVED
+                    logger.info(f"Identidad resuelta: {self.character} -> {char_id}")
+                else:
+                    self.id_status = IdentityStatus.FAILED
+            except Exception as e:
+                self.id_status = IdentityStatus.FAILED
+                logger.debug(f"Error silencioso en resolución de {self.character}: {e}")
+                
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
 
     def add_event(self, timestamp: datetime, isk: int, raw_line: str = '',
                  processed_at: Optional[datetime] = None,
@@ -296,14 +333,27 @@ class MultiAccountTracker:
         now = now or datetime.now()
         duration = self.get_total_session_duration(now)
         rolling_isk_h = self.get_rolling_isk_per_hour()
+        isk_per_hour_session = self.get_total_isk_per_hour_session(now)
         isk_per_min = self.get_total_isk_per_minute_session(now)
 
         per_character = []
+        online_count = 0
         for char_id, s in self.sessions.items():
+            status = s.get_status(self.inactivity_threshold, now)
+            if status in [CharStatus.ACTIVE, CharStatus.IDLE]:
+                online_count += 1
             inactivity = s.get_inactivity_duration(now)
+            
+            # Preparación para retratos reales
+            char_uid = getattr(s, 'character_id', None)
+            portrait_url = getattr(s, 'portrait_url', None)
+            
             per_character.append({
                 'character': char_id,
                 'display_name': char_id,
+                'character_id': char_uid,
+                'portrait_url': portrait_url,
+                'id_status': getattr(s, 'id_status', 'pending'),
                 'total_isk': s.total_isk,
                 'isk_per_hour': s.get_rolling_isk_per_hour(),
                 'isk_per_hour_session': s.get_isk_per_hour_session(now),

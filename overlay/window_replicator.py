@@ -56,6 +56,7 @@ class ReplicatorHub(W.QWidget):
         super().__init__(None)
         self._cfg = cfg; self._region = region
         self._overlays = {}; self._handles = {}
+        self._stale_handles = {} # [NUEVO] Cache para no perder handles en refrescos rápidos
         self._drag_pos = None
         
         self.setWindowTitle("Replicator Hub")
@@ -129,21 +130,35 @@ class ReplicatorHub(W.QWidget):
         llay.addWidget(self._list)
         lay.addWidget(self._list_container)
         
-        # Footer con botones de acción
+        # Footer con botones de acción y PRESETS (NUEVO)
         self._footer = W.QWidget()
-        self._footer.setFixedHeight(50)
+        self._footer.setFixedHeight(90) # Aumentado para presets
         self._footer.setStyleSheet("background: rgba(0,0,0,0.3); border-top: 1px solid rgba(0,180,255,0.1); border-bottom-left-radius: 11px; border-bottom-right-radius: 11px;")
-        fl = QHBox(self._footer); fl.setContentsMargins(15,0,15,0); fl.setSpacing(10)
+        f_v = QVBox(self._footer); f_v.setContentsMargins(10, 10, 10, 10); f_v.setSpacing(10)
         
+        # Presets Row
+        p_lay = QHBox(); p_lay.setSpacing(8)
+        p_lay.addWidget(QLabel("PRESETS:")); p_lay.addStretch()
+        
+        btn_all = QBtn("TODOS"); btn_all.setFixedSize(65, 24); btn_all.setProperty("class", "action_btn")
+        btn_all.clicked.connect(self._preset_all)
+        btn_none = QBtn("NINGUNO"); btn_none.setFixedSize(65, 24); btn_none.setProperty("class", "action_btn")
+        btn_none.clicked.connect(self._preset_none)
+        
+        p_lay.addWidget(btn_all); p_lay.addWidget(btn_none)
+        f_v.addLayout(p_lay)
+        
+        # Action Buttons Row
+        fl = QHBox(); fl.setSpacing(10)
         br = QBtn("🔄 REFRESCAR"); br.setFixedHeight(30); br.setCursor(Qt.PointingHandCursor)
         br.setProperty("class", "action_btn")
-        br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
+        br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br, 1)
         
-        fl.addStretch()
-        
-        bo = QBtn("✕ APAGAR TODO"); bo.setFixedHeight(30); bo.setCursor(Qt.PointingHandCursor)
+        bo = QBtn("✕ APAGAR"); bo.setFixedHeight(30); bo.setCursor(Qt.PointingHandCursor)
         bo.setStyleSheet("QPushButton{background: rgba(255,60,60,0.1); border: 1px solid rgba(255,60,60,0.4); border-radius: 6px; color: #ff8888; font-weight: bold; font-size: 10px;} QPushButton:hover{background:rgba(255,60,60,0.2); border-color:#ff4444;}")
-        bo.clicked.connect(self.close_all); fl.addWidget(bo)
+        bo.clicked.connect(self.close_all); fl.addWidget(bo, 1)
+        f_v.addLayout(fl)
+        
         lay.addWidget(self._footer)
         
         self.setStyleSheet(STYLE)
@@ -205,23 +220,51 @@ class ReplicatorHub(W.QWidget):
         if not isinstance(force_titles, (list, tuple)): force_titles = None
         try:
             current = find_eve_windows()
-            self._handles = {w['title']: w['hwnd'] for w in current}
+            # Actualizar handles de forma incremental para evitar "parpadeos" de binding
+            new_handles = {w['title']: w['hwnd'] for w in current}
+            self._handles.update(new_handles)
+            
+            # Limpiar handles de ventanas que ya no existen (opcional, pero ayuda a la salud del dict)
+            # Solo limpiamos si el título no está en uso por un overlay activo
+            current_titles = set(new_handles.keys())
+            active_titles = set(self._overlays.keys())
+            for t in list(self._handles.keys()):
+                if t not in current_titles and t not in active_titles:
+                    del self._handles[t]
+
             active = force_titles if force_titles is not None else [t for t, ov in self._overlays.items()]
+            
+            # Guardar estado de scroll
+            sbar = self._list.verticalScrollBar()
+            sval = sbar.value()
             
             self._list.clear()
             for w in current:
                 title = w['title']
+                clean_name = title.replace("EVE - ", "").strip()
+                is_running = title in self._overlays
+                
                 item = QItem(self._list)
-                row = CharacterRow(title, title in active or title in self._overlays, 
-                                 self._toggle, self._adj_op)
+                row = CharacterRow(title, clean_name, title in active or is_running, 
+                                 is_running, self._toggle, self._adj_op)
                 item.setSizeHint(row.sizeHint())
                 self._list.addItem(item)
                 self._list.setItemWidget(item, row)
                 
                 if (title in active or title in self._overlays) and title not in self._overlays:
                     self._launch_one(title)
+            
+            sbar.setValue(sval)
         except Exception as e:
             print(f"Error refresh: {e}")
+
+    def _preset_all(self):
+        current = find_eve_windows()
+        titles = [w['title'] for w in current]
+        self.refresh_windows(titles)
+
+    def _preset_none(self):
+        self.close_all()
 
     def _toggle(self, title, active):
         if active: self._launch_one(title)
@@ -230,8 +273,14 @@ class ReplicatorHub(W.QWidget):
     def _launch_one(self, title):
         if title in self._overlays: return
         h = self._handles.get(title)
+        if not h:
+            # Si no hay handle, intentar un refresco rápido por si la ventana acaba de aparecer
+            self.refresh_windows()
+            h = self._handles.get(title)
+            if not h: return
+
         try:
-            ov = ReplicationOverlay(title=title, hwnd_getter=lambda t=title: self._handles.get(t),
+            ov = ReplicationOverlay(title=title, hwnd=h,
                                     region_rel=self._region, cfg=self._cfg, save_callback=self._save)
             ov.show()
             self._overlays[title] = ov
@@ -256,24 +305,24 @@ class ReplicatorHub(W.QWidget):
 
 # Widget personalizado para las filas de la lista (Estilo Foto)
 class CharacterRow(W.QWidget):
-    def __init__(self, title, checked, toggle_cb, opacity_cb):
+    def __init__(self, title, clean_name, checked, is_running, toggle_cb, opacity_cb):
         super().__init__()
         self.title = title
         self.toggle_cb = toggle_cb
         self.opacity_cb = opacity_cb
         
-        lay = QHBox(self); lay.setContentsMargins(15,8,15,8); lay.setSpacing(15)
+        lay = QHBox(self); lay.setContentsMargins(15,8,15,8); lay.setSpacing(12)
         
-        # 1. Ticker (Izquierda) - Verde neón con check SVG
+        # 1. Ticker (Izquierda)
         self.chk = W.QCheckBox()
         self.chk.setChecked(checked)
         self.chk.setCursor(Qt.PointingHandCursor)
-        self.chk.setFixedSize(22, 22)
+        self.chk.setFixedSize(20, 20)
         self.chk.setStyleSheet("""
             QCheckBox::indicator {
-                width: 18px; height: 18px;
-                background: rgba(0,255,157,0.05);
-                border: 2px solid rgba(0,255,157,0.3);
+                width: 16px; height: 16px;
+                background: rgba(255,255,255,0.05);
+                border: 1px solid rgba(0,180,255,0.3);
                 border-radius: 4px;
             }
             QCheckBox::indicator:checked {
@@ -281,30 +330,36 @@ class CharacterRow(W.QWidget):
                 border-color: #00ff9d;
                 image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/></svg>");
             }
-            QCheckBox::indicator:hover { border-color: #00ff9d; }
         """)
         self.chk.toggled.connect(lambda v: self.toggle_cb(self.title, v))
         lay.addWidget(self.chk)
         
-        # 2. Nombre (Centro)
-        self.name = QLabel(title)
-        self.name.setStyleSheet("color: white; font-weight: bold; font-size: 11px; letter-spacing: 0.5px;")
-        lay.addWidget(self.name); lay.addStretch()
+        # 2. Info (Centro)
+        info_v = QVBox(); info_v.setSpacing(1)
+        self.name = QLabel(clean_name.upper())
+        self.name.setStyleSheet("color: white; font-weight: 900; font-size: 10px; letter-spacing: 1px;")
         
-        # 3. Controles (Derecha) - Solo botones +/- compactos
+        status_lbl = QLabel("● ACTIVE" if is_running else "○ STANDBY")
+        status_color = "#00ff9d" if is_running else "#4a5568"
+        status_lbl.setStyleSheet(f"color: {status_color}; font-size: 8px; font-weight: bold;")
+        
+        info_v.addWidget(self.name)
+        info_v.addWidget(status_lbl)
+        lay.addLayout(info_v); lay.addStretch()
+        
+        # 3. Controles (Derecha)
         b_lay = QHBox(); b_lay.setSpacing(4)
-        b1 = QBtn("-"); b1.setFixedSize(24, 22); b1.setStyleSheet("QPushButton{background:rgba(0,180,255,0.1); border:1px solid rgba(0,180,255,0.2); border-radius:3px; color:#00c8ff; font-size:11px;} QPushButton:hover{background:rgba(0,180,255,0.2);}")
+        b1 = QBtn("-"); b1.setFixedSize(22, 20); b1.setStyleSheet("QPushButton{background:rgba(0,180,255,0.05); border:1px solid rgba(0,180,255,0.1); border-radius:3px; color:#00c8ff; font-size:10px;} QPushButton:hover{background:rgba(0,180,255,0.15);}")
         b1.clicked.connect(lambda: self.opacity_cb(self.title, -0.1))
-        b2 = QBtn("+"); b2.setFixedSize(24, 22); b2.setStyleSheet("QPushButton{background:rgba(0,180,255,0.1); border:1px solid rgba(0,180,255,0.2); border-radius:3px; color:#00c8ff; font-size:11px;} QPushButton:hover{background:rgba(0,180,255,0.2);}")
+        b2 = QBtn("+"); b2.setFixedSize(22, 20); b2.setStyleSheet("QPushButton{background:rgba(0,180,255,0.05); border:1px solid rgba(0,180,255,0.1); border-radius:3px; color:#00c8ff; font-size:10px;} QPushButton:hover{background:rgba(0,180,255,0.15);}")
         b2.clicked.connect(lambda: self.opacity_cb(self.title, 0.1))
         b_lay.addWidget(b1); b_lay.addWidget(b2)
         lay.addLayout(b_lay)
         
-        # Estilo de fila (Card)
         self.setObjectName("CharRow")
         self.setStyleSheet("""
-            QWidget#CharRow { background: rgba(0,0,0,0.2); border: 1px solid rgba(0,180,255,0.05); border-radius: 6px; }
-            QWidget#CharRow:hover { background: rgba(0,180,255,0.05); border-color: rgba(0,180,255,0.2); }
+            QWidget#CharRow { background: rgba(0,0,0,0.3); border: 1px solid rgba(0,180,255,0.05); border-radius: 8px; }
+            QWidget#CharRow:hover { background: rgba(0,180,255,0.08); border-color: rgba(0,180,255,0.2); }
         """)
 
 # 5. ASISTENTE (DISEÑO LIMPIO)

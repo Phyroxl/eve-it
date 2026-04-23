@@ -57,23 +57,52 @@ class MessageBubble(W.QFrame):
             lay.addWidget(self.lbl_orig)
         self.lbl_tl = None
         if profile.show_translation and translation and translation != msg.text:
+            tl_h = W.QHBoxLayout()
+            tl_h.setContentsMargins(0, 0, 0, 0)
+            tl_h.setSpacing(4)
+            
             self.lbl_tl = W.QLabel(f"\u27a4 {translation}")
             self.lbl_tl.setWordWrap(True)
             self.lbl_tl.setTextInteractionFlags(C.Qt.TextSelectableByMouse)
             self.lbl_tl.setCursor(C.Qt.IBeamCursor)
-            lay.addWidget(self.lbl_tl)
+            tl_h.addWidget(self.lbl_tl, 1)
+            
+            self.btn_copy = W.QPushButton("\u2398") # Icono de copiar
+            self.btn_copy.setFixedSize(14, 14)
+            self.btn_copy.setCursor(C.Qt.PointingHandCursor)
+            self.btn_copy.setToolTip("Copiar traducción")
+            self.btn_copy.setStyleSheet("QPushButton{background:transparent;border:none;color:rgba(0,180,255,0.4);font-size:10px;}QPushButton:hover{color:#00c8ff;}")
+            self.btn_copy.clicked.connect(lambda: G.QGuiApplication.clipboard().setText(translation))
+            tl_h.addWidget(self.btn_copy)
+            
+            lay.addLayout(tl_h)
         self.update_style(profile)
 
     def update_translation(self, translation, profile):
         if translation and translation != self._msg.text:
             if not self.lbl_tl:
+                tl_h = W.QHBoxLayout()
+                tl_h.setContentsMargins(0, 0, 0, 0)
+                tl_h.setSpacing(4)
+                
                 self.lbl_tl = W.QLabel()
                 self.lbl_tl.setWordWrap(True)
                 self.lbl_tl.setTextInteractionFlags(C.Qt.TextSelectableByMouse)
                 self.lbl_tl.setCursor(C.Qt.IBeamCursor)
-                self.layout().addWidget(self.lbl_tl)
+                tl_h.addWidget(self.lbl_tl, 1)
+                
+                self.btn_copy = W.QPushButton("\u2398")
+                self.btn_copy.setFixedSize(14, 14)
+                self.btn_copy.setCursor(C.Qt.PointingHandCursor)
+                self.btn_copy.setStyleSheet("QPushButton{background:transparent;border:none;color:rgba(0,180,255,0.4);font-size:10px;}QPushButton:hover{color:#00c8ff;}")
+                self.btn_copy.clicked.connect(lambda: G.QGuiApplication.clipboard().setText(self.lbl_tl.text().replace("➤ ", "")))
+                tl_h.addWidget(self.btn_copy)
+                
+                self.layout().addLayout(tl_h)
+            
             self.lbl_tl.setText(f"\u27a4 {translation}")
             self.lbl_tl.show()
+            if hasattr(self, 'btn_copy'): self.btn_copy.show()
             self.update_style(profile)
 
     def update_style(self, profile):
@@ -131,6 +160,8 @@ class ChatOverlay(W.QWidget):
         self._bubbles = []
         self._bubble_map = {}
         self._msg_cache = {} 
+        self._history = [] # Historial de traducciones salientes
+        self._is_compact = False
         self._drag_pos = None
         self._watcher = None
         
@@ -250,11 +281,12 @@ class ChatOverlay(W.QWidget):
         self._btn_lang.setIconSize(C.QSize(18, 12))
         self._btn_lang.clicked.connect(self._on_lang_select)
 
-        # Minimizar
+        # Minimizar / Compacto
         self._btn_min = W.QPushButton("\u2212")
         self._btn_min.setFixedSize(20, 20)
         self._btn_min.setStyleSheet(BTN_MIN_STYLE)
-        self._btn_min.clicked.connect(self._animate_minimize)
+        self._btn_min.clicked.connect(self.toggle_compact)
+        self._btn_min.setToolTip("Modo Compacto")
         
         # Cerrar
         btn_cls = W.QPushButton("\u00d7")
@@ -322,6 +354,14 @@ class ChatOverlay(W.QWidget):
         self._btn_send_lang.setToolTip("Idioma de salida")
         self._btn_send_lang.clicked.connect(self._on_send_lang_select)
         self._composer_lay.addWidget(self._btn_send_lang)
+
+        # Historial (derecha)
+        self._btn_hist = W.QPushButton("\u231a")
+        self._btn_hist.setFixedSize(24, 24)
+        self._btn_hist.setStyleSheet(BTN_MIN_STYLE)
+        self._btn_hist.setToolTip("Historial reciente")
+        self._btn_hist.clicked.connect(self._show_history_menu)
+        self._composer_lay.addWidget(self._btn_hist)
 
         main.addLayout(self._composer_lay)
         
@@ -574,6 +614,12 @@ class ChatOverlay(W.QWidget):
             # Éxito: copiar al portapapeles para que el usuario pegue con Ctrl+V
             from PySide6.QtGui import QGuiApplication
             QGuiApplication.clipboard().setText(result)
+            
+            # Guardar en historial
+            if result not in self._history:
+                self._history.insert(0, result)
+                if len(self._history) > 10: self._history.pop()
+                
             self._input_chat.setPlaceholderText("✅ Copiado — pega en EVE con Ctrl+V")
             C.QTimer.singleShot(3000, lambda: self._input_chat.setPlaceholderText(self._composer_placeholder()) if self._input_chat.text() == "" else None)
         self._input_chat.setEnabled(True)
@@ -731,6 +777,30 @@ class ChatOverlay(W.QWidget):
 
     def toggle_visibility(self):
         self.hide() if self.isVisible() else self.show()
+
+    def toggle_compact(self):
+        """Alterna entre modo normal y modo compacto (sin barra ni composer)."""
+        self._is_compact = not self._is_compact
+        if hasattr(self, '_composer_lay'):
+            for i in range(self._composer_lay.count()):
+                w = self._composer_lay.itemAt(i).widget()
+                if w: w.setVisible(not self._is_compact)
+        
+        # En modo compacto, el fondo es más transparente
+        if self._is_compact:
+            self.setStyleSheet(f"ChatOverlay{{background:rgba(0,0,0,0.6);border:1px solid rgba(0,180,255,0.2);border-radius:5px;}}")
+        else:
+            self._apply_theme()
+            
+    def _show_history_menu(self):
+        """Muestra el historial de traducciones salientes."""
+        if not self._history: return
+        m = W.QMenu(self)
+        m.setStyleSheet("QMenu{background:#0d1117;border:1px solid rgba(0,180,255,0.4);color:#00c8ff;font-size:10px;padding:4px;}QMenu::item{padding:5px 16px;}QMenu::item:selected{background:rgba(0,180,255,0.2);}")
+        for h in self._history:
+            a = m.addAction(f"📋 {h[:40]}...")
+            a.triggered.connect(lambda checked, text=h: G.QGuiApplication.clipboard().setText(text))
+        m.exec(G.QCursor.pos())
 
     def set_profile(self, profile):
         self._profile = profile

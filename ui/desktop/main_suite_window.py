@@ -5,13 +5,14 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QComboBox, QFileDialog, QSpacerItem, QSizePolicy,
     QListWidget, QProgressBar
 )
-from PySide6.QtCore import Qt, QSize, QTimer, QSettings
+from PySide6.QtCore import Qt, QSize, QTimer, QSettings, QUrl
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 import sys
 from datetime import datetime, timedelta
 
 from ui.desktop.styles import MAIN_STYLE
-from ui.desktop.components import AnimatedCard, IndustrialBadge
+from ui.desktop.components import AnimatedCard, IndustrialBadge, TelemetryChart
 from utils.formatters import format_isk
 
 class MainSuiteWindow(QMainWindow):
@@ -24,11 +25,23 @@ class MainSuiteWindow(QMainWindow):
         self.controller = controller
         self.tray_manager = None
         self.setWindowTitle("EVE iT Elite Suite")
-        self.resize(960, 680)
-        self.setMinimumSize(850, 600)
+        # Tamaño fijo: el mínimo es igual al máximo
+        self.setFixedSize(960, 680)
+        
+        # Configuración de flags: Mantener botones básicos pero quitar Maximizar
+        # Es necesario incluir CloseButton y MinimizeButton explícitamente con CustomizeWindowHint
+        self.setWindowFlags(
+            Qt.Window | 
+            Qt.CustomizeWindowHint | 
+            Qt.WindowTitleHint | 
+            Qt.WindowSystemMenuHint | 
+            Qt.WindowMinimizeButtonHint | 
+            Qt.WindowCloseButtonHint
+        )
         
         self.account_cards = {}
         self.current_character = None 
+        self.network_manager = QNetworkAccessManager(self)
         
         # Refs para persistencia
         self.edit_log_dir = None
@@ -75,7 +88,15 @@ class MainSuiteWindow(QMainWindow):
         
         self.nav_l.addWidget(self.btn_dashboard); self.nav_l.addWidget(self.btn_tools)
         self.nav_l.addStretch()
+        
+        # Botón de Configuración
         self.nav_l.addWidget(self.btn_settings)
+        
+        # Botón de Logoff (Cierre total)
+        self.btn_exit = self.create_nav_button("Logoff")
+        self.btn_exit.setStyleSheet("QPushButton { color: #ef4444; font-weight: 800; border-top: 1px solid rgba(255,0,0,0.1); } QPushButton:hover { background: rgba(239, 68, 68, 0.1); }")
+        self.btn_exit.clicked.connect(self._action_logoff)
+        self.nav_l.addWidget(self.btn_exit)
         
         # 2. Content Area
         self.content_frame = QFrame(); self.content_frame.setObjectName("ContentFrame")
@@ -120,17 +141,28 @@ class MainSuiteWindow(QMainWindow):
         summary_panel = QHBoxLayout()
         summary_panel.setSpacing(10)
         
-        # Módulos de estado de la flota (Fila 1)
+        # Módulos de estado de la flota (Fila 1 - Táctica)
         self.fleet_status_box = self.create_mini_analytic("ESTADO DE FLOTA", "0/0 ONLINE", "#60a5fa")
-        self.total_isk_box = self.create_mini_analytic("TOTAL SESIÓN", "0 ISK", "#fbbf24")
-        self.isk_h_box = self.create_mini_analytic("ISK / HORA", "0/h", "#63b3ed")
+        self.elite_pilot_box = self.create_mini_analytic("ELITE PILOT", "---", "#fbbf24")
+        self.total_isk_box = self.create_mini_analytic("TOTAL SESIÓN", "0 ISK", "#cbd5e1")
+        self.isk_h_box = self.create_mini_analytic("ISK / HORA", "0/h", "#10b981")
+        self.next_tick_box = self.create_mini_analytic("NEXT TICK ETA", "--:--", "#63b3ed")
         self.signals_box = self.create_mini_analytic("SEÑALES", "0", "#48bb78")
         
         summary_panel.addWidget(self.fleet_status_box)
+        summary_panel.addWidget(self.elite_pilot_box)
         summary_panel.addWidget(self.total_isk_box)
         summary_panel.addWidget(self.isk_h_box)
+        summary_panel.addWidget(self.next_tick_box)
         summary_panel.addWidget(self.signals_box)
         outer.addLayout(summary_panel)
+
+        # Gráfico de Telemetría de Sesión (NUEVO)
+        chart_v = QVBoxLayout(); chart_v.setSpacing(5); chart_v.setContentsMargins(0, 5, 0, 0)
+        chart_v.addWidget(QLabel("TELEMETRÍA DE SESIÓN (ISK ACUMULADO)", objectName="ModuleHeader"))
+        self.perf_chart = TelemetryChart()
+        chart_v.addWidget(self.perf_chart)
+        outer.addLayout(chart_v)
 
         # --- Panel de estado (Command Center Style) ---
         self.status_bar = QFrame()
@@ -172,18 +204,92 @@ class MainSuiteWindow(QMainWindow):
         char_section.addWidget(self.cards_container)
         cont_l.addLayout(char_section)
 
-        # 2. Global System Log (Para llenar espacio inferior y dar vida)
-        log_section = QVBoxLayout()
-        log_section.addWidget(QLabel("FEED GLOBAL DE SEÑALES", objectName="ModuleHeader"))
-        self.global_log_frame = QFrame(); self.global_log_frame.setObjectName("AnalyticBox")
-        gl_l = QVBoxLayout(self.global_log_frame); gl_l.setContentsMargins(10, 10, 10, 10)
+        # Secciones Inferiores: Timeline e Insights
+        bottom_row = QHBoxLayout(); bottom_row.setSpacing(15)
+
+        # 1. ACTIVITY TIMELINE
+        tl_v = QVBoxLayout(); tl_v.setSpacing(5)
+        tl_v.addWidget(QLabel("ACTIVITY TIMELINE", objectName="ModuleHeader"))
+        self.tl_frame = QFrame(); self.tl_frame.setObjectName("AnalyticBox")
+        tl_l = QVBoxLayout(self.tl_frame); tl_l.setContentsMargins(10, 10, 10, 10)
+        self.global_feed = QListWidget() # Reutilizamos nombre para compatibilidad
+        self.global_feed.setFrameShape(QFrame.NoFrame)
+        self.global_feed.setStyleSheet("background: transparent; color: #cbd5e1; font-size: 9px;")
+        self.global_feed.setFixedHeight(180)
+        tl_l.addWidget(self.global_feed)
+        tl_v.addWidget(self.tl_frame)
+        bottom_row.addLayout(tl_v, 2)
+
+        # 2. FLEET INSIGHTS
+        fi_v = QVBoxLayout(); fi_v.setSpacing(5)
+        fi_v.addWidget(QLabel("FLEET INSIGHTS", objectName="ModuleHeader"))
+        self.fi_frame = QFrame(); self.fi_frame.setObjectName("AnalyticBox")
+        fi_l = QVBoxLayout(self.fi_frame); fi_l.setContentsMargins(15, 15, 15, 15); fi_l.setSpacing(10)
         
-        self.global_feed = QListWidget()
-        self.global_feed.setFrameShape(QFrame.NoFrame); self.global_feed.setStyleSheet("background: transparent; color: #718096; font-size: 9px;")
-        self.global_feed.setFixedHeight(180) # Altura fija para el log inferior
-        gl_l.addWidget(self.global_feed)
-        log_section.addWidget(self.global_log_frame)
-        cont_l.addLayout(log_section)
+        self.insight_top_pilot = self.create_insight_item("PILOTO ÉLITE", "---", "#fbbf24")
+        self.insight_max_isk = self.create_insight_item("PICO RENDIMIENTO", "0 ISK/H", "#63b3ed")
+        self.insight_idle = self.create_insight_item("PILOTOS EN ESPERA", "0", "#f87171")
+        self.insight_active_time = self.create_insight_item("DURACIÓN SESIÓN", "00:00:00", "#10b981")
+        
+        fi_l.addWidget(self.insight_top_pilot)
+        fi_l.addWidget(self.insight_max_isk)
+        fi_l.addWidget(self.insight_idle)
+        fi_l.addWidget(self.insight_active_time)
+        fi_l.addStretch()
+        
+        fi_v.addWidget(self.fi_frame)
+        bottom_row.addLayout(fi_v, 1)
+
+        # 3. SUITE STATUS (NUEVO)
+        ss_v = QVBoxLayout(); ss_v.setSpacing(5)
+        ss_v.addWidget(QLabel("SUITE STATUS", objectName="ModuleHeader"))
+        self.ss_frame = QFrame(); self.ss_frame.setObjectName("AnalyticBox")
+        ss_l = QVBoxLayout(self.ss_frame); ss_l.setContentsMargins(15, 15, 15, 15); ss_l.setSpacing(12)
+        
+        self.st_tracker = self.create_status_item("TRACKER CORE")
+        self.st_overlay = self.create_status_item("HUD OVERLAY")
+        self.st_translator = self.create_status_item("CHAT TRANSLATOR")
+        self.st_replicator = self.create_status_item("REPLICATOR")
+        self.st_esi = self.create_status_item("ESI IDENTITY")
+        
+        ss_l.addWidget(self.st_tracker)
+        ss_l.addWidget(self.st_overlay)
+        ss_l.addWidget(self.st_translator)
+        ss_l.addWidget(self.st_replicator)
+        ss_l.addWidget(self.st_esi)
+        ss_l.addStretch()
+        
+        ss_v.addWidget(self.ss_frame)
+        bottom_row.addLayout(ss_v, 1)
+
+        # 4. QUICK ACTIONS (NUEVO)
+        qa_v = QVBoxLayout(); qa_v.setSpacing(5)
+        qa_v.addWidget(QLabel("QUICK ACTIONS", objectName="ModuleHeader"))
+        self.qa_frame = QFrame(); self.qa_frame.setObjectName("AnalyticBox")
+        qa_l = QVBoxLayout(self.qa_frame); qa_l.setContentsMargins(15, 15, 15, 15); qa_l.setSpacing(10)
+        
+        self.btn_hud = self.create_action_button("Toggle HUD", "👁", self.controller.toggle_overlay)
+        
+        # Perfiles Rápidos (NUEVO)
+        self.btn_prof_pve = self.create_action_button("Profile: PvE", "⚔", lambda: self._apply_profile("PvE"))
+        self.btn_prof_pvp = self.create_action_button("Profile: PvP", "🛡", lambda: self._apply_profile("PvP"))
+        self.btn_prof_farm = self.create_action_button("Profile: Farm", "💰", lambda: self._apply_profile("Farm Focus"))
+        
+        self.btn_reset = self.create_action_button("Reset Session", "↺", self._action_reset)
+        self.btn_refresh = self.create_action_button("Force Sync", "⚡", self.refresh_data)
+        
+        qa_l.addWidget(self.btn_hud)
+        qa_l.addWidget(self.btn_prof_pve)
+        qa_l.addWidget(self.btn_prof_pvp)
+        qa_l.addWidget(self.btn_prof_farm)
+        qa_l.addWidget(self.btn_reset)
+        qa_l.addWidget(self.btn_refresh)
+        qa_l.addStretch()
+        
+        qa_v.addWidget(self.qa_frame)
+        bottom_row.addLayout(qa_v, 1)
+
+        cont_l.addLayout(bottom_row)
 
         self.empty_state = QWidget()
         es_l = QVBoxLayout(self.empty_state)
@@ -201,6 +307,49 @@ class MainSuiteWindow(QMainWindow):
         scroll.setWidget(cont)
         outer.addWidget(scroll)
         return p
+
+    def create_insight_item(self, label, value, color):
+        w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(1)
+        lbl = QLabel(label); lbl.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800; letter-spacing: 0.5px;")
+        val = QLabel(value); val.setObjectName("InsightVal"); val.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 600;")
+        l.addWidget(lbl); l.addWidget(val); return w
+
+    def create_status_item(self, label):
+        w = QWidget(); l = QHBoxLayout(w); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(8)
+        dot = QLabel("●"); dot.setObjectName("StatusDot")
+        dot.setStyleSheet("color: #4a5568; font-size: 12px;") # Default gray
+        lbl = QLabel(label.upper()); lbl.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: 700; letter-spacing: 0.5px;")
+        l.addWidget(dot); l.addWidget(lbl); l.addStretch()
+        return w
+
+    def create_action_button(self, text, icon_text, callback):
+        btn = QPushButton(f" {icon_text}  {text.upper()}")
+        btn.setObjectName("ActionButton")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton#ActionButton {
+                background-color: #1a1e23;
+                border: 1px solid #2d3748;
+                color: #e2e8f0;
+                font-size: 9px;
+                font-weight: 800;
+                padding: 8px 12px;
+                text-align: left;
+                border-radius: 2px;
+                letter-spacing: 0.5px;
+            }
+            QPushButton#ActionButton:hover {
+                background-color: #242b33;
+                border-color: #3b82f6;
+                color: #ffffff;
+            }
+            QPushButton#ActionButton:pressed {
+                background-color: #1a1e23;
+                border-color: #2563eb;
+            }
+        """)
+        btn.clicked.connect(callback)
+        return btn
 
     def create_mini_analytic(self, label, value, color):
         f = QFrame(); f.setObjectName("AnalyticBox"); f.setFixedHeight(45)
@@ -238,24 +387,57 @@ class MainSuiteWindow(QMainWindow):
         af_l = QVBoxLayout(self.avatar_frame); af_l.setContentsMargins(0,0,0,0)
         
         self.avatar_img = QLabel()
+        self.avatar_img.setObjectName("CharPortrait") # ID para futuras actualizaciones
         self.avatar_img.setAlignment(Qt.AlignCenter)
-        self.avatar_img.setText(name[0].upper())
-        self.avatar_img.setStyleSheet("font-size: 14px; font-weight: 900; color: #60a5fa;")
-        # NOTA: Para implementar retrato real, usar:
-        # self.avatar_img.setPixmap(QPixmap(path).scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        
+        id_status = acc.get('id_status', 'pending')
+        portrait_url = acc.get('portrait_url')
+        
+        # Tooltip técnico discreto
+        status_map = {
+            'resolved': 'PORTRAIT READY',
+            'resolving': 'RESOLVING IDENTITY',
+            'pending': 'NO PORTRAIT',
+            'failed': 'IDENTITY FAILED'
+        }
+        self.avatar_img.setToolTip(status_map.get(id_status, 'UNKNOWN'))
+
+        if portrait_url:
+            # Preparado para carga asíncrona
+            self._load_portrait_async(self.avatar_img, portrait_url, name[0].upper())
+        else:
+            self._apply_fallback_avatar(self.avatar_img, name[0].upper())
         
         af_l.addWidget(self.avatar_img)
         
         info = QVBoxLayout(); info.setSpacing(1); info.setContentsMargins(0, 2, 0, 0)
         name_lbl = QLabel(name.upper()); name_lbl.setObjectName("CharName")
         
+        metrics_row = QHBoxLayout(); metrics_row.setSpacing(8)
         isk_val = QLabel(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
-        isk_val.setObjectName("IskValue"); isk_val.setStyleSheet("font-size: 11px;")
+        isk_val.setObjectName("IskValue"); isk_val.setStyleSheet("font-size: 11px; font-weight: 700; color: #10b981;")
         
-        info.addWidget(name_lbl); info.addWidget(isk_val); info.addStretch()
+        sess_val = QLabel(format_isk(acc.get('total_isk', 0), short=True))
+        sess_val.setObjectName("SessionIsk"); sess_val.setStyleSheet("font-size: 10px; color: #718096;")
+        
+        metrics_row.addWidget(isk_val); metrics_row.addWidget(sess_val); metrics_row.addStretch()
+        
+        info.addWidget(name_lbl); info.addLayout(metrics_row); info.addStretch()
         top.addWidget(self.avatar_frame); top.addLayout(info); top.addStretch()
         layout.addLayout(top)
         
+        # Middle: Telemetry row (NUEVO)
+        mid = QHBoxLayout(); mid.setSpacing(12); mid.setContentsMargins(0, 4, 0, 4)
+        
+        last_tick_lbl = QLabel("LAST: ---")
+        last_tick_lbl.setObjectName("LastTick"); last_tick_lbl.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: 700;")
+        
+        dur_lbl = QLabel("UPTIME: --:--:--")
+        dur_lbl.setObjectName("CharDuration"); dur_lbl.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: 700;")
+        
+        mid.addWidget(last_tick_lbl); mid.addWidget(dur_lbl); mid.addStretch()
+        layout.addLayout(mid)
+
         layout.addStretch()
         
         # Footer: Telemetría de Estado
@@ -367,10 +549,16 @@ class MainSuiteWindow(QMainWindow):
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setStyleSheet("background: transparent;")
         cont = QWidget(); cont_l = QVBoxLayout(cont); cont_l.setContentsMargins(0, 0, 0, 0)
         
-        g = QGridLayout(); g.setSpacing(12); g.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        g = QGridLayout(); g.setSpacing(15); g.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
+        # Fila 1
         g.addWidget(self.create_tool_card("HUD Overlay", "HUD visual táctico.", "🕹️", self._on_hud_clicked), 0, 0)
         g.addWidget(self.create_tool_card("Traductor", "Traducción de logs.", "🌐", self._on_translator_clicked), 0, 1)
-        g.addWidget(self.create_tool_card("Replicador", "Sincronización.", "🪟", self._on_replicator_clicked), 1, 0)
+        g.addWidget(self.create_tool_card("Replicador", "Sincronización.", "🪟", self._on_replicator_clicked), 0, 2)
+        
+        # Fila 2 (Preparado para expansión 3x5)
+        # g.addWidget(self.create_tool_card("Tool X", "Desc...", "...", ...), 1, 0)
+        # ...
         
         cont_l.addLayout(g); cont_l.addStretch()
         scroll.setWidget(cont)
@@ -402,8 +590,20 @@ class MainSuiteWindow(QMainWindow):
         # Grupo 2
         g2 = QFrame(); g2.setObjectName("SettingsGroup"); g2_l = QVBoxLayout(g2)
         g2_l.addWidget(QLabel("TELEMETRÍA Y HUD", objectName="ModuleHeader"))
+        
+        g2_l.addWidget(QLabel("Preset de HUD táctico:", styleSheet="color: #64748b; font-size: 10px; margin-top: 5px;"))
+        self.combo_hud_preset = QComboBox()
+        self.combo_hud_preset.addItems(["BALANCED", "COMPACT", "FOCUS"])
+        g2_l.addWidget(self.combo_hud_preset)
+
         self.check_blur = QCheckBox("Efecto de transparencia avanzado"); g2_l.addWidget(self.check_blur)
         self.check_hide_hud = QCheckBox("Ocultación automática de HUD"); g2_l.addWidget(self.check_hide_hud)
+        
+        g2_l.addWidget(QLabel("VISIBILIDAD HUD:", styleSheet="color: #64748b; font-size: 8px; margin-top: 8px; font-weight: bold;"))
+        self.check_hud_total = QCheckBox("Mostrar ISK Total"); g2_l.addWidget(self.check_hud_total)
+        self.check_hud_tick = QCheckBox("Mostrar Siguiente Tick"); g2_l.addWidget(self.check_hud_tick)
+        self.check_hud_dur = QCheckBox("Mostrar Duración"); g2_l.addWidget(self.check_hud_dur)
+
         c_l.addWidget(g2)
         
         # Grupo 3
@@ -430,20 +630,53 @@ class MainSuiteWindow(QMainWindow):
         except Exception: pass
 
         if not self.controller or not self.controller._tracker:
+            # Si el tracker está intentando arrancar, esperamos un poco antes de mostrar vacío
             self._show_empty_state(True)
             return
             
         try:
             summary = self.controller._tracker.get_summary(datetime.now())
             accounts = summary.get('per_character', [])
+            
+            # Si hay personajes pero el tracker acaba de empezar, dale un ciclo de gracia
+            if not accounts and self.controller.state.tracker_running:
+                # No mostramos "vacio" inmediatamente si el tracker está activo (puede estar escaneando)
+                pass 
+            elif not accounts:
+                self._show_empty_state(True)
+                return
+            
+            self._show_empty_state(False)
+            
             # Actualizar Summary Global
             self.total_isk_box.findChild(QLabel, "AnalyticVal").setText(format_isk(summary.get('total_isk', 0), short=True))
             self.isk_h_box.findChild(QLabel, "AnalyticVal").setText(format_isk(summary.get('isk_per_hour_rolling', 0), short=True) + "/h")
             
+            # Fleet Status mejorado (X/Y Pilots)
+            online = summary.get('online_count', 0)
+            total = summary.get('total_pilots', 0)
+            self.fleet_status_box.findChild(QLabel, "AnalyticVal").setText(f"{online}/{total} PILOTOS")
+            
+            # Elite Pilot (Top ISK)
+            elite_name = "---"
+            if accounts:
+                elite_p = max(accounts, key=lambda x: x.get('total_isk', 0))
+                elite_name = elite_p.get('display_name', '---').upper()
+            self.elite_pilot_box.findChild(QLabel, "AnalyticVal").setText(elite_name)
+            
+            # Next Tick ETA (Mínimo de todos los personajes activos)
+            next_tick_str = "--:--"
+            active_etas = [acc.get('last_tick', {}).get('secs_until_next', 0) for acc in accounts if acc.get('status') == 'active']
+            if active_etas:
+                min_eta = min(active_etas)
+                next_tick_str = f"{min_eta//60:02d}:{min_eta%60:02d}"
+            self.next_tick_box.findChild(QLabel, "AnalyticVal").setText(next_tick_str)
+
+            # Contador de señales (ISK Events)
             total_signals = sum(acc.get('event_count', 0) for acc in accounts)
             self.signals_box.findChild(QLabel, "AnalyticVal").setText(str(total_signals))
             
-            self.lbl_last_update.setText(f"SYNC: {datetime.now().strftime('%H:%M:%S')}")
+            self.lbl_last_update.setText(f"TELEMETRÍA SYNC: {datetime.now().strftime('%H:%M:%S')}")
             self.update_accounts_view(accounts)
             
             # Actualizar feed global
@@ -456,11 +689,128 @@ class MainSuiteWindow(QMainWindow):
             all_events.sort(key=lambda x: x[0], reverse=True)
             for ts, name, isk in all_events[:20]:
                 ts_str = ts.strftime('%H:%M:%S') if isinstance(ts, datetime) else str(ts)[11:19]
-                self.global_feed.addItem(f"[{ts_str}] {name.upper()}: +{format_isk(isk, short=True)}")
+                item = f"[{ts_str}] {name.upper()}: +{format_isk(isk, short=True)}"
+                self.global_feed.addItem(item)
             
+            # Actualizar FLEET INSIGHTS
+            if accounts:
+                top_p = max(accounts, key=lambda x: x.get('total_isk', 0))
+                self.insight_top_pilot.findChild(QLabel, "InsightVal").setText(top_p.get('display_name', '---').upper())
+                
+                max_isk = max(accounts, key=lambda x: x.get('isk_per_hour', 0))
+                self.insight_max_isk.findChild(QLabel, "InsightVal").setText(format_isk(max_isk.get('isk_per_hour', 0), short=True) + "/H")
+                
+                idle_count = sum(1 for acc in accounts if acc.get('status') == 'idle')
+                self.insight_idle.findChild(QLabel, "InsightVal").setText(str(idle_count))
+                
+                duration_secs = summary.get('session_duration_seconds', 0)
+                from utils.formatters import format_duration
+                from datetime import timedelta
+                self.insight_active_time.findChild(QLabel, "InsightVal").setText(format_duration(timedelta(seconds=duration_secs)))
+
+            # Actualizar SUITE STATUS
+            st = self.controller.state
+            self._update_status_indicator(self.st_tracker, st.tracker_running)
+            self._update_status_indicator(self.st_overlay, st.overlay_active)
+            self._update_status_indicator(self.st_translator, getattr(self.controller, '_translator_overlay', None) is not None)
+            self._update_status_indicator(self.st_replicator, st.replicator_active)
+            
+            # Lógica ESI Identity
+            if self.controller and self.controller._tracker:
+                accs = self.controller._tracker.sessions.values()
+                if not accs:
+                    self._update_status_indicator(self.st_esi, False)
+                else:
+                    all_ok = all(a.id_status == 'resolved' for a in accs)
+                    any_fail = any(a.id_status == 'failed' for a in accs)
+                    if any_fail: self._update_status_indicator(self.st_esi, "degraded")
+                    else: self._update_status_indicator(self.st_esi, all_ok)
+
+            # Actualizar Mini Gráfico (NUEVO)
+            if self.controller and self.controller._tracker:
+                hist = self.controller._tracker.get_isk_history_for_chart()
+                if hist:
+                    vals = [h['total_isk'] for h in hist]
+                    # Si solo hay un punto o valores planos, añadir un 0 al inicio para perspectiva
+                    if len(vals) == 1: vals = [0] + vals
+                    self.perf_chart.set_data(vals)
+
             if self.stack.currentIndex() == 3: self.update_detail_view()
         except Exception as e:
             self.diag_log.error(f"DIAG: Error en refresh_data: {e}")
+
+    def _apply_fallback_avatar(self, label, initial):
+        """Aplica el fallback técnico al avatar."""
+        label.setPixmap(QPixmap()) # Limpiar pixmap
+        label.setText(initial)
+        label.setStyleSheet("font-size: 14px; font-weight: 900; color: #60a5fa; background: transparent;")
+
+    def _load_portrait_async(self, label, url, fallback_initial):
+        """Carga el retrato de forma asíncrona y segura."""
+        request = QNetworkRequest(QUrl(url))
+        reply = self.network_manager.get(request)
+        
+        def on_finished():
+            if reply.error() == QNetworkReply.NoError:
+                pixmap = QPixmap()
+                if pixmap.loadFromData(reply.readAll()):
+                    label.setText("")
+                    label.setPixmap(pixmap.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                else:
+                    self._apply_fallback_avatar(label, fallback_initial)
+            else:
+                self._apply_fallback_avatar(label, fallback_initial)
+            reply.deleteLater()
+            
+        reply.finished.connect(on_finished)
+
+    def _update_status_indicator(self, widget, state):
+        dot = widget.findChild(QLabel, "StatusDot")
+        if not dot: return
+        if state == "degraded":
+            dot.setStyleSheet("color: #f59e0b; font-size: 12px;") # Amber
+        elif state:
+            dot.setStyleSheet("color: #10b981; font-size: 12px;") # Green
+        else:
+            dot.setStyleSheet("color: #ef4444; font-size: 12px;") # Red
+
+    def _action_reset(self):
+        if self.controller and self.controller._tracker:
+            self.controller._tracker.reset_all()
+            self.refresh_data()
+            self.diag_log.info("DIAG: Session reset triggered from Dashboard.")
+
+    def _apply_profile(self, name):
+        """Aplica un perfil visual predefinido a la Suite."""
+        s_hud = QSettings("EVEISKTracker", "Overlay")
+        if name == "PvE":
+            s_hud.setValue("preset", "balanced")
+            s_hud.setValue("show_total", "true")
+            s_hud.setValue("show_tick", "true")
+            s_hud.setValue("show_dur", "true")
+        elif name == "PvP":
+            s_hud.setValue("preset", "compact")
+            s_hud.setValue("show_total", "false")
+            s_hud.setValue("show_tick", "false")
+            s_hud.setValue("show_dur", "false")
+        elif name == "Farm Focus":
+            s_hud.setValue("preset", "focus")
+            s_hud.setValue("show_total", "true")
+            s_hud.setValue("show_tick", "true")
+            s_hud.setValue("show_dur", "false")
+        
+        # Sincronizar UI de settings y controlador
+        self.load_settings()
+        
+        # Notificar al overlay si está activo
+        if self.controller and self.controller.overlay_window:
+            try:
+                preset = s_hud.value("preset", "balanced")
+                if hasattr(self.controller.overlay_window, '_apply_preset'):
+                    self.controller.overlay_window._apply_preset(preset)
+            except Exception: pass
+            
+        self.diag_log.info(f"DIAG: Quick Profile '{name}' applied successfully.")
 
     def _show_empty_state(self, show: bool):
         """Muestra u oculta el estado vacío y el contenedor de tarjetas."""
@@ -503,23 +853,58 @@ class MainSuiteWindow(QMainWindow):
             else:
                 card = self.account_cards[name]
                 
-            # Actualizar ISK/h
+            # Actualizar estado técnico (Tooltip)
+            id_status = acc.get('id_status', 'pending')
+            status_map = {
+                'resolved': 'PORTRAIT READY',
+                'resolving': 'RESOLVING IDENTITY',
+                'pending': 'NO PORTRAIT',
+                'failed': 'IDENTITY FAILED'
+            }
+            portrait_label = card.findChild(QLabel, "CharPortrait")
+            if portrait_label:
+                portrait_label.setToolTip(status_map.get(id_status, 'UNKNOWN'))
+
+            # Actualizar ISK/h y Session Total
             isk_val = card.findChild(QLabel, "IskValue")
             if isk_val:
                 isk_val.setText(format_isk(acc.get('isk_per_hour', 0), short=True) + "/h")
+            
+            sess_isk = card.findChild(QLabel, "SessionIsk")
+            if sess_isk:
+                sess_isk.setText(format_isk(acc.get('total_isk', 0), short=True))
                 
             # Actualizar Badge de Estado Operativo
             badge = card.findChild(QLabel, "StatusBadge")
             if badge:
                 if status == 'active':
-                    badge.setText("● SISTEMA ONLINE")
+                    badge.setText("● SISTEMA ACTIVE")
                     badge.setStyleSheet("background-color: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2); padding: 2px 8px; font-size: 8px; font-weight: 900; border-radius: 2px;")
                 elif status == 'idle':
-                    badge.setText("○ STANDBY")
+                    badge.setText("○ STANDBY (IDLE)")
                     badge.setStyleSheet("background-color: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); padding: 2px 8px; font-size: 8px; font-weight: 900; border-radius: 2px;")
                 else:
-                    badge.setText("× DESCONECTADO")
+                    badge.setText("× SYNC LOST")
                     badge.setStyleSheet("background-color: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); padding: 2px 8px; font-size: 8px; font-weight: 900; border-radius: 2px;")
+
+            # Actualizar Telemetría Media (NUEVO)
+            last_tick = acc.get('last_tick', {})
+            last_val = last_tick.get('current_cycle_isk', 0)
+            last_lbl = card.findChild(QLabel, "LastTick")
+            if last_lbl:
+                last_lbl.setText(f"LAST: {format_isk(last_val, short=True)}")
+            
+            # Usar duración de sesión si no hay por personaje
+            dur_lbl = card.findChild(QLabel, "CharDuration")
+            if dur_lbl:
+                from utils.formatters import format_duration
+                from datetime import timedelta
+                dur_secs = acc.get('inactivity_seconds', 0) # Esto es inactividad, no uptime. 
+                # El summary de flota tiene 'session_duration_seconds'. 
+                # Por ahora mostraremos el global si no tenemos el del personaje.
+                # Pero en la proxima iteración del tracker podemos añadirlo.
+                # Por ahora lo dejamos como placeholder dinámico o usamos un valor base.
+                dur_lbl.setText(f"UPTIME: {format_duration(timedelta(seconds=acc.get('total_isk', 0)/max(1, acc.get('isk_per_hour', 1))*3600))[:8]}") # Estimación simple por ahora
 
     def set_tray_manager(self, tm): self.tray_manager = tm
     def _on_hud_clicked(self):
@@ -546,9 +931,29 @@ class MainSuiteWindow(QMainWindow):
                 pass
 
         if self.edit_log_dir: self.edit_log_dir.setText(saved_dir)
+        
+        # ASEGURAR que el controlador tiene la ruta cargada para que el tracker empiece bien
+        if self.controller and saved_dir:
+            self.controller.set_log_directory(saved_dir)
+            # Si el tracker no ha arrancado, lo forzamos con los ajustes cargados
+            if not self.controller.state.tracker_running:
+                skip = s.value("skip_logs", "true") == "true"
+                self.controller.start_tracker(skip_existing=skip)
+
         if self.check_skip_logs: self.check_skip_logs.setChecked(s.value("skip_logs", "true") == "true")
         if self.check_blur: self.check_blur.setChecked(s.value("enable_blur", "false") == "true")
         if self.check_hide_hud: self.check_hide_hud.setChecked(s.value("auto_hide_hud", "false") == "true")
+        
+        if hasattr(self, 'combo_hud_preset'):
+            s_hud = QSettings("EVEISKTracker", "Overlay")
+            preset_val = str(s_hud.value("preset", "balanced")).upper()
+            idx = self.combo_hud_preset.findText(preset_val)
+            if idx >= 0: self.combo_hud_preset.setCurrentIndex(idx)
+            
+            self.check_hud_total.setChecked(str(s_hud.value("show_total", "true")) == "true")
+            self.check_hud_tick.setChecked(str(s_hud.value("show_tick", "true")) == "true")
+            self.check_hud_dur.setChecked(str(s_hud.value("show_dur", "true")) == "true")
+        
         if self.combo_translator_lang:
             idx = self.combo_translator_lang.findText(s.value("translator_lang", "Español"))
             if idx >= 0: self.combo_translator_lang.setCurrentIndex(idx)
@@ -561,6 +966,15 @@ class MainSuiteWindow(QMainWindow):
         if self.check_blur: s.setValue("enable_blur", "true" if self.check_blur.isChecked() else "false")
         if self.check_hide_hud: s.setValue("auto_hide_hud", "true" if self.check_hide_hud.isChecked() else "false")
         if self.combo_translator_lang: s.setValue("translator_lang", self.combo_translator_lang.currentText())
+
+        # Guardar Preset de HUD
+        if hasattr(self, 'combo_hud_preset'):
+            preset_val = self.combo_hud_preset.currentText().lower()
+            s_hud = QSettings("EVEISKTracker", "Overlay")
+            s_hud.setValue("preset", preset_val)
+            s_hud.setValue("show_total", "true" if self.check_hud_total.isChecked() else "false")
+            s_hud.setValue("show_tick", "true" if self.check_hud_tick.isChecked() else "false")
+            s_hud.setValue("show_dur", "true" if self.check_hud_dur.isChecked() else "false")
 
         # Relanzar tracker si el directorio cambió
         if self.controller and new_log_dir:
@@ -621,6 +1035,15 @@ class MainSuiteWindow(QMainWindow):
     def hideEvent(self, event):
         self.diag_log.info("DIAG: hideEvent disparado por el sistema.")
         super().hideEvent(event)
+
+    def _action_logoff(self):
+        """Cierre total de la aplicación con confirmación visual/auditiva."""
+        self.diag_log.info("DIAG: Logoff manual solicitado.")
+        # Limpiar tray_manager para que el closeEvent no intercepte el cierre
+        self.tray_manager = None
+        self.close()
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().quit()
 
     def closeEvent(self, event):
         self.diag_log.info("DIAG: closeEvent detectado.")

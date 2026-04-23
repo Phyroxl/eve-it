@@ -35,6 +35,7 @@ class AppState:
         self.dashboard_running  = False
         self.overlay_active     = False
         self.replicator_active  = False
+        self.translator_running = False
         self.dashboard_url      = 'http://localhost:8501'
         self.language           = 'es'
         self._lock              = threading.Lock()
@@ -127,7 +128,7 @@ class AppController:
                     poll_interval  = 1.0,
                     ess_retention  = ess_retention,
                     skip_existing  = skip_existing,
-                    active_window_minutes = 480,
+                    active_window_minutes = 1440, # Aumentado a 24h para que aparezcan aunque no hayan hecho ISK hoy
                 )
                 self._watcher.start()
 
@@ -313,6 +314,7 @@ class AppController:
             self._translator_overlay = ChatOverlay(cfg, controller=self)
             self._translator_overlay.start()
             self._translator_overlay.show()
+            self.state.update(translator_running=True)
         except Exception as e:
             import logging
             logging.getLogger('eve').error(f"start_translator error: {e}")
@@ -323,6 +325,7 @@ class AppController:
                 self._translator_overlay.stop()
                 self._translator_overlay.close()
                 self._translator_overlay = None
+            self.state.update(translator_running=False)
         except Exception: pass
 
 

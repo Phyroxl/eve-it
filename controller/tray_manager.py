@@ -470,6 +470,7 @@ class TrayManager:
             self._replicator_wizard_inst = ReplicatorWizard(
                 self._W, self._C, self._G, cfg, cfg_mod, 
                 lang=self._lang, 
+                suite_win=getattr(self, '_suite_win', None),
                 callback=lambda c, m: self._restore_replicator_overlays(c, m)
             )
             self._replicator_wizard_inst.show()

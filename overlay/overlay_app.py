@@ -86,17 +86,38 @@ FONT_HUD  = 'Orbitron, Rajdhani, Arial, sans-serif'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Widgets
+# ── Presets ───────────────────────────────────────────────────────────────────
+class HUDPreset:
+    BALANCED = 'balanced' # Métrica principal + secundarias (Default)
+    COMPACT  = 'compact'  # Todo pequeño en una fila
+    FOCUS    = 'focus'    # Solo la métrica principal (Gigante)
+
+    @staticmethod
+    def get_config(preset):
+        if preset == HUDPreset.COMPACT:
+            return {'width': 320, 'height': 80, 'main_large': False, 'show_sec': True, 'sec_compact': True}
+        if preset == HUDPreset.FOCUS:
+            return {'width': 220, 'height': 100, 'main_large': True, 'show_sec': False, 'sec_compact': False}
+        # BALANCED
+        return {'width': 280, 'height': 180, 'main_large': True, 'show_sec': True, 'sec_compact': False}
+
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MetricBlock(QWidget):
-    def __init__(self, key: str, value: str = '—', accent: str = C['accent'], parent=None):
+    def __init__(self, key: str, value: str = '—', accent: str = C['accent'], large=False, parent=None):
         super().__init__(parent)
         self._key = key; self._lang = 'es'; self._accent = accent
         lay = QVBoxLayout(self); lay.setContentsMargins(8, 4, 8, 4); lay.setSpacing(0)
+        
+        lbl_size = 8 if not large else 9
+        val_size = 15 if not large else 22
+        
         self._lbl = QLabel(t(self._key, self._lang).upper())
-        self._lbl.setStyleSheet(f"color: {C['dim']}; font-family: {FONT_MONO}; font-size: 8px; letter-spacing: 1px;")
+        self._lbl.setStyleSheet(f"color: {C['dim']}; font-family: {FONT_MONO}; font-size: {lbl_size}px; letter-spacing: 1px;")
+        
         self._val = QLabel(value)
-        self._val.setStyleSheet(f"color: {accent}; font-family: {FONT_HUD}; font-size: 15px; font-weight: bold; letter-spacing: 1px;")
+        self._val.setStyleSheet(f"color: {accent}; font-family: {FONT_HUD}; font-size: {val_size}px; font-weight: bold; letter-spacing: 1px;")
+        
         lay.addWidget(self._lbl); lay.addWidget(self._val)
         self.setStyleSheet(f"MetricBlock {{ background: {C['bg_panel']}; border: 1px solid {C['border']}; border-radius: 5px; }}")
 
@@ -242,6 +263,14 @@ class OverlayWindow(QWidget):
         self._drag_pos = None; self._compact = False
         self._all_chars = []; self._current_main = self._load_saved_main()
         self._last_server_secs = 0; self._local_secs = 0; self._is_paused = False
+        
+        # Sistema de Presets
+        s = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        self._current_preset = s.value('preset', HUDPreset.BALANCED)
+        
+        self._root_lay = QVBoxLayout(self)
+        self._root_lay.setContentsMargins(0, 0, 0, 0)
+        
         self._setup_window(); self._build_ui(); self._restore_position(); self._setup_poller()
         self._interp_timer = QTimer(self); self._interp_timer.timeout.connect(self._local_tick); self._interp_timer.start(1000)
         if self._ctrl: self._ctrl.state.subscribe(self._on_state_change)
@@ -258,13 +287,20 @@ class OverlayWindow(QWidget):
     def _setup_window(self):
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
         self.setWindowFlags(flags)
-        self.setMinimumSize(250, 130); self.resize(280, 160); self.setWindowOpacity(1.0)
+        self.setMinimumSize(250, 150); self.resize(280, 180); self.setWindowOpacity(1.0)
         self.setStyleSheet(f"QWidget {{ background: {C['bg']}; color: {C['white']}; font-family: {FONT_MONO}; }}")
 
     def _build_ui(self):
+        # Limpiar contenedor previo si existe para evitar duplicados al cambiar de preset
+        if hasattr(self, '_container') and self._container:
+            self._container.deleteLater()
+            self._root_lay.removeWidget(self._container)
+            self._container = None
+
         self._container = QWidget(self)
         self._container.setStyleSheet(f"QWidget {{ background: {C['bg']}; border: 1px solid {C['border']}; border-radius: 8px; }}")
-        root_lay = QVBoxLayout(self); root_lay.setContentsMargins(0, 0, 0, 0); root_lay.addWidget(self._container)
+        self._root_lay.addWidget(self._container)
+        
         main_lay = QVBoxLayout(self._container); main_lay.setContentsMargins(10, 8, 10, 8); main_lay.setSpacing(6)
 
         title_row = QHBoxLayout()
@@ -352,15 +388,47 @@ class OverlayWindow(QWidget):
         title_row.addWidget(btn_close)
         
         main_lay.addLayout(title_row)
+        
+        self._lbl_title.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu if hasattr(Qt.ContextMenuPolicy, 'CustomContextMenu') else Qt.CustomContextMenu)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu if hasattr(Qt.ContextMenuPolicy, 'CustomContextMenu') else Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_preset_menu)
 
         sep = QFrame(); sep.setFixedHeight(1); sep.setStyleSheet(f"background: {C['border']};")
         main_lay.addWidget(sep)
 
-        self._full_panel = QWidget(); full_lay = QVBoxLayout(self._full_panel); full_lay.setContentsMargins(0, 0, 0, 0); full_lay.setSpacing(4)
-        r1 = QHBoxLayout(); self._m_total = MetricBlock('hud_isk_total'); self._m_isks = MetricBlock('hud_isk_h_session')
-        r1.addWidget(self._m_total); r1.addWidget(self._m_isks); full_lay.addLayout(r1)
-        r2 = QHBoxLayout(); self._m_cd = CountdownBlock(); self._m_sess = MetricBlock('hud_session')
-        r2.addWidget(self._m_cd); r2.addWidget(self._m_sess); full_lay.addLayout(r2)
+        cfg = HUDPreset.get_config(self._current_preset)
+        self.resize(cfg['width'], cfg['height'])
+
+        self._full_panel = QWidget(); full_lay = QVBoxLayout(self._full_panel); full_lay.setContentsMargins(0, 0, 0, 0); full_lay.setSpacing(6)
+        
+        # Métrica Principal: ISK/h
+        self._m_isks = MetricBlock('hud_isk_h_session', accent=C['green'], large=cfg['main_large'])
+        full_lay.addWidget(self._m_isks)
+        
+        # Métricas Secundarias
+        self._sec_container = QWidget()
+        sec_lay = QHBoxLayout(self._sec_container) if not cfg['sec_compact'] else QVBoxLayout(self._sec_container)
+        sec_lay.setContentsMargins(0, 0, 0, 0); sec_lay.setSpacing(4)
+        
+        if cfg['sec_compact']: # Si es compacto, van en una fila horizontal dentro del main_lay
+            full_lay.removeWidget(self._m_isks)
+            h_row = QHBoxLayout(); h_row.setSpacing(4)
+            h_row.addWidget(self._m_isks)
+            self._m_total = MetricBlock('hud_isk_total')
+            self._m_cd = CountdownBlock()
+            self._m_sess = MetricBlock('hud_session')
+            h_row.addWidget(self._m_total); h_row.addWidget(self._m_cd); h_row.addWidget(self._m_sess)
+            full_lay.addLayout(h_row)
+            self._sec_container.hide()
+        else:
+            self._m_total = MetricBlock('hud_isk_total')
+            self._m_cd = CountdownBlock()
+            self._m_sess = MetricBlock('hud_session')
+            r2 = QHBoxLayout(); r2.setSpacing(4)
+            r2.addWidget(self._m_total); r2.addWidget(self._m_cd); r2.addWidget(self._m_sess)
+            full_lay.addLayout(r2)
+            self._sec_container.setVisible(cfg['show_sec'])
+
         # m_iskh y m_chars ocultos pero mantenidos para compatibilidad
         self._m_iskh = MetricBlock('hud_isk_h_rolling'); self._m_iskh.hide()
         self._m_chars = MetricBlock('hud_characters'); self._m_chars.hide()
@@ -396,6 +464,34 @@ class OverlayWindow(QWidget):
                 from controller.control_window import _control_window_ref
                 if _control_window_ref: _control_window_ref._on_reset()
             except: pass
+
+    def _show_preset_menu(self, pos):
+        """Muestra menú de presets al hacer click derecho."""
+        from importlib import import_module
+        try:
+            _w = import_module(_QT_BACKEND + '.QtWidgets')
+            QMenu = _w.QMenu
+        except: return
+        
+        menu = QMenu(self)
+        menu.setStyleSheet(f"QMenu {{ background: #0d0d0d; border: 1px solid {C['accent']}; color: white; }} QMenu::item:selected {{ background: {C['accent']}; }}")
+        
+        for p in [HUDPreset.BALANCED, HUDPreset.COMPACT, HUDPreset.FOCUS]:
+            act = menu.addAction(p.upper())
+            act.setCheckable(True)
+            act.setChecked(self._current_preset == p)
+            act.triggered.connect(lambda checked, mode=p: self._apply_preset(mode))
+        
+        menu.exec(self.mapToGlobal(pos))
+
+    def _apply_preset(self, mode):
+        """Cambia el preset y reconstruye parte de la UI de forma segura."""
+        self._current_preset = mode
+        s = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        s.setValue('preset', mode)
+        
+        # Reconstruir UI sin re-inicializar el objeto QWidget (evita RuntimeError)
+        self._build_ui()
 
     def _send_command(self, cmd: str):
         """Envía comando al servidor vía el poller."""
@@ -462,6 +558,17 @@ class OverlayWindow(QWidget):
         self._m_sess.set_value(self._fmt_dur(self._local_secs))
 
     def _on_data(self, data):
+        # Sincronización automática de Preset desde Settings
+        remote_preset = data.get('hud_preset')
+        if remote_preset and remote_preset != self._current_preset:
+            self._apply_preset(remote_preset)
+            return
+
+        # Sincronización de visibilidad granular
+        if hasattr(self, '_m_total'): self._m_total.setVisible(data.get('show_total', True))
+        if hasattr(self, '_m_cd'): self._m_cd.setVisible(data.get('show_tick', True))
+        if hasattr(self, '_m_sess'): self._m_sess.setVisible(data.get('show_dur', True))
+
         self._m_iskh.set_value(self._fmt(data.get('isk_h_rolling', 0)))
         self._m_isks.set_value(self._fmt(data.get('isk_h_session', 0)))
         # Sincronizar el contador local con el servidor

@@ -190,8 +190,36 @@ def build_overlay_payload(tracker, now=None) -> dict:
             'isk':    cd.get('total_isk', 0),
         })
 
+    # Detectar QSettings de forma segura
+    try:
+        from PySide6.QtCore import QSettings
+    except ImportError:
+        try:
+            from PyQt6.QtCore import QSettings
+        except ImportError:
+            QSettings = None
+
+    hud_preset = "balanced"
+    show_total = "true"
+    show_tick  = "true"
+    show_dur   = "true"
+
+    if QSettings:
+        try:
+            s_hud = QSettings("EVEISKTracker", "Overlay")
+            hud_preset = s_hud.value("preset", "balanced")
+            show_total = s_hud.value("show_total", "true")
+            show_tick  = s_hud.value("show_tick", "true")
+            show_dur   = s_hud.value("show_dur", "true")
+        except Exception:
+            pass
+
     return {
         'connected':        True,
+        'hud_preset':       hud_preset,
+        'show_total':       show_total == "true",
+        'show_tick':        show_tick == "true",
+        'show_dur':         show_dur == "true",
         'total_isk':        total_isk,
         'isk_h_rolling':    isk_h_rolling,
         'isk_h_session':    isk_h_session,

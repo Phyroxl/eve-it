@@ -87,13 +87,42 @@ if IS_WINDOWS:
         return results
 
     def find_eve_windows() -> List[Dict]:
-        """Busca ventanas que parezcan de EVE Online."""
+        """Busca ventanas de EVE Online con un filtro permisivo para máxima compatibilidad."""
         result = []
-        for w in enum_windows():
-            t = w['title']
-            if not (('EVE —' in t or 'EVE - ' in t or t.upper() == 'EVE ONLINE') and 
-                    w['size'][0] > 400 and w['size'][1] > 300):
+        titles_seen = {}
+        
+        # Primero enumeramos todas las ventanas
+        all_windows = enum_windows()
+        
+        # ORDENAR DETERMINÍSTICAMENTE por HWND antes de procesar títulos
+        # Esto asegura que si hay varias ventanas con el mismo título, 
+        # siempre reciban el mismo identificador en cada tick de refresco.
+        all_windows.sort(key=lambda x: x['hwnd'])
+        
+        for w in all_windows:
+            t_orig = w['title']
+            t_upper = t_orig.upper()
+            
+            # Filtro estricto para clientes de juego
+            # EVE Online usa "EVE -" o "EVE —" seguido del nombre del personaje.
+            is_eve = (t_upper.startswith('EVE -') or t_upper.startswith('EVE —'))
+            
+            # Excluir explícitamente nuestra propia aplicación, lanzadores y NAVEGADORES
+            # Evita que el auto-recovery se confunda con pestañas de búsqueda o foros.
+            EXCLUSIONS = ["EVE IT", "LANZADOR", "EXPLORADOR", "CHROME", "FIREFOX", "EDGE", "BRAVE", "GOOGLE"]
+            if any(exc in t_upper for exc in EXCLUSIONS):
+                is_eve = False
+            
+            if not is_eve:
                 continue
+                
+            if w['size'][0] < 200 or w['size'][1] < 200:
+                continue
+            
+            # USAR SIEMPRE EL PID para garantizar unicidad absoluta y estabilidad total
+            # Esto evita que el binding cambie si el orden de enumeración de Windows varía.
+            # Mostramos el nombre limpio pero con el ID de proceso para que el Hub sea infalible.
+            w['title'] = f"{t_orig} [#{w['pid']}]"
             
             hwnd = w['hwnd']
             cl = wt.RECT()
@@ -103,87 +132,130 @@ if IS_WINDOWS:
                 w['client_rect'] = (pt.x, pt.y, pt.x + cl.right, pt.y + cl.bottom)
                 w['client_size'] = (cl.right, cl.bottom)
             else:
-                l, t, r, b = w['rect']
-                w['client_rect'] = (l, t, r, b)
-                w['client_size'] = (r - l, b - t)
+                l, t_rect, r, b = w['rect']
+                w['client_rect'] = (l, t_rect, r, b)
+                w['client_size'] = (r - l, b - t_rect)
                 
             result.append(w)
             
+        # Ordenar por tamaño (descendente) para priorizar clientes principales
         result.sort(key=lambda x: x['size'][0] * x['size'][1], reverse=True)
         return result
 
+    def resolve_eve_window_handle(display_title: str, preferred_hwnd: Optional[int] = None) -> Optional[int]:
+        """
+        Resuelve el handle de ventana de EVE de forma robusta.
+        Prioriza el handle preferido si es válido, luego busca por títulos (exactos o normalizados).
+        """
+        # 1. Priorizar el handle preferido si sigue siendo una ventana válida
+        if preferred_hwnd and user32.IsWindow(preferred_hwnd):
+            # Podríamos validar el título aquí, pero confiamos en la validez del HWND
+            return preferred_hwnd
+
+        all_eve = find_eve_windows()
+        if not all_eve:
+            return None
+
+        # Normalizar título buscado (quitar [#hwnd] si lo trae)
+        search_norm = display_title.split(' [#')[0].strip() if ' [#' in display_title else display_title.strip()
+
+        # 2. Intentar match exacto o normalizado
+        candidates = []
+        for w in all_eve:
+            w_title = w['title']
+            w_norm = w_title.split(' [#' )[0].strip() if ' [#' in w_title else w_title.strip()
+            
+            # Match exacto (incluyendo [#pid])
+            if w_title == display_title:
+                return w['hwnd']
+            
+            # Match normalizado (sin el sufijo de unicidad)
+            if w_norm == search_norm:
+                candidates.append(w)
+
+        # 3. Si hay candidatos normalizados, devolver el primero
+        if candidates:
+            return candidates[0]['hwnd']
+
+        # 4. Fallback final: si solo hay una ventana EVE abierta, la devolvemos
+        # (Es mejor que nada si el personaje cambió de nombre o título)
+        if len(all_eve) == 1:
+            return all_eve[0]['hwnd']
+
+        return None
+
     def capture_window_region(hwnd: int, region_rel: dict, out_w: int = 400, out_h: int = 300):
-        """Captura ultra-estable con priorización de rendimiento para evitar bloqueos."""
+        """
+        Captura de ventana EVE con endurecimiento de ruta.
+        Flujo: Window DC → PrintWindow fallback.
+        """
         if not hwnd or not user32.IsWindow(hwnd): return None
-        
-        # 1. Obtener dimensiones y estado de la ventana
+        if user32.IsIconic(hwnd): return None
+
+        # 1. Dimensiones del cliente
         cl = wt.RECT()
         if not user32.GetClientRect(hwnd, ctypes.byref(cl)): return None
         ww, wh = cl.right, cl.bottom
         if ww <= 0 or wh <= 0: return None
 
-        # 2. Calcular coordenadas de la región
-        rx, ry = int(region_rel['x'] * ww), int(region_rel['y'] * wh)
-        rw, rh = int(region_rel['w'] * ww), int(region_rel['h'] * wh)
+        # 2. Coordenadas ROI con clamping estricto
+        rx = max(0, int(region_rel['x'] * ww))
+        ry = max(0, int(region_rel['y'] * wh))
+        rw = max(1, int(region_rel['w'] * ww))
+        rh = max(1, int(region_rel['h'] * wh))
+        
+        # Clamping: nunca exceder los límites de la ventana
+        if rx + rw > ww: rw = ww - rx
+        if ry + rh > wh: rh = wh - ry
         if rw <= 0 or rh <= 0: return None
 
-        hdc_window = None; mdc = None; bmp = None; hdc_screen = None; old_obj = None
+        hdc_screen = None; mdc = None; bmp = None; old_obj = None
         data = None
         
         try:
-            # 3. Preparar DC de destino (memoria)
-            hdc_window = user32.GetDC(hwnd)
-            mdc = gdi32.CreateCompatibleDC(hdc_window)
-            bmp = gdi32.CreateCompatibleBitmap(hdc_window, out_w, out_h)
+            hdc_screen = user32.GetDC(0)
+            mdc = gdi32.CreateCompatibleDC(hdc_screen)
+            bmp = gdi32.CreateCompatibleBitmap(hdc_screen, out_w, out_h)
             old_obj = gdi32.SelectObject(mdc, bmp)
-            gdi32.SetStretchBltMode(mdc, 4) # STRETCH_HALFTONE
+            gdi32.SetStretchBltMode(mdc, 3) # COLORONCOLOR
 
-            # --- ESTRATEGIA DE CAPTURA DE ALTO RENDIMIENTO ---
             captured = False
             
-            # A. Detectar si la ventana es la activa
-            fg_hwnd = user32.GetForegroundWindow()
-            is_foreground = (hwnd == fg_hwnd)
-            
-            # Si el foco está en el HUD, permitimos captura de pantalla solo si el juego está visible
-            if not is_foreground and fg_hwnd:
-                # Obtenemos el título de la ventana activa para ver si es nuestro HUD
-                length = user32.GetWindowTextLengthW(fg_hwnd)
-                if length > 0:
-                    buf = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(fg_hwnd, buf, length + 1)
-                    if "EVE Replica:" in buf.value or "Panel de control" in buf.value:
-                        # El usuario está tocando la interfaz, el juego debería estar justo debajo
-                        if not user32.IsIconic(hwnd):
-                            is_foreground = True
-            
-            if is_foreground:
-                hdc_screen = user32.GetDC(0)
-                pt = wt.POINT(0, 0)
-                user32.ClientToScreen(hwnd, ctypes.byref(pt))
-                # Validar que la ventana está realmente en el área visible (no minimizada ni fuera)
-                captured = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_screen, pt.x + rx, pt.y + ry, rw, rh, SRCCOPY)
-            
-            # B. Si no está en primer plano, USAR CAPTURA INTERNA (BitBlt o PrintWindow)
+            # --- RUTA 1: Window DC (Directo al cliente) ---
+            hdc_window = user32.GetDC(hwnd)
+            if hdc_window:
+                if gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY):
+                    # Verificar que obtuvimos contenido real (al menos 1 píxel no-negro)
+                    points = [
+                        (out_w//2, out_h//2),
+                        (out_w//4, out_h//4),
+                        (3*out_w//4, out_h//4),
+                        (out_w//4, 3*out_h//4),
+                        (3*out_w//4, 3*out_h//4)
+                    ]
+                    for px, py in points:
+                        if gdi32.GetPixel(mdc, px, py) != 0:
+                            captured = True
+                            break
+                user32.ReleaseDC(hwnd, hdc_window)
+
+            # --- RUTA 2: PrintWindow (para ventanas tapadas u opacas) ---
             if not captured:
-                captured = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY)
-                
-            # C. Fallback: Si sigue fallando (ventana oculta), usamos PrintWindow (con precaución)
-            if not captured or gdi32.GetPixel(mdc, out_w//2, out_h//2) == 0:
-                # Usar un DC intermedio para PrintWindow evita parpadeos y es más estable
-                tmp_mdc = gdi32.CreateCompatibleDC(hdc_window)
-                tmp_bmp = gdi32.CreateCompatibleBitmap(hdc_window, ww, wh)
+                tmp_mdc = gdi32.CreateCompatibleDC(hdc_screen)
+                tmp_bmp = gdi32.CreateCompatibleBitmap(hdc_screen, ww, wh)
                 tmp_old = gdi32.SelectObject(tmp_mdc, tmp_bmp)
                 
-                # PW_CLIENTONLY = 1, PW_RENDERFULLCONTENT = 2 -> 0x3
-                if user32.PrintWindow(hwnd, tmp_mdc, 0x3):
-                    captured = gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, tmp_mdc, rx, ry, rw, rh, SRCCOPY)
+                for flag in [3, 2, 0]:
+                    if user32.PrintWindow(hwnd, tmp_mdc, flag):
+                        gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, tmp_mdc, rx, ry, rw, rh, SRCCOPY)
+                        captured = True
+                        break
                 
                 gdi32.SelectObject(tmp_mdc, tmp_old)
                 gdi32.DeleteObject(tmp_bmp)
                 gdi32.DeleteDC(tmp_mdc)
 
-            # 4. Extraer bits
+            # Extraer datos si capturamos algo
             if captured:
                 bmi = BITMAPINFO()
                 bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -191,24 +263,22 @@ if IS_WINDOWS:
                 bmi.bmiHeader.biHeight = -out_h
                 bmi.bmiHeader.biPlanes = 1
                 bmi.bmiHeader.biBitCount = 32
+                bmi.bmiHeader.biCompression = 0
+                
                 buf = ctypes.create_string_buffer(out_w * out_h * 4)
                 if gdi32.GetDIBits(mdc, bmp, 0, out_h, buf, ctypes.byref(bmi), DIB_RGB_COLORS):
-                    # Forzar Alfa a 255 (Optimizado)
-                    ba = bytearray(buf.raw)
-                    ba[3::4] = b'\xff' * (len(ba) // 4)
-                    data = bytes(ba)
+                    data = bytes(buf.raw)
 
         except Exception as e:
-            logger.error(f"Error crítico en captura: {e}")
+            logger.debug(f"Error captura: {e}")
         finally:
-            # LIMPIEZA TOTAL DE RECURSOS (Vital para evitar fugas y cuelgues)
             if old_obj: gdi32.SelectObject(mdc, old_obj)
             if bmp: gdi32.DeleteObject(bmp)
             if mdc: gdi32.DeleteDC(mdc)
-            if hdc_window: user32.ReleaseDC(hwnd, hdc_window)
             if hdc_screen: user32.ReleaseDC(0, hdc_screen)
             
         return data
+
 
     def set_click_through(hwnd: int, enabled: bool):
         """Habilita o deshabilita el modo click-through."""
@@ -219,6 +289,14 @@ if IS_WINDOWS:
                 user32.SetWindowLongW(hwnd, -20, ex_style | 0x00000020 | 0x00080000)
             else:
                 user32.SetWindowLongW(hwnd, -20, ex_style & ~0x00000020 & ~0x00080000)
+        except: pass
+
+    def set_window_stealth(hwnd: int):
+        """Hace que la ventana sea invisible para capturas de pantalla/réplicas."""
+        if not hwnd: return
+        try:
+            # WDA_EXCLUDEFROMCAPTURE = 0x00000011 (Windows 10+)
+            user32.SetWindowDisplayAffinity(hwnd, 0x11)
         except: pass
 
     def set_no_activate(hwnd: int):
@@ -237,6 +315,7 @@ if IS_WINDOWS:
 else:
     def enum_windows(): return []
     def find_eve_windows(): return []
+    def resolve_eve_window_handle(display_title, preferred_hwnd=None): return None
     def capture_window_region(hwnd, r, w=400, h=300): return None
     def set_click_through(h, e): pass
     def set_no_activate(h): pass

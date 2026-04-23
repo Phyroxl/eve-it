@@ -89,6 +89,30 @@ def _signal_focus():
             _suite_window_ref.activateWindow()
         except: pass
 
+_audio_refs = []
+
+def _play_sound(name):
+    """Reproduce un sonido táctico usando el motor nativo de Windows (MCI)."""
+    try:
+        import ctypes
+        path = PROJECT_ROOT / 'assets' / f"{name}.mp3"
+        if not path.exists(): return
+        
+        # Usamos mciSendString para máxima compatibilidad en Windows sin dependencias de QtMultimedia
+        mci = ctypes.windll.winmm.mciSendStringW
+        alias = f"sound_{name}"
+        
+        # Cerrar si ya estaba abierto (por si acaso)
+        mci(f"close {alias}", None, 0, 0)
+        # Abrir y reproducir
+        mci(f'open "{str(path)}" type mpegvideo alias {alias}', None, 0, 0)
+        mci(f"play {alias}", None, 0, 0)
+        
+        # Guardamos en log para diagnóstico
+        logging.getLogger('eve.main').info(f"Audio: {name}.mp3 reproducido.")
+    except Exception as e:
+        logging.getLogger('eve.main').warning(f"Error de audio nativo: {e}")
+
 def main():
     lock = SingletonLock()
     if not lock.acquire():
@@ -98,9 +122,27 @@ def main():
     log = setup_logging()
     log.info("--- INICIANDO EVE iT ELITE ---")
 
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QSplashScreen
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import Qt
+    
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    # --- Pantalla de Carga (Splash) ---
+    splash_pix = QPixmap(str(PROJECT_ROOT / 'assets' / 'fondo_pantalla.png'))
+    if splash_pix.isNull():
+        splash_pix = QPixmap(600, 400)
+        splash_pix.fill(QColor("#000000"))
+        
+    splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+    splash.show()
+    
+    # Sonido de inicio táctico (Reproducción inmediata)
+    _play_sound("login")
+    
+    splash.showMessage("INICIALIZANDO PUENTE DE MANDO...", Qt.AlignBottom | Qt.AlignCenter, QColor("#00c8ff"))
+    app.processEvents()
 
     from controller.app_controller import AppController
     from controller.tray_manager import TrayManager
@@ -120,10 +162,22 @@ def main():
     tray.set_suite_window(suite_win)
     suite_win.set_tray_manager(tray)
 
+    splash.showMessage("CARGANDO TELEMETRÍA...", Qt.AlignBottom | Qt.AlignCenter, QColor("#00c8ff"))
+    app.processEvents()
+
     log.info("Desplegando Suite Principal...")
     suite_win.show()
     suite_win.raise_()
-    suite_win.activateWindow()
+    # [NUEVO] Modo Sigilo: Evitar que la propia Suite se vea en las réplicas
+    try:
+        from overlay.win32_capture import set_window_stealth
+        set_window_stealth(int(suite_win.winId()))
+        if ctrl_win: set_window_stealth(int(ctrl_win.winId()))
+    except Exception as e:
+        log.warning(f"No se pudo activar Modo Sigilo: {e}")
+    
+    # Finalizar splash
+    splash.finish(suite_win)
 
     # Auto-start con persistencia completa
     try:
@@ -136,6 +190,28 @@ def main():
 
     exec_fn = getattr(app, 'exec', None) or app.exec_
     ret = exec_fn()
+
+    # Secuencia de Logoff Optimizada
+    if _suite_window_ref:
+        _suite_window_ref.showMinimized()
+    
+    log.info("Cerrando EVE iT Elite...")
+    _play_sound("logoff")
+    
+    # [NUEVO] Purga de Configuración del Replicador (Evitar datos residuales corruptos)
+    try:
+        repl_cfg = PROJECT_ROOT / 'config' / 'replicator.json'
+        if repl_cfg.exists():
+            # En lugar de borrar el archivo, lo reseteamos a un estado vacío limpio
+            with open(repl_cfg, 'w', encoding='utf-8') as f:
+                f.write('{"global":{"capture_fps":30,"current_profile":"Default"},"regions":{"Default":{"x":0.2,"y":0.2,"w":0.3,"h":0.3}},"selected_windows":[],"overlays":{},"region":{"x":0,"y":0,"w":0.1,"h":0.1}}')
+            log.info("Configuración del Replicador purgada exitosamente.")
+    except Exception as e:
+        log.warning(f"No se pudo purgar la configuración: {e}")
+
+    # Esperamos a que el sonido termine
+    import time
+    time.sleep(2.5)
 
     controller.shutdown()
     lock.release()

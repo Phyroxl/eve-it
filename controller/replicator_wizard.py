@@ -11,13 +11,14 @@ class ReplicatorWizard:
     Controlador del Asistente del Replicador 2.0.
     Ahora implementado como una clase limpia que gestiona un QDialog.
     """
-    def __init__(self, W, C, G, cfg, cfg_mod, lang='es', callback=None):
+    def __init__(self, W, C, G, cfg, cfg_mod, lang='es', suite_win=None, callback=None):
         self._W = W
         self._C = C
         self._G = G
         self._cfg = cfg
         self._cfg_mod = cfg_mod
         self._lang = lang
+        self._suite_win = suite_win
         self._callback = callback
         
         self._windows_cache = []
@@ -224,14 +225,42 @@ class ReplicatorWizard:
 
     def _setup_step1(self):
         W = self._W
-        p1 = W.QWidget(); l1 = W.QVBoxLayout(p1); l1.setContentsMargins(15,10,15,10); l1.setSpacing(8)
-        self.lbl_step1_title = W.QLabel(t('repl_p1_title', self._lang))
-        self.lbl_step1_title.setStyleSheet("color: #00c8ff; font-weight: bold; font-size: 11px;")
+        # [NUEVO] Limpieza agresiva de memoria táctica al iniciar el asistente
+        # Esto evita que datos residuales de Phyrox Perez u otros interfieran con la nueva sesión.
+        try:
+            self._cfg['overlays'] = {}
+            self._cfg['selected_windows'] = []
+            self.diag_log.info("DIAG: Memoria de overlays purgada para nueva sesión.")
+        except: pass
+
+        p1 = W.QWidget(); l1 = W.QVBoxLayout(p1); l1.setContentsMargins(25,20,25,20); l1.setSpacing(10)
+        self.lbl_step1_title = self._W.QLabel(t('repl_p1_title', self._lang))
+        self.lbl_step1_title.setObjectName("SectionTitle")
         l1.addWidget(self.lbl_step1_title)
-        self.win_list = W.QListWidget(); l1.addWidget(self.win_list)
         
-        btn_row = W.QHBoxLayout()
-        self.btn_all = W.QPushButton("Seleccionar Todos")
+        # [NUEVO] Lista personalizada para manejar Drag & Drop robusto
+        class ReplicList(self._W.QListWidget):
+            def __init__(self, parent_ctrl):
+                super().__init__()
+                self.ctrl = parent_ctrl
+            def dropEvent(self, event):
+                super().dropEvent(event)
+                # Al terminar el drop, sincronizamos la caché y RE-DIBUJAMOS
+                self.ctrl._sync_cache_from_ui()
+
+        self.win_list = ReplicList(self)
+        self.win_list.setDragEnabled(True)
+        self.win_list.setAcceptDrops(True)
+        self.win_list.setDropIndicatorShown(True)
+        self.win_list.setDragDropMode(self._W.QAbstractItemView.InternalMove if hasattr(self._W.QAbstractItemView, 'InternalMove') else self._C.Qt.InternalMove)
+        
+        l1.addWidget(self.win_list)
+        
+        self._refresh_windows()
+
+        
+        btn_row = self._W.QHBoxLayout()
+        self.btn_all = self._W.QPushButton("Seleccionar Todos")
         self.btn_all.setStyleSheet("font-size: 9px; padding: 4px 10px;")
         btn_row.addWidget(self.btn_all)
         
@@ -364,17 +393,22 @@ class ReplicatorWizard:
 
         for w in self._windows_cache:
             it = self._W.QListWidgetItem()
+            it.setData(self._C.Qt.ItemDataRole.UserRole if hasattr(self._C.Qt, 'ItemDataRole') else 256, w['title'])
             self.win_list.addItem(it)
             
             card = self._W.QWidget()
-            card.setStyleSheet(
-                "QWidget#Card { background: rgba(0,180,255,0.03); border: 1px solid rgba(0,180,255,0.1); border-radius: 4px; }"
-                "QWidget#Card:hover { background: rgba(0,180,255,0.08); border-color: rgba(0,180,255,0.3); }"
-            )
             card.setObjectName("Card")
             lay = self._W.QHBoxLayout(card)
-            lay.setContentsMargins(12, 8, 12, 8)
-            lay.setSpacing(12)
+            lay.setContentsMargins(8, 6, 12, 6)
+            lay.setSpacing(10)
+            
+            # [NUEVO] Agarre para Drag & Drop (⠿)
+            grip = self._W.QLabel("\u283f")
+            grip.setStyleSheet("color: rgba(0,200,255,0.3); font-size: 14px; font-weight: bold; margin-right: 2px;")
+            grip.setFixedWidth(15)
+            # El grip NO debe capturar el ratón para que el QListWidget pueda detectar el arrastre
+            grip.setAttribute(self._C.Qt.WA_TransparentForMouseEvents, True)
+            lay.addWidget(grip)
             
             chk = self._W.QLabel()
             chk.setFixedSize(16, 16)
@@ -390,11 +424,128 @@ class ReplicatorWizard:
             lbl_res = self._W.QLabel(f"{w['size'][0]}x{w['size'][1]}")
             lbl_res.setStyleSheet("color: rgba(0,200,255,0.6); font-size: 10px; background: rgba(0,0,0,0.3); border-radius: 3px; padding: 2px 6px;")
             
-            def _toggle(ev, _chk=chk): self._set_checked_helper(_chk, not _chk.property("is_checked"))
-            card.mousePressEvent = _toggle
+            # Botones de Orden (▲/▼)
+            btn_v = self._W.QVBoxLayout(); btn_v.setSpacing(2); btn_v.setContentsMargins(0,0,0,0)
+            btn_up = self._W.QPushButton("▲"); btn_up.setFixedSize(18, 14)
+            btn_dn = self._W.QPushButton("▼"); btn_dn.setFixedSize(18, 14)
             
-            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res)
+            style_arr = "QPushButton { background: rgba(0,180,255,0.05); border: 1px solid rgba(0,180,255,0.1); color: #00c8ff; font-size: 8px; padding: 0; } QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }"
+            btn_up.setStyleSheet(style_arr); btn_dn.setStyleSheet(style_arr)
             
+            btn_up.clicked.connect(lambda _, _it=it: self._move_window_item(_it, -1))
+            btn_dn.clicked.connect(lambda _, _it=it: self._move_window_item(_it, 1))
+            
+            btn_v.addWidget(btn_up); btn_v.addWidget(btn_dn)
+            
+            # Lógica de Toggle mejorada para no bloquear el drag
+            def _toggle(ev, _chk=chk): 
+                # Solo toggle si es click izquierdo y no hay mucho movimiento
+                self._set_checked_helper(_chk, not _chk.property("is_checked"))
+            
+            # En lugar de capturar mousePressEvent en toda la card, 
+            # dejamos que el QListWidget gestione el foco/drag y capturamos solo el click
+            card.mouseReleaseEvent = _toggle
+            
+            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res); lay.addLayout(btn_v)
+            
+            it.setSizeHint(card.sizeHint())
+            self.win_list.setItemWidget(it, card)
+            
+    def _sync_cache_from_ui(self):
+        """Sincroniza la caché basándose en el orden REAL de la lista UI."""
+        new_cache = []
+        # En lugar de buscar widgets (que pueden fallar tras un drop), 
+        # usamos la propiedad 'win_title' que guardamos en los items o widgets.
+        # Pero como InternalMove borra widgets, guardamos el título en el DATA del item.
+        for i in range(self.win_list.count()):
+            it = self.win_list.item(i)
+            title = it.data(self._C.Qt.ItemDataRole.UserRole if hasattr(self._C.Qt, 'ItemDataRole') else 256)
+            
+            orig_w = next((w for w in self._windows_cache if w['title'] == title), None)
+            if orig_w:
+                new_cache.append(orig_w)
+        
+        if new_cache:
+            self._windows_cache = new_cache
+            # IMPORTANTE: Re-dibujar para restaurar los widgets (los botones y chks se pierden al mover)
+            self._refresh_list_ui_only()
+
+    def _on_rows_moved(self, parent, start, end, destination, row):
+        pass # Reemplazado por dropEvent en la clase ReplicList
+
+    def _move_window_item(self, item, direction):
+        """Mueve un personaje arriba o abajo en la lista de prioridad."""
+        row = self.win_list.row(item)
+        new_row = row + direction
+        if 0 <= new_row < self.win_list.count():
+            # Intercambiar en el cache
+            self._windows_cache[row], self._windows_cache[new_row] = self._windows_cache[new_row], self._windows_cache[row]
+            # Intercambiar en los cards (para el check de 'is_checked')
+            # Nota: _custom_cards debe seguir el mismo orden que la UI
+            self._custom_cards[row], self._custom_cards[new_row] = self._custom_cards[new_row], self._custom_cards[row]
+            
+            # Re-dibujar la lista para mantener widgets y conexiones (más simple y seguro en PySide)
+            self._refresh_list_ui_only()
+
+    def _refresh_list_ui_only(self):
+        """Refresca solo los widgets de la lista sin volver a escanear Windows."""
+        # Guardar qué títulos estaban marcados
+        selected_titles = [c.property("win_title") for c in self._custom_cards if c.property("is_checked")]
+        
+        self.win_list.clear()
+        self._custom_cards = []
+        
+        # Helper para los pseudo-checkboxes (mismo que en _refresh_windows)
+        def set_custom_chk(lbl, state):
+            lbl.setProperty("is_checked", state)
+            if state:
+                lbl.setText("✔")
+                lbl.setStyleSheet("border: 1px solid #00ff9d; border-radius: 3px; background: rgba(0,255,157,0.1); color: #00ff9d; font-weight: bold; font-size: 13px; padding-bottom: 2px;")
+            else:
+                lbl.setText("")
+                lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.5); border-radius: 3px; background: transparent; color: transparent;")
+
+        for w in self._windows_cache:
+            it = self._W.QListWidgetItem()
+            it.setData(self._C.Qt.ItemDataRole.UserRole if hasattr(self._C.Qt, 'ItemDataRole') else 256, w['title'])
+            self.win_list.addItem(it)
+            
+            card = self._W.QWidget()
+            card.setStyleSheet("QWidget#Card { background: rgba(0,180,255,0.03); border: 1px solid rgba(0,180,255,0.1); border-radius: 4px; } QWidget#Card:hover { background: rgba(0,180,255,0.08); border-color: rgba(0,180,255,0.3); }")
+            card.setObjectName("Card")
+            lay = self._W.QHBoxLayout(card); lay.setContentsMargins(8, 6, 12, 6); lay.setSpacing(10)
+            
+            # Grip
+            grip = self._W.QLabel("\u283f")
+            grip.setStyleSheet("color: rgba(0,200,255,0.3); font-size: 14px; font-weight: bold; margin-right: 2px;")
+            grip.setFixedWidth(15)
+            grip.setAttribute(self._C.Qt.WA_TransparentForMouseEvents, True)
+            lay.addWidget(grip)
+
+            chk = self._W.QLabel(); chk.setFixedSize(16, 16); chk.setProperty("win_title", w['title'])
+            # Restaurar estado marcado
+            set_custom_chk(chk, w['title'] in selected_titles)
+            self._custom_cards.append(chk)
+            
+            lbl_title = self._W.QLabel(w['title']); lbl_title.setStyleSheet("color: #e1e9f5; font-weight: bold; font-size: 11px;")
+            lbl_res = self._W.QLabel(f"{w['size'][0]}x{w['size'][1]}"); lbl_res.setStyleSheet("color: rgba(0,200,255,0.6); font-size: 10px; background: rgba(0,0,0,0.3); border-radius: 3px; padding: 2px 6px;")
+            
+            # Botones de Orden
+            btn_v = self._W.QVBoxLayout(); btn_v.setSpacing(2); btn_v.setContentsMargins(0,0,0,0)
+            btn_up = self._W.QPushButton("▲"); btn_up.setFixedSize(18, 14)
+            btn_dn = self._W.QPushButton("▼"); btn_dn.setFixedSize(18, 14)
+            style_arr = "QPushButton { background: rgba(0,180,255,0.05); border: 1px solid rgba(0,180,255,0.1); color: #00c8ff; font-size: 8px; padding: 0; } QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }"
+            btn_up.setStyleSheet(style_arr); btn_dn.setStyleSheet(style_arr)
+            
+            btn_up.clicked.connect(lambda _, _it=it: self._move_window_item(_it, -1))
+            btn_dn.clicked.connect(lambda _, _it=it: self._move_window_item(_it, 1))
+            
+            btn_v.addWidget(btn_up); btn_v.addWidget(btn_dn)
+            
+            def _toggle(ev, _chk=chk): set_custom_chk(_chk, not _chk.property("is_checked"))
+            card.mouseReleaseEvent = _toggle
+            
+            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res); lay.addLayout(btn_v)
             it.setSizeHint(card.sizeHint())
             self.win_list.setItemWidget(it, card)
 
@@ -450,19 +601,81 @@ class ReplicatorWizard:
         self._cfg['region'] = self._get_current_relative_reg()
 
     def _on_visual_select(self):
+        # [NUEVO] Sistema de Ancla Táctica Reforzado V5: Protocolo de Promoción Agresiva
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            
+            if self.win_list.count() > 0:
+                first_it = self.win_list.item(0)
+                widget = self.win_list.itemWidget(first_it)
+                if widget:
+                    chk = widget.findChild(self._W.QLabel)
+                    anchor_title = chk.property("win_title")
+                    
+                    self.diag_log.info(f"DIAG: Iniciando Protocolo de Promoción para: '{anchor_title}'")
+                    
+                    from overlay.win32_capture import resolve_eve_window_handle
+                    hwnd = resolve_eve_window_handle(anchor_title)
+                    
+                    if hwnd and user32.IsWindow(hwnd):
+                        # --- TRUCO DE FOCO AGRESIVO (AttachThreadInput) ---
+                        # Obtenemos el ID del hilo de la ventana actual (la nuestra) y de la de EVE
+                        fore_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+                        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+                        curr_thread = kernel32.GetCurrentThreadId()
+                        
+                        if fore_thread != target_thread:
+                            user32.AttachThreadInput(curr_thread, target_thread, True)
+                            
+                        # Asegurar visibilidad (Restore garantiza que salte al frente si estaba minimizada)
+                        # Si ya estaba visible, Restore la "refresca" en el orden Z
+                        user32.ShowWindow(hwnd, 9) # SW_RESTORE (Más agresivo que SHOW)
+                        user32.BringWindowToTop(hwnd)
+                        user32.SetForegroundWindow(hwnd)
+                        
+                        if fore_thread != target_thread:
+                            user32.AttachThreadInput(curr_thread, target_thread, False)
+                            
+                        self.diag_log.info(f"DIAG: Promoción completada para HWND: {hwnd}")
+                        self._anchor_hwnd_ref = hwnd
+                    else:
+                        self.diag_log.warning(f"DIAG: No se pudo resolver HWND para '{anchor_title}'")
+        except Exception as e:
+            logger.warning(f"No se pudo ejecutar Promoción V5: {e}")
+
+        # Ahora sí, ocultamos la Suite y el Asistente
         self.dlg.hide()
+        if self._suite_win:
+            try: self._suite_win.hide()
+            except: pass
+
         from overlay.region_selector import select_region
-        # Use first selected window as reference if available
-        ref = self._windows_cache[0] if self._windows_cache else {'rect': (0,0,1920,1080)}
+        # Usar el handle del ancla si lo encontramos, si no, fallback a la cache
+        ref_hwnd = getattr(self, '_anchor_hwnd_ref', None)
+        if not ref_hwnd and self._windows_cache:
+            ref_hwnd = self._windows_cache[0]['hwnd']
+            
+        ref = {'hwnd': ref_hwnd} if ref_hwnd else {'rect': (0,0,1920,1080)}
+        
         reg = select_region(ref)
+        
+        # Restaurar visibilidad
+        if self._suite_win:
+            try: self._suite_win.show()
+            except: pass
+        
         if reg:
             self.sp_x.setValue(int(reg['x'] * 1920))
             self.sp_y.setValue(int(reg['y'] * 1080))
             self.sp_w.setValue(int(reg['w'] * 1920))
             self.sp_h.setValue(int(reg['h'] * 1080))
             self._sync_to_cfg()
+            
         self.dlg.show()
         self.dlg.raise_()
+        self.dlg.activateWindow()
 
     def _show_custom_dialog(self, title, msg, is_input=False):
         W, C = self._W, self._C
@@ -716,8 +929,11 @@ class ReplicatorHub:
         Qt = C.Qt
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
         self.window.setWindowFlags(flags)
-        self.window.setMinimumSize(260, 320)
-        self.window.resize(260, 380)
+        self.window.setMinimumSize(286, 350)
+        self.window.resize(286, 420)
+        
+        self._next_x = 100  # Para posicionamiento en cascada/tiled
+        self._sync_all = False # Estado del toggle
         
         # Estilo HUB Premium (Como el de ISK y Wizard)
         self.window.setStyleSheet("""
@@ -790,6 +1006,23 @@ class ReplicatorHub:
         bo.setStyleSheet("QPushButton { background: rgba(255,50,50,0.08); border: 1px solid rgba(255,60,60,0.25); color: rgba(255,120,120,0.7); font-size: 9px; padding: 4px 12px; font-weight:bold; } "
                          "QPushButton:hover { background: rgba(255,50,50,0.22); border-color: #ff4444; color: #ff6666; }")
         bo.clicked.connect(self.close_all); fl.addWidget(bo)
+        # Toggle de Sincronización
+        sync_row = W.QWidget(); sync_row.setFixedHeight(30)
+        sl = W.QHBoxLayout(sync_row); sl.setContentsMargins(12,0,12,0)
+        self.chk_sync = W.QCheckBox("Sincronizar Manipulación")
+        self.chk_sync.setStyleSheet("QCheckBox { color: #00ff9d; font-size: 10px; }")
+        self.chk_sync.stateChanged.connect(self._on_sync_toggled)
+        sl.addWidget(self.chk_sync)
+        # Botón de Limpieza de Configuración
+        clear_row = W.QWidget(); clear_row.setFixedHeight(30)
+        cl = W.QHBoxLayout(clear_row); cl.setContentsMargins(12,0,12,0)
+        btn_clear = W.QPushButton("🗑️ Limpiar Configuración Antigua")
+        btn_clear.setStyleSheet("QPushButton { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #aaa; font-size: 9px; padding: 2px; } "
+                                "QPushButton:hover { background: rgba(255,50,50,0.15); border-color: #ff4444; color: #fff; }")
+        btn_clear.clicked.connect(self._clear_all_config)
+        cl.addWidget(btn_clear)
+        lay.addWidget(clear_row)
+
         lay.addWidget(footer)
 
         # Lógica de Arrastre (Conectada directamente a la ventana)
@@ -997,15 +1230,48 @@ class ReplicatorHub:
         if active: self._launch_one(title)
         else: self._stop_one(title)
 
+    def _on_sync_toggled(self, state):
+        self._sync_all = bool(state)
+        logger.info(f"Sincronización global: {self._sync_all}")
+
+    def _on_region_changed(self, title, new_region):
+        """Callback cuando una réplica cambia su región (zoom/pan)."""
+        if not self._sync_all:
+            return
+        
+        # Sincronizar a todas las demás
+        self._region = new_region.copy()
+        for t, ov in self._overlays.items():
+            if t != title:
+                # Bloqueamos la emisión de señal para evitar bucles infinitos
+                ov.set_region(new_region, emit_signal=False)
+
     def _launch_one(self, title):
         if title in self._overlays: return
         h = self._handles.get(title)
         if not h: return
         from overlay.replication_overlay import ReplicationOverlay
         from overlay import replicator_config as cfg_lib
-        ov = ReplicationOverlay(title=title, hwnd_getter=lambda t=title: self._handles.get(t),
-                                region_rel=self._region, cfg=self._cfg, 
+        
+        # Cada réplica tiene su PROPIA COPIA de la región para ser independiente por defecto
+        ov_region = self._region.copy()
+
+        ov = ReplicationOverlay(title=title, hwnd=h,
+                                region_rel=ov_region, cfg=self._cfg, 
                                 save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
+        
+        # Conectar señal de cambio de región para sincronización
+        ov.region_changed.connect(self._on_region_changed)
+
+        # Posicionamiento 100x100 en GRILLA (6 por fila)
+        # Usamos la cantidad de overlays activos para calcular la posición
+        count = len(self._overlays)
+        col = count % 6
+        row = count // 6
+        
+        ov.resize(100, 100)
+        ov.move(100 + col * 110, 100 + row * 110)
+
         # CONEXIÓN CRÍTICA: Re-selección de zona desde el HUB
         try:
             from controller.tray_manager import _GLOBAL_TRAY
@@ -1019,12 +1285,24 @@ class ReplicatorHub:
         try:
             if title in self._overlays:
                 ov = self._overlays.pop(title)
-                # Desconectar señales antes de cerrar para evitar llamadas a objetos borrados
+                # Desconectar señales de forma segura
                 try: ov.selection_requested.disconnect()
                 except: pass
+                try: ov.region_changed.disconnect()
+                except: pass
+                
                 ov.close()
         except Exception as e:
             logger.error(f"Error al detener réplica {title}: {e}")
+
+    def _clear_all_config(self):
+        """Limpia todos los estados guardados de las réplicas para empezar de cero."""
+        from PySide6.QtCore import QSettings
+        s = QSettings("EVE_iT", "Replicator")
+        s.clear()
+        logger.info("Configuración del Replicador reseteada.")
+        # Opcional: Cerrar todo para forzar recreación
+        self.close_all()
 
     def _adj_op(self, title, d):
         if title in self._overlays:
