@@ -109,7 +109,7 @@ if IS_WINDOWS:
             
             # Excluir explícitamente nuestra propia aplicación, lanzadores y NAVEGADORES
             # Evita que el auto-recovery se confunda con pestañas de búsqueda o foros.
-            EXCLUSIONS = ["EVE IT", "LANZADOR", "EXPLORADOR", "CHROME", "FIREFOX", "EDGE", "BRAVE", "GOOGLE"]
+            EXCLUSIONS = ["EVE IT", "EVE IT -", "REPLICATOR", "OVERLAY", "LANZADOR", "EXPLORADOR", "CHROME", "FIREFOX", "EDGE", "BRAVE", "GOOGLE"]
             if any(exc in t_upper for exc in EXCLUSIONS):
                 is_eve = False
             
@@ -226,17 +226,20 @@ if IS_WINDOWS:
             if hdc_window:
                 if gdi32.StretchBlt(mdc, 0, 0, out_w, out_h, hdc_window, rx, ry, rw, rh, SRCCOPY):
                     # Verificar que obtuvimos contenido real (al menos 1 píxel no-negro)
-                    points = [
-                        (out_w//2, out_h//2),
-                        (out_w//4, out_h//4),
-                        (3*out_w//4, out_h//4),
-                        (out_w//4, 3*out_h//4),
-                        (3*out_w//4, 3*out_h//4)
-                    ]
-                    for px, py in points:
-                        if gdi32.GetPixel(mdc, px, py) != 0:
-                            captured = True
-                            break
+                                    if out_w < 80 or out_h < 80:
+                                                            captured = True  # Guard: overlay muy pequeño, skip validacion pixel
+                                    else:
+                            points = [
+                                (out_w//2, out_h//2),
+                                (out_w//4, out_h//4),
+                                (3*out_w//4, out_h//4),
+                                (out_w//4, 3*out_h//4),
+                                (3*out_w//4, 3*out_h//4)
+                            ]
+                            for px, py in points:
+                                if gdi32.GetPixel(mdc, px, py) != 0:
+                                    captured = True
+                                    break
                 user32.ReleaseDC(hwnd, hdc_window)
 
             # --- RUTA 2: PrintWindow (para ventanas tapadas u opacas) ---
