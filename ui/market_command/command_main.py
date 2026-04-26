@@ -37,12 +37,46 @@ class MarketCommandMain(QWidget):
         nav_layout.addWidget(self.btn_advanced)
         nav_layout.addStretch()
         
-        # Status Label inside Nav
-        self.lbl_mode = QLabel("ANÁLISIS OPERATIVO")
-        self.lbl_mode.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800; letter-spacing: 1px;")
+        # SSO Section
+        self.btn_sso = QPushButton("VINCULAR PERSONAJE")
+        self.btn_sso.setCursor(Qt.PointingHandCursor)
+        self.btn_sso.setStyleSheet("""
+            QPushButton {
+                background: #1e293b;
+                color: #94a3b8;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                font-size: 8px;
+                font-weight: 800;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background: #334155;
+                color: #f1f5f9;
+            }
+        """)
+        from core.auth_manager import AuthManager
+        self.btn_sso.clicked.connect(AuthManager.instance().login)
+        AuthManager.instance().authenticated.connect(self.on_auth_success)
+        
+        nav_layout.addWidget(self.btn_sso)
         nav_layout.addWidget(self.lbl_mode)
         
         self.layout.addWidget(self.nav_frame)
+
+    def on_auth_success(self, char_name, tokens):
+        self.btn_sso.setText(f"● {char_name.upper()}")
+        self.btn_sso.setStyleSheet("""
+            QPushButton {
+                background: rgba(16, 185, 129, 0.1);
+                color: #10b981;
+                border: 1px solid rgba(16, 185, 129, 0.2);
+                border-radius: 4px;
+                font-size: 8px;
+                font-weight: 800;
+                padding: 4px 10px;
+            }
+        """)
         
         # 2. Stacked Widget
         self.stack = QStackedWidget()

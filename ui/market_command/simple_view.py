@@ -219,10 +219,38 @@ class MarketSimpleView(QWidget):
     def on_item_action(self, action, item_name):
         if action == "copied":
             self.lbl_status.setText(f"● PORTAPAPELES: {item_name.upper()}")
-            self.lbl_status.setStyleSheet("color: #a78bfa; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
-        elif action == "double_clicked":
-            self.lbl_status.setText(f"● JUEGO (COPIADO): BUSCA {item_name.upper()}")
-            self.lbl_status.setStyleSheet("color: #60a5fa; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        elif action == "opened_in_game":
+            self.lbl_status.setText(f"● EVE ONLINE: MERCADO ABIERTO ({item_name.upper()})")
+            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+
+    def on_item_double_clicked(self, item):
+        row = item.row()
+        item_name = self.table.item(row, 1).text()
+        
+        # Buscar el ID del ítem
+        type_id = None
+        for opp in getattr(self, 'all_opportunities', []):
+            if opp.item_name == item_name:
+                type_id = opp.type_id
+                break
+        
+        # Intentar abrir en juego si hay token
+        from core.auth_manager import AuthManager
+        auth = AuthManager.instance()
+        
+        if type_id and auth.current_token and auth.current_token != "MOCK_TOKEN":
+            from core.esi_client import ESIClient
+            client = ESIClient()
+            success = client.open_market_window(type_id, auth.current_token)
+            if success:
+                self.on_item_action("opened_in_game", item_name)
+                return
+
+        # Fallback: Copiar al portapapeles
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(item_name)
+        self.on_item_action("copied", item_name)
 
     def on_refresh_clicked(self):
         if self.worker and self.worker.isRunning():

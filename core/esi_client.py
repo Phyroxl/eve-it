@@ -125,3 +125,21 @@ class ESIClient:
         except Exception:
             pass
         return []
+
+    def open_market_window(self, type_id: int, access_token: str):
+        """
+        Abre la ventana de mercado regional en el cliente de EVE Online.
+        Requiere scope: esi-ui.open_window.v1
+        """
+        endpoint = f"/ui/openwindow/marketdetails/"
+        params = {'type_id': type_id}
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        self._rate_limit()
+        try:
+            # ESI UI endpoints are POST
+            response = self.session.post(f"{self.BASE_URL}{endpoint}", params=params, headers=headers, timeout=10)
+            return response.status_code == 204 # 204 No Content is success for this endpoint
+        except Exception as e:
+            print(f"Error opening market window: {e}")
+            return False
