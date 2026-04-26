@@ -14,7 +14,7 @@ class MarketAdvancedView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
-        self.icon_cache = {}
+        self.all_opportunities = []
         self.setup_ui()
         
     def setup_ui(self):
@@ -278,6 +278,10 @@ class MarketAdvancedView(QWidget):
         lbl.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800;")
         v = QLabel(val)
         v.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 600;")
+        
+        # Guardar referencia al label de valor
+        w.val_lbl = v
+        
         l.addWidget(lbl)
         l.addWidget(v)
         return w
@@ -333,6 +337,7 @@ class MarketAdvancedView(QWidget):
         self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_finished(self, opportunities):
+        self.all_opportunities = opportunities
         self.table.populate(opportunities)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
@@ -353,11 +358,10 @@ class MarketAdvancedView(QWidget):
         item_name = self.table.item(row, 1).text()
         
         opp = None
-        if hasattr(self.worker, 'last_results'):
-            for o in self.worker.last_results:
-                if o.item_name == item_name:
-                    opp = o
-                    break
+        for o in self.all_opportunities:
+            if o.item_name == item_name:
+                opp = o
+                break
         
         if opp:
             self.update_detail(opp)
@@ -366,15 +370,15 @@ class MarketAdvancedView(QWidget):
         self.det_name.setText(opp.item_name.upper())
         self.det_type_id.setText(f"TYPE ID: {opp.type_id}")
         
-        # Metrics
-        self.det_buy.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.best_buy_price:,.2f}")
-        self.det_sell.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.best_sell_price:,.2f}")
-        self.det_margin.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.margin_net_pct:.2f}%")
-        self.det_profit_u.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.profit_per_unit:,.2f}")
-        self.det_profit_d.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.profit_day_est:,.0f}")
-        self.det_vol.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(str(opp.liquidity.volume_5d))
-        self.det_depth.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.liquidity.buy_orders_count} / {opp.liquidity.sell_orders_count}")
-        self.det_hist.findChild(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{opp.liquidity.history_days} días")
+        # Metrics using stored references
+        self.det_buy.val_lbl.setText(f"{opp.best_buy_price:,.2f}")
+        self.det_sell.val_lbl.setText(f"{opp.best_sell_price:,.2f}")
+        self.det_margin.val_lbl.setText(f"{opp.margin_net_pct:.2f}%")
+        self.det_profit_u.val_lbl.setText(f"{opp.profit_per_unit:,.2f}")
+        self.det_profit_d.val_lbl.setText(f"{opp.profit_day_est:,.0f}")
+        self.det_vol.val_lbl.setText(str(opp.liquidity.volume_5d))
+        self.det_depth.val_lbl.setText(f"{opp.liquidity.buy_orders_count} / {opp.liquidity.sell_orders_count}")
+        self.det_hist.val_lbl.setText(f"{opp.liquidity.history_days} días")
         
         # Score Breakdown
         sb = opp.score_breakdown

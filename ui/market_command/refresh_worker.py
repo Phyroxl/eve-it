@@ -103,16 +103,23 @@ class MarketRefreshWorker(QThread):
                         names_dict[n['id']] = n['name']
             
             self.emit_progress(90, "Parsing opportunities...")
+            # Note: names_dict only has names for candidates
             opps = parse_opportunities(orders, history_dict, names_dict, self.config)
             
+            # FILTRAR: Solo quedarnos con los que realmente procesamos (candidatos)
+            # y que pasan los filtros finales del motor.
+            final_opps = [o for o in opps if o.type_id in candidates]
+            from core.market_engine import apply_filters
+            final_opps = apply_filters(final_opps, self.config)
+            
             self.emit_progress(95, "Scoring...")
-            for opp in opps:
+            for opp in final_opps:
                 opp.score_breakdown = score_opportunity(opp, self.config)
                 
-            self.last_results = opps
+            self.last_results = final_opps
             self.emit_progress(100, "Done")
-            self.finished.emit(opps)
-            self.data_ready.emit(opps)
+            self.finished.emit(final_opps)
+            self.data_ready.emit(final_opps)
             
         except Exception as e:
             self.emit_error(str(e))
