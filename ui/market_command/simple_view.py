@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame, QGridLayout
 )
 from PySide6.QtCore import Qt
 from .widgets import MarketTableWidget
@@ -16,6 +16,26 @@ class MarketSimpleView(QWidget):
         self.current_config = FilterConfig()
         self.setup_ui()
         
+    def create_insight_box(self, title, color):
+        f = QFrame()
+        f.setStyleSheet("""
+            QFrame {
+                background-color: #1a1e23;
+                border: 1px solid #2d3748;
+                border-radius: 4px;
+            }
+        """)
+        l = QVBoxLayout(f)
+        l.setContentsMargins(12, 10, 12, 10)
+        l.setSpacing(2)
+        t = QLabel(title)
+        t.setStyleSheet(f"color: {color}; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; border: none; background: transparent;")
+        v = QLabel("---")
+        v.setStyleSheet("color: #f1f5f9; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+        l.addWidget(t)
+        l.addWidget(v)
+        return f, v
+
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
         
@@ -76,44 +96,109 @@ class MarketSimpleView(QWidget):
         # Right Panel: Table and Progress
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
+        right_layout.setSpacing(10)
+        
+        # HEADER
+        header_l = QHBoxLayout()
+        title_lbl = QLabel("MARKET COMMAND")
+        title_lbl.setStyleSheet("color: #e2e8f0; font-size: 16px; font-weight: 800; letter-spacing: 1px;")
+        
+        self.lbl_status = QLabel("● ESPERANDO DATOS DE JITA")
+        self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        
+        header_l.addWidget(title_lbl)
+        header_l.addStretch()
+        header_l.addWidget(self.lbl_status)
+        right_layout.addLayout(header_l)
+        
+        # INSIGHTS
+        insights_l = QHBoxLayout()
+        insights_l.setSpacing(10)
+        self.box_top, self.lbl_sum_top = self.create_insight_box("Mejor Oportunidad", "#fbbf24")
+        self.box_liq, self.lbl_sum_liquid = self.create_insight_box("Más Líquida", "#60a5fa")
+        self.box_mar, self.lbl_sum_margin = self.create_insight_box("Mayor Margen Sólido", "#34d399")
+        self.box_cnt, self.lbl_sum_count = self.create_insight_box("Total Filtros", "#a78bfa")
+        self.box_ins, self.lbl_sum_insight = self.create_insight_box("Lectura Mercado", "#94a3b8")
+        
+        insights_l.addWidget(self.box_top)
+        insights_l.addWidget(self.box_liq)
+        insights_l.addWidget(self.box_mar)
+        insights_l.addWidget(self.box_cnt)
+        insights_l.addWidget(self.box_ins)
+        right_layout.addLayout(insights_l)
         
         self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(3)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background-color: #1e293b; border: none; }
+            QProgressBar::chunk { background-color: #3b82f6; }
+        """)
         self.progress_bar.setVisible(False)
-        
-        self.lbl_status = QLabel("Listo - Presiona Refrescar para cargar datos de Jita")
-        self.lbl_status.setAlignment(Qt.AlignCenter)
-        
-        self.summary_panel = QFrame()
-        self.summary_panel.setFrameShape(QFrame.StyledPanel)
-        sl = QHBoxLayout(self.summary_panel)
-        self.lbl_sum_top = QLabel("Mejor: ---")
-        self.lbl_sum_liquid = QLabel("Más Líquida: ---")
-        self.lbl_sum_count = QLabel("Total: 0")
-        self.lbl_sum_insight = QLabel("Estado: Esperando datos")
-        self.lbl_sum_insight.setStyleSheet("color: #60a5fa; font-weight: bold;")
-        sl.addWidget(self.lbl_sum_top)
-        sl.addWidget(self.lbl_sum_liquid)
-        sl.addWidget(self.lbl_sum_count)
-        sl.addWidget(self.lbl_sum_insight)
+        right_layout.addWidget(self.progress_bar)
 
         self.table = MarketTableWidget()
         self.table.itemSelectionChanged.connect(self.on_table_selection)
-        
-        self.detail_panel = QGroupBox("Detalle de la Oportunidad")
-        dl = QFormLayout(self.detail_panel)
-        self.lbl_det_item = QLabel("---")
-        self.lbl_det_prices = QLabel("---")
-        self.lbl_det_profit = QLabel("---")
-        self.lbl_det_score = QLabel("---")
-        dl.addRow("Item:", self.lbl_det_item)
-        dl.addRow("Buy/Sell:", self.lbl_det_prices)
-        dl.addRow("Net Profit/Margin:", self.lbl_det_profit)
-        dl.addRow("Score/Riesgo:", self.lbl_det_score)
-        
-        right_layout.addWidget(self.summary_panel)
-        right_layout.addWidget(self.progress_bar)
-        right_layout.addWidget(self.lbl_status)
         right_layout.addWidget(self.table, 1)
+        
+        # DETAIL PANEL
+        self.detail_panel = QFrame()
+        self.detail_panel.setFixedHeight(110)
+        self.detail_panel.setStyleSheet("""
+            QFrame { background-color: #0f172a; border: 1px solid #1e293b; border-radius: 4px; }
+            QLabel { border: none; background: transparent; }
+        """)
+        dl = QHBoxLayout(self.detail_panel)
+        dl.setContentsMargins(15, 15, 15, 15)
+        dl.setSpacing(20)
+        
+        # Section 1: Identity
+        id_l = QVBoxLayout()
+        self.lbl_det_icon = QLabel()
+        self.lbl_det_icon.setFixedSize(64, 64)
+        self.lbl_det_item = QLabel("SELECCIONA UN ITEM")
+        self.lbl_det_item.setStyleSheet("color: #f8fafc; font-size: 15px; font-weight: 900; letter-spacing: 0.5px;")
+        self.lbl_det_tags = QLabel("---")
+        self.lbl_det_tags.setStyleSheet("color: #60a5fa; font-size: 11px; font-weight: 800;")
+        id_l.addWidget(self.lbl_det_item)
+        id_l.addWidget(self.lbl_det_tags)
+        id_l.addStretch()
+        
+        dl.addWidget(self.lbl_det_icon)
+        dl.addLayout(id_l, 2)
+        
+        # Section 2: Metrics
+        m_l = QGridLayout()
+        m_l.setSpacing(8)
+        m_l.addWidget(QLabel("BUY PRICE", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"), 0, 0)
+        self.lbl_det_buy = QLabel("---", styleSheet="color: #e2e8f0; font-size: 13px; font-weight: 800;")
+        m_l.addWidget(self.lbl_det_buy, 1, 0)
+        
+        m_l.addWidget(QLabel("SELL PRICE", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"), 0, 1)
+        self.lbl_det_sell = QLabel("---", styleSheet="color: #e2e8f0; font-size: 13px; font-weight: 800;")
+        m_l.addWidget(self.lbl_det_sell, 1, 1)
+        
+        m_l.addWidget(QLabel("NET PROFIT", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"), 2, 0)
+        self.lbl_det_profit = QLabel("---", styleSheet="color: #34d399; font-size: 14px; font-weight: 900;")
+        m_l.addWidget(self.lbl_det_profit, 3, 0)
+        
+        m_l.addWidget(QLabel("NET MARGIN", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"), 2, 1)
+        self.lbl_det_margin = QLabel("---", styleSheet="color: #3b82f6; font-size: 14px; font-weight: 900;")
+        m_l.addWidget(self.lbl_det_margin, 3, 1)
+        
+        dl.addLayout(m_l, 2)
+        
+        # Section 3: Score Breakdown
+        s_l = QVBoxLayout()
+        s_l.setSpacing(2)
+        s_l.addWidget(QLabel("SCORE & RIESGO", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"))
+        self.lbl_det_score = QLabel("0.0", styleSheet="color: #f1f5f9; font-size: 24px; font-weight: 900;")
+        self.lbl_det_pens = QLabel("Penalizaciones: Ninguna", styleSheet="color: #f87171; font-size: 10px; font-weight: 600;")
+        s_l.addWidget(self.lbl_det_score)
+        s_l.addWidget(self.lbl_det_pens)
+        s_l.addStretch()
+        dl.addLayout(s_l, 2)
+
         right_layout.addWidget(self.detail_panel)
         
         main_layout.addWidget(filter_panel)
@@ -128,7 +213,8 @@ class MarketSimpleView(QWidget):
         self.btn_refresh.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.lbl_status.setText("Iniciando conexión ESI...")
+        self.lbl_status.setText("● OBTENIENDO MERCADO (ESI)...")
+        self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         
         self.worker = MarketRefreshWorker(region_id=10000002) # Default The Forge
         self.worker.config = self.current_config
@@ -139,19 +225,21 @@ class MarketSimpleView(QWidget):
         
     def on_progress(self, pct, text):
         self.progress_bar.setValue(pct)
-        self.lbl_status.setText(text)
+        self.lbl_status.setText(f"● {text.upper()}")
         
     def on_data_ready(self, opps):
         self.btn_refresh.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.lbl_status.setText(f"Cargadas {len(opps)} oportunidades desde ESI.")
+        self.lbl_status.setText("● SISTEMA LISTO")
+        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         self.all_opportunities = opps
         self.apply_and_display()
         
     def on_error(self, err_msg):
         self.btn_refresh.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.lbl_status.setText(f"Error: {err_msg}")
+        self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
+        self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         
     def update_config_from_ui(self):
         self.current_config.capital_max = self.spin_capital.value()
@@ -173,24 +261,38 @@ class MarketSimpleView(QWidget):
         top_50 = filtered[:50]
         self.table.populate(top_50)
         
-        self.lbl_sum_count.setText(f"Total tras filtros: {len(filtered)}")
+        self.lbl_sum_count.setText(f"{len(filtered)}")
         if top_50:
-            self.lbl_sum_top.setText(f"Mejor: {top_50[0].item_name}")
+            self.lbl_sum_top.setText(top_50[0].item_name)
             liquid_opp = max(filtered, key=lambda x: x.liquidity.volume_5d)
-            self.lbl_sum_liquid.setText(f"Más Líquida: {liquid_opp.item_name} ({liquid_opp.liquidity.volume_5d} vol)")
-            if len(filtered) > 100:
-                self.lbl_sum_insight.setText("Estado: Mercado activo, muchas opciones.")
+            self.lbl_sum_liquid.setText(f"{liquid_opp.item_name}")
+            
+            solid_opps = [o for o in filtered if "Sólida" in o.tags]
+            if solid_opps:
+                best_solid = max(solid_opps, key=lambda x: x.margin_net_pct)
+                self.lbl_sum_margin.setText(f"{best_solid.item_name} ({best_solid.margin_net_pct:.1f}%)")
             else:
-                self.lbl_sum_insight.setText("Estado: Mercado selectivo o filtros restrictivos.")
+                self.lbl_sum_margin.setText("Ninguna")
+            
+            if len(filtered) > 50:
+                self.lbl_sum_insight.setText("MERCADO SALUDABLE")
+                self.lbl_sum_insight.setStyleSheet("color: #34d399; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+            else:
+                self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
+                self.lbl_sum_insight.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 800; border: none; background: transparent;")
         else:
-            self.lbl_sum_top.setText("Mejor: ---")
-            self.lbl_sum_liquid.setText("Más Líquida: ---")
-            self.lbl_sum_insight.setText("Estado: Sin resultados.")
+            self.lbl_sum_top.setText("---")
+            self.lbl_sum_liquid.setText("---")
+            self.lbl_sum_margin.setText("---")
+            self.lbl_sum_insight.setText("SIN RESULTADOS")
+            self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 13px; font-weight: 800; border: none; background: transparent;")
 
     def on_table_selection(self):
         sel = self.table.selectedItems()
         if not sel:
-            self.lbl_det_item.setText("---")
+            self.lbl_det_item.setText("SELECCIONA UN ITEM")
+            self.lbl_det_tags.setText("---")
+            self.lbl_det_icon.clear()
             return
             
         row = sel[0].row()
@@ -198,22 +300,42 @@ class MarketSimpleView(QWidget):
         
         opp = next((o for o in self.all_opportunities if o.item_name == item_name), None)
         if opp:
-            self.lbl_det_item.setText(f"<b>{opp.item_name}</b> (Vol 5d: {opp.liquidity.volume_5d})")
+            self.lbl_det_item.setText(opp.item_name.upper())
+            tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
+            self.lbl_det_tags.setText(tags_str if tags_str else "SIN ETIQUETAS")
+            
+            # Icon from cache
+            if opp.type_id in self.table.icon_cache:
+                from PySide6.QtGui import QIcon, QPixmap
+                pixmap = self.table.icon_cache[opp.type_id]
+                self.lbl_det_icon.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                self.lbl_det_icon.clear()
             
             try:
                 from utils.formatters import format_isk
                 b_str = format_isk(opp.best_buy_price, short=True)
                 s_str = format_isk(opp.best_sell_price, short=True)
-                p_str = format_isk(opp.profit_per_unit, short=True)
+                p_str = format_isk(opp.profit_per_unit, short=False)
             except ImportError:
                 b_str = f"{opp.best_buy_price:,.0f}"
                 s_str = f"{opp.best_sell_price:,.0f}"
                 p_str = f"{opp.profit_per_unit:,.0f}"
                 
-            self.lbl_det_prices.setText(f"Buy: {b_str} ISK | Sell: {s_str} ISK")
-            self.lbl_det_profit.setText(f"{p_str} ISK ({opp.margin_net_pct:.1f}% Neto)")
+            self.lbl_det_buy.setText(f"{b_str} ISK")
+            self.lbl_det_sell.setText(f"{s_str} ISK")
+            self.lbl_det_profit.setText(f"{p_str} ISK")
+            self.lbl_det_margin.setText(f"{opp.margin_net_pct:.1f}%")
                 
             sb = opp.score_breakdown
-            penalties = ", ".join([f"x{p:.2f}" for p in sb.penalties]) if sb and sb.penalties else "Ninguna"
-            score_str = f"Final: {sb.final_score:.1f}" if sb else "---"
-            self.lbl_det_score.setText(f"{score_str} | Riesgo: {opp.risk_level} | Penalizaciones: {penalties}")
+            if sb:
+                self.lbl_det_score.setText(f"{sb.final_score:.1f}")
+                if sb.final_score > 70: self.lbl_det_score.setStyleSheet("color: #34d399; font-size: 24px; font-weight: 900;")
+                elif sb.final_score > 40: self.lbl_det_score.setStyleSheet("color: #fbbf24; font-size: 24px; font-weight: 900;")
+                else: self.lbl_det_score.setStyleSheet("color: #f87171; font-size: 24px; font-weight: 900;")
+                
+                penalties = ", ".join([f"x{p:.2f}" for p in sb.penalties]) if sb.penalties else "Ninguna"
+                self.lbl_det_pens.setText(f"Riesgo: {opp.risk_level.upper()} | Penalizaciones: {penalties}")
+            else:
+                self.lbl_det_score.setText("---")
+                self.lbl_det_pens.setText("---")

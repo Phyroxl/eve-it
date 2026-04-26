@@ -114,3 +114,33 @@ Se ha refactorizado la lógica de inicialización y renderizado del MVP para gar
 - [x] Los ítems cargan correctamente su icono desde `images.evetech.net`.
 - [x] La tabla no se bloquea durante la carga de las imágenes.
 - [x] La caché de imágenes (`self.icon_cache`) previene descargas repetidas.
+
+---
+
+# ANTIGRAVITY TASK: EVE iT Market Command - Mejora Visual Premium
+
+## STATUS: COMPLETED
+
+## COMPLETED PHASE
+Remodelación Visual Premium - EVE iT Market Command
+
+## SUMMARY
+Se ha elevado radicalmente la estética y usabilidad del modo simple, sin añadir complejidad funcional pero transformando la experiencia en algo verdaderamente premium.
+1. **Insights Superiores:** Se han reemplazado los textos sueltos por tarjetas analíticas (estilo `AnalyticBox`) que muestran el top del mercado en un vistazo: Mejor Oportunidad, Más Líquida, Mayor Margen Sólido, y el estado de la búsqueda.
+2. **Tabla Táctica:** La tabla (`MarketTableWidget`) tiene un diseño renovado (sin grid molesto, fondo transparente, colores distintivos).
+    - Tamaños de fila de 45px para integrar los íconos de los ítems con el texto alineado.
+    - Las métricas clave (Margen, Profit, Score) usan colores semánticos (verde/ambar/rojo) y pesos tipográficos claros para guiar el ojo instantáneamente.
+    - Las *Etiquetas* ahora se formatean como `[RÁPIDA]`, `[SÓLIDA]` en azul táctico (`#60a5fa`).
+3. **Detalle de Item Consolidado:** El panel inferior ahora parece un módulo militar/espacial de lectura de datos. Incluye el ícono a 64x64px escalado suavemente, grandes indicadores numéricos para el Profit Neto y el Score Final, y una disposición en celdas (`QGridLayout`) con excelente balance.
+4. **Estado de Carga Premium:** La barra de carga y los estados de texto ya no son grises genéricos, ahora acompañan con un azul vibrante mientras escanean, e informan con verde esmeralda `● SISTEMA LISTO` cuando finalizan.
+
+## FILES_CHANGED
+- `ui/market_command/simple_view.py` (Rediseño de header, tarjetas de insight, barra de progreso y panel de detalle con grids).
+- `ui/market_command/widgets.py` (Estilos CSS de la tabla, alineaciones, alturas de fila y colores condicionales en los Items).
+
+## CHECKS
+- [x] Los badges de etiquetas (Rápida, Sólida...) se formatean bien en la tabla.
+- [x] El detalle inferior muestra claramente la jerarquía visual pedida (Ícono, Buy/Sell, Profit/Margen, Score/Riesgo).
+- [x] El feedback visual del refresco da sensación "Command Center".
+- [x] La velocidad sigue siendo instantánea para la renderización.
+- [x] Estilo consistente con `main_suite_window.py` (colores grises oscuros, azules tácticos, bordes delgados).
