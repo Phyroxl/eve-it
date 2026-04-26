@@ -1,5 +1,7 @@
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 class CustomTableWidgetItem(QTableWidgetItem):
     def __init__(self, display_text, sort_value):
@@ -25,6 +27,11 @@ class MarketTableWidget(QTableWidget):
         self.setSelectionBehavior(QTableWidget.SelectRows)
         self.setSelectionMode(QTableWidget.SingleSelection)
         self.setSortingEnabled(True)
+        from PySide6.QtCore import QSize
+        self.setIconSize(QSize(32, 32))
+        
+        self.net_manager = QNetworkAccessManager(self)
+        self.icon_cache = {}
 
     def populate(self, opportunities):
         self.setSortingEnabled(False)
@@ -34,6 +41,11 @@ class MarketTableWidget(QTableWidget):
             rank = CustomTableWidgetItem(str(row + 1), row + 1)
             
             item = QTableWidgetItem(opp.item_name)
+            # Support for async icon loading
+            if opp.type_id in self.icon_cache:
+                item.setIcon(QIcon(self.icon_cache[opp.type_id]))
+            else:
+                self.load_icon_async(opp.type_id, item)
             
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
@@ -66,3 +78,21 @@ class MarketTableWidget(QTableWidget):
         self.setSortingEnabled(True)
         # Default sort by score descending
         self.sortItems(2, Qt.DescendingOrder)
+
+    def load_icon_async(self, type_id, table_item):
+        url = f"https://images.evetech.net/types/{type_id}/icon?size=32"
+        request = QNetworkRequest(QUrl(url))
+        reply = self.net_manager.get(request)
+        
+        # We need to keep a reference to table_item or find it again.
+        # Capturing variables in a closure for the callback:
+        def on_finished():
+            if reply.error() == QNetworkReply.NoError:
+                data = reply.readAll()
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    self.icon_cache[type_id] = pixmap
+                    table_item.setIcon(QIcon(pixmap))
+            reply.deleteLater()
+            
+        reply.finished.connect(on_finished)

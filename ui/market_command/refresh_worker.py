@@ -37,37 +37,46 @@ class MarketRefreshWorker(QThread):
                 if t not in temp_grouped:
                     temp_grouped[t] = {'buy': [], 'sell': []}
                 if o['is_buy_order']:
-                    temp_grouped[t]['buy'].append(o['price'])
+                    temp_grouped[t]['buy'].append(o)
                 else:
-                    temp_grouped[t]['sell'].append(o['price'])
+                    temp_grouped[t]['sell'].append(o)
             
-            candidates = []
-            for t, prices in temp_grouped.items():
-                if prices['buy'] and prices['sell']:
-                    best_buy = max(prices['buy'])
-                    best_sell = min(prices['sell'])
-                    if best_buy > 0:
+            scored_candidates = []
+            for t, group in temp_grouped.items():
+                if len(group['buy']) >= 2 and len(group['sell']) >= 2:
+                    best_buy = max(o['price'] for o in group['buy'])
+                    best_sell = min(o['price'] for o in group['sell'])
+                    
+                    if best_buy > 0 and best_buy <= self.config.capital_max:
                         spread = ((best_sell - best_buy) / best_buy) * 100
                         if spread <= self.config.spread_max_pct:
-                            # Pre-calculate net margin to save history calls
+                            # Pre-calculate net margin
                             b_fee = self.config.broker_fee_pct / 100.0
                             s_tax = self.config.sales_tax_pct / 100.0
                             profit = best_sell * (1.0 - s_tax - b_fee) - best_buy * (1.0 + b_fee)
                             margin_net = (profit / best_buy) * 100 if best_buy > 0 else 0
                             
                             if margin_net >= self.config.margin_min_pct:
-                                candidates.append(t)
+                                # Heuristic for top N selection
+                                scored_candidates.append({
+                                    'type_id': t,
+                                    'margin': margin_net,
+                                    'profit': profit,
+                                    'orders_count': len(group['buy']) + len(group['sell'])
+                                })
                             
             if not self.is_running: return
+            
+            # Sort candidates by a mix of margin and order activity to find the most viable ones
+            scored_candidates.sort(key=lambda x: x['margin'] * min(x['orders_count'], 50), reverse=True)
+            
+            # Take only the top 150 to guarantee a scan under 20 seconds
+            candidates = [c['type_id'] for c in scored_candidates[:150]]
             
             # Exclude PLEX (type_id 44992)
             if self.config.exclude_plex and 44992 in candidates:
                 candidates.remove(44992)
                 
-            # If still too many candidates (e.g. Jita could have 3000), we might just take top 2000 to avoid locking
-            # But with ESI max 10/s, 2000 is 200 seconds (3 mins). Since it's background, it's fine.
-            # We'll just do it, the cache will speed up subsequent runs immensely.
-            
             total_candidates = len(candidates)
             self.progress_changed.emit(40, f"Fetching history for {total_candidates} items...")
             
