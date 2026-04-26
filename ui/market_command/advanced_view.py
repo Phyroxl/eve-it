@@ -202,8 +202,11 @@ class MarketAdvancedView(QWidget):
         l.addLayout(score_v)
         
         # 4. Operation Recommendation
-        op_v = QVBoxLayout()
-        op_v.setFixedWidth(180)
+        op_container = QFrame()
+        op_container.setFixedWidth(180)
+        op_container.setStyleSheet("background: transparent; border: none;")
+        op_v = QVBoxLayout(op_container)
+        op_v.setContentsMargins(0, 0, 0, 0)
         op_v.setSpacing(8)
         op_v.addWidget(QLabel("RECOMENDACIÓN COMPRA", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"))
         
@@ -220,7 +223,7 @@ class MarketAdvancedView(QWidget):
         op_v.addWidget(self.det_rec_cost)
         op_v.addStretch()
         op_v.addWidget(self.det_risk_badge)
-        l.addLayout(op_v)
+        l.addWidget(op_container)
 
     def create_advanced_spin(self, label, val, min_v, max_v):
         w = QWidget()
