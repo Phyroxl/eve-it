@@ -83,12 +83,10 @@ class MainSuiteWindow(QMainWindow):
         self.nav_l.addWidget(self.logo)
         
         self.btn_dashboard = self.create_nav_button("Dashboard", True)
-        self.btn_market = self.create_nav_button("Mercado")
         self.btn_tools = self.create_nav_button("Herramientas")
         self.btn_settings = self.create_nav_button("Configuración")
         
         self.nav_l.addWidget(self.btn_dashboard)
-        self.nav_l.addWidget(self.btn_market)
         self.nav_l.addWidget(self.btn_tools)
         self.nav_l.addStretch()
         
@@ -115,14 +113,10 @@ class MainSuiteWindow(QMainWindow):
         self.page_settings = self.create_settings_page()
         self.page_detail = self.create_detail_page()
         
-        from ui.market_command.simple_view import MarketSimpleView
-        self.page_market = MarketSimpleView()
-        
         self.stack.addWidget(self.page_dashboard)
         self.stack.addWidget(self.page_tools)
         self.stack.addWidget(self.page_settings)
         self.stack.addWidget(self.page_detail)
-        self.stack.addWidget(self.page_market)
         
         self.content_layout.addWidget(self.stack)
         self.main_layout.addWidget(self.nav_bar); self.main_layout.addWidget(self.content_frame, 1)
@@ -130,12 +124,11 @@ class MainSuiteWindow(QMainWindow):
         self.btn_dashboard.clicked.connect(lambda: self.switch_page(0, "Dashboard"))
         self.btn_tools.clicked.connect(lambda: self.switch_page(1, "Herramientas"))
         self.btn_settings.clicked.connect(lambda: self.switch_page(2, "Configuración"))
-        self.btn_market.clicked.connect(lambda: self.switch_page(4, "Market Command"))
 
     def switch_page(self, index, title):
         self.stack.setCurrentIndex(index); self.section_title.setText(title)
         
-        idx_to_btn = {0: self.btn_dashboard, 1: self.btn_tools, 2: self.btn_settings, 4: getattr(self, 'btn_market', None)}
+        idx_to_btn = {0: self.btn_dashboard, 1: self.btn_tools, 2: self.btn_settings}
         
         for idx, b in idx_to_btn.items():
             if b:
@@ -927,7 +920,20 @@ class MainSuiteWindow(QMainWindow):
     def _on_replicator_clicked(self):
         if self.tray_manager: self.tray_manager._on_replicator()
     def _on_market_clicked(self):
-        self.switch_page(4, "Market Command")
+        if not hasattr(self, '_market_window') or self._market_window is None:
+            from ui.market_command.simple_view import MarketSimpleView
+            self._market_window = MarketSimpleView()
+            self._market_window.setWindowTitle("EVE iT Market Command - Modo Simple")
+            self._market_window.resize(1000, 600)
+            # Configurar como Tool para que no aparezca en la barra de tareas
+            self._market_window.setWindowFlags(Qt.Window | Qt.Tool | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.CustomizeWindowHint)
+            # Aplicar hoja de estilo global si es necesario
+            from ui.desktop.styles import MAIN_STYLE
+            self._market_window.setStyleSheet(MAIN_STYLE)
+        
+        self._market_window.show()
+        self._market_window.raise_()
+        self._market_window.activateWindow()
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
     def load_settings(self):

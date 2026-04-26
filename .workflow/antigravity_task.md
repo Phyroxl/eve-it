@@ -157,7 +157,7 @@ Usabilidad Premium, Integración y Decisiones Operativas - EVE iT Market Command
 ## SUMMARY
 Se han resuelto las peticiones de usabilidad y QoL (Quality of Life) demandadas para transformar Market Command en una herramienta verdaderamente madura y útil, integrándola completamente con la Suite.
 
-1. **Integración Nativa en Main Suite:** En lugar de abrir una ventana popup desconectada, Market Command ahora forma parte de la barra de navegación lateral (`QStackedWidget`) de la Main Suite. Se accede haciendo clic en "Mercado" y comparte la misma geometría y contexto del programa.
+1. **Integración como Herramienta Popup:** Market Command ahora se comporta exactamente como el Traductor o el Replicador. Se abre como una ventana independiente (popup) al hacer clic en su tarjeta en "Herramientas", pero gracias al flag `Qt.Tool`, no genera un icono independiente en la barra de tareas de Windows, manteniendo la Suite limpia y organizada.
 2. **Ayuda Contextual Inteligente:** Se han inyectado tooltips (`setToolTip`) en todos los encabezados de la tabla con explicaciones breves, claras y precisas sobre cada métrica (ej: qué es exactamente el score, cómo se calcula el spread, etc.).
 3. **Cantidad Recomendada de Compra (Decisión Operativa):** El panel inferior calcula ahora un "Safe Qty" basado en un ratio del volumen de 5 días (aprox. 1.5 días de liquidez), castigado automáticamente a la mitad si el riesgo es "Alto". Se compara esto con el Capital Máximo del usuario y se sugiere una cantidad de unidades a comprar y su Coste Estimado.
 4. **Tabla Flexible (Columnas y Sidebar):** 
@@ -173,7 +173,7 @@ Se han resuelto las peticiones de usabilidad y QoL (Quality of Life) demandadas 
 - `ui/market_command/widgets.py` (Headers reordenables, tooltips interactivos, `QMenu` para Right-Click, doble click action).
 
 ## CHECKS
-- [x] Market Command abre integrado dentro de la suite.
+- [x] Market Command abre como popup (sin icono en barra de tareas).
 - [x] Tabla reordenable por arrastre.
 - [x] Tooltips de ayuda en encabezados.
 - [x] Click derecho y doble click funcionales con feedback UI en Simple View.
