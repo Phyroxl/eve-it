@@ -28,6 +28,7 @@ class MarketOpportunity:
     profit_day_est: float
     spread_pct: float
     risk_level: str
+    tags: List[str]
     liquidity: LiquidityMetrics
     score_breakdown: Optional[ScoreBreakdown] = None
 
@@ -38,3 +39,5 @@ class FilterConfig:
     margin_min_pct: float = 5.0
     spread_max_pct: float = 40.0
     exclude_plex: bool = True
+    broker_fee_pct: float = 3.0
+    sales_tax_pct: float = 8.0

@@ -61,36 +61,30 @@ No refactorizar. Cambios mínimos y quirúrgicos.
 
 ---
 
-# ANTIGRAVITY TASK: EVE iT Market Command - MVP Fase 1
+# ANTIGRAVITY TASK: EVE iT Market Command - Mejoras MVP Modo Simple
 
 ## STATUS: COMPLETED
 
 ## COMPLETED PHASE
-Implementación MVP Fase 1 - EVE iT Market Command
+Mejora de Precisión y Usabilidad - EVE iT Market Command
 
 ## SUMMARY
-Implementada la Fase 1 del módulo EVE iT Market Command. 
-El módulo actúa como asistente de station trading, conectándose directamente a la API ESI de EVE Online para presentar oportunidades rentables en el mercado de la región objetivo (por defecto Jita/The Forge).
-Se creó un sistema completo con:
-1. `ESIClient` en `core/esi_client.py` con caché en memoria, rate-limit de 10 req/s, y soporte para fetch de orders y history.
-2. `core/market_engine.py` encargado de procesar órdenes, calcular márgenes (spread, beneficio por unidad), filtrar las oportunidades en base a reglas duras y calcular un score (0-100) aplicando penalizaciones multiplicativas por riesgo de mercado.
-3. Modelos de datos dedicados en `core/market_models.py`.
-4. Una vista principal "Simple View" (`ui/market_command/simple_view.py`) montada en PySide6 con filtros configurables en el panel lateral, tabla interactiva, y ejecución asíncrona a través de `QThread` (`refresh_worker.py`).
-5. Integración del "Market Command" en la pestaña "Herramientas" de la Suite Principal de la aplicación (`MainSuiteWindow`).
-
-## CHECKS COMPLETADOS
-- [x] ESI client funciona y cachea correctamente
-- [x] Motor de scoring produce resultados ordenados por score
-- [x] UI carga y muestra tabla con datos reales de ESI
-- [x] Refresco background no bloquea la UI
-- [x] Filtros básicos funcionan correctamente
+Se ha mejorado el MVP del Market Command en 4 puntos clave, enfocándose en la precisión matemática, la utilidad de la UI y el rendimiento de red.
+1. **Net Profit:** El profit ahora deduce un porcentaje configurable de Broker Fee y Sales Tax.
+2. **Refresh Flow:** Se ha optimizado el refresco calculando el margen neto real de cada candidato *antes* de solicitar su historial, reduciendo masivamente las llamadas inútiles a ESI.
+3. **Simple Insights:** Se añadió un panel superior en la interfaz con lectura rápida del mercado (Mejor, Más Líquida, Total).
+4. **Item Detail & Tags:** Se añadió la columna "Etiquetas" (Rápida, Sólida, Cuidado, etc.) en la tabla y un panel de detalle inferior que se actualiza al seleccionar una fila.
 
 ## FILES_CHANGED
-- `core/market_models.py` (Nuevo)
-- `core/esi_client.py` (Nuevo)
-- `core/market_engine.py` (Nuevo)
-- `ui/market_command/__init__.py` (Nuevo)
-- `ui/market_command/widgets.py` (Nuevo)
-- `ui/market_command/refresh_worker.py` (Nuevo)
-- `ui/market_command/simple_view.py` (Nuevo)
-- `ui/desktop/main_suite_window.py` (Modificado)
+- `core/market_models.py` (Añadido broker_fee_pct, sales_tax_pct y tags)
+- `core/market_engine.py` (Lógica de profit neto y generación de etiquetas)
+- `ui/market_command/refresh_worker.py` (Pre-filtrado de net margin)
+- `ui/market_command/simple_view.py` (Nuevos spinboxes de fees, paneles de resumen y detalle)
+- `ui/market_command/widgets.py` (Añadida la columna de Etiquetas)
+
+## CHECKS
+- [x] Cálculos de profit neto usan nueva lógica deducida de fees.
+- [x] Refresco background pre-filtra candidatos negativos.
+- [x] Panel resumen superior se renderiza bien.
+- [x] Detalle por item funciona al seleccionar fila.
+- [x] Compatibilidad mantenida (sin romper suite actual).

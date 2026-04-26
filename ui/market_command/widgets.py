@@ -14,9 +14,9 @@ class CustomTableWidgetItem(QTableWidgetItem):
 class MarketTableWidget(QTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setColumnCount(8)
+        self.setColumnCount(9)
         self.setHorizontalHeaderLabels([
-            "Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo"
+            "Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas"
         ])
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
@@ -51,6 +51,7 @@ class MarketTableWidget(QTableWidget):
             spread = CustomTableWidgetItem(f"{spread_val:.1f}%", spread_val)
             
             risk = QTableWidgetItem(opp.risk_level)
+            tags_item = QTableWidgetItem(", ".join(opp.tags))
             
             self.setItem(row, 0, rank)
             self.setItem(row, 1, item)
@@ -60,6 +61,7 @@ class MarketTableWidget(QTableWidget):
             self.setItem(row, 5, profit)
             self.setItem(row, 6, spread)
             self.setItem(row, 7, risk)
+            self.setItem(row, 8, tags_item)
             
         self.setSortingEnabled(True)
         # Default sort by score descending

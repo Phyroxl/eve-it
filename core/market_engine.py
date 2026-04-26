@@ -1,7 +1,9 @@
 from typing import List, Dict, Any
 from .market_models import MarketOpportunity, LiquidityMetrics, ScoreBreakdown, FilterConfig
 
-def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Dict[str, Any]]], item_names: Dict[int, str] = None) -> List[MarketOpportunity]:
+def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Dict[str, Any]]], item_names: Dict[int, str] = None, config: FilterConfig = None) -> List[MarketOpportunity]:
+    if config is None:
+        config = FilterConfig()
     if item_names is None:
         item_names = {}
         
@@ -30,11 +32,16 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
         
         if best_buy > 0 and best_sell > 0:
             spread_pct = ((best_sell - best_buy) / best_buy) * 100
-            # Broker fees (approx 3%) and sales tax (approx 8%) -> Total 11% average for basic
-            # Net margin = (Sell - Buy - Fees) / Buy
-            # Let's use simplified 8% total fee for station trading (max skills is ~3.6%, let's use a flat 5% total for conservative estimate)
-            # Actually net profit per unit: best_sell * 0.95 - best_buy * 1.02? Let's just do best_sell * 0.92 - best_buy to be safe, or just simpler.
-            profit_per_unit = (best_sell * 0.92) - best_buy
+            
+            # Station trading fee calculation:
+            # When buying: you pay broker fee on best_buy
+            # When selling: you pay broker fee + sales tax on best_sell
+            # Cost = best_buy + (best_buy * broker_fee) + (best_sell * broker_fee) + (best_sell * sales_tax)
+            # Or simply, Profit = best_sell * (1 - sales_tax - broker_fee) - best_buy * (1 + broker_fee)
+            b_fee = config.broker_fee_pct / 100.0
+            s_tax = config.sales_tax_pct / 100.0
+            
+            profit_per_unit = best_sell * (1.0 - s_tax - b_fee) - best_buy * (1.0 + b_fee)
             margin_net_pct = (profit_per_unit / best_buy) * 100 if best_buy > 0 else 0
         else:
             spread_pct = 0.0
@@ -60,6 +67,17 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
             risk_level = "Low"
         elif margin_net_pct > 5 and vol_5d > 20:
             risk_level = "Medium"
+            
+        # Tags for quick read
+        tags = []
+        if vol_5d > 500: tags.append("Rápida")
+        elif vol_5d < 50: tags.append("Lenta")
+        
+        if margin_net_pct > 20: tags.append("Buen margen")
+        if spread_pct > 50 or margin_net_pct < 2: tags.append("Cuidado")
+        
+        if best_buy > 100_000_000: tags.append("Capital alto")
+        if risk_level == "Low" and margin_net_pct > 15: tags.append("Sólida")
 
         liq = LiquidityMetrics(
             volume_5d=vol_5d,
@@ -78,6 +96,7 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
             profit_day_est=profit_day_est,
             spread_pct=spread_pct,
             risk_level=risk_level,
+            tags=tags,
             liquidity=liq
         )
         opportunities.append(opp)

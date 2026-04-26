@@ -49,7 +49,14 @@ class MarketRefreshWorker(QThread):
                     if best_buy > 0:
                         spread = ((best_sell - best_buy) / best_buy) * 100
                         if spread <= self.config.spread_max_pct:
-                            candidates.append(t)
+                            # Pre-calculate net margin to save history calls
+                            b_fee = self.config.broker_fee_pct / 100.0
+                            s_tax = self.config.sales_tax_pct / 100.0
+                            profit = best_sell * (1.0 - s_tax - b_fee) - best_buy * (1.0 + b_fee)
+                            margin_net = (profit / best_buy) * 100 if best_buy > 0 else 0
+                            
+                            if margin_net >= self.config.margin_min_pct:
+                                candidates.append(t)
                             
             if not self.is_running: return
             
@@ -86,7 +93,7 @@ class MarketRefreshWorker(QThread):
                         names_dict[n['id']] = n['name']
             
             self.progress_changed.emit(90, "Parsing opportunities...")
-            opps = parse_opportunities(orders, history_dict, names_dict)
+            opps = parse_opportunities(orders, history_dict, names_dict, self.config)
             
             self.progress_changed.emit(95, "Scoring...")
             for opp in opps:

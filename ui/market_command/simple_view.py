@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame
 )
 from PySide6.QtCore import Qt
 from .widgets import MarketTableWidget
@@ -47,10 +47,22 @@ class MarketSimpleView(QWidget):
         self.chk_plex = QCheckBox("Excluir PLEX")
         self.chk_plex.setChecked(self.current_config.exclude_plex)
         
+        self.spin_broker = QDoubleSpinBox()
+        self.spin_broker.setRange(0, 100)
+        self.spin_broker.setValue(self.current_config.broker_fee_pct)
+        self.spin_broker.setSuffix("%")
+        
+        self.spin_tax = QDoubleSpinBox()
+        self.spin_tax.setRange(0, 100)
+        self.spin_tax.setValue(self.current_config.sales_tax_pct)
+        self.spin_tax.setSuffix("%")
+        
         filter_layout.addRow("Capital Max:", self.spin_capital)
         filter_layout.addRow("Min Vol/Día:", self.spin_vol)
         filter_layout.addRow("Min Margen:", self.spin_margin)
         filter_layout.addRow("Max Spread:", self.spin_spread)
+        filter_layout.addRow("Broker Fee:", self.spin_broker)
+        filter_layout.addRow("Sales Tax:", self.spin_tax)
         filter_layout.addRow("", self.chk_plex)
         
         self.btn_apply = QPushButton("Aplicar Filtros")
@@ -71,11 +83,38 @@ class MarketSimpleView(QWidget):
         self.lbl_status = QLabel("Listo - Presiona Refrescar para cargar datos de Jita")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         
+        self.summary_panel = QFrame()
+        self.summary_panel.setFrameShape(QFrame.StyledPanel)
+        sl = QHBoxLayout(self.summary_panel)
+        self.lbl_sum_top = QLabel("Mejor: ---")
+        self.lbl_sum_liquid = QLabel("Más Líquida: ---")
+        self.lbl_sum_count = QLabel("Total: 0")
+        self.lbl_sum_insight = QLabel("Estado: Esperando datos")
+        self.lbl_sum_insight.setStyleSheet("color: #60a5fa; font-weight: bold;")
+        sl.addWidget(self.lbl_sum_top)
+        sl.addWidget(self.lbl_sum_liquid)
+        sl.addWidget(self.lbl_sum_count)
+        sl.addWidget(self.lbl_sum_insight)
+
         self.table = MarketTableWidget()
+        self.table.itemSelectionChanged.connect(self.on_table_selection)
         
+        self.detail_panel = QGroupBox("Detalle de la Oportunidad")
+        dl = QFormLayout(self.detail_panel)
+        self.lbl_det_item = QLabel("---")
+        self.lbl_det_prices = QLabel("---")
+        self.lbl_det_profit = QLabel("---")
+        self.lbl_det_score = QLabel("---")
+        dl.addRow("Item:", self.lbl_det_item)
+        dl.addRow("Buy/Sell:", self.lbl_det_prices)
+        dl.addRow("Net Profit/Margin:", self.lbl_det_profit)
+        dl.addRow("Score/Riesgo:", self.lbl_det_score)
+        
+        right_layout.addWidget(self.summary_panel)
         right_layout.addWidget(self.progress_bar)
         right_layout.addWidget(self.lbl_status)
-        right_layout.addWidget(self.table)
+        right_layout.addWidget(self.table, 1)
+        right_layout.addWidget(self.detail_panel)
         
         main_layout.addWidget(filter_panel)
         main_layout.addWidget(right_panel)
@@ -120,6 +159,8 @@ class MarketSimpleView(QWidget):
         self.current_config.margin_min_pct = self.spin_margin.value()
         self.current_config.spread_max_pct = self.spin_spread.value()
         self.current_config.exclude_plex = self.chk_plex.isChecked()
+        self.current_config.broker_fee_pct = self.spin_broker.value()
+        self.current_config.sales_tax_pct = self.spin_tax.value()
         
     def on_apply_filters(self):
         self.update_config_from_ui()
@@ -131,3 +172,48 @@ class MarketSimpleView(QWidget):
         filtered.sort(key=lambda x: x.score_breakdown.final_score if x.score_breakdown else 0, reverse=True)
         top_50 = filtered[:50]
         self.table.populate(top_50)
+        
+        self.lbl_sum_count.setText(f"Total tras filtros: {len(filtered)}")
+        if top_50:
+            self.lbl_sum_top.setText(f"Mejor: {top_50[0].item_name}")
+            liquid_opp = max(filtered, key=lambda x: x.liquidity.volume_5d)
+            self.lbl_sum_liquid.setText(f"Más Líquida: {liquid_opp.item_name} ({liquid_opp.liquidity.volume_5d} vol)")
+            if len(filtered) > 100:
+                self.lbl_sum_insight.setText("Estado: Mercado activo, muchas opciones.")
+            else:
+                self.lbl_sum_insight.setText("Estado: Mercado selectivo o filtros restrictivos.")
+        else:
+            self.lbl_sum_top.setText("Mejor: ---")
+            self.lbl_sum_liquid.setText("Más Líquida: ---")
+            self.lbl_sum_insight.setText("Estado: Sin resultados.")
+
+    def on_table_selection(self):
+        sel = self.table.selectedItems()
+        if not sel:
+            self.lbl_det_item.setText("---")
+            return
+            
+        row = sel[0].row()
+        item_name = self.table.item(row, 1).text()
+        
+        opp = next((o for o in self.all_opportunities if o.item_name == item_name), None)
+        if opp:
+            self.lbl_det_item.setText(f"<b>{opp.item_name}</b> (Vol 5d: {opp.liquidity.volume_5d})")
+            
+            try:
+                from utils.formatters import format_isk
+                b_str = format_isk(opp.best_buy_price, short=True)
+                s_str = format_isk(opp.best_sell_price, short=True)
+                p_str = format_isk(opp.profit_per_unit, short=True)
+            except ImportError:
+                b_str = f"{opp.best_buy_price:,.0f}"
+                s_str = f"{opp.best_sell_price:,.0f}"
+                p_str = f"{opp.profit_per_unit:,.0f}"
+                
+            self.lbl_det_prices.setText(f"Buy: {b_str} ISK | Sell: {s_str} ISK")
+            self.lbl_det_profit.setText(f"{p_str} ISK ({opp.margin_net_pct:.1f}% Neto)")
+                
+            sb = opp.score_breakdown
+            penalties = ", ".join([f"x{p:.2f}" for p in sb.penalties]) if sb and sb.penalties else "Ninguna"
+            score_str = f"Final: {sb.final_score:.1f}" if sb else "---"
+            self.lbl_det_score.setText(f"{score_str} | Riesgo: {opp.risk_level} | Penalizaciones: {penalties}")
