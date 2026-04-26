@@ -33,8 +33,27 @@ class MarketAdvancedView(QWidget):
         title_v.addWidget(subtitle)
         
         self.btn_refresh = QPushButton("EJECUTAR ESCANEO AVANZADO")
-        self.btn_refresh.setObjectName("SaveButton")
-        self.btn_refresh.setFixedWidth(200)
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setMinimumWidth(250)
+        self.btn_refresh.setFixedHeight(40)
+        self.btn_refresh.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                font-size: 11px;
+                font-weight: 900;
+                border-radius: 4px;
+                letter-spacing: 1px;
+                padding: 0 20px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+            QPushButton:disabled {
+                background-color: #1e293b;
+                color: #64748b;
+            }
+        """)
         self.btn_refresh.clicked.connect(self.on_refresh_clicked)
         
         header.addLayout(title_v)
@@ -233,7 +252,6 @@ class MarketAdvancedView(QWidget):
         lbl = QLabel(label.upper())
         lbl.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700;")
         
-        # Si el valor es muy grande, forzamos QDoubleSpinBox para evitar overflow de 32-bit int
         if isinstance(val, float) or max_v > 2_000_000_000:
             s = QDoubleSpinBox()
             s.setDecimals(0 if not isinstance(val, float) else 1)
@@ -243,6 +261,10 @@ class MarketAdvancedView(QWidget):
         s.setRange(min_v, max_v)
         s.setValue(val)
         s.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 4px;")
+        
+        # Guardar referencia directa para evitar findChild
+        w.spin = s
+        
         l.addWidget(lbl)
         l.addWidget(s)
         return w
@@ -278,37 +300,50 @@ class MarketAdvancedView(QWidget):
             return
             
         config = FilterConfig(
-            capital_max=self.spin_capital.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            vol_min_day=self.spin_vol.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            margin_min_pct=self.spin_margin.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            spread_max_pct=self.spin_spread.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            score_min=self.spin_score.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            profit_day_min=self.spin_profit_day.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            buy_orders_min=self.spin_buy_orders.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            sell_orders_min=self.spin_sell_orders.findChild((QSpinBox, QDoubleSpinBox)).value(),
-            history_days_min=self.spin_hist_days.findChild((QSpinBox, QDoubleSpinBox)).value(),
+            capital_max=self.spin_capital.spin.value(),
+            vol_min_day=self.spin_vol.spin.value(),
+            margin_min_pct=self.spin_margin.spin.value(),
+            spread_max_pct=self.spin_spread.spin.value(),
+            score_min=self.spin_score.spin.value(),
+            profit_day_min=self.spin_profit_day.spin.value(),
+            buy_orders_min=self.spin_buy_orders.spin.value(),
+            sell_orders_min=self.spin_sell_orders.spin.value(),
+            history_days_min=self.spin_hist_days.spin.value(),
             exclude_plex=self.check_plex.isChecked()
         )
         
         risk_idx = self.combo_risk.currentIndex()
-        if risk_idx == 1: config.risk_max = 2 # Medium
-        elif risk_idx == 2: config.risk_max = 1 # Low
-        else: config.risk_max = 3 # Any
+        if risk_idx == 1: config.risk_max = 2 
+        elif risk_idx == 2: config.risk_max = 1 
+        else: config.risk_max = 3 
         
-        self.worker = MarketRefreshWorker("10000002", config) # Default Forge
+        self.worker = MarketRefreshWorker("10000002", config)
         self.worker.progress.connect(self.progress.setValue)
-        self.worker.status.connect(self.lbl_status.setText)
+        self.worker.status.connect(self.on_status_received)
         self.worker.finished.connect(self.on_scan_finished)
+        self.worker.error.connect(self.on_scan_error)
         
         self.btn_refresh.setEnabled(False)
         self.btn_refresh.setText("ESCANEO EN CURSO...")
+        self.progress.setValue(0)
         self.worker.start()
+
+    def on_status_received(self, text):
+        self.lbl_status.setText(f"● {text.upper()}")
+        self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_finished(self, opportunities):
         self.table.populate(opportunities)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
         self.lbl_status.setText(f"● ESCANEO COMPLETADO: {len(opportunities)} ITEMS")
+        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+
+    def on_scan_error(self, err_msg):
+        self.btn_refresh.setEnabled(True)
+        self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
+        self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
+        self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_selection_changed(self):
         selected = self.table.selectedItems()
