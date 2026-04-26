@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QIcon, QPixmap, QColor, QFont
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QMenu, QApplication
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QIcon, QPixmap, QColor, QFont, QClipboard
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 class CustomTableWidgetItem(QTableWidgetItem):
@@ -14,15 +14,35 @@ class CustomTableWidgetItem(QTableWidgetItem):
         return super().__lt__(other)
 
 class MarketTableWidget(QTableWidget):
+    item_action_triggered = Signal(str, str) # action_type, item_name
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(9)
-        self.setHorizontalHeaderLabels([
-            "Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas"
-        ])
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
+        headers = ["Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas"]
+        self.setHorizontalHeaderLabels(headers)
+        
+        tooltips = [
+            "Ranking de oportunidad (1 es la mejor).",
+            "Nombre del Item en el mercado.",
+            "Puntuación heurística de rentabilidad y seguridad. >70 Excelente.",
+            "Unidades movidas de media al día (basado en 5 días).",
+            "Margen de beneficio neto esperado (ya deducidas las tasas).",
+            "Beneficio en ISK estimado si capturas parte del volumen diario.",
+            "Diferencia porcentual bruta entre órdenes Buy y Sell.",
+            "Estimación de riesgo según capital requerido y volatilidad.",
+            "Etiquetas inteligentes para toma de decisiones rápida."
+        ]
+        for i, tip in enumerate(tooltips):
+            self.horizontalHeaderItem(i).setToolTip(tip)
+            
+        self.horizontalHeader().setSectionsMovable(True)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.setColumnWidth(0, 50)
         self.setColumnWidth(1, 250)
+        self.setColumnWidth(2, 60)
+        self.setColumnWidth(3, 70)
+        self.setColumnWidth(8, 150)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -64,6 +84,30 @@ class MarketTableWidget(QTableWidget):
         
         self.net_manager = QNetworkAccessManager(self)
         self.icon_cache = {}
+        
+        self.itemDoubleClicked.connect(self.on_item_double_clicked)
+
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item is not None:
+            row = item.row()
+            item_name = self.item(row, 1).text()
+            
+            menu = QMenu(self)
+            menu.setStyleSheet("QMenu { background-color: #1e293b; color: #f8fafc; border: 1px solid #3b82f6; } QMenu::item:selected { background-color: #3b82f6; }")
+            copy_action = menu.addAction(f"Copiar Nombre: {item_name}")
+            
+            action = menu.exec(self.viewport().mapToGlobal(event.pos()))
+            
+            if action == copy_action:
+                QApplication.clipboard().setText(item_name)
+                self.item_action_triggered.emit("copied", item_name)
+
+    def on_item_double_clicked(self, item):
+        row = item.row()
+        item_name = self.item(row, 1).text()
+        QApplication.clipboard().setText(item_name)
+        self.item_action_triggered.emit("double_clicked", item_name)
 
     def populate(self, opportunities):
         self.setSortingEnabled(False)

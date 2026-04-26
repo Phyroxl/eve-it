@@ -139,6 +139,7 @@ class MarketSimpleView(QWidget):
 
         self.table = MarketTableWidget()
         self.table.itemSelectionChanged.connect(self.on_table_selection)
+        self.table.item_action_triggered.connect(self.on_item_action)
         right_layout.addWidget(self.table, 1)
         
         # DETAIL PANEL
@@ -193,17 +194,36 @@ class MarketSimpleView(QWidget):
         s_l.setSpacing(2)
         s_l.addWidget(QLabel("SCORE & RIESGO", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"))
         self.lbl_det_score = QLabel("0.0", styleSheet="color: #f1f5f9; font-size: 24px; font-weight: 900;")
-        self.lbl_det_pens = QLabel("Penalizaciones: Ninguna", styleSheet="color: #f87171; font-size: 10px; font-weight: 600;")
+        self.lbl_det_pens = QLabel("Ninguna", styleSheet="color: #f87171; font-size: 10px; font-weight: 600;")
         s_l.addWidget(self.lbl_det_score)
         s_l.addWidget(self.lbl_det_pens)
         s_l.addStretch()
         dl.addLayout(s_l, 2)
+        
+        # Section 4: Operations
+        o_l = QVBoxLayout()
+        o_l.setSpacing(2)
+        o_l.addWidget(QLabel("RECOMENDACIÓN COMPRA", styleSheet="color: #64748b; font-size: 9px; font-weight: 800;"))
+        self.lbl_det_rec_qty = QLabel("0 uds", styleSheet="color: #fbbf24; font-size: 18px; font-weight: 900;")
+        self.lbl_det_rec_cost = QLabel("Coste Estimado: 0 ISK", styleSheet="color: #94a3b8; font-size: 10px; font-weight: 600;")
+        o_l.addWidget(self.lbl_det_rec_qty)
+        o_l.addWidget(self.lbl_det_rec_cost)
+        o_l.addStretch()
+        dl.addLayout(o_l, 2)
 
         right_layout.addWidget(self.detail_panel)
         
         main_layout.addWidget(filter_panel)
         main_layout.addWidget(right_panel)
         
+    def on_item_action(self, action, item_name):
+        if action == "copied":
+            self.lbl_status.setText(f"● PORTAPAPELES: {item_name.upper()}")
+            self.lbl_status.setStyleSheet("color: #a78bfa; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        elif action == "double_clicked":
+            self.lbl_status.setText(f"● JUEGO (COPIADO): BUSCA {item_name.upper()}")
+            self.lbl_status.setStyleSheet("color: #60a5fa; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+
     def on_refresh_clicked(self):
         if self.worker and self.worker.isRunning():
             return
@@ -335,7 +355,31 @@ class MarketSimpleView(QWidget):
                 else: self.lbl_det_score.setStyleSheet("color: #f87171; font-size: 24px; font-weight: 900;")
                 
                 penalties = ", ".join([f"x{p:.2f}" for p in sb.penalties]) if sb.penalties else "Ninguna"
-                self.lbl_det_pens.setText(f"Riesgo: {opp.risk_level.upper()} | Penalizaciones: {penalties}")
+                self.lbl_det_pens.setText(f"Riesgo: {opp.risk_level.upper()} | {penalties}")
             else:
                 self.lbl_det_score.setText("---")
                 self.lbl_det_pens.setText("---")
+                
+            # Cálculo de Cantidad Recomendada
+            capital = self.current_config.capital_max
+            b_price = opp.best_buy_price
+            
+            # Criterio: aprox 1.5 días de volumen (volume_5d / 3.3)
+            safe_qty = int(opp.liquidity.volume_5d / 3.3)
+            if safe_qty < 1: safe_qty = 1
+            
+            if "Alto" in opp.risk_level: safe_qty = int(safe_qty * 0.5)
+            
+            max_afford = int(capital / b_price) if b_price > 0 else 0
+            rec_qty = min(safe_qty, max_afford)
+            if rec_qty <= 0: rec_qty = 1
+            
+            cost_est = rec_qty * b_price
+            self.lbl_det_rec_qty.setText(f"{rec_qty:,} uds")
+            
+            try:
+                from utils.formatters import format_isk
+                cost_str = format_isk(cost_est, short=True)
+            except:
+                cost_str = f"{cost_est:,.0f}"
+            self.lbl_det_rec_cost.setText(f"Coste: {cost_str} ISK")

@@ -144,3 +144,37 @@ Se ha elevado radicalmente la estética y usabilidad del modo simple, sin añadi
 - [x] El feedback visual del refresco da sensación "Command Center".
 - [x] La velocidad sigue siendo instantánea para la renderización.
 - [x] Estilo consistente con `main_suite_window.py` (colores grises oscuros, azules tácticos, bordes delgados).
+
+---
+
+# ANTIGRAVITY TASK: EVE iT Market Command - Usabilidad e Integración
+
+## STATUS: COMPLETED
+
+## COMPLETED PHASE
+Usabilidad Premium, Integración y Decisiones Operativas - EVE iT Market Command
+
+## SUMMARY
+Se han resuelto las peticiones de usabilidad y QoL (Quality of Life) demandadas para transformar Market Command en una herramienta verdaderamente madura y útil, integrándola completamente con la Suite.
+
+1. **Integración Nativa en Main Suite:** En lugar de abrir una ventana popup desconectada, Market Command ahora forma parte de la barra de navegación lateral (`QStackedWidget`) de la Main Suite. Se accede haciendo clic en "Mercado" y comparte la misma geometría y contexto del programa.
+2. **Ayuda Contextual Inteligente:** Se han inyectado tooltips (`setToolTip`) en todos los encabezados de la tabla con explicaciones breves, claras y precisas sobre cada métrica (ej: qué es exactamente el score, cómo se calcula el spread, etc.).
+3. **Cantidad Recomendada de Compra (Decisión Operativa):** El panel inferior calcula ahora un "Safe Qty" basado en un ratio del volumen de 5 días (aprox. 1.5 días de liquidez), castigado automáticamente a la mitad si el riesgo es "Alto". Se compara esto con el Capital Máximo del usuario y se sugiere una cantidad de unidades a comprar y su Coste Estimado.
+4. **Tabla Flexible (Columnas y Sidebar):** 
+    - Ya no aparece la barra lateral por defecto con numeración de fila (`verticalHeader().setVisible(False)` - esto ya existía en mi anterior commit pero se validó).
+    - Ahora el usuario puede arrastrar y reordenar columnas (`setSectionsMovable(True)`) y redimensionar manualmente el espacio si lo necesita (`Interactive`).
+5. **Doble Click y Context Menu (Flujo Ingame):**
+    - **Click Derecho:** Abre un estilizado `QMenu` oscuro/azul para copiar el nombre del ítem rápidamente al portapapeles.
+    - **Doble Click:** Envía automáticamente el ítem al portapapeles y se emite una notificación en la cabecera ("● JUEGO (COPIADO): BUSCA ITEM"), asumiendo el rol robusto de "Ctrl+V" in-game al no contar con un endpoint auth validado para abrir interfaces de forma remota en esta arquitectura.
+
+## FILES_CHANGED
+- `ui/desktop/main_suite_window.py` (Añadido botón de nav "Mercado", y página en `QStackedWidget`).
+- `ui/market_command/simple_view.py` (Nuevo bloque de Recomendación de Compra, handler de eventos de clipboard de la tabla y UI tweaks).
+- `ui/market_command/widgets.py` (Headers reordenables, tooltips interactivos, `QMenu` para Right-Click, doble click action).
+
+## CHECKS
+- [x] Market Command abre integrado dentro de la suite.
+- [x] Tabla reordenable por arrastre.
+- [x] Tooltips de ayuda en encabezados.
+- [x] Click derecho y doble click funcionales con feedback UI en Simple View.
+- [x] Cálculo y vista de Recomendación de Compra sin sugerir barbaridades para ítems ilíquidos.
