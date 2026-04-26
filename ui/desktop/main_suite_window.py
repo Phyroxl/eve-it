@@ -921,10 +921,10 @@ class MainSuiteWindow(QMainWindow):
         if self.tray_manager: self.tray_manager._on_replicator()
     def _on_market_clicked(self):
         if not hasattr(self, '_market_window') or self._market_window is None:
-            from ui.market_command.simple_view import MarketSimpleView
-            self._market_window = MarketSimpleView()
-            self._market_window.setWindowTitle("EVE iT Market Command - Modo Simple")
-            self._market_window.resize(1000, 600)
+            from ui.market_command import MarketCommandMain
+            self._market_window = MarketCommandMain()
+            self._market_window.setWindowTitle("EVE iT Market Command")
+            self._market_window.resize(1100, 750) # Slightly larger for Advanced view
             # Configurar como Tool para que no aparezca en la barra de tareas
             self._market_window.setWindowFlags(Qt.Window | Qt.Tool | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.CustomizeWindowHint)
             # Aplicar hoja de estilo global si es necesario

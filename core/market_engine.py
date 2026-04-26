@@ -105,22 +105,31 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
 
 def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) -> List[MarketOpportunity]:
     filtered = []
+    
+    risk_map = {"Low": 1, "Medium": 2, "High": 3}
+    
     for opp in opportunities:
-        # FILTROS DUROS (eliminan antes de scoring)
-        if opp.best_buy_price == 0:
-            continue
-        if opp.liquidity.volume_5d < config.vol_min_day:
-            continue
-        if opp.spread_pct > config.spread_max_pct:
-            continue
-        if opp.liquidity.history_days < 3:
+        # 1. Filtros Básicos (ya existentes pero limpios)
+        if opp.best_buy_price == 0: continue
+        if config.exclude_plex and "plex" in opp.item_name.lower(): continue
+        
+        if opp.best_buy_price > config.capital_max: continue
+        if opp.liquidity.volume_5d < config.vol_min_day: continue
+        if opp.margin_net_pct < config.margin_min_pct: continue
+        if opp.spread_pct > config.spread_max_pct: continue
+        
+        # 2. Filtros Avanzados (Fase 1)
+        if opp.score_breakdown and opp.score_breakdown.final_score < config.score_min:
             continue
             
-        # Additional UI filters
-        if opp.best_buy_price > config.capital_max:
+        current_risk = risk_map.get(opp.risk_level, 3)
+        if current_risk > config.risk_max:
             continue
-        if opp.margin_net_pct < config.margin_min_pct:
-            continue
+            
+        if opp.liquidity.buy_orders_count < config.buy_orders_min: continue
+        if opp.liquidity.sell_orders_count < config.sell_orders_min: continue
+        if opp.liquidity.history_days < config.history_days_min: continue
+        if opp.profit_day_est < config.profit_day_min: continue
             
         filtered.append(opp)
     return filtered

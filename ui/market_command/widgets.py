@@ -190,3 +190,122 @@ class MarketTableWidget(QTableWidget):
             reply.deleteLater()
             
         reply.finished.connect(on_finished)
+class AdvancedMarketTableWidget(MarketTableWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Columns: Rank, Item, Score, Vol/Día, Margen %, Profit/U, Profit/Día, Spread %, Riesgo, Buy Ord, Sell Ord, Hist Days, Etiquetas
+        self.setColumnCount(13)
+        headers = [
+            "Rank", "Item", "Score", "Vol/Día", "Margen %", 
+            "Profit/U", "Profit/Día", "Spread %", "Riesgo", 
+            "Buy Ord", "Sell Ord", "Hist Days", "Etiquetas"
+        ]
+        self.setHorizontalHeaderLabels(headers)
+        
+        tooltips = [
+            "Ranking.", "Nombre del Item.", "Score Final.", "Volumen 5d.", "Margen Neto %.",
+            "Beneficio por unidad vendida.", "Beneficio diario estimado.", "Spread %.", 
+            "Nivel de riesgo.", "Cantidad de órdenes de compra.", "Cantidad de órdenes de venta.",
+            "Días de historial disponibles.", "Etiquetas tácticas."
+        ]
+        for i, tip in enumerate(tooltips):
+            if i < self.columnCount():
+                self.horizontalHeaderItem(i).setToolTip(tip)
+                
+        self.setColumnWidth(1, 200)
+        self.setColumnWidth(12, 120)
+
+    def populate(self, opportunities):
+        self.setSortingEnabled(False)
+        self.setRowCount(len(opportunities))
+        
+        for row, opp in enumerate(opportunities):
+            # Reuse logic from MarketTableWidget for common columns if possible, 
+            # but since it's hardcoded for column indices, we rewrite populate for precision.
+            
+            # 0. Rank
+            rank = CustomTableWidgetItem(str(row + 1), row + 1)
+            rank.setTextAlignment(Qt.AlignCenter)
+            rank.setForeground(QColor("#64748b"))
+            
+            # 1. Item
+            item = QTableWidgetItem(opp.item_name)
+            if opp.type_id in self.icon_cache:
+                item.setIcon(QIcon(self.icon_cache[opp.type_id]))
+            else:
+                self.load_icon_async(opp.type_id, item)
+            
+            # 2. Score
+            score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
+            score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
+            score.setTextAlignment(Qt.AlignCenter)
+            score.setForeground(QColor("#34d399") if score_val > 70 else (QColor("#fbbf24") if score_val > 40 else QColor("#f87171")))
+            score.setFont(QFont("Arial", 10, QFont.Bold))
+            
+            # 3. Vol
+            vol_val = opp.liquidity.volume_5d
+            vol = CustomTableWidgetItem(str(vol_val), vol_val)
+            vol.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            
+            # 4. Margen
+            margin_val = opp.margin_net_pct
+            margin = CustomTableWidgetItem(f"{margin_val:.1f}%", margin_val)
+            margin.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if margin_val > 15: margin.setForeground(QColor("#10b981"))
+            
+            # 5. Profit/U
+            pu_val = opp.profit_per_unit
+            pu = CustomTableWidgetItem(f"{pu_val:,.2f}", pu_val)
+            pu.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            
+            # 6. Profit/Día
+            pd_val = opp.profit_day_est
+            pd = CustomTableWidgetItem(f"{pd_val:,.0f}", pd_val)
+            pd.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            
+            # 7. Spread
+            spread_val = opp.spread_pct
+            spread = CustomTableWidgetItem(f"{spread_val:.1f}%", spread_val)
+            spread.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            
+            # 8. Riesgo
+            risk = QTableWidgetItem(opp.risk_level)
+            risk.setTextAlignment(Qt.AlignCenter)
+            
+            # 9. Buy Ord
+            bo_val = opp.liquidity.buy_orders_count
+            bo = CustomTableWidgetItem(str(bo_val), bo_val)
+            bo.setTextAlignment(Qt.AlignCenter)
+            
+            # 10. Sell Ord
+            so_val = opp.liquidity.sell_orders_count
+            so = CustomTableWidgetItem(str(so_val), so_val)
+            so.setTextAlignment(Qt.AlignCenter)
+            
+            # 11. Hist Days
+            hd_val = opp.liquidity.history_days
+            hd = CustomTableWidgetItem(str(hd_val), hd_val)
+            hd.setTextAlignment(Qt.AlignCenter)
+            
+            # 12. Tags
+            tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
+            tags_item = QTableWidgetItem(tags_str)
+            tags_item.setForeground(QColor("#60a5fa"))
+            tags_item.setFont(QFont("Arial", 8, QFont.Bold))
+
+            self.setItem(row, 0, rank)
+            self.setItem(row, 1, item)
+            self.setItem(row, 2, score)
+            self.setItem(row, 3, vol)
+            self.setItem(row, 4, margin)
+            self.setItem(row, 5, pu)
+            self.setItem(row, 6, pd)
+            self.setItem(row, 7, spread)
+            self.setItem(row, 8, risk)
+            self.setItem(row, 9, bo)
+            self.setItem(row, 10, so)
+            self.setItem(row, 11, hd)
+            self.setItem(row, 12, tags_item)
+            
+        self.setSortingEnabled(True)
+        self.sortItems(2, Qt.DescendingOrder)

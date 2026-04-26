@@ -41,3 +41,11 @@ class FilterConfig:
     exclude_plex: bool = True
     broker_fee_pct: float = 3.0
     sales_tax_pct: float = 8.0
+    
+    # Advanced Filters (Phase 1)
+    score_min: float = 0.0
+    risk_max: int = 3  # 1: Low, 2: Medium, 3: High
+    buy_orders_min: int = 0
+    sell_orders_min: int = 0
+    history_days_min: int = 0
+    profit_day_min: float = 0.0

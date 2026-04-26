@@ -178,3 +178,44 @@ Se han resuelto las peticiones de usabilidad y QoL (Quality of Life) demandadas 
 - [x] Tooltips de ayuda en encabezados.
 - [x] Click derecho y doble click funcionales con feedback UI en Simple View.
 - [x] Cálculo y vista de Recomendación de Compra sin sugerir barbaridades para ítems ilíquidos.
+
+---
+
+# ANTIGRAVITY TASK: EVE iT Market Command — Modo Avanzado (Fase 1)
+
+## STATUS: COMPLETED
+
+## COMPLETED PHASE
+Modo Avanzado Fase 1 — Investigación y Análisis Profundo
+
+## SUMMARY
+Se ha implementado la base del Modo Avanzado de Market Command, permitiendo al usuario realizar análisis mucho más profundos y filtrar oportunidades con criterios técnicos avanzados. Se ha mantenido la integridad del Modo Simple.
+
+1. **Separación de Vistas (Simple vs Avanzado):** Se ha creado una estructura de navegación interna mediante pestañas (`MODO SIMPLE` / `MODO AVANZADO`). Esto permite al usuario cambiar de contexto instantáneamente sin salir del módulo.
+2. **Vista Avanzada (AdvancedView):** Una nueva interfaz diseñada para la investigación, que incluye:
+    - **Filtros Potentes:** Nuevos controles para Score Mínimo, Riesgo Máximo, Órdenes Buy/Sell mínimas, Días de Historial y Profit diario esperado.
+    - **Tabla Extendida:** Columnas adicionales como Profit por Unidad, Conteo de Órdenes (B/S) y Días de Historial para una comparativa rápida.
+    - **Detalle Extendido:** Un panel de detalles mucho más rico que muestra el **Breakdown del Score** (Liquidez, ROI, Profit) mediante barras de progreso y una lista clara de penalizaciones aplicadas.
+3. **Motor de Filtrado Evolucionado:** Se ha actualizado `FilterConfig` y `apply_filters` para procesar los nuevos criterios técnicos del modo avanzado.
+4. **Infraestructura Modular:** La arquitectura está lista para recibir Watchlists y Analytics en futuras fases gracias a la separación clara de vistas y al uso de `MarketCommandMain` como contenedor.
+
+## FILES_CHANGED
+- `core/market_models.py` (Extensión de `FilterConfig`)
+- `core/market_engine.py` (Implementación de filtros avanzados)
+- `ui/market_command/advanced_view.py` (NUEVO: Vista avanzada)
+- `ui/market_command/widgets.py` (Añadido `AdvancedMarketTableWidget`)
+- `ui/market_command/command_main.py` (NUEVO: Contenedor y navegación entre modos)
+- `ui/market_command/__init__.py` (Exportación de nuevas clases)
+- `ui/market_command/refresh_worker.py` (Armonización de señales y almacenamiento de resultados)
+- `ui/desktop/main_suite_window.py` (Soporte para la nueva vista de comandos)
+
+## CHECKS
+- [x] El modo simple sigue funcionando con su lógica rápida.
+- [x] El modo avanzado abre correctamente y permite cambiar entre pestañas.
+- [x] Los filtros avanzados (Score, Risk, Orders) filtran correctamente la tabla.
+- [x] El detalle avanzado muestra el desglose del score y las barras de progreso.
+- [x] Doble click y menú contextual funcionan en ambas vistas.
+- [x] La UI se siente fluida y mantiene el estilo premium de la suite.
+
+## NOTES
+Se ha mantenido el límite de 150 candidatos para el scan avanzado para garantizar que la respuesta de la ESI sea rápida (<20s). En futuras fases se podrá aumentar este límite mediante un sistema de paginación o scan en segundo plano.
