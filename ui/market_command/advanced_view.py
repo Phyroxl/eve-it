@@ -229,11 +229,14 @@ class MarketAdvancedView(QWidget):
         l.setSpacing(2)
         lbl = QLabel(label.upper())
         lbl.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700;")
-        if isinstance(val, float):
+        
+        # Si el valor es muy grande, forzamos QDoubleSpinBox para evitar overflow de 32-bit int
+        if isinstance(val, float) or max_v > 2_000_000_000:
             s = QDoubleSpinBox()
-            s.setDecimals(1)
+            s.setDecimals(0 if not isinstance(val, float) else 1)
         else:
             s = QSpinBox()
+            
         s.setRange(min_v, max_v)
         s.setValue(val)
         s.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 4px;")
