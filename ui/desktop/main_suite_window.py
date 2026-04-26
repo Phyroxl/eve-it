@@ -557,8 +557,7 @@ class MainSuiteWindow(QMainWindow):
         g.addWidget(self.create_tool_card("Replicador", "Sincronización.", "🪟", self._on_replicator_clicked), 0, 2)
         
         # Fila 2 (Preparado para expansión 3x5)
-        # g.addWidget(self.create_tool_card("Tool X", "Desc...", "...", ...), 1, 0)
-        # ...
+        g.addWidget(self.create_tool_card("Market Command", "Station Trading AI.", "📈", self._on_market_clicked), 1, 0)
         
         cont_l.addLayout(g); cont_l.addStretch()
         scroll.setWidget(cont)
@@ -913,6 +912,18 @@ class MainSuiteWindow(QMainWindow):
         if self.controller: self.controller.start_translator()
     def _on_replicator_clicked(self):
         if self.tray_manager: self.tray_manager._on_replicator()
+    def _on_market_clicked(self):
+        if not hasattr(self, '_market_window') or self._market_window is None:
+            from ui.market_command.simple_view import MarketSimpleView
+            self._market_window = MarketSimpleView()
+            self._market_window.setWindowTitle("EVE iT Market Command - Modo Simple")
+            self._market_window.resize(1000, 600)
+            # Aplicar hoja de estilo global si es necesario
+            from ui.desktop.styles import MAIN_STYLE
+            self._market_window.setStyleSheet(MAIN_STYLE)
+        self._market_window.show()
+        self._market_window.raise_()
+        self._market_window.activateWindow()
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
     def load_settings(self):

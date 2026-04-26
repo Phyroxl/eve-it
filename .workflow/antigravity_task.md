@@ -42,19 +42,55 @@ La validación multi-punto en `win32_capture.py` opera sobre el bitmap ya escala
 ### FILE 1: overlay/win32_capture.py
 En `capture_window_region`, bloque RUTA 1 (zona ~línea 227-240):
 - Añadir guard de tamaño antes de la validación de píxeles
-- - Si `out_w < 80` o `out_h < 80`: saltar validación, forzar `captured = True`
-  - - Mantener validación 5 puntos solo cuando `out_w >= 80` y `out_h >= 80`
-   
-    - ### FILE 2: overlay/replication_overlay.py
-    - En método `_on_stale` (~línea 400), cuando `is_stale == True`:
-    - - Añadir re-sync de output_size con dimensiones actuales del overlay:
-      -   `if hasattr(self, '_capture'): self._capture.set_output_size(self.width(), self.height())`
-     
-      -   ## CHECKS
-      -   - [ ] Replica no congela al reducir tamaño del overlay
-          - [ ] - [ ] Stale detection sigue funcionando para capturas genuinamente rotas
-          - [ ] - [ ] Sin cambios en otras réplicas ni en lógica global de captura
-          - [ ] - [ ] Validación multi-punto activa para tamaños normales (>= 80px)
-       
-          - [ ] ## NOTES
-          - [ ] No refactorizar. Cambios mínimos y quirúrgicos.
+- Si `out_w < 80` o `out_h < 80`: saltar validación, forzar `captured = True`
+- Mantener validación 5 puntos solo cuando `out_w >= 80` y `out_h >= 80`
+
+### FILE 2: overlay/replication_overlay.py
+En método `_on_stale` (~línea 400), cuando `is_stale == True`:
+- Añadir re-sync de output_size con dimensiones actuales del overlay:
+  `if hasattr(self, '_capture'): self._capture.set_output_size(self.width(), self.height())`
+
+## CHECKS
+- [ ] Replica no congela al reducir tamaño del overlay
+- [ ] Stale detection sigue funcionando para capturas genuinamente rotas
+- [ ] Sin cambios en otras réplicas ni en lógica global de captura
+- [ ] Validación multi-punto activa para tamaños normales (>= 80px)
+
+## NOTES
+No refactorizar. Cambios mínimos y quirúrgicos.
+
+---
+
+# ANTIGRAVITY TASK: EVE iT Market Command - MVP Fase 1
+
+## STATUS: COMPLETED
+
+## COMPLETED PHASE
+Implementación MVP Fase 1 - EVE iT Market Command
+
+## SUMMARY
+Implementada la Fase 1 del módulo EVE iT Market Command. 
+El módulo actúa como asistente de station trading, conectándose directamente a la API ESI de EVE Online para presentar oportunidades rentables en el mercado de la región objetivo (por defecto Jita/The Forge).
+Se creó un sistema completo con:
+1. `ESIClient` en `core/esi_client.py` con caché en memoria, rate-limit de 10 req/s, y soporte para fetch de orders y history.
+2. `core/market_engine.py` encargado de procesar órdenes, calcular márgenes (spread, beneficio por unidad), filtrar las oportunidades en base a reglas duras y calcular un score (0-100) aplicando penalizaciones multiplicativas por riesgo de mercado.
+3. Modelos de datos dedicados en `core/market_models.py`.
+4. Una vista principal "Simple View" (`ui/market_command/simple_view.py`) montada en PySide6 con filtros configurables en el panel lateral, tabla interactiva, y ejecución asíncrona a través de `QThread` (`refresh_worker.py`).
+5. Integración del "Market Command" en la pestaña "Herramientas" de la Suite Principal de la aplicación (`MainSuiteWindow`).
+
+## CHECKS COMPLETADOS
+- [x] ESI client funciona y cachea correctamente
+- [x] Motor de scoring produce resultados ordenados por score
+- [x] UI carga y muestra tabla con datos reales de ESI
+- [x] Refresco background no bloquea la UI
+- [x] Filtros básicos funcionan correctamente
+
+## FILES_CHANGED
+- `core/market_models.py` (Nuevo)
+- `core/esi_client.py` (Nuevo)
+- `core/market_engine.py` (Nuevo)
+- `ui/market_command/__init__.py` (Nuevo)
+- `ui/market_command/widgets.py` (Nuevo)
+- `ui/market_command/refresh_worker.py` (Nuevo)
+- `ui/market_command/simple_view.py` (Nuevo)
+- `ui/desktop/main_suite_window.py` (Modificado)
