@@ -1,4 +1,4 @@
 {
-  "auto_refresh_enabled": true,
-  "refresh_interval_min": 1
+  "auto_refresh_enabled": false,
+  "refresh_interval_min": 5
 }

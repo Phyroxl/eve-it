@@ -389,3 +389,21 @@ Dos causas combinadas:
 - Los slots de PySide6 silencian excepciones por defecto — siempre wrappear en try/except
 
 *Estado: Performance View muestra datos reales tras sync. Diagnóstico permanente visible.*
+
+---
+
+## Sesión 13 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+### FASE: Limpieza y Profesionalización del Repositorio
+Se han movido las herramientas de desarrollo a `/tools` y se ha actualizado el `.gitignore` para excluir la carpeta `/data`. La documentación se actualizó para reflejar la nueva estructura.
+
+---
+
+## Sesión 14 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+### FASE: Sello Final y Neutralización de Configuración
+Se han forzado los defaults profesionales en `performance_config.json` y se ha confirmado que `market_performance.db` está fuera del control de versiones.
+
+*Estado: Repositorio profesional, limpio y sellado.*
