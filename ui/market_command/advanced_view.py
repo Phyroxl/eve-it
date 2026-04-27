@@ -1,4 +1,4 @@
-# VERSION_STAMP: 2026-04-27_18-25_STABLE_V1
+# VERSION_STAMP: 2026-04-27_20-00_ADVANCED_RESTORED
 import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
@@ -20,7 +20,7 @@ class MarketAdvancedView(QWidget):
         self.worker = None
         self.all_opportunities = []
         self.current_config = load_market_filters()
-        self.lbl_status = None # Pre-inicialización
+        self.lbl_status = None
         self.setup_ui()
         
     def setup_ui(self):
@@ -33,7 +33,7 @@ class MarketAdvancedView(QWidget):
         title_v = QVBoxLayout()
         title_lbl = QLabel("MARKET COMMAND — MODO AVANZADO")
         title_lbl.setStyleSheet("color: #f1f5f9; font-size: 16px; font-weight: 900; letter-spacing: 1px;")
-        subtitle = QLabel("INVESTIGACIÓN ESTRATÉGICA Y ANÁLISIS OPERATIVO")
+        subtitle = QLabel("CONFIGURACIÓN TÁCTICA Y ANÁLISIS ESTRATÉGICO")
         subtitle.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;")
         self.lbl_status = QLabel("● SISTEMA LISTO")
         self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
@@ -65,25 +65,25 @@ class MarketAdvancedView(QWidget):
         content_split = QHBoxLayout()
         content_split.setSpacing(12)
         
-        # LEFT: Advanced Filter Panel
+        # LEFT: Advanced Filter Panel (Restored)
         filter_panel = QFrame()
         filter_panel.setObjectName("AnalyticBox")
-        filter_panel.setFixedWidth(220)
+        filter_panel.setFixedWidth(240) # Un poco más ancho para albergar los nuevos controles
         filter_panel.setStyleSheet("background-color: #0f172a; border-right: 1px solid #1e293b; border-radius: 4px;")
         filter_l = QVBoxLayout(filter_panel)
         filter_l.setContentsMargins(12, 12, 12, 12)
         filter_l.setSpacing(8)
         
-        filter_l.addWidget(QLabel("FILTROS AVANZADOS", styleSheet="color: #64748b; font-size: 9px; font-weight: 900;"))
+        filter_l.addWidget(QLabel("FILTROS ESTRATÉGICOS", styleSheet="color: #64748b; font-size: 9px; font-weight: 900;"))
         
-        # Filters List
+        # Filters List with Scroll
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background: transparent; border: none;")
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 5, 0)
-        scroll_layout.setSpacing(8)
+        scroll_layout.setSpacing(10)
 
         def add_adv_input(layout, label, widget):
             w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(2)
@@ -91,30 +91,55 @@ class MarketAdvancedView(QWidget):
             widget.setStyleSheet("background: #000000; color: #f1f5f9; border: 1px solid #1e293b; padding: 3px; border-radius: 2px;")
             widget.setFixedHeight(26); v.addWidget(lbl); v.addWidget(widget); layout.addWidget(w)
 
+        # ─── BLOQUE 1: CAPITAL Y MARGEN ───
         self.spin_capital = QDoubleSpinBox()
         self.spin_capital.setRange(0, 1e12); self.spin_capital.setDecimals(0); self.spin_capital.setSuffix(" ISK")
-        self.spin_capital.setValue(self.current_config.capital_max)
         add_adv_input(scroll_layout, "Cap. Máximo", self.spin_capital)
 
-        self.spin_vol = QSpinBox()
-        self.spin_vol.setRange(0, 100000); self.spin_vol.setValue(self.current_config.vol_min_day)
-        add_adv_input(scroll_layout, "Vol. Mínimo (5D)", self.spin_vol)
-
         self.spin_margin = QDoubleSpinBox()
-        self.spin_margin.setRange(0, 1000); self.spin_margin.setSuffix("%"); self.spin_margin.setValue(self.current_config.margin_min_pct)
+        self.spin_margin.setRange(0, 1000); self.spin_margin.setSuffix("%"); self.spin_margin.setDecimals(1)
         add_adv_input(scroll_layout, "Margen Mínimo %", self.spin_margin)
 
         self.spin_spread = QDoubleSpinBox()
-        self.spin_spread.setRange(0, 1000); self.spin_spread.setSuffix("%"); self.spin_spread.setValue(self.current_config.spread_max_pct)
+        self.spin_spread.setRange(0, 1000); self.spin_spread.setSuffix("%"); self.spin_spread.setDecimals(1)
         add_adv_input(scroll_layout, "Spread Máximo %", self.spin_spread)
+
+        # ─── BLOQUE 2: LIQUIDEZ Y VOLUMEN ───
+        self.spin_vol = QSpinBox()
+        self.spin_vol.setRange(0, 1000000)
+        add_adv_input(scroll_layout, "Vol. Mínimo (Diario)", self.spin_vol)
+
+        self.spin_buy_min = QSpinBox()
+        self.spin_buy_min.setRange(0, 1000)
+        add_adv_input(scroll_layout, "Mín. Órdenes Compra", self.spin_buy_min)
+
+        self.spin_sell_min = QSpinBox()
+        self.spin_sell_min.setRange(0, 1000)
+        add_adv_input(scroll_layout, "Mín. Órdenes Venta", self.spin_sell_min)
+
+        # ─── BLOQUE 3: COMISIONES Y TAX ───
+        self.spin_broker = QDoubleSpinBox()
+        self.spin_broker.setRange(0, 100); self.spin_broker.setSuffix("%"); self.spin_broker.setDecimals(2)
+        add_adv_input(scroll_layout, "Broker Fee %", self.spin_broker)
+
+        self.spin_tax = QDoubleSpinBox()
+        self.spin_tax.setRange(0, 100); self.spin_tax.setSuffix("%"); self.spin_tax.setDecimals(2)
+        add_adv_input(scroll_layout, "Sales Tax %", self.spin_tax)
+
+        # ─── BLOQUE 4: PUNTUACIÓN Y RIESGO ───
+        self.spin_profit_min = QDoubleSpinBox()
+        self.spin_profit_min.setRange(0, 1e12); self.spin_profit_min.setDecimals(0); self.spin_profit_min.setSuffix(" ISK")
+        add_adv_input(scroll_layout, "Profit Diario Mínimo", self.spin_profit_min)
+
+        self.spin_score = QDoubleSpinBox()
+        self.spin_score.setRange(0, 100); self.spin_score.setDecimals(1)
+        add_adv_input(scroll_layout, "Score Mínimo (AI)", self.spin_score)
 
         self.combo_risk = QComboBox()
         self.combo_risk.addItems(["Cualquier Riesgo", "Máximo Medium", "Solo Low"])
-        self.combo_risk.setStyleSheet("background: #000000; color: #f1f5f9; border: 1px solid #1e293b; padding: 4px; font-size: 9px;")
-        add_adv_input(scroll_layout, "Nivel de Riesgo", self.combo_risk)
+        add_adv_input(scroll_layout, "Nivel de Riesgo Máx", self.combo_risk)
 
         self.check_plex = QCheckBox("EXCLUIR PLEX / SKINS")
-        self.check_plex.setChecked(self.current_config.exclude_plex)
         self.check_plex.setStyleSheet("color: #475569; font-size: 8px; font-weight: 700; margin-top: 5px;")
         scroll_layout.addWidget(self.check_plex)
 
@@ -122,6 +147,7 @@ class MarketAdvancedView(QWidget):
         scroll.setWidget(scroll_content)
         filter_l.addWidget(scroll)
         
+        # Botones de Acción
         self.btn_apply = QPushButton("APLICAR FILTROS")
         self.btn_apply.setFixedHeight(32)
         self.btn_apply.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; border-radius: 4px; font-size: 10px;")
@@ -157,6 +183,9 @@ class MarketAdvancedView(QWidget):
         self.progress = QProgressBar(); self.progress.setFixedHeight(2); self.progress.setTextVisible(False)
         self.progress.setStyleSheet("QProgressBar { background: #1e293b; border: none; } QProgressBar::chunk { background: #3b82f6; }")
         self.main_layout.addWidget(self.progress)
+        
+        # Inicializar valores desde config
+        self.update_ui_from_config()
 
     def setup_detail_ui(self):
         dl = QHBoxLayout(self.detail_panel)
@@ -193,7 +222,7 @@ class MarketAdvancedView(QWidget):
         ops_v = QVBoxLayout()
         ops_v.addWidget(QLabel("MÉTRICAS DE FLUJO", styleSheet="color: #475569; font-size: 8px; font-weight: 800;"))
         self.lbl_det_vol = QLabel("Vol: ---"); self.lbl_det_vol.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 700;")
-        self.lbl_det_depth = QLabel("Deep: ---"); self.lbl_det_depth.setStyleSheet("color: #64748b; font-size: 10px; font-600;")
+        self.lbl_det_depth = QLabel("Deep: ---"); self.lbl_det_depth.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 600;")
         ops_v.addWidget(self.lbl_det_vol); ops_v.addWidget(self.lbl_det_depth); ops_v.addStretch()
         dl.addLayout(ops_v, 1)
 
@@ -261,6 +290,13 @@ class MarketAdvancedView(QWidget):
         self.current_config.margin_min_pct = self.spin_margin.value()
         self.current_config.spread_max_pct = self.spin_spread.value()
         self.current_config.exclude_plex = self.check_plex.isChecked()
+        self.current_config.broker_fee_pct = self.spin_broker.value()
+        self.current_config.sales_tax_pct = self.spin_tax.value()
+        self.current_config.score_min = self.spin_score.value()
+        self.current_config.buy_orders_min = self.spin_buy_min.value()
+        self.current_config.sell_orders_min = self.spin_sell_min.value()
+        self.current_config.profit_day_min = self.spin_profit_min.value()
+        self.current_config.risk_max = self.combo_risk.currentIndex() + 1
 
     def update_ui_from_config(self):
         self.spin_capital.setValue(self.current_config.capital_max)
@@ -268,6 +304,13 @@ class MarketAdvancedView(QWidget):
         self.spin_margin.setValue(self.current_config.margin_min_pct)
         self.spin_spread.setValue(self.current_config.spread_max_pct)
         self.check_plex.setChecked(self.current_config.exclude_plex)
+        self.spin_broker.setValue(self.current_config.broker_fee_pct)
+        self.spin_tax.setValue(self.current_config.sales_tax_pct)
+        self.spin_score.setValue(self.current_config.score_min)
+        self.spin_buy_min.setValue(self.current_config.buy_orders_min)
+        self.spin_sell_min.setValue(self.current_config.sell_orders_min)
+        self.spin_profit_min.setValue(self.current_config.profit_day_min)
+        self.combo_risk.setCurrentIndex(max(0, self.current_config.risk_max - 1))
 
     def on_selection_changed(self):
         sel = self.table.selectedItems()
