@@ -653,7 +653,7 @@ class ControlWindow:
                                 dlg.accept()
                                 self._on_scan_chars() # Recargar para ver cambios
                             except Exception:
-                pass
+                                pass
                     
                     card.customContextMenuRequested.connect(_on_ctx)
                     scroll_lay.addWidget(card)
