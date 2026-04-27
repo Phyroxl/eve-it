@@ -1,17 +1,44 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QComboBox, QScrollArea, QGridLayout, 
-    QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy
+    QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy, QCheckBox,
+    QAbstractItemView
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPixmap
+from PySide6.QtCore import Qt, Signal, QTimer, QUrl
 import sqlite3
+import logging
+from datetime import datetime, timedelta
 
 from core.performance_engine import PerformanceEngine
-from datetime import datetime, timedelta
-import logging
 
 _log = logging.getLogger('eve.performance')
+
+class AsyncImageLoader(QWidget):
+    """Cargador asíncrono de imágenes para evitar bloqueos de UI."""
+    def __init__(self):
+        super().__init__()
+        self.manager = QNetworkAccessManager(self)
+        self.cache = {} # URL -> QPixmap
+
+    def load(self, url, callback):
+        if url in self.cache:
+            callback(self.cache[url])
+            return
+        
+        request = QNetworkRequest(QUrl(url))
+        reply = self.manager.get(request)
+        reply.finished.connect(lambda: self._on_finished(reply, url, callback))
+
+    def _on_finished(self, reply, url, callback):
+        if reply.error() == QNetworkReply.NoError:
+            data = reply.readAll()
+            pixmap = QPixmap()
+            pixmap.loadFromData(data)
+            self.cache[url] = pixmap
+            callback(pixmap)
+        reply.deleteLater()
 
 class KPIWidget(QFrame):
     def __init__(self, title, value, color="#3b82f6", parent=None):
@@ -44,7 +71,7 @@ class SimpleBarChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.data = [] # List of (date, value)
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(180)
 
     def set_data(self, data):
         self.data = data
@@ -56,40 +83,96 @@ class SimpleBarChart(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         
         w, h = self.width(), self.height()
-        padding = 30
-        chart_w = w - (padding * 2)
-        chart_h = h - (padding * 2)
+        padding_l, padding_r = 50, 60
+        padding_t, padding_b = 30, 30
+        chart_w = w - padding_l - padding_r
+        chart_h = h - padding_t - padding_b
         
-        # Scale
-        max_val = max([abs(d[1]) for d in self.data]) if self.data else 1
-        if max_val == 0: max_val = 1
-        
-        bar_w = (chart_w / len(self.data)) * 0.8
-        spacing = (chart_w / len(self.data)) * 0.2
-        
-        zero_line = chart_h / 2 + padding
-        
-        for i, (date, val) in enumerate(self.data):
-            x = padding + i * (bar_w + spacing)
-            # Normalize height
-            norm_h = (val / max_val) * (chart_h / 2)
+        # Data processing
+        vals = [d[1] for d in self.data]
+        cumulative = []
+        curr = 0
+        for v in vals:
+            curr += v
+            cumulative.append(curr)
             
+        max_val = max([abs(v) for v in vals]) if vals else 1
+        max_cum = max([abs(c) for c in cumulative]) if cumulative else 1
+        if max_val == 0: max_val = 1
+        if max_cum == 0: max_cum = 1
+        
+        bar_w = (chart_w / len(self.data)) * 0.7 if len(self.data) > 0 else 10
+        spacing = (chart_w / len(self.data)) * 0.3 if len(self.data) > 0 else 5
+        
+        zero_line = padding_t + chart_h / 2
+        
+        # Draw Axis Labels (Background)
+        p.setPen(QPen(QColor("#1e293b"), 1))
+        p.drawLine(padding_l, zero_line, w - padding_r, zero_line)
+        
+        # Bars (Daily Profit)
+        for i, val in enumerate(vals):
+            x = padding_l + i * (bar_w + spacing)
+            norm_h = (val / max_val) * (chart_h / 2)
             color = QColor("#10b981") if val >= 0 else QColor("#ef4444")
+            color.setAlpha(180)
             p.setBrush(QBrush(color))
             p.setPen(Qt.NoPen)
-            
             p.drawRect(x, zero_line, bar_w, -norm_h)
             
-        p.setPen(QPen(QColor("#475569"), 1))
-        p.drawLine(padding, zero_line, w - padding, zero_line)
+        # Line (Cumulative Profit) - Secondary Axis
+        if len(cumulative) > 1:
+            path_pen = QPen(QColor("#3b82f6"), 2)
+            p.setPen(path_pen)
+            p.setBrush(Qt.NoBrush)
+            
+            points = []
+            for i, cum_val in enumerate(cumulative):
+                x = padding_l + i * (bar_w + spacing) + bar_w/2
+                norm_cum_h = (cum_val / max_cum) * (chart_h / 2)
+                points.append((x, zero_line - norm_cum_h))
+            
+            for i in range(len(points)-1):
+                p.drawLine(points[i][0], points[i][1], points[i+1][0], points[i+1][1])
+                
+            # Draw point at end
+            p.setBrush(QBrush(QColor("#3b82f6")))
+            p.drawEllipse(points[-1][0]-3, points[-1][1]-3, 6, 6)
+
+        # Labels
+        from utils.formatters import format_isk
+        p.setPen(QColor("#64748b"))
+        p.setFont(QFont("Segoe UI", 7))
+        # Left scale (Daily)
+        p.drawText(5, padding_t + 10, "DIARIO")
+        p.drawText(5, padding_t + 22, format_isk(max_val, True))
+        # Right scale (Cumulative)
+        p.drawText(w - 55, padding_t + 10, "ACUMULADO")
+        p.setPen(QColor("#3b82f6"))
+        p.drawText(w - 55, padding_t + 22, format_isk(cumulative[-1] if cumulative else 0, True))
 
 class MarketPerformanceView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        from core.config_manager import load_performance_config
+        self.config = load_performance_config()
+        self._sync_in_progress = False
+        self._is_auto_sync = False
+        self.image_loader = AsyncImageLoader()
+        
         self.engine = PerformanceEngine()
-        self._purge_fake_char0()  # Eliminar datos demo con char_id=0 antes de nada
+        self._purge_fake_char0()
         self.setup_ui()
         self.discover_characters()
+        
+        # Setup Auto-Refresh Timer
+        self.auto_timer = QTimer(self)
+        self.auto_timer.timeout.connect(self._on_auto_timer_tick)
+        self._next_sync_seconds = 0
+        
+        if self.config.auto_refresh_enabled:
+            self.start_auto_refresh()
+            
         self.refresh_view()
 
     def _purge_fake_char0(self):
@@ -129,6 +212,14 @@ class MarketPerformanceView(QWidget):
         
         # 1. Header & Selectors
         header = QHBoxLayout()
+        
+        # Portrait del personaje
+        self.lbl_portrait = QLabel()
+        self.lbl_portrait.setFixedSize(48, 48)
+        self.lbl_portrait.setStyleSheet("background: #0f172a; border: 1px solid #1e293b; border-radius: 24px;")
+        self.lbl_portrait.setScaledContents(True)
+        header.addWidget(self.lbl_portrait)
+        
         title_v = QVBoxLayout()
         title_lbl = QLabel("MARKET PERFORMANCE")
         title_lbl.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900; letter-spacing: 1px;")
@@ -137,6 +228,36 @@ class MarketPerformanceView(QWidget):
         title_v.addWidget(title_lbl)
         title_v.addWidget(subtitle)
         
+        # Nueva etiqueta de contexto operativa
+        self.context_lbl = QLabel("ANALIZANDO OPERATIVA...")
+        self.context_lbl.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 800; letter-spacing: 0.5px;")
+        title_v.addWidget(self.context_lbl)
+        
+        # Auto-Refresh Group
+        auto_group = QHBoxLayout()
+        auto_group.setSpacing(5)
+        
+        self.check_auto = QCheckBox("Auto-Refresh")
+        self.check_auto.setChecked(self.config.auto_refresh_enabled)
+        self.check_auto.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 700;")
+        self.check_auto.toggled.connect(self.on_auto_refresh_toggled)
+        
+        self.combo_auto_time = QComboBox()
+        for m in [1, 2, 5, 10, 15]:
+            self.combo_auto_time.addItem(f"{m} min", m)
+        
+        # Seleccionar valor guardado
+        idx = self.combo_auto_time.findData(self.config.refresh_interval_min)
+        if idx >= 0: self.combo_auto_time.setCurrentIndex(idx)
+        
+        self.combo_auto_time.setFixedWidth(70)
+        self.combo_auto_time.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; font-size: 9px;")
+        self.combo_auto_time.currentIndexChanged.connect(self.on_auto_interval_changed)
+        
+        auto_group.addWidget(self.check_auto)
+        auto_group.addWidget(self.combo_auto_time)
+        
+        # Selectores de Personaje y Rango (Inicialización faltante restaurada)
         self.combo_char = QComboBox()
         self.combo_char.addItem("Sincroniza para ver personajes")
         self.combo_char.setFixedWidth(200)
@@ -144,7 +265,7 @@ class MarketPerformanceView(QWidget):
         
         self.combo_range = QComboBox()
         self.combo_range.addItems(["Hoy", "7 días", "30 días", "90 días"])
-        self.combo_range.setCurrentIndex(2)  # Default: 30 días — ESI devuelve historial de hasta 30 días
+        self.combo_range.setCurrentIndex(2)
         self.combo_range.setFixedWidth(100)
         self.combo_range.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 5px;")
         self.combo_range.currentIndexChanged.connect(self.refresh_view)
@@ -160,6 +281,7 @@ class MarketPerformanceView(QWidget):
         header.addStretch()
         header.addWidget(self.combo_char)
         header.addWidget(self.combo_range)
+        header.addLayout(auto_group)
         header.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header)
 
@@ -172,20 +294,33 @@ class MarketPerformanceView(QWidget):
         )
         self.main_layout.addWidget(self._diag_label)
 
-        # 2. KPIs Row
-        kpis_layout = QHBoxLayout()
-        self.kpi_profit = KPIWidget("Profit Neto", "0 ISK", "#10b981")
-        self.kpi_income = KPIWidget("Ingresos", "0 ISK", "#60a5fa")
-        self.kpi_cost = KPIWidget("Gastos", "0 ISK", "#f87171")
-        self.kpi_fees = KPIWidget("Fees & Tax", "0 ISK", "#f59e0b")
-        self.kpi_wallet = KPIWidget("Wallet Balance", "0 ISK", "#cbd5e1")
+        # 2. KPIs Section (Two Rows for detail)
+        kpis_v = QVBoxLayout()
+        kpis_v.setSpacing(10)
         
-        kpis_layout.addWidget(self.kpi_profit)
-        kpis_layout.addWidget(self.kpi_income)
-        kpis_layout.addWidget(self.kpi_cost)
-        kpis_layout.addWidget(self.kpi_fees)
-        kpis_layout.addWidget(self.kpi_wallet)
-        self.main_layout.addLayout(kpis_layout)
+        # Row 1: Primary Metrics
+        kpis_row1 = QHBoxLayout()
+        self.kpi_cashflow = KPIWidget("Net Trade Cashflow", "0 ISK", "#3b82f6") # Blue (Main metric)
+        self.kpi_income = KPIWidget("Sales Income", "0 ISK", "#60a5fa")
+        self.kpi_cost = KPIWidget("Buy Investment", "0 ISK", "#f87171")
+        kpis_row1.addWidget(self.kpi_cashflow)
+        kpis_row1.addWidget(self.kpi_income)
+        kpis_row1.addWidget(self.kpi_cost)
+        
+        # Row 2: Detailed Accounting
+        kpis_row2 = QHBoxLayout()
+        self.kpi_broker = KPIWidget("Broker Fees", "0 ISK", "#f59e0b")
+        self.kpi_tax = KPIWidget("Sales Tax", "0 ISK", "#f97316")
+        self.kpi_realized = KPIWidget("Realized Profit (Est)", "0 ISK", "#10b981")
+        self.kpi_exposure = KPIWidget("Inventory Exposure", "0 ISK", "#cbd5e1")
+        kpis_row2.addWidget(self.kpi_broker)
+        kpis_row2.addWidget(self.kpi_tax)
+        kpis_row2.addWidget(self.kpi_realized)
+        kpis_row2.addWidget(self.kpi_exposure)
+        
+        kpis_v.addLayout(kpis_row1)
+        kpis_v.addLayout(kpis_row2)
+        self.main_layout.addLayout(kpis_v)
         
         # 3. Middle Row: Chart & Top Items
         middle_layout = QHBoxLayout()
@@ -207,10 +342,15 @@ class MarketPerformanceView(QWidget):
         middle_layout.addWidget(self.chart_frame, 3)
         
         # Top Items Table
-        self.top_items_table = QTableWidget(0, 6)
-        self.top_items_table.setHorizontalHeaderLabels(["Item", "In", "Out", "Stock", "Profit", "Estado"])
+        from PySide6.QtWidgets import QAbstractItemView
+        self.top_items_table = QTableWidget(0, 7)
+        self.top_items_table.setHorizontalHeaderLabels(["", "Item", "In (Qty)", "Out (Qty)", "Net Stock", "Realized Profit", "Estado"])
         self.top_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.top_items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.top_items_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.top_items_table.setColumnWidth(0, 32)
+        self.top_items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.top_items_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.top_items_table.customContextMenuRequested.connect(self.on_table_context_menu)
         self.top_items_table.setStyleSheet("background: #0f172a; color: #f1f5f9; border: none; font-size: 10px;")
         self.top_items_table.setShowGrid(False)
         self.top_items_table.verticalHeader().setVisible(False)
@@ -249,7 +389,7 @@ class MarketPerformanceView(QWidget):
         self.det_in, self.lbl_det_in = create_det_box("Total Bought")
         self.det_out, self.lbl_det_out = create_det_box("Total Sold")
         self.det_stock, self.lbl_det_stock = create_det_box("Net Stock", "#3b82f6")
-        self.det_profit, self.lbl_det_profit = create_det_box("Profit", "#10b981")
+        self.det_profit, self.lbl_det_profit = create_det_box("Realized (Est)", "#10b981")
         self.det_margin, self.lbl_det_margin = create_det_box("Margin")
         self.det_status, self.lbl_det_status = create_det_box("Operational Status", "#fbbf24")
         
@@ -266,6 +406,9 @@ class MarketPerformanceView(QWidget):
         self.trans_table = QTableWidget(0, 6)
         self.trans_table.setHorizontalHeaderLabels(["Fecha", "Item", "Tipo", "Cantidad", "Total", "Fee Est."])
         self.trans_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.trans_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.trans_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.trans_table.customContextMenuRequested.connect(self.on_table_context_menu)
         self.trans_table.setStyleSheet("background: #0f172a; color: #f1f5f9; border: none;")
         self.trans_table.setShowGrid(False)
         self.trans_table.verticalHeader().setVisible(False)
@@ -274,15 +417,23 @@ class MarketPerformanceView(QWidget):
         
         self.main_layout.addStretch()
 
-    def on_sync_clicked(self):
+    def on_sync_clicked(self, is_auto=False):
+        if self._sync_in_progress:
+            _log.info("[SYNC] Ignorando petición, ya hay una sync en curso.")
+            return
+
         from core.auth_manager import AuthManager
         from core.wallet_poller import WalletPoller
         from PySide6.QtCore import QThread
         
         auth = AuthManager.instance()
+        self._is_auto_sync = is_auto
         
-        # Si no hay token, iniciar login ESI y esperar con polling en el hilo principal
+        # Si no hay token, iniciar login ESI (solo si es manual)
         if not auth.current_token:
+            if is_auto:
+                _log.info("[SYNC] Auto-refresh cancelado: no hay token.")
+                return
             auth.login()
             self.btn_refresh.setText("ESPERANDO LOGIN...")
             self.btn_refresh.setEnabled(False)
@@ -323,6 +474,7 @@ class MarketPerformanceView(QWidget):
 
         self.btn_refresh.setText("SINCRONIZANDO...")
         self.btn_refresh.setEnabled(False)
+        self._sync_in_progress = True
         
         # Worker Thread
         self.poller_thread = QThread()
@@ -338,6 +490,7 @@ class MarketPerformanceView(QWidget):
         self.poller_thread.start()
 
     def on_sync_finished(self):
+        self._sync_in_progress = False
         self.btn_refresh.setText("COMPLETO")
         self.btn_refresh.setEnabled(True)
 
@@ -345,62 +498,64 @@ class MarketPerformanceView(QWidget):
         from PySide6.QtWidgets import QMessageBox
         auth = AuthManager.instance()
         char_id = self.combo_char.currentData() or auth.char_id
-        _log.info(f"[SYNC DONE] combo_data={self.combo_char.currentData()}, auth.char_id={auth.char_id}, char_id={char_id}")
-
+        
         # Garantizar rango ≥ 30 días antes de refrescar
         if self.combo_range.currentIndex() < 2:
             self.combo_range.blockSignals(True)
             self.combo_range.setCurrentIndex(2)
             self.combo_range.blockSignals(False)
 
-        # Limpiar hilo worker primero (sin bloquear UI)
+        # Limpiar hilo worker primero
         if hasattr(self, 'poller_thread'):
             self.poller_thread.quit()
             self.poller_thread.wait(2000)
 
-        # Construir mensaje de diagnóstico
-        r = self._last_sync_report or {}
-        rep_char_id   = r.get('char_id', char_id)
-        balance       = r.get('balance')
-        esi_trans     = r.get('esi_trans_count', '?')
-        esi_journal   = r.get('esi_journal_count', '?')
-        saved_trans   = r.get('saved_trans', '?')
-        saved_journal = r.get('saved_journal', '?')
-        db_trans      = r.get('db_transactions', '?')
-        db_journal    = r.get('db_journal', '?')
-        db_snaps      = r.get('db_snapshots', '?')
-        date_min      = r.get('db_trans_date_min') or '—'
-        date_max      = r.get('db_trans_date_max') or '—'
-        balance_str   = f"{balance:,.0f} ISK" if isinstance(balance, (int, float)) else "No recibido"
+        # Solo mostrar popup si fue manual
+        if not self._is_auto_sync:
+            # Construir mensaje de diagnóstico
+            r = self._last_sync_report or {}
+            rep_char_id   = r.get('char_id', char_id)
+            balance       = r.get('balance')
+            esi_trans     = r.get('esi_trans_count', '?')
+            esi_journal   = r.get('esi_journal_count', '?')
+            saved_trans   = r.get('saved_trans', '?')
+            saved_journal = r.get('saved_journal', '?')
+            db_trans      = r.get('db_transactions', '?')
+            db_journal    = r.get('db_journal', '?')
+            db_snaps      = r.get('db_snapshots', '?')
+            date_min      = r.get('db_trans_date_min') or '—'
+            date_max      = r.get('db_trans_date_max') or '—'
+            balance_str   = f"{balance:,.0f} ISK" if isinstance(balance, (int, float)) else "No recibido"
 
-        msg = (
-            f"═══ DIAGNÓSTICO DE SYNC ═══\n\n"
-            f"char_id usado:      {rep_char_id}\n"
-            f"auth.char_id:       {auth.char_id}\n"
-            f"combo currentData:  {self.combo_char.currentData()}\n\n"
-            f"── ESI recibido ──\n"
-            f"  Balance:          {balance_str}\n"
-            f"  Transacciones:    {esi_trans}\n"
-            f"  Journal entries:  {esi_journal}\n\n"
-            f"── Guardado en DB ──\n"
-            f"  Trans guardadas:  {saved_trans}\n"
-            f"  Journal guardado: {saved_journal}\n\n"
-            f"── Estado DB total para char_id ──\n"
-            f"  wallet_snapshots: {db_snaps}\n"
-            f"  wallet_trans:     {db_trans}  ({date_min} → {date_max})\n"
-            f"  wallet_journal:   {db_journal}\n"
-        )
-        _log.info(f"[SYNC DONE] Diagnóstico completo:\n{msg}")
+            msg = (
+                f"═══ DIAGNÓSTICO DE SYNC ═══\n\n"
+                f"char_id usado:      {rep_char_id}\n"
+                f"auth.char_id:       {auth.char_id}\n"
+                f"combo currentData:  {self.combo_char.currentData()}\n\n"
+                f"── ESI recibido ──\n"
+                f"  Balance:          {balance_str}\n"
+                f"  Transacciones:    {esi_trans}\n"
+                f"  Journal entries:  {esi_journal}\n\n"
+                f"── Guardado en DB ──\n"
+                f"  Trans guardadas:  {saved_trans}\n"
+                f"  Journal guardado: {saved_journal}\n\n"
+                f"── Estado DB total para char_id ──\n"
+                f"  wallet_snapshots: {db_snaps}\n"
+                f"  wallet_trans:     {db_trans}  ({date_min} → {date_max})\n"
+                f"  wallet_journal:   {db_journal}\n"
+            )
+            if isinstance(db_trans, int) and db_trans > 0:
+                box = QMessageBox(QMessageBox.Information, "Sincronización ESI", msg, parent=self)
+            else:
+                box = QMessageBox(QMessageBox.Warning, "Sincronización ESI — Sin datos", msg, parent=self)
+            box.exec()
 
-        if isinstance(db_trans, int) and db_trans > 0:
-            box = QMessageBox(QMessageBox.Information, "Sincronización ESI", msg, parent=self)
-        else:
-            box = QMessageBox(QMessageBox.Warning, "Sincronización ESI — Sin datos", msg, parent=self)
-        box.exec()
-
-        # refresh_view DESPUÉS de cerrar el popup — el usuario verá los datos inmediatamente
         self.refresh_view()
         QTimer.singleShot(3000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
+        
+        # Resetear timer si está activo
+        if self.config.auto_refresh_enabled:
+            self.start_auto_refresh()
 
     def _on_sync_report(self, report: dict):
         """Recibe el informe de diagnóstico emitido por WalletPoller desde el hilo worker."""
@@ -435,6 +590,7 @@ class MarketPerformanceView(QWidget):
             QMessageBox.warning(self, "Login ESI", "No se recibió respuesta de EVE SSO en 60 segundos.\nIntenta de nuevo.")
 
     def on_sync_error(self, msg):
+        self._sync_in_progress = False
         _log.error(f"[SYNC ERROR] {msg}")
         self.btn_refresh.setText("ERROR")
         self.btn_refresh.setEnabled(True)
@@ -442,6 +598,11 @@ class MarketPerformanceView(QWidget):
         if hasattr(self, 'poller_thread'):
             self.poller_thread.quit()
             self.poller_thread.wait(2000)
+        
+        # Pausar auto-refresh si falla auth/token
+        if "token" in msg.lower() or "auth" in msg.lower():
+            self.check_auto.setChecked(False)
+            _log.warning("[SYNC] Auto-refresh desactivado por error de token.")
 
     def refresh_view(self):
         """Entry point público — captura cualquier excepción y la hace visible."""
@@ -476,11 +637,12 @@ class MarketPerformanceView(QWidget):
                 "color: #f59e0b; font-size: 9px; font-weight: 700; "
                 "padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;"
             )
-            self.kpi_profit.update_value("0 ISK")
+            self.kpi_realized.update_value("0 ISK")
             self.kpi_income.update_value("0 ISK")
             self.kpi_cost.update_value("0 ISK")
             self.kpi_fees.update_value("0 ISK")
-            self.kpi_wallet.update_value("0 ISK", "No sync")
+            self.kpi_exposure.update_value("0 ISK", "No sync")
+            self.context_lbl.setText("SIN DATOS")
             self.chart.set_data([])
             self.top_items_table.setRowCount(0)
             self.trans_table.setRowCount(0)
@@ -518,7 +680,7 @@ class MarketPerformanceView(QWidget):
         _log.info(
             f"[REFRESH] Engine → daily={len(daily_pnl)} días  items={len(items)}  "
             f"income={summary.total_income:.0f}  cost={summary.total_cost:.0f}  "
-            f"fees={summary.total_fees:.0f}  profit={summary.total_profit_net:.0f}  "
+            f"fees={summary.total_fees:.0f}  cashflow={summary.net_cashflow:.0f}  "
             f"wallet={summary.wallet_current:.0f}"
         )
 
@@ -526,12 +688,20 @@ class MarketPerformanceView(QWidget):
 
         # ── Actualizar barra de diagnóstico ───────────────────────────────
         diag_color = "#10b981" if summary.total_income > 0 else "#f59e0b"
+        
+        auto_text = ""
+        if self.config.auto_refresh_enabled:
+            m, s = divmod(self._next_sync_seconds, 60)
+            auto_text = f" | Next Sync: {m:02d}:{s:02d}"
+
         self._diag_label.setText(
             f"▸ char={char_id}  rango={days}d  "
             f"tx_rango={sql_tx}  journal={sql_jn}  items={len(items)}  "
-            f"income={format_isk(summary.total_income, True)} ISK  "
-            f"profit={format_isk(summary.total_profit_net, True)} ISK  "
-            f"wallet={format_isk(summary.wallet_current, True)} ISK"
+            f"income={format_isk(summary.total_income, True)} ISK | "
+            f"fees={format_isk(summary.broker_fees, True)} | tax={format_isk(summary.sales_tax, True)} | "
+            f"cashflow={format_isk(summary.net_cashflow, True)} ISK | "
+            f"realized_est={format_isk(summary.total_realized_profit, True)} ISK"
+            f"{auto_text}"
         )
         self._diag_label.setStyleSheet(
             f"color: {diag_color}; font-size: 9px; font-weight: 700; "
@@ -539,14 +709,22 @@ class MarketPerformanceView(QWidget):
         )
 
         # ── KPIs ──────────────────────────────────────────────────────────
-        self.kpi_profit.update_value(format_isk(summary.total_profit_net, short=True) + " ISK")
+        self.kpi_cashflow.update_value(format_isk(summary.net_cashflow, short=True) + " ISK")
         self.kpi_income.update_value(format_isk(summary.total_income, short=True) + " ISK")
         self.kpi_cost.update_value(format_isk(summary.total_cost, short=True) + " ISK")
-        self.kpi_fees.update_value(format_isk(summary.total_fees, short=True) + " ISK")
-        self.kpi_wallet.update_value(
-            format_isk(summary.wallet_current, short=True) + " ISK",
-            f"Sync: {summary.last_synced_at.strftime('%H:%M')}"
+        
+        self.kpi_broker.update_value(format_isk(summary.broker_fees, short=True) + " ISK")
+        self.kpi_tax.update_value(format_isk(summary.sales_tax, short=True) + " ISK")
+        self.kpi_realized.update_value(format_isk(summary.total_realized_profit, short=True) + " ISK")
+        self.kpi_exposure.update_value(
+            format_isk(summary.inventory_exposure, short=True) + " ISK",
+            f"Wallet: {format_isk(summary.wallet_current, True)}"
         )
+        self.context_lbl.setText(summary.period_context.upper())
+
+        # Portrait
+        portrait_url = f"https://images.evetech.net/characters/{char_id}/portrait?size=64"
+        self.image_loader.load(portrait_url, lambda pix: self.lbl_portrait.setPixmap(pix))
 
         # ── Gráfico ───────────────────────────────────────────────────────
         self.chart.set_data([(d.date, d.profit_net) for d in daily_pnl])
@@ -559,20 +737,30 @@ class MarketPerformanceView(QWidget):
             "Acumulando Stock": "#fbbf24",
             "Liquidando": "#f87171",
             "Flujo Equilibrado": "#60a5fa",
-            "Salida Lenta": "#94a3b8"
+            "Salida Lenta": "#94a3b8",
+            "Exposición Alta": "#ef4444"
         }
         for i, item in enumerate(items[:15]):
-            self.top_items_table.setItem(i, 0, QTableWidgetItem(item.item_name))
-            self.top_items_table.setItem(i, 1, QTableWidgetItem(str(item.total_bought_units)))
-            self.top_items_table.setItem(i, 2, QTableWidgetItem(str(item.total_sold_units)))
+            # Icono
+            icon_lbl = QLabel()
+            icon_lbl.setFixedSize(24, 24)
+            icon_lbl.setScaledContents(True)
+            icon_url = f"https://images.evetech.net/types/{item.item_id}/icon?size=32"
+            self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
+            self.top_items_table.setCellWidget(i, 0, icon_lbl)
+
+            self.top_items_table.setItem(i, 1, QTableWidgetItem(item.item_name))
+            self.top_items_table.setItem(i, 2, QTableWidgetItem(str(item.total_bought_units)))
+            self.top_items_table.setItem(i, 3, QTableWidgetItem(str(item.total_sold_units)))
             stock_item = QTableWidgetItem(str(item.net_units))
             if item.net_units > 0:
                 stock_item.setForeground(QColor("#60a5fa"))
-            self.top_items_table.setItem(i, 3, stock_item)
-            self.top_items_table.setItem(i, 4, QTableWidgetItem(format_isk(item.profit_net, short=True)))
+            self.top_items_table.setItem(i, 4, stock_item)
+            # Mostramos el Realized Profit (estimado) en la tabla para mayor utilidad
+            self.top_items_table.setItem(i, 5, QTableWidgetItem(format_isk(item.realized_profit_est, short=True)))
             status_item = QTableWidgetItem(item.status_text)
             status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
-            self.top_items_table.setItem(i, 5, status_item)
+            self.top_items_table.setItem(i, 6, status_item)
 
         # ── Recent Transactions (sin filtro de fecha) ─────────────────────
         conn2 = sqlite3.connect(self.engine.db_path)
@@ -616,8 +804,75 @@ class MarketPerformanceView(QWidget):
             self.lbl_det_stock.setText(str(item.net_units))
             
             from utils.formatters import format_isk
-            self.lbl_det_profit.setText(format_isk(item.profit_net))
+            self.lbl_det_profit.setText(format_isk(item.realized_profit_est))
             self.lbl_det_margin.setText(f"{item.margin_real_pct:.1f}%")
-            self.lbl_det_status.setText(item.status_text.upper())
+            
+            # Contexto adicional en el detalle
+            exposure_text = f"Exposure: {format_isk(item.inventory_value_est, True)}"
+            self.lbl_det_status.setText(f"{item.status_text.upper()} | {exposure_text}")
             
             self.detail_frame.setVisible(True)
+
+    def on_table_context_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QGuiApplication
+        
+        table = self.sender()
+        item = table.itemAt(pos)
+        if not item: return
+        
+        # En la tabla de top items, el nombre está en la columna 1. En transacciones, en la 1.
+        col_name = 1
+        name_item = table.item(item.row(), col_name)
+        if not name_item: return
+        
+        name = name_item.text()
+        
+        menu = QMenu()
+        copy_action = menu.addAction(f"Copiar '{name}'")
+        action = menu.exec(table.mapToGlobal(pos))
+        
+        if action == copy_action:
+            QGuiApplication.clipboard().setText(name)
+
+    # ── Auto-Refresh Logic ───────────────────────────────────────────
+    
+    def on_auto_refresh_toggled(self, checked):
+        self.config.auto_refresh_enabled = checked
+        from core.config_manager import save_performance_config
+        save_performance_config(self.config)
+        
+        if checked:
+            self.start_auto_refresh()
+        else:
+            self.auto_timer.stop()
+            self.refresh_view() # Para limpiar el texto de "Next sync" en el diag label
+
+    def on_auto_interval_changed(self):
+        self.config.refresh_interval_min = self.combo_auto_time.currentData()
+        from core.config_manager import save_performance_config
+        save_performance_config(self.config)
+        
+        if self.config.auto_refresh_enabled:
+            self.start_auto_refresh()
+
+    def start_auto_refresh(self):
+        self._next_sync_seconds = self.config.refresh_interval_min * 60
+        self.auto_timer.start(1000) # Tick cada segundo
+
+    def _on_auto_timer_tick(self):
+        if not self.config.auto_refresh_enabled:
+            self.auto_timer.stop()
+            return
+            
+        if self._sync_in_progress:
+            return # Esperamos a que termine la actual antes de descontar
+
+        self._next_sync_seconds -= 1
+        
+        # Actualizar feedback visual (re-usamos refresh_view que actualiza diag label)
+        self.refresh_view()
+        
+        if self._next_sync_seconds <= 0:
+            self.auto_timer.stop() # Pausar mientras sincroniza
+            self.on_sync_clicked(is_auto=True)

@@ -51,3 +51,8 @@ class FilterConfig:
     sell_orders_min: int = 0
     history_days_min: int = 0
     profit_day_min: float = 0.0
+
+@dataclass
+class PerformanceConfig:
+    auto_refresh_enabled: bool = False
+    refresh_interval_min: int = 5

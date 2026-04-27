@@ -45,7 +45,9 @@ class ItemPerformanceSummary:
     gross_income: float
     gross_cost: float
     fees_paid: float
-    profit_net: float
+    profit_net: float             # Crudo: Income - Cost - Fees
+    realized_profit_est: float    # Aproximado: Lo ganado en ventas cerradas
+    inventory_value_est: float    # Capital "atrapado" en el stock neto acumulado
     margin_real_pct: float
     trade_count: int
     status_text: str = ""
@@ -57,12 +59,20 @@ class CharacterPerformanceSummary:
     portrait_url: str
     period_start: datetime
     period_end: datetime
-    total_profit_net: float
+    
     total_income: float
     total_cost: float
-    total_fees: float
+    broker_fees: float
+    sales_tax: float
+    total_fees: float  # Combined fees + tax
+    
+    net_cashflow: float  # income - cost - fees - tax (Rolling Trade Profit in EVE Tycoon)
+    total_realized_profit: float  # Closed profit based on estimated COGS
+    
+    inventory_exposure: float     # Valor estimado del stock acumulado en el periodo
     wallet_current: float
     last_synced_at: datetime
+    period_context: str = ""       # Diagnóstico: "Acumulación", "Liquidación", etc.
 
 @dataclass
 class FeeBreakdown:

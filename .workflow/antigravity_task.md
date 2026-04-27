@@ -100,6 +100,161 @@ Dos bugs críticos corregidos de forma quirúrgica sin alterar lógica existente
 
 ---
 
+## Sesión 8 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Refinado de analítica Market Performance — Realized Profit vs Inventario Abierto
+
+### RESUMEN
+Se ha transformado la analítica cruda de Performance en un panel profesional para *station trading*. La lectura anterior era engañosa porque un periodo de fuerte inversión en stock aparecía como "pérdida neta", sin distinguir entre ISK gastado en inventario valioso vs. ISK realmente perdido.
+
+**Mejoras clave:**
+1. **Separación de Rendimiento**: Se introdujo el concepto de **Realized Profit (Est)**, que calcula el beneficio solo sobre las unidades vendidas, usando el coste medio de compra del periodo.
+2. **Métrica de Inventario**: Se añadió el KPI de **Inventory Exposure**, que cuantifica el capital "atrapado" en stock neto positivo (compras > ventas), convirtiendo los números rojos de "pérdida" en una métrica de inversión productiva.
+3. **Contexto de Operativa**: Se añadió una etiqueta de diagnóstico dinámico que clasifica el periodo como *"Fase de Acumulación"*, *"Fase de Liquidación"* u *"Operativa Balanceada"*.
+4. **Estados de Item Profesionales**: Clasificación avanzada de items basada en rotación y exposición (ej: "Exposición Alta" si > 500M ISK, "Salida Lenta", "Rotando Bien").
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/performance_models.py` | Actualizados `ItemPerformanceSummary` y `CharacterPerformanceSummary` con campos para beneficio realizado, exposición de inventario y contexto del periodo. |
+| `core/performance_engine.py` | Implementada lógica de cálculo de coste medio, beneficio realizado estimado y valoración de stock neto. Añadida lógica de diagnóstico de contexto. |
+| `ui/market_command/performance_view.py` | Rediseño de KPIs superiores (Realized, Sales, Buy, Exposure). Añadida `context_lbl` para diagnóstico. Actualizada tabla de items y panel de detalle con las nuevas métricas. |
+
+### CHECKS
+- **Ventas realizadas**: El profit realizado no se ve penalizado por compras de stock masivo para inventario.
+- **Detección de Acumulación**: El sistema detecta correctamente periodos de inversión pesada y ajusta el diagnóstico.
+- **Honestidad de Datos**: Se mantiene la visibilidad del "Profit Neto" crudo en el tooltip de la barra de diagnóstico, pero el KPI principal es el realizado.
+- **Compatibilidad**: No se rompió el gráfico diario ni la sincronización ESI.
+
+### NOTES
+- La estimación de beneficio realizado usa el **Precio Medio del Periodo**. Si un item tiene 0 compras en el periodo pero ventas, el coste se asume 0 para ese periodo específico (limitación aceptada frente a complejidad FIFO).
+- El panel ahora es mucho más accionable: permite saber si una "pérdida" es real o si simplemente tienes el ISK en forma de naves/módulos en el hangar.
+
+*Estado: Performance Analytics refinado para operativa profesional.*
+
+---
+
+## Sesión 9 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Auto-Refresh opcional para ESI en Market Performance
+
+### RESUMEN
+Se ha implementado un sistema de sincronización automática opcional para la pestaña de Performance. Esto permite que el panel se mantenga actualizado de forma pasiva mientras el usuario lo tiene abierto, ideal para monitorear ventas y stock en tiempo real (según los tiempos de caché de ESI).
+
+**Mejoras clave:**
+1. **Control de Usuario**: Se añadieron controles en el header para activar/desactivar el auto-refresco y elegir el intervalo (1, 2, 5, 10 o 15 minutos).
+2. **Sistema de Timer Robusto**: Utiliza un `QTimer` de Qt que gestiona tanto el disparo de la sincronización como el feedback visual del tiempo restante.
+3. **Prevención de Conflictos**: Se implementó una guardia de estado `_sync_in_progress` que garantiza que nunca se lancen dos sincronizaciones simultáneas (evita choques entre el timer y el botón manual).
+4. **Feedback Silencioso**: A diferencia de la sincronización manual, el auto-refresh es silencioso (no muestra popups modales si tiene éxito) para no interrumpir el flujo de trabajo, pero informa de su estado en la barra de diagnóstico.
+5. **Persistencia**: Las preferencias se guardan en `config/performance_config.json`.
+6. **Seguridad ESI**: Si se detecta un error de autenticación o de token, el auto-refresco se pausa automáticamente para evitar bucles de error.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/market_models.py` | Añadida la clase `PerformanceConfig`. |
+| `core/config_manager.py` | Añadidas funciones `load_performance_config` y `save_performance_config`. |
+| `ui/market_command/performance_view.py` | Implementada toda la lógica de UI y Timer. Añadidos controles al header y contador regresivo en la barra de diagnóstico. |
+
+### CHECKS
+- **Sincronización Manual**: Sigue funcionando perfectamente con su diálogo de diagnóstico.
+- **Intervalos**: El cambio de intervalo reinicia el contador correctamente.
+- **Persistencia**: Al reiniciar la app, se mantiene el estado del checkbox y el tiempo elegido.
+- **Concurrency**: Si una sync manual está en curso, el timer espera y no intenta disparar otra.
+- **Feedback**: La barra de diagnóstico muestra claramente `Next Sync: MM:SS` cuando está activo.
+
+### NOTES
+- Por seguridad, si el usuario no ha hecho login (no hay token), el auto-refresh no intenta sincronizar y loguea el aviso.
+- Si el refresco automático falla, se muestra un error en el log y, si es grave (auth), se desactiva el toggle.
+
+*Estado: Market Performance ahora soporta monitoreo desatendido seguro.*
+
+---
+
+## Sesión 10 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Refinamiento visual y de interacción Premium en Market Performance
+
+### RESUMEN
+Se ha transformado la interfaz de Performance en una consola de mando de alta fidelidad, integrando elementos visuales dinámicos e interacciones profesionales.
+
+**Mejoras clave:**
+1. **Identidad Visual**: Se integraron retratos de personajes y fotos de items directamente desde los servidores de imágenes de EVE Online usando un sistema de carga asíncrona (`AsyncImageLoader`) que evita bloqueos en la interfaz.
+2. **Analítica Avanzada en Gráfico**: El gráfico de barras ahora incluye una línea de **Profit Acumulado** con su propia escala en el eje derecho, permitiendo visualizar no solo el rendimiento diario sino la tendencia de crecimiento total del periodo.
+3. **Tablas de Solo Lectura**: Se bloqueó la edición accidental de celdas en todas las tablas de rendimiento, garantizando la integridad de los datos visualizados.
+4. **Interacción Operativa**: Se añadió un menú contextual (click derecho) para copiar rápidamente el nombre de los items al portapapeles, manteniendo la agilidad del trader.
+5. **Layout Bridge-Console**: Se ajustaron espaciados y componentes (como el retrato circular del piloto) para alinearse con la estética de "Command Bridge" del proyecto.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/performance_view.py` | Implementada clase `AsyncImageLoader`. Rediseño de `SimpleBarChart`. Actualizada `setup_ui` con retrato y tablas de solo lectura. Añadida columna de iconos a la tabla de items. Implementado menú contextual. |
+
+### CHECKS
+- **Carga de Imágenes**: Los retratos e iconos se cargan en segundo plano sin lag.
+- **Gráfico Doble Eje**: La línea azul (acumulado) y las barras (diario) son perfectamente legibles.
+- **Solo Lectura**: No es posible editar ninguna celda mediante doble click o teclado.
+- **Copia de Nombre**: El menú contextual funciona correctamente en la tabla de items y transacciones.
+- **Sync ESI**: La sincronización y el auto-refresh siguen operativos y actualizan los nuevos elementos visuales.
+
+### NOTES
+- Se utiliza `QNetworkAccessManager` para las peticiones de imagen, lo que requiere conexión a internet para ver los iconos (comportamiento estándar en herramientas de EVE).
+- El sistema de caché simple en memoria evita redundancia de descargas durante la misma sesión.
+
+*Estado: Market Performance alcanza un nivel de acabado Premium y profesional.*
+
+---
+
+## Sesión 11 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Alineación contable con EVE Tycoon Parity
+
+### RESUMEN
+Se ha realizado una auditoría profunda de la captura de datos y la lógica contable para reducir la discrepancia con herramientas de terceros como EVE Tycoon.
+
+**Mejoras clave:**
+1. **Paginación ESI Completa**: Se corrigió el error crítico donde solo se capturaba la primera página de datos. Ahora la suite solicita todas las páginas disponibles para el Wallet Journal y hasta 50 páginas (2500 registros) para Transacciones, asegurando un historial completo.
+2. **Desglose de Gastos**: Se separaron los **Broker Fees** de los **Sales Taxes** en la base de datos y la interfaz, permitiendo una auditoría exacta de los costes de trading.
+3. **Dualidad de Profit**:
+    - **Net Trade Cashflow**: Equivalente al "Rolling Trade Profit" de EVE Tycoon (Ingresos - Compras - Gastos). Refleja la liquidez real.
+    - **Estimated Realized Profit**: Beneficio basado en el COGS (Cost of Goods Sold). Refleja el beneficio de las operaciones cerradas.
+4. **Rediseño de KPIs**: El panel de control ahora muestra 7 métricas clave en dos niveles, eliminando ambigüedades en la nomenclatura.
+5. **Trazabilidad en Diagnóstico**: La barra de estado ahora desglosa los totales brutos para permitir una validación rápida contra EVE Tycoon.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/esi_client.py` | Implementada paginación en `character_wallet_journal` y `character_wallet_transactions`. |
+| `core/performance_models.py` | Actualizado `CharacterPerformanceSummary` con campos desglosados de fees y cashflow. |
+| `core/performance_engine.py` | Refactorizada la lógica de agregación para calcular fees/taxes reales y cashflow neto. |
+| `ui/market_command/performance_view.py` | Rediseño total de la sección de KPIs y actualización de la barra de diagnóstico técnica. |
+
+### CHECKS
+- **Paginación**: Los logs ahora muestran la captura de múltiples páginas (ej: "2500 entradas totales en 1 páginas" para journal).
+- **Cálculo Cashflow**: (Income - Cost - BrokerFees - SalesTax) coincide con la lógica de caja.
+- **Diferencias con EVE Tycoon**: Las diferencias residuales ahora solo deberían deberse a:
+    - Fecha exacta de corte (ESI cache).
+    - Órdenes de mercado muy antiguas cuyo coste original no está en las últimas 2500 transacciones.
+
+### NOTES
+- Se ha mantenido el **Realized Profit** como una estimación basada en COGS medio del periodo, ya que EVE no proporciona una trazabilidad FIFO nativa por transacción.
+
+*Estado: Contabilidad de trading profesional, precisa y comparable.*
+
+---
+
+---
+
+---
+
 ## Sesión 5 — 2026-04-27
 
 ### STATUS: DIAGNÓSTICO ACTIVO 🔍

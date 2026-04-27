@@ -1,10 +1,11 @@
 import json
 import os
 from pathlib import Path
-from core.market_models import FilterConfig
+from core.market_models import FilterConfig, PerformanceConfig
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
 _MARKET_FILTERS_FILE = _CONFIG_DIR / 'market_filters.json'
+_PERFORMANCE_FILE = _CONFIG_DIR / 'performance_config.json'
 
 def save_market_filters(config: FilterConfig):
     """Guarda la configuración de filtros en un archivo JSON."""
@@ -54,3 +55,26 @@ def load_market_filters() -> FilterConfig:
     except Exception as e:
         print(f"Error cargando filtros: {e}")
         return FilterConfig()
+def save_performance_config(config: PerformanceConfig):
+    _CONFIG_DIR.mkdir(exist_ok=True)
+    try:
+        data = {
+            "auto_refresh_enabled": config.auto_refresh_enabled,
+            "refresh_interval_min": config.refresh_interval_min
+        }
+        _PERFORMANCE_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"Error guardando performance config: {e}")
+
+def load_performance_config() -> PerformanceConfig:
+    if not _PERFORMANCE_FILE.exists():
+        return PerformanceConfig()
+    try:
+        data = json.loads(_PERFORMANCE_FILE.read_text(encoding='utf-8'))
+        return PerformanceConfig(
+            auto_refresh_enabled=data.get("auto_refresh_enabled", False),
+            refresh_interval_min=data.get("refresh_interval_min", 5)
+        )
+    except Exception as e:
+        print(f"Error cargando performance config: {e}")
+        return PerformanceConfig()

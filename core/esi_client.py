@@ -153,30 +153,58 @@ class ESIClient:
         return None
 
     def character_wallet_journal(self, char_id, token):
-        url = f"{self.BASE_URL}/characters/{char_id}/wallet/journal/"
-        try:
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                logger.info(f"ESI wallet_journal char={char_id} → {len(data)} entradas")
-                return data
-            logger.warning(f"ESI wallet_journal char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
-        except Exception as e:
-            logger.error(f"ESI wallet_journal char={char_id} excepción: {e}")
-        return []
+        all_data = []
+        page = 1
+        while True:
+            url = f"{self.BASE_URL}/characters/{char_id}/wallet/journal/"
+            params = {'page': page}
+            try:
+                self._rate_limit()
+                res = self.session.get(url, headers=self._headers(token), params=params, timeout=15)
+                if res.status_code == 200:
+                    data = res.json()
+                    if not data: break
+                    all_data.extend(data)
+                    pages = int(res.headers.get('X-Pages', 1))
+                    if page >= pages: break
+                    page += 1
+                else:
+                    logger.warning(f"ESI wallet_journal char={char_id} page={page} → HTTP {res.status_code}")
+                    break
+            except Exception as e:
+                logger.error(f"ESI wallet_journal char={char_id} page={page} excepción: {e}")
+                break
+        
+        logger.info(f"ESI wallet_journal char={char_id} → {len(all_data)} entradas totales en {page} páginas")
+        return all_data
 
     def character_wallet_transactions(self, char_id, token):
-        url = f"{self.BASE_URL}/characters/{char_id}/wallet/transactions/"
-        try:
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                logger.info(f"ESI wallet_transactions char={char_id} → {len(data)} transacciones")
-                return data
-            logger.warning(f"ESI wallet_transactions char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
-        except Exception as e:
-            logger.error(f"ESI wallet_transactions char={char_id} excepción: {e}")
-        return []
+        all_data = []
+        page = 1
+        # ESI permite hasta 2500 transacciones (50 páginas de 50)
+        while page <= 50:
+            url = f"{self.BASE_URL}/characters/{char_id}/wallet/transactions/"
+            params = {'page': page}
+            try:
+                self._rate_limit()
+                res = self.session.get(url, headers=self._headers(token), params=params, timeout=15)
+                if res.status_code == 200:
+                    data = res.json()
+                    if not data: break
+                    all_data.extend(data)
+                    # El header X-Pages no siempre está presente en este endpoint o es confuso,
+                    # paramos si recibimos menos de 50 (fin de datos)
+                    if len(data) < 50: break
+                    page += 1
+                else:
+                    logger.warning(f"ESI wallet_transactions char={char_id} page={page} → HTTP {res.status_code}")
+                    break
+            except Exception as e:
+                logger.error(f"ESI wallet_transactions char={char_id} page={page} excepción: {e}")
+                break
+        
+        logger.info(f"ESI wallet_transactions char={char_id} → {len(all_data)} transacciones totales en {page} páginas")
+        return all_data
 
     def open_market_window(self, type_id: int, access_token: str):
         """
