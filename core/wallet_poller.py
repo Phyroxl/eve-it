@@ -67,25 +67,37 @@ class WalletPoller(QObject):
 
     def poll(self, character_id, token):
         """Ejecuta un ciclo de sincronización completo."""
+        log = logging.getLogger('eve.wallet_poller')
+        log.info(f"[POLL] Iniciando sync para char_id={character_id}")
         try:
             # 1. Wallet Balance
             balance = self.client.character_wallet(character_id, token)
             if balance is not None:
                 self._save_snapshot(character_id, balance)
+                log.info(f"[POLL] Balance guardado: {balance:.0f} ISK para char_id={character_id}")
+            else:
+                log.warning(f"[POLL] character_wallet devolvió None para char_id={character_id} — token inválido o scope ausente")
 
             # 2. Wallet Journal (Fees/Taxes)
             journal_entries = self.client.character_wallet_journal(character_id, token)
+            saved_journal = 0
             if journal_entries:
-                self._save_journal(character_id, journal_entries)
+                saved_journal = self._save_journal(character_id, journal_entries)
+            log.info(f"[POLL] Journal: {len(journal_entries) if journal_entries else 0} recibidas, {saved_journal} guardadas para char_id={character_id}")
 
             # 3. Wallet Transactions (Sales/Purchases)
             transactions = self.client.character_wallet_transactions(character_id, token)
+            saved_trans = 0
             if transactions:
-                self._save_transactions(character_id, transactions)
+                saved_trans = self._save_transactions(character_id, transactions)
+            log.info(f"[POLL] Transacciones: {len(transactions) if transactions else 0} recibidas, {saved_trans} guardadas para char_id={character_id}")
+
+            if not transactions and not journal_entries:
+                log.warning(f"[POLL] ESI devolvió 0 transacciones Y 0 journal para char_id={character_id}. ¿Personaje sin historial? ¿Token expirado?")
 
             self.finished.emit()
         except Exception as e:
-            logging.error(f"WalletPoller Error: {e}")
+            logging.error(f"WalletPoller Error: {e}", exc_info=True)
             self.error.emit(str(e))
 
     def _save_snapshot(self, char_id, balance):
@@ -101,6 +113,7 @@ class WalletPoller(QObject):
 
     def _save_journal(self, char_id, entries):
         conn = sqlite3.connect(self.db_path)
+        saved = 0
         try:
             c = conn.cursor()
             valid_types = ["market_transaction", "brokers_fee", "transaction_tax"]
@@ -108,9 +121,11 @@ class WalletPoller(QObject):
                 if e.get('ref_type') in valid_types:
                     c.execute("INSERT OR REPLACE INTO wallet_journal (id, character_id, date, ref_type, amount, balance, description) VALUES (?,?,?,?,?,?,?)",
                               (e['id'], char_id, e['date'], e['ref_type'], e['amount'], e.get('balance'), e.get('description')))
+                    saved += 1
             conn.commit()
         finally:
             conn.close()
+        return saved
 
     def _save_transactions(self, char_id, transactions):
         if not transactions: return
@@ -130,6 +145,7 @@ class WalletPoller(QObject):
             logging.error(f"Error resolviendo nombres: {e}")
 
         conn = sqlite3.connect(self.db_path)
+        saved = 0
         try:
             c = conn.cursor()
             for t in transactions:
@@ -139,9 +155,11 @@ class WalletPoller(QObject):
                              VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                           (t['transaction_id'], char_id, t['date'], t['type_id'], item_name, t['quantity'], t['unit_price'],
                            1 if t['is_buy'] else 0, t.get('order_id'), t.get('client_id'), t.get('location_id')))
+                saved += 1
             conn.commit()
         finally:
             conn.close()
+        return saved
 
     def ensure_demo_data(self, char_id=0):
         """Genera datos de prueba si la BD está vacía."""

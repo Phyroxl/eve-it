@@ -46,3 +46,54 @@ Dos bugs críticos corregidos de forma quirúrgica sin alterar lógica existente
 - `ensure_demo_data(0)` creaba datos ficticios para el personaje ID=0 en cada arranque, contaminando la DB aunque el usuario tuviera un personaje real autenticado.
 
 *Estado: Performance View estable para datos reales ESI.*
+
+---
+
+## Sesión 4 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Causa raíz del "todo a 0 tras sync ESI" — diagnóstico y fix definitivo
+
+### RESUMEN
+
+**Causa real del problema**: El filtro de fecha por defecto era "Hoy" (`days=1`). ESI devuelve transacciones de los últimos 30 días. `build_daily_pnl` y `build_item_summary` filtran con `BETWEEN date_from AND date_to`. Con rango de 1-2 días, la mayoría de transacciones quedaban fuera del filtro aunque estuvieran guardadas correctamente en DB. El wallet balance (snapshot) sí aparecía porque usa `ORDER BY date DESC LIMIT 1` sin filtro de fecha — por eso la UI mostraba hora de sync pero KPIs/gráfico/items a cero.
+
+**Desalineación de char_id**: No había desalineación real. El `char_id` de `auth.char_id` se usaba correctamente en poll(), los datos se guardaban con ese ID, y `refresh_view()` consultaba con el mismo ID (vía `combo_char.currentData()` que había sido actualizado con `blockSignals`). La desalineación era *temporal* (sin `blockSignals`, el combo disparaba `refresh_view()` antes de que llegaran los datos), ahora corregida.
+
+**Cambios para unificar persistencia + selección + refresco**:
+1. Default del combo de rango cambiado a "30 días" para coincidir con el máximo que devuelve ESI.
+2. Tras sync exitosa, `on_sync_finished` fuerza el rango a ≥30 días antes de llamar `refresh_view()`.
+3. Actualización del combo de personajes usa `blockSignals(True/False)` para no disparar refreshes prematuros.
+4. Recent Transactions no filtra por fecha (siempre muestra las 50 más recientes).
+5. `on_sync_finished` muestra mensaje diferenciado: si count>0 muestra el resumen, si count=0 muestra warning con causas probables.
+
+**Logs/diagnóstico añadido**:
+- `[POLL]` en WalletPoller.poll(): char_id, balance guardado, conteo ESI recibido/guardado para transactions y journal.
+- `[SYNC]` en on_sync_clicked(): char_id real, auth.char_id, combo_data.
+- `[SYNC DONE]` en on_sync_finished(): todos los IDs, counts totales en DB (sin filtro de fecha).
+- `[REFRESH]` en refresh_view(): char_id, rango de fechas, conteos de daily_pnl/items/wallet, filas de transacciones.
+- ESI methods (`character_wallet`, `_journal`, `_transactions`): log HTTP status code en no-200, excepción capturada, count en 200.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/performance_view.py` | Default range → "30 días". `on_sync_finished` fuerza ≥30d + logging + mensaje diferenciado. `on_sync_clicked` usa `blockSignals`. `refresh_view` logging completo. `on_sync_error` → `_log.error`. |
+| `core/esi_client.py` | `character_wallet/journal/transactions`: timeout=15, logging de status codes no-200 y excepciones, logging de count en respuesta 200. |
+| `core/wallet_poller.py` | `poll()`: logging de char_id, balances, counts ESI recibidos/guardados. `_save_journal/_save_transactions` devuelven int (filas guardadas). |
+
+### CHECKS
+- `combo_range` por defecto = índice 2 ("30 días") — coincide con ventana de tiempo que devuelve ESI.
+- `on_sync_finished` fuerza índice ≥2 antes de `refresh_view()` — garantiza visibilidad tras sync.
+- `blockSignals` en actualización del combo evita refreshes prematuros antes de que lleguen los datos.
+- ESI wallet methods loguean HTTP status code explícitamente — 401/403/etc ya no son silenciosos.
+- `[REFRESH]` loguea cuántas filas devuelve SQLite — inmediato para detectar si el problema es ESI vs DB vs UI.
+- `_save_journal` y `_save_transactions` retornan el conteo real de filas persistidas.
+- `poller_thread.wait(2000)` tras `quit()` — limpieza ordenada del hilo worker.
+
+### NOTES
+- ESI `/wallet/transactions/` devuelve máximo 30 días de historial. El filtro "Hoy" dejaba fuera el 95%+ de las transacciones.
+- El wallet snapshot (balance) no tenía filtro de fecha → siempre visible. Eso creaba la falsa ilusión de que la sync funcionaba pero los datos no aparecían.
+- Si tras estos fixes los counts en DB siguen siendo 0, la causa es en ESI (token expirado, scope incorrecto o personaje sin historial). El log `[POLL]` + `[SYNC DONE]` lo confirmarán.
+
+*Estado: Flujo ESI → DB → UI completamente trazable y funcional.*

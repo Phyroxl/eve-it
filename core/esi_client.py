@@ -143,18 +143,40 @@ class ESIClient:
 
     def character_wallet(self, char_id, token):
         url = f"{self.BASE_URL}/characters/{char_id}/wallet/"
-        res = self.session.get(url, headers=self._headers(token))
-        return res.json() if res.status_code == 200 else None
+        try:
+            res = self.session.get(url, headers=self._headers(token), timeout=15)
+            if res.status_code == 200:
+                return res.json()
+            logger.warning(f"ESI character_wallet char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logger.error(f"ESI character_wallet char={char_id} excepción: {e}")
+        return None
 
     def character_wallet_journal(self, char_id, token):
         url = f"{self.BASE_URL}/characters/{char_id}/wallet/journal/"
-        res = self.session.get(url, headers=self._headers(token))
-        return res.json() if res.status_code == 200 else []
+        try:
+            res = self.session.get(url, headers=self._headers(token), timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                logger.info(f"ESI wallet_journal char={char_id} → {len(data)} entradas")
+                return data
+            logger.warning(f"ESI wallet_journal char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logger.error(f"ESI wallet_journal char={char_id} excepción: {e}")
+        return []
 
     def character_wallet_transactions(self, char_id, token):
         url = f"{self.BASE_URL}/characters/{char_id}/wallet/transactions/"
-        res = self.session.get(url, headers=self._headers(token))
-        return res.json() if res.status_code == 200 else []
+        try:
+            res = self.session.get(url, headers=self._headers(token), timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                logger.info(f"ESI wallet_transactions char={char_id} → {len(data)} transacciones")
+                return data
+            logger.warning(f"ESI wallet_transactions char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logger.error(f"ESI wallet_transactions char={char_id} excepción: {e}")
+        return []
 
     def open_market_window(self, type_id: int, access_token: str):
         """

@@ -9,6 +9,9 @@ import sqlite3
 
 from core.performance_engine import PerformanceEngine
 from datetime import datetime, timedelta
+import logging
+
+_log = logging.getLogger('eve.performance')
 
 class KPIWidget(QFrame):
     def __init__(self, title, value, color="#3b82f6", parent=None):
@@ -122,6 +125,7 @@ class MarketPerformanceView(QWidget):
         
         self.combo_range = QComboBox()
         self.combo_range.addItems(["Hoy", "7 días", "30 días", "90 días"])
+        self.combo_range.setCurrentIndex(2)  # Default: 30 días — ESI devuelve historial de hasta 30 días
         self.combo_range.setFixedWidth(100)
         self.combo_range.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 5px;")
         self.combo_range.currentIndexChanged.connect(self.refresh_view)
@@ -259,22 +263,28 @@ class MarketPerformanceView(QWidget):
             return
             
         char_id = self.combo_char.currentData()
-        
-        # Si el char_id no es válido pero acabamos de loguear, usar el de auth
+
+        # El personaje autenticado tiene prioridad absoluta sobre el combo
         if auth.char_id:
             char_id = auth.char_id
-            # Asegurarnos de que el combo tenga este personaje con el ID correcto
+            # Actualizar combo para que refleje el personaje real autenticado
             found = False
             for i in range(self.combo_char.count()):
                 if self.combo_char.itemData(i) == char_id:
+                    self.combo_char.blockSignals(True)
                     self.combo_char.setCurrentIndex(i)
+                    self.combo_char.blockSignals(False)
                     found = True
                     break
-            
+
             if not found:
+                self.combo_char.blockSignals(True)
                 self.combo_char.addItem(auth.char_name, auth.char_id)
                 self.combo_char.setCurrentIndex(self.combo_char.count() - 1)
-            
+                self.combo_char.blockSignals(False)
+
+        _log.info(f"[SYNC] Iniciando sync para char_id={char_id} (auth.char_id={auth.char_id}, combo_data={self.combo_char.currentData()})")
+
         if not char_id or char_id <= 0:
             self.btn_refresh.setText("SELECT CHAR")
             from PySide6.QtCore import QTimer
@@ -298,26 +308,61 @@ class MarketPerformanceView(QWidget):
     def on_sync_finished(self):
         self.btn_refresh.setText("COMPLETO")
         self.btn_refresh.setEnabled(True)
-        
-        # Obtener el char_id actual (el real que acabamos de usar)
+
         from core.auth_manager import AuthManager
         char_id = self.combo_char.currentData() or AuthManager.instance().char_id
-        
+        _log.info(f"[SYNC DONE] on_sync_finished: combo_data={self.combo_char.currentData()}, auth.char_id={AuthManager.instance().char_id}, usando char_id={char_id}")
+
+        # Garantizar que el rango sea al menos 30 días para que los datos sean visibles
+        # (ESI devuelve historial de hasta 30 días; con "Hoy" la mayoría de transacciones quedaría fuera)
+        if self.combo_range.currentIndex() < 2:
+            self.combo_range.blockSignals(True)
+            self.combo_range.setCurrentIndex(2)
+            self.combo_range.blockSignals(False)
+
         self.refresh_view()
-        
-        # Obtener conteo de la DB para ese personaje específico
-        import sqlite3
+
+        # Conteo total en DB para ese personaje (sin filtro de fecha, para diagnóstico)
         conn = sqlite3.connect(self.engine.db_path)
-        count = conn.execute("SELECT COUNT(*) FROM wallet_transactions WHERE character_id = ?", (char_id,)).fetchone()[0]
-        conn.close()
-        
+        try:
+            count_trans = conn.execute(
+                "SELECT COUNT(*) FROM wallet_transactions WHERE character_id = ?", (char_id,)
+            ).fetchone()[0]
+            count_snap = conn.execute(
+                "SELECT COUNT(*) FROM wallet_snapshots WHERE character_id = ?", (char_id,)
+            ).fetchone()[0]
+            count_journal = conn.execute(
+                "SELECT COUNT(*) FROM wallet_journal WHERE character_id = ?", (char_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        _log.info(f"[SYNC DONE] DB para char_id={char_id}: {count_trans} transacciones, {count_journal} journal, {count_snap} snapshots")
+
         from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Sincronización ESI", f"¡Éxito!\n\nSe han importado {count} transacciones para tu personaje.\n\nSi no ves nada en la tabla, cambia el filtro de tiempo a 'Últimos 30 días'.")
-        
+        if count_trans > 0:
+            QMessageBox.information(
+                self, "Sincronización ESI",
+                f"¡Sync completada!\n\n"
+                f"• {count_trans} transacciones en DB\n"
+                f"• {count_journal} entradas de journal\n\n"
+                f"Mostrando últimos 30 días."
+            )
+        else:
+            QMessageBox.warning(
+                self, "Sincronización ESI",
+                f"Sync completada, pero ESI devolvió 0 transacciones para char_id={char_id}.\n\n"
+                f"Posibles causas:\n"
+                f"• El personaje no tiene historial de trading en los últimos 30 días\n"
+                f"• El token puede haber expirado (vuelve a hacer login)\n\n"
+                f"Revisa el log de la app para más detalle."
+            )
+
         from PySide6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
         if hasattr(self, 'poller_thread'):
             self.poller_thread.quit()
+            self.poller_thread.wait(2000)
 
     def on_auth_success(self, name, tokens):
         """Slot para manejar el éxito de la autenticación desde el hilo de AuthManager."""
@@ -326,25 +371,25 @@ class MarketPerformanceView(QWidget):
         QTimer.singleShot(0, self.on_sync_clicked)
 
     def on_sync_error(self, msg):
+        _log.error(f"[SYNC ERROR] {msg}")
         self.btn_refresh.setText("ERROR")
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setStyleSheet("background: #ef4444; color: white; font-weight: 800; border-radius: 4px;")
-        print(f"Sync Error: {msg}")
         if hasattr(self, 'poller_thread'):
             self.poller_thread.quit()
+            self.poller_thread.wait(2000)
 
     def refresh_view(self):
         self.detail_frame.setVisible(False)
-        # Calculate range
         days_map = {0: 1, 1: 7, 2: 30, 3: 90}
-        days = days_map.get(self.combo_range.currentIndex(), 7)
+        days = days_map.get(self.combo_range.currentIndex(), 30)
         date_to = datetime.utcnow().strftime("%Y-%m-%d")
         date_from = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-        
-        # Obtener personaje seleccionado
+
         char_id = self.combo_char.currentData()
+        _log.info(f"[REFRESH] char_id={char_id}, rango={days}d ({date_from} → {date_to})")
+
         if char_id is None or char_id == -1:
-            # Limpiar vista si no hay personaje
             self.kpi_profit.update_value("0 ISK")
             self.kpi_income.update_value("0 ISK")
             self.kpi_cost.update_value("0 ISK")
@@ -358,6 +403,7 @@ class MarketPerformanceView(QWidget):
         summary = self.engine.build_character_summary(char_id, date_from, date_to)
         daily_pnl = self.engine.build_daily_pnl(char_id, date_from, date_to)
         items = self.engine.build_item_summary(char_id, date_from, date_to)
+        _log.info(f"[REFRESH] Resultados: daily_pnl={len(daily_pnl)} días, items={len(items)}, wallet={summary.wallet_current:.0f} ISK")
         
         from utils.formatters import format_isk
         self.kpi_profit.update_value(format_isk(summary.total_profit_net, short=True) + " ISK")
@@ -395,15 +441,18 @@ class MarketPerformanceView(QWidget):
             status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 5, status_item)
 
-        # Update Recent Transactions
+        # Update Recent Transactions (sin filtro de fecha — muestra las 50 más recientes)
         conn = sqlite3.connect(self.engine.db_path)
-        c = conn.cursor()
-        c.execute("""SELECT date, item_name, is_buy, quantity, unit_price
-                     FROM wallet_transactions
-                     WHERE character_id = ?
-                     ORDER BY date DESC LIMIT 50""", (char_id,))
-        rows = c.fetchall()
-        conn.close()
+        try:
+            c = conn.cursor()
+            c.execute("""SELECT date, item_name, is_buy, quantity, unit_price
+                         FROM wallet_transactions
+                         WHERE character_id = ?
+                         ORDER BY date DESC LIMIT 50""", (char_id,))
+            rows = c.fetchall()
+        finally:
+            conn.close()
+        _log.info(f"[REFRESH] Recent Transactions: {len(rows)} filas para char_id={char_id}")
 
         self.trans_table.setRowCount(len(rows))
         for i, r in enumerate(rows):
