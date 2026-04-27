@@ -4,7 +4,7 @@ Ejecutar desde terminal: python debug_db.py
 """
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 def debug_db():
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +13,7 @@ def debug_db():
     print(f"\n{'='*60}")
     print(f"  DIAGNÓSTICO: market_performance.db")
     print(f"  Ruta: {db_path}")
-    print(f"  Hora: {datetime.utcnow().isoformat()} UTC")
+    print(f"  Hora: {datetime.now(timezone.utc).isoformat()} UTC")
     print(f"{'='*60}")
 
     if not os.path.exists(db_path):

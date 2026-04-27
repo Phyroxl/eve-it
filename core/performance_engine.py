@@ -13,30 +13,37 @@ class PerformanceEngine:
 
     def find_active_characters(self):
         """Descubre personajes leyendo los logs locales y resolviendo IDs vía ESI público."""
-        from core.log_parser import find_log_files, extract_character_name
+        import logging
         import requests
-        
-        # 1. Obtener nombres de los logs (últimos 20 archivos)
+        from core.log_parser import find_log_files, extract_character_name
+        log = logging.getLogger('eve.performance_engine')
+
         log_files = find_log_files()[:20]
         names = set()
         for f in log_files:
             name = extract_character_name(f)
             if name and not name.isdigit() and "_" not in name:
                 names.add(name)
-        
+
         if not names:
+            log.info("[CHARS] Sin archivos de log detectados — combo quedará vacío hasta login ESI")
             return []
 
-        # 2. Resolver IDs vía ESI Público (No requiere token)
+        log.info(f"[CHARS] Nombres detectados en logs: {names}")
         try:
             url = "https://esi.evetech.net/latest/universe/ids/"
-            res = requests.post(url, json=list(names))
+            res = requests.post(url, json=list(names), timeout=10)
             if res.status_code == 200:
                 data = res.json()
-                return data.get('characters', [])
-        except Exception:
-            pass
-        return [{"id": 0, "name": n} for n in names] # Fallback
+                chars = data.get('characters', [])
+                log.info(f"[CHARS] ESI /universe/ids/ resolvió: {chars}")
+                return chars
+            log.warning(f"[CHARS] ESI /universe/ids/ → HTTP {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            log.warning(f"[CHARS] ESI /universe/ids/ falló: {e}")
+        # No usar fallback con id=0 — un ID 0 nunca es válido en EVE y contamina la DB
+        log.info("[CHARS] No se pudieron resolver IDs — el usuario debe hacer login ESI manual")
+        return []
 
     def build_daily_pnl(self, character_id, date_from: str, date_to: str):
         """Genera un listado de PnL diario para un rango de fechas (YYYY-MM-DD)."""

@@ -87,20 +87,39 @@ class MarketPerformanceView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.engine = PerformanceEngine()
+        self._purge_fake_char0()  # Eliminar datos demo con char_id=0 antes de nada
         self.setup_ui()
         self.discover_characters()
-        self.refresh_view() # Intentar cargar si hay algo ya en DB
+        self.refresh_view()
+
+    def _purge_fake_char0(self):
+        """Elimina datos demo/fallback con character_id=0 que contaminan la vista."""
+        try:
+            conn = sqlite3.connect(self.engine.db_path)
+            try:
+                deleted = conn.execute("DELETE FROM wallet_transactions WHERE character_id = 0").rowcount
+                conn.execute("DELETE FROM wallet_snapshots WHERE character_id = 0")
+                conn.execute("DELETE FROM wallet_journal WHERE character_id = 0")
+                conn.commit()
+                if deleted:
+                    _log.info(f"[PURGE] Eliminados {deleted} registros demo con char_id=0")
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning(f"[PURGE] No se pudo limpiar char_id=0: {e}")
 
     def discover_characters(self):
-        """Busca personajes en los logs y llena el combo."""
+        """Busca personajes en los logs y llena el combo, ignorando fallbacks con id=0."""
         chars = self.engine.find_active_characters()
         self.combo_char.clear()
-        if not chars:
-            self.combo_char.addItem("Sin personajes detectados", -1)
+        # Filtrar estrictamente: solo aceptar personajes con ID real (>0)
+        valid = [c for c in chars if isinstance(c.get('id'), int) and c['id'] > 0]
+        if not valid:
+            self.combo_char.addItem("Haz login ESI para sincronizar", -1)
         else:
-            for c in chars:
+            for c in valid:
                 self.combo_char.addItem(c['name'], c['id'])
-        
+
         self.combo_char.currentIndexChanged.connect(self.refresh_view)
         
     def setup_ui(self):
