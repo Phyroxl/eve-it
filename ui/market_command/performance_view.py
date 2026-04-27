@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QPushButton, QComboBox, QScrollArea, QGridLayout, 
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
 import sqlite3
 
@@ -272,13 +272,16 @@ class MarketPerformanceView(QWidget):
         
         auth = AuthManager.instance()
         
-        # Si no hay token, loguear primero
+        # Si no hay token, iniciar login ESI y esperar con polling en el hilo principal
         if not auth.current_token:
-            try:
-                auth.authenticated.disconnect(self.on_auth_success)
-            except: pass
-            auth.authenticated.connect(self.on_auth_success)
             auth.login()
+            self.btn_refresh.setText("ESPERANDO LOGIN...")
+            self.btn_refresh.setEnabled(False)
+            self._auth_poll_timer = QTimer(self)
+            self._auth_poll_timer.setInterval(500)
+            self._auth_poll_timer.timeout.connect(self._poll_auth_completion)
+            self._auth_poll_timer.start()
+            self._auth_poll_count = 0
             return
             
         char_id = self.combo_char.currentData()
@@ -306,7 +309,6 @@ class MarketPerformanceView(QWidget):
 
         if not char_id or char_id <= 0:
             self.btn_refresh.setText("SELECT CHAR")
-            from PySide6.QtCore import QTimer
             QTimer.singleShot(2000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
             return
 
@@ -386,7 +388,6 @@ class MarketPerformanceView(QWidget):
             box = QMessageBox(QMessageBox.Warning, "Sincronización ESI — Sin datos", msg, parent=self)
         box.exec()
 
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
         if hasattr(self, 'poller_thread'):
             self.poller_thread.quit()
@@ -397,11 +398,22 @@ class MarketPerformanceView(QWidget):
         self._last_sync_report = report
         _log.info(f"[SYNC_REPORT] {report}")
 
-    def on_auth_success(self, name, tokens):
-        """Slot para manejar el éxito de la autenticación desde el hilo de AuthManager."""
-        from PySide6.QtCore import QTimer
-        # Usar un timer de 0ms para forzar la ejecución en el hilo de la UI
-        QTimer.singleShot(0, self.on_sync_clicked)
+    def _poll_auth_completion(self):
+        """Polling en hilo principal cada 500ms — detecta cuando el token ESI ya está disponible."""
+        from core.auth_manager import AuthManager
+        auth = AuthManager.instance()
+        self._auth_poll_count += 1
+        if auth.current_token:
+            self._auth_poll_timer.stop()
+            self.btn_refresh.setText("SINCRONIZAR ESI")
+            self.btn_refresh.setEnabled(True)
+            _log.info(f"[AUTH] Token detectado tras {self._auth_poll_count * 500}ms — iniciando sync")
+            self.on_sync_clicked()
+        elif self._auth_poll_count >= 120:  # 60 segundos de timeout
+            self._auth_poll_timer.stop()
+            self.btn_refresh.setText("SINCRONIZAR ESI")
+            self.btn_refresh.setEnabled(True)
+            _log.warning("[AUTH] Timeout esperando token de autenticación (60s)")
 
     def on_sync_error(self, msg):
         _log.error(f"[SYNC ERROR] {msg}")

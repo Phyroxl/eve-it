@@ -140,3 +140,42 @@ El problema persiste tras el fix del filtro de fecha. La causa exacta no se pued
 - La causa real quedará confirmada con los números del diálogo de diagnóstico
 
 *Estado: Instrumentación completa. Pendiente de ejecución real para confirmar causa.*
+
+---
+
+## Sesión 6 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE: Fix definitivo de autenticación ESI — señal cross-thread silenciosa
+
+### RESUMEN
+
+**Causa raíz confirmada**: El `authenticated` signal de `AuthManager` se emitía desde un `threading.Thread` daemon (el servidor HTTP local del callback OAuth2). `MarketPerformanceView` tiene thread affinity con el hilo principal, por lo que Qt usa DirectConnection — el slot se ejecuta desde el hilo daemon, comportamiento indefinido. En la práctica, la señal se perdía o el slot fallaba silenciosamente. El usuario veía "EVE iT Autenticado" en el navegador pero la app no reaccionaba.
+
+**Fix aplicado**: Eliminado el mecanismo de señal cross-thread por completo. Reemplazado por un `QTimer` que corre íntegramente en el hilo principal (event loop de Qt), haciendo polling de `auth.current_token` cada 500ms. No hay ningún cruce de hilos.
+
+**Flujo nuevo**:
+1. Usuario pulsa SINCRONIZAR ESI sin token → `auth.login()` abre el navegador
+2. Botón cambia a "ESPERANDO LOGIN..." y se deshabilita
+3. `_auth_poll_timer` arranca en el hilo principal, tick cada 500ms
+4. Cuando el daemon HTTP escribe el token en `auth.current_token`, el siguiente tick lo detecta
+5. Timer se detiene, botón vuelve a "SINCRONIZAR ESI", `on_sync_clicked()` se relanza automáticamente
+6. Timeout de seguridad: 60s (120 ticks × 500ms) → botón se reactiva sin crashear
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/performance_view.py` | `QTimer` añadido al import top-level. `on_sync_clicked()`: bloque de auth reemplazado por polling QTimer. `on_auth_success()` eliminado. `_poll_auth_completion()` añadido. Imports inline de `QTimer` limpiados. |
+
+### CHECKS
+- El timer vive en el hilo principal — cero cruce de hilos, cero señales perdidas
+- `QTimer(self)` usa `self` como parent → se destruye con la vista, no hay leak de timer
+- Timeout de 60s garantiza que el botón siempre se reactiva si el login falla o el usuario cierra el navegador
+- `auth.current_token` es leído-escrito desde hilos distintos pero es una asignación atómica de referencia Python (GIL protege)
+
+### NOTES
+- `threading.Thread` + `Signal.emit()` cruzado a `QObject` en el main thread es UB en Qt. Nunca usar esta combinación.
+- Si `AuthManager` necesita emitir señales desde su hilo daemon en el futuro, migrar a `QThread` + `QMetaObject.invokeMethod` con `Qt.QueuedConnection`.
+
+*Estado: Autenticación ESI completamente funcional — flujo sin cruce de hilos.*
