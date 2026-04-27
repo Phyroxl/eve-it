@@ -236,23 +236,22 @@ class MultiAccountTracker:
             return
         with self._sessions_lock:
             self._alias[alias] = canonical_name
-
-        if alias in self.sessions and canonical_name not in self.sessions:
-            self.sessions[canonical_name] = self.sessions.pop(alias)
-            self.sessions[canonical_name].character = canonical_name
-        elif alias in self.sessions and canonical_name in self.sessions:
-            src = self.sessions.pop(alias)
-            dst = self.sessions[canonical_name]
-            dst.total_isk += src.total_isk
-            dst.events.extend(src.events)
-            for ev in src._rolling_events:
-                dst._rolling_events.append(ev)
-            if src.last_event_time:
-                if dst.last_event_time is None or src.last_event_time > dst.last_event_time:
-                    dst.last_event_time = src.last_event_time
-            if src._latest_event_ts:
-                if dst._latest_event_ts is None or src._latest_event_ts > dst._latest_event_ts:
-                    dst._latest_event_ts = src._latest_event_ts
+            if alias in self.sessions and canonical_name not in self.sessions:
+                self.sessions[canonical_name] = self.sessions.pop(alias)
+                self.sessions[canonical_name].character = canonical_name
+            elif alias in self.sessions and canonical_name in self.sessions:
+                src = self.sessions.pop(alias)
+                dst = self.sessions[canonical_name]
+                dst.total_isk += src.total_isk
+                dst.events.extend(src.events)
+                for ev in src._rolling_events:
+                    dst._rolling_events.append(ev)
+                if src.last_event_time:
+                    if dst.last_event_time is None or src.last_event_time > dst.last_event_time:
+                        dst.last_event_time = src.last_event_time
+                if src._latest_event_ts:
+                    if dst._latest_event_ts is None or src._latest_event_ts > dst._latest_event_ts:
+                        dst._latest_event_ts = src._latest_event_ts
 
     def resolve_name(self, char_id: str) -> str:
         return self._normalize_character(char_id)

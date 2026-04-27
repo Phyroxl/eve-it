@@ -90,24 +90,27 @@ class WalletPoller(QObject):
 
     def _save_snapshot(self, char_id, balance):
         conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        now = datetime.utcnow().isoformat()
-        c.execute("INSERT OR REPLACE INTO wallet_snapshots (character_id, date, balance) VALUES (?, ?, ?)",
-                  (char_id, now, balance))
-        conn.commit()
-        conn.close()
+        try:
+            c = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            c.execute("INSERT OR REPLACE INTO wallet_snapshots (character_id, date, balance) VALUES (?, ?, ?)",
+                      (char_id, now, balance))
+            conn.commit()
+        finally:
+            conn.close()
 
     def _save_journal(self, char_id, entries):
         conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        valid_types = ["market_transaction", "brokers_fee", "transaction_tax"]
-        for e in entries:
-            if e.get('ref_type') in valid_types:
-                # Usamos REPLACE para asegurar que si el ID era 0, se actualice al real
-                c.execute("INSERT OR REPLACE INTO wallet_journal (id, character_id, date, ref_type, amount, balance, description) VALUES (?,?,?,?,?,?,?)",
-                          (e['id'], char_id, e['date'], e['ref_type'], e['amount'], e.get('balance'), e.get('description')))
-        conn.commit()
-        conn.close()
+        try:
+            c = conn.cursor()
+            valid_types = ["market_transaction", "brokers_fee", "transaction_tax"]
+            for e in entries:
+                if e.get('ref_type') in valid_types:
+                    c.execute("INSERT OR REPLACE INTO wallet_journal (id, character_id, date, ref_type, amount, balance, description) VALUES (?,?,?,?,?,?,?)",
+                              (e['id'], char_id, e['date'], e['ref_type'], e['amount'], e.get('balance'), e.get('description')))
+            conn.commit()
+        finally:
+            conn.close()
 
     def _save_transactions(self, char_id, transactions):
         if not transactions: return
@@ -127,17 +130,18 @@ class WalletPoller(QObject):
             logging.error(f"Error resolviendo nombres: {e}")
 
         conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        for t in transactions:
-            item_name = names_map.get(t['type_id'], "")
-            # Usamos REPLACE para vincular transacciones antiguas (ID 0) al ID real
-            c.execute("""INSERT OR REPLACE INTO wallet_transactions 
-                         (transaction_id, character_id, date, item_id, item_name, quantity, unit_price, is_buy, order_id, client_id, location_id)
-                         VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                      (t['transaction_id'], char_id, t['date'], t['type_id'], item_name, t['quantity'], t['unit_price'], 
-                       1 if t['is_buy'] else 0, t.get('client_id'), t.get('client_id'), t.get('location_id')))
-        conn.commit()
-        conn.close()
+        try:
+            c = conn.cursor()
+            for t in transactions:
+                item_name = names_map.get(t['type_id'], "")
+                c.execute("""INSERT OR REPLACE INTO wallet_transactions
+                             (transaction_id, character_id, date, item_id, item_name, quantity, unit_price, is_buy, order_id, client_id, location_id)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                          (t['transaction_id'], char_id, t['date'], t['type_id'], item_name, t['quantity'], t['unit_price'],
+                           1 if t['is_buy'] else 0, t.get('order_id'), t.get('client_id'), t.get('location_id')))
+            conn.commit()
+        finally:
+            conn.close()
 
     def ensure_demo_data(self, char_id=0):
         """Genera datos de prueba si la BD está vacía."""

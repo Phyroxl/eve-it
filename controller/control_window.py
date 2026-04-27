@@ -124,7 +124,7 @@ class DraggableWindow(QWidget):
             e.accept()
             
     def mouseMoveEvent(self, e):
-        if self._C.Qt.LeftButton and self._drag_pos is not None:
+        if e.buttons() & self._C.Qt.LeftButton and self._drag_pos is not None:
             self.move(e.globalPos() - self._drag_pos)
             e.accept()
 

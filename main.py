@@ -27,7 +27,8 @@ if sys.executable.endswith("pythonw.exe"):
     try:
         sys.stdout = open(os.devnull, "w")
         sys.stderr = open(os.devnull, "w")
-    except: pass
+    except Exception:
+        pass
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:

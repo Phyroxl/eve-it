@@ -41,90 +41,90 @@ class PerformanceEngine:
     def build_daily_pnl(self, character_id, date_from: str, date_to: str):
         """Genera un listado de PnL diario para un rango de fechas (YYYY-MM-DD)."""
         conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        
-        # Agregamos transacciones por día
-        query_trans = """
-            SELECT substr(date, 1, 10) as day, 
-                   SUM(CASE WHEN is_buy = 0 THEN quantity * unit_price ELSE 0 END) as income,
-                   SUM(CASE WHEN is_buy = 1 THEN quantity * unit_price ELSE 0 END) as cost,
-                   COUNT(*) as count
-            FROM wallet_transactions
-            WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
-            GROUP BY substr(date, 1, 10)
-        """
-        c.execute(query_trans, (character_id, date_from, date_to))
-        trans_rows = {row[0]: row for row in c.fetchall()}
+        try:
+            c = conn.cursor()
 
-        # Agregamos fees y taxes desde el journal
-        query_journal = """
-            SELECT substr(date, 1, 10) as day,
-                   SUM(CASE WHEN ref_type = 'brokers_fee' THEN ABS(amount) ELSE 0 END) as fees,
-                   SUM(CASE WHEN ref_type = 'transaction_tax' THEN ABS(amount) ELSE 0 END) as tax
-            FROM wallet_journal
-            WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
-            GROUP BY substr(date, 1, 10)
-        """
-        c.execute(query_journal, (character_id, date_from, date_to))
-        journal_rows = {row[0]: row for row in c.fetchall()}
+            query_trans = """
+                SELECT substr(date, 1, 10) as day,
+                       SUM(CASE WHEN is_buy = 0 THEN quantity * unit_price ELSE 0 END) as income,
+                       SUM(CASE WHEN is_buy = 1 THEN quantity * unit_price ELSE 0 END) as cost,
+                       COUNT(*) as count
+                FROM wallet_transactions
+                WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
+                GROUP BY substr(date, 1, 10)
+            """
+            c.execute(query_trans, (character_id, date_from, date_to))
+            trans_rows = {row[0]: row for row in c.fetchall()}
 
-        # Unimos los datos
-        all_days = sorted(set(list(trans_rows.keys()) + list(journal_rows.keys())))
-        results = []
-        cumulative = 0
-        for day in all_days:
-            t = trans_rows.get(day, (day, 0, 0, 0))
-            j = journal_rows.get(day, (day, 0, 0))
-            
-            income = t[1]
-            cost = t[2]
-            fees = j[1]
-            tax = j[2]
-            profit = income - cost - fees - tax
-            cumulative += profit
-            
-            results.append(DailyPnLEntry(
-                character_id=character_id,
-                date=day,
-                gross_income=income,
-                gross_cost=cost,
-                fees=fees,
-                tax=tax,
-                profit_net=profit,
-                cumulative_profit_net=cumulative,
-                transaction_count=t[3]
-            ))
-            
-        conn.close()
+            query_journal = """
+                SELECT substr(date, 1, 10) as day,
+                       SUM(CASE WHEN ref_type = 'brokers_fee' THEN ABS(amount) ELSE 0 END) as fees,
+                       SUM(CASE WHEN ref_type = 'transaction_tax' THEN ABS(amount) ELSE 0 END) as tax
+                FROM wallet_journal
+                WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
+                GROUP BY substr(date, 1, 10)
+            """
+            c.execute(query_journal, (character_id, date_from, date_to))
+            journal_rows = {row[0]: row for row in c.fetchall()}
+
+            all_days = sorted(set(list(trans_rows.keys()) + list(journal_rows.keys())))
+            results = []
+            cumulative = 0
+            for day in all_days:
+                t = trans_rows.get(day, (day, 0, 0, 0))
+                j = journal_rows.get(day, (day, 0, 0))
+
+                income = t[1]
+                cost = t[2]
+                fees = j[1]
+                tax = j[2]
+                profit = income - cost - fees - tax
+                cumulative += profit
+
+                results.append(DailyPnLEntry(
+                    character_id=character_id,
+                    date=day,
+                    gross_income=income,
+                    gross_cost=cost,
+                    fees=fees,
+                    tax=tax,
+                    profit_net=profit,
+                    cumulative_profit_net=cumulative,
+                    transaction_count=t[3]
+                ))
+        finally:
+            conn.close()
         return results
 
     def build_item_summary(self, character_id, date_from, date_to):
         conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        
-        query = """
-            SELECT item_id, item_name,
-                   SUM(CASE WHEN is_buy = 0 THEN quantity ELSE 0 END) as sold,
-                   SUM(CASE WHEN is_buy = 1 THEN quantity ELSE 0 END) as bought,
-                   SUM(CASE WHEN is_buy = 0 THEN quantity * unit_price ELSE 0 END) as income,
-                   SUM(CASE WHEN is_buy = 1 THEN quantity * unit_price ELSE 0 END) as cost,
-                   COUNT(*) as trades
-            FROM wallet_transactions
-            WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
-            GROUP BY item_id
-        """
-        c.execute(query, (character_id, date_from, date_to))
-        rows = c.fetchall()
-        
+        try:
+            c = conn.cursor()
+
+            query = """
+                SELECT item_id, item_name,
+                       SUM(CASE WHEN is_buy = 0 THEN quantity ELSE 0 END) as sold,
+                       SUM(CASE WHEN is_buy = 1 THEN quantity ELSE 0 END) as bought,
+                       SUM(CASE WHEN is_buy = 0 THEN quantity * unit_price ELSE 0 END) as income,
+                       SUM(CASE WHEN is_buy = 1 THEN quantity * unit_price ELSE 0 END) as cost,
+                       COUNT(*) as trades
+                FROM wallet_transactions
+                WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
+                GROUP BY item_id
+            """
+            c.execute(query, (character_id, date_from, date_to))
+            rows = c.fetchall()
+        finally:
+            conn.close()
+
         summaries = []
         for r in rows:
             item_id, item_name, sold, bought, income, cost, trades = r
-            
+
             profit = income - cost
             margin = (profit / cost * 100) if cost > 0 else 0
             net = bought - sold
-            
-            # Lógica operativa simple
+
             status = "Normal"
             if bought == 0 and sold > 0:
                 status = "Liquidando"
@@ -154,9 +154,7 @@ class PerformanceEngine:
                 trade_count=trades,
                 status_text=status
             ))
-            
-        conn.close()
-        # Sort by profit net
+
         summaries.sort(key=lambda x: x.profit_net, reverse=True)
         return summaries
 
@@ -167,14 +165,15 @@ class PerformanceEngine:
         total_cost = sum(d.gross_cost for d in daily)
         total_fees = sum(d.fees + d.tax for d in daily)
         
-        # Get current wallet
         conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("SELECT balance, date FROM wallet_snapshots WHERE character_id = ? ORDER BY date DESC LIMIT 1", (character_id,))
-        row = c.fetchone()
-        wallet = row[0] if row else 0
-        last_sync = datetime.fromisoformat(row[1]) if row else datetime.utcnow()
-        conn.close()
+        try:
+            c = conn.cursor()
+            c.execute("SELECT balance, date FROM wallet_snapshots WHERE character_id = ? ORDER BY date DESC LIMIT 1", (character_id,))
+            row = c.fetchone()
+            wallet = row[0] if row else 0
+            last_sync = datetime.fromisoformat(row[1]) if row else datetime.utcnow()
+        finally:
+            conn.close()
 
         return CharacterPerformanceSummary(
             character_id=character_id,

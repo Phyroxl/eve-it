@@ -84,11 +84,6 @@ class MarketPerformanceView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.engine = PerformanceEngine()
-        
-        # Generar datos demo si está vacío para facilitar la primera vista
-        from core.wallet_poller import WalletPoller
-        WalletPoller().ensure_demo_data(0)
-        
         self.setup_ui()
         self.discover_characters()
         self.refresh_view() # Intentar cargar si hay algo ya en DB
@@ -400,6 +395,33 @@ class MarketPerformanceView(QWidget):
             status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 5, status_item)
 
+        # Update Recent Transactions
+        conn = sqlite3.connect(self.engine.db_path)
+        c = conn.cursor()
+        c.execute("""SELECT date, item_name, is_buy, quantity, unit_price
+                     FROM wallet_transactions
+                     WHERE character_id = ?
+                     ORDER BY date DESC LIMIT 50""", (char_id,))
+        rows = c.fetchall()
+        conn.close()
+
+        self.trans_table.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            date_short = r[0].split("T")[0]
+            tipo = "COMPRA" if r[2] == 1 else "VENTA"
+            color = "#f87171" if r[2] == 1 else "#34d399"
+
+            self.trans_table.setItem(i, 0, QTableWidgetItem(date_short))
+            self.trans_table.setItem(i, 1, QTableWidgetItem(r[1] or "Unknown"))
+
+            type_item = QTableWidgetItem(tipo)
+            type_item.setForeground(QColor(color))
+            self.trans_table.setItem(i, 2, type_item)
+
+            self.trans_table.setItem(i, 3, QTableWidgetItem(str(r[3])))
+            self.trans_table.setItem(i, 4, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
+            self.trans_table.setItem(i, 5, QTableWidgetItem("~3.0%"))
+
     def on_item_selection_changed(self):
         sel = self.top_items_table.selectedItems()
         if not sel:
@@ -420,30 +442,3 @@ class MarketPerformanceView(QWidget):
             self.lbl_det_status.setText(item.status_text.upper())
             
             self.detail_frame.setVisible(True)
-
-        # Update Recent Transactions
-        conn = sqlite3.connect(self.engine.db_path)
-        c = conn.cursor()
-        c.execute("""SELECT date, item_name, is_buy, quantity, unit_price 
-                     FROM wallet_transactions 
-                     WHERE character_id = ? 
-                     ORDER BY date DESC LIMIT 50""", (char_id,))
-        rows = c.fetchall()
-        conn.close()
-        
-        self.trans_table.setRowCount(len(rows))
-        for i, r in enumerate(rows):
-            date_short = r[0].split("T")[0]
-            tipo = "COMPRA" if r[2] == 1 else "VENTA"
-            color = "#f87171" if r[2] == 1 else "#34d399"
-            
-            self.trans_table.setItem(i, 0, QTableWidgetItem(date_short))
-            self.trans_table.setItem(i, 1, QTableWidgetItem(r[1] or "Unknown"))
-            
-            type_item = QTableWidgetItem(tipo)
-            type_item.setForeground(QColor(color))
-            self.trans_table.setItem(i, 2, type_item)
-            
-            self.trans_table.setItem(i, 3, QTableWidgetItem(str(r[3])))
-            self.trans_table.setItem(i, 4, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
-            self.trans_table.setItem(i, 5, QTableWidgetItem("~3.0%")) # Estimado MVP
