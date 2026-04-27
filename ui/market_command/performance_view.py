@@ -162,7 +162,16 @@ class MarketPerformanceView(QWidget):
         header.addWidget(self.combo_range)
         header.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header)
-        
+
+        # Barra de estado de diagnóstico (siempre visible)
+        self._diag_label = QLabel("▸ Sin datos — pulsa SINCRONIZAR ESI para empezar")
+        self._diag_label.setStyleSheet(
+            "color: #475569; font-size: 9px; font-weight: 700; "
+            "padding: 4px 8px; background: #0f172a; "
+            "border: 1px solid #1e293b; border-radius: 3px;"
+        )
+        self.main_layout.addWidget(self._diag_label)
+
         # 2. KPIs Row
         kpis_layout = QHBoxLayout()
         self.kpi_profit = KPIWidget("Profit Neto", "0 ISK", "#10b981")
@@ -333,33 +342,36 @@ class MarketPerformanceView(QWidget):
         self.btn_refresh.setEnabled(True)
 
         from core.auth_manager import AuthManager
+        from PySide6.QtWidgets import QMessageBox
         auth = AuthManager.instance()
         char_id = self.combo_char.currentData() or auth.char_id
         _log.info(f"[SYNC DONE] combo_data={self.combo_char.currentData()}, auth.char_id={auth.char_id}, char_id={char_id}")
 
-        # Garantizar rango ≥ 30 días antes de refrescar (ESI devuelve hasta 30 días de historial)
+        # Garantizar rango ≥ 30 días antes de refrescar
         if self.combo_range.currentIndex() < 2:
             self.combo_range.blockSignals(True)
             self.combo_range.setCurrentIndex(2)
             self.combo_range.blockSignals(False)
 
-        self.refresh_view()
+        # Limpiar hilo worker primero (sin bloquear UI)
+        if hasattr(self, 'poller_thread'):
+            self.poller_thread.quit()
+            self.poller_thread.wait(2000)
 
-        # Construir mensaje de diagnóstico real
+        # Construir mensaje de diagnóstico
         r = self._last_sync_report or {}
-        rep_char_id  = r.get('char_id', char_id)
-        balance      = r.get('balance')
-        esi_trans    = r.get('esi_trans_count', '?')
-        esi_journal  = r.get('esi_journal_count', '?')
-        saved_trans  = r.get('saved_trans', '?')
-        saved_journal= r.get('saved_journal', '?')
-        db_trans     = r.get('db_transactions', '?')
-        db_journal   = r.get('db_journal', '?')
-        db_snaps     = r.get('db_snapshots', '?')
-        date_min     = r.get('db_trans_date_min') or '—'
-        date_max     = r.get('db_trans_date_max') or '—'
-
-        balance_str = f"{balance:,.0f} ISK" if isinstance(balance, (int, float)) else "No recibido"
+        rep_char_id   = r.get('char_id', char_id)
+        balance       = r.get('balance')
+        esi_trans     = r.get('esi_trans_count', '?')
+        esi_journal   = r.get('esi_journal_count', '?')
+        saved_trans   = r.get('saved_trans', '?')
+        saved_journal = r.get('saved_journal', '?')
+        db_trans      = r.get('db_transactions', '?')
+        db_journal    = r.get('db_journal', '?')
+        db_snaps      = r.get('db_snapshots', '?')
+        date_min      = r.get('db_trans_date_min') or '—'
+        date_max      = r.get('db_trans_date_max') or '—'
+        balance_str   = f"{balance:,.0f} ISK" if isinstance(balance, (int, float)) else "No recibido"
 
         msg = (
             f"═══ DIAGNÓSTICO DE SYNC ═══\n\n"
@@ -378,20 +390,17 @@ class MarketPerformanceView(QWidget):
             f"  wallet_trans:     {db_trans}  ({date_min} → {date_max})\n"
             f"  wallet_journal:   {db_journal}\n"
         )
-
         _log.info(f"[SYNC DONE] Diagnóstico completo:\n{msg}")
 
-        from PySide6.QtWidgets import QMessageBox
         if isinstance(db_trans, int) and db_trans > 0:
             box = QMessageBox(QMessageBox.Information, "Sincronización ESI", msg, parent=self)
         else:
             box = QMessageBox(QMessageBox.Warning, "Sincronización ESI — Sin datos", msg, parent=self)
         box.exec()
 
+        # refresh_view DESPUÉS de cerrar el popup — el usuario verá los datos inmediatamente
+        self.refresh_view()
         QTimer.singleShot(3000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
-        if hasattr(self, 'poller_thread'):
-            self.poller_thread.quit()
-            self.poller_thread.wait(2000)
 
     def _on_sync_report(self, report: dict):
         """Recibe el informe de diagnóstico emitido por WalletPoller desde el hilo worker."""
@@ -435,16 +444,38 @@ class MarketPerformanceView(QWidget):
             self.poller_thread.wait(2000)
 
     def refresh_view(self):
+        """Entry point público — captura cualquier excepción y la hace visible."""
+        try:
+            self._do_refresh()
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            _log.error(f"[REFRESH] EXCEPCIÓN:\n{tb}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error en refresh_view", f"{exc}\n\n{tb[:1000]}")
+
+    def _do_refresh(self):
         self.detail_frame.setVisible(False)
         days_map = {0: 1, 1: 7, 2: 30, 3: 90}
         days = days_map.get(self.combo_range.currentIndex(), 30)
-        date_to = datetime.utcnow().strftime("%Y-%m-%d")
+        date_to   = datetime.utcnow().strftime("%Y-%m-%d")
         date_from = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
 
         char_id = self.combo_char.currentData()
-        _log.info(f"[REFRESH] char_id={char_id}, rango={days}d ({date_from} → {date_to})")
+        _log.info(
+            f"[REFRESH] ▶ char_id={char_id!r}  tipo={type(char_id).__name__}  "
+            f"rango={days}d  ({date_from} → {date_to})"
+        )
 
         if char_id is None or char_id == -1:
+            _log.info(f"[REFRESH] char_id inválido ({char_id!r}) → salida temprana")
+            self._diag_label.setText(
+                f"▸ char_id={char_id!r} — sin personaje válido. Haz login ESI y sincroniza."
+            )
+            self._diag_label.setStyleSheet(
+                "color: #f59e0b; font-size: 9px; font-weight: 700; "
+                "padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;"
+            )
             self.kpi_profit.update_value("0 ISK")
             self.kpi_income.update_value("0 ISK")
             self.kpi_cost.update_value("0 ISK")
@@ -454,74 +485,118 @@ class MarketPerformanceView(QWidget):
             self.top_items_table.setRowCount(0)
             self.trans_table.setRowCount(0)
             return
-        
-        summary = self.engine.build_character_summary(char_id, date_from, date_to)
+
+        # ── Verificación SQL directa (pre-engine) ─────────────────────────
+        conn = sqlite3.connect(self.engine.db_path)
+        try:
+            sql_tx = conn.execute(
+                "SELECT COUNT(*) FROM wallet_transactions "
+                "WHERE character_id=? AND substr(date,1,10) BETWEEN ? AND ?",
+                (char_id, date_from, date_to)
+            ).fetchone()[0]
+            sql_jn = conn.execute(
+                "SELECT COUNT(*) FROM wallet_journal "
+                "WHERE character_id=? AND substr(date,1,10) BETWEEN ? AND ?",
+                (char_id, date_from, date_to)
+            ).fetchone()[0]
+            sql_tx_total = conn.execute(
+                "SELECT COUNT(*) FROM wallet_transactions WHERE character_id=?",
+                (char_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        _log.info(
+            f"[REFRESH] SQL directo → tx_total={sql_tx_total}  "
+            f"tx_en_rango={sql_tx}  journal_en_rango={sql_jn}"
+        )
+
+        # ── Engine ────────────────────────────────────────────────────────
+        summary  = self.engine.build_character_summary(char_id, date_from, date_to)
         daily_pnl = self.engine.build_daily_pnl(char_id, date_from, date_to)
-        items = self.engine.build_item_summary(char_id, date_from, date_to)
-        _log.info(f"[REFRESH] Resultados: daily_pnl={len(daily_pnl)} días, items={len(items)}, wallet={summary.wallet_current:.0f} ISK")
-        
+        items    = self.engine.build_item_summary(char_id, date_from, date_to)
+
+        _log.info(
+            f"[REFRESH] Engine → daily={len(daily_pnl)} días  items={len(items)}  "
+            f"income={summary.total_income:.0f}  cost={summary.total_cost:.0f}  "
+            f"fees={summary.total_fees:.0f}  profit={summary.total_profit_net:.0f}  "
+            f"wallet={summary.wallet_current:.0f}"
+        )
+
         from utils.formatters import format_isk
+
+        # ── Actualizar barra de diagnóstico ───────────────────────────────
+        diag_color = "#10b981" if summary.total_income > 0 else "#f59e0b"
+        self._diag_label.setText(
+            f"▸ char={char_id}  rango={days}d  "
+            f"tx_rango={sql_tx}  journal={sql_jn}  items={len(items)}  "
+            f"income={format_isk(summary.total_income, True)} ISK  "
+            f"profit={format_isk(summary.total_profit_net, True)} ISK  "
+            f"wallet={format_isk(summary.wallet_current, True)} ISK"
+        )
+        self._diag_label.setStyleSheet(
+            f"color: {diag_color}; font-size: 9px; font-weight: 700; "
+            f"padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;"
+        )
+
+        # ── KPIs ──────────────────────────────────────────────────────────
         self.kpi_profit.update_value(format_isk(summary.total_profit_net, short=True) + " ISK")
         self.kpi_income.update_value(format_isk(summary.total_income, short=True) + " ISK")
         self.kpi_cost.update_value(format_isk(summary.total_cost, short=True) + " ISK")
         self.kpi_fees.update_value(format_isk(summary.total_fees, short=True) + " ISK")
-        self.kpi_wallet.update_value(format_isk(summary.wallet_current, short=True) + " ISK", f"Sync: {summary.last_synced_at.strftime('%H:%M')}")
-        
-        # Update Chart
-        chart_data = [(d.date, d.profit_net) for d in daily_pnl]
-        self.chart.set_data(chart_data)
-        
-        # Update Top Items
-        self.current_items = items # Guardar para detalle
+        self.kpi_wallet.update_value(
+            format_isk(summary.wallet_current, short=True) + " ISK",
+            f"Sync: {summary.last_synced_at.strftime('%H:%M')}"
+        )
+
+        # ── Gráfico ───────────────────────────────────────────────────────
+        self.chart.set_data([(d.date, d.profit_net) for d in daily_pnl])
+
+        # ── Top Items ─────────────────────────────────────────────────────
+        self.current_items = items
         self.top_items_table.setRowCount(len(items[:15]))
+        status_colors = {
+            "Rotando Bien": "#10b981",
+            "Acumulando Stock": "#fbbf24",
+            "Liquidando": "#f87171",
+            "Flujo Equilibrado": "#60a5fa",
+            "Salida Lenta": "#94a3b8"
+        }
         for i, item in enumerate(items[:15]):
             self.top_items_table.setItem(i, 0, QTableWidgetItem(item.item_name))
             self.top_items_table.setItem(i, 1, QTableWidgetItem(str(item.total_bought_units)))
             self.top_items_table.setItem(i, 2, QTableWidgetItem(str(item.total_sold_units)))
-            
             stock_item = QTableWidgetItem(str(item.net_units))
-            if item.net_units > 0: stock_item.setForeground(QColor("#60a5fa"))
+            if item.net_units > 0:
+                stock_item.setForeground(QColor("#60a5fa"))
             self.top_items_table.setItem(i, 3, stock_item)
-            
             self.top_items_table.setItem(i, 4, QTableWidgetItem(format_isk(item.profit_net, short=True)))
-            
             status_item = QTableWidgetItem(item.status_text)
-            status_colors = {
-                "Rotando Bien": "#10b981", 
-                "Acumulando Stock": "#fbbf24", 
-                "Liquidando": "#f87171", 
-                "Flujo Equilibrado": "#60a5fa",
-                "Salida Lenta": "#94a3b8"
-            }
             status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 5, status_item)
 
-        # Update Recent Transactions (sin filtro de fecha — muestra las 50 más recientes)
-        conn = sqlite3.connect(self.engine.db_path)
+        # ── Recent Transactions (sin filtro de fecha) ─────────────────────
+        conn2 = sqlite3.connect(self.engine.db_path)
         try:
-            c = conn.cursor()
-            c.execute("""SELECT date, item_name, is_buy, quantity, unit_price
-                         FROM wallet_transactions
-                         WHERE character_id = ?
-                         ORDER BY date DESC LIMIT 50""", (char_id,))
-            rows = c.fetchall()
+            rows = conn2.execute(
+                "SELECT date, item_name, is_buy, quantity, unit_price "
+                "FROM wallet_transactions "
+                "WHERE character_id=? ORDER BY date DESC LIMIT 50",
+                (char_id,)
+            ).fetchall()
         finally:
-            conn.close()
+            conn2.close()
         _log.info(f"[REFRESH] Recent Transactions: {len(rows)} filas para char_id={char_id}")
 
         self.trans_table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             date_short = r[0].split("T")[0]
-            tipo = "COMPRA" if r[2] == 1 else "VENTA"
+            tipo  = "COMPRA" if r[2] == 1 else "VENTA"
             color = "#f87171" if r[2] == 1 else "#34d399"
-
             self.trans_table.setItem(i, 0, QTableWidgetItem(date_short))
             self.trans_table.setItem(i, 1, QTableWidgetItem(r[1] or "Unknown"))
-
             type_item = QTableWidgetItem(tipo)
             type_item.setForeground(QColor(color))
             self.trans_table.setItem(i, 2, type_item)
-
             self.trans_table.setItem(i, 3, QTableWidgetItem(str(r[3])))
             self.trans_table.setItem(i, 4, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
             self.trans_table.setItem(i, 5, QTableWidgetItem("~3.0%"))

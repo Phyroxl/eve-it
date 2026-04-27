@@ -179,3 +179,58 @@ El problema persiste tras el fix del filtro de fecha. La causa exacta no se pued
 - Si `AuthManager` necesita emitir señales desde su hilo daemon en el futuro, migrar a `QThread` + `QMetaObject.invokeMethod` con `Qt.QueuedConnection`.
 
 *Estado: Autenticación ESI completamente funcional — flujo sin cruce de hilos.*
+
+---
+
+## Sesión 7 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE: Diagnóstico y fix de Performance View — KPIs/gráfico/tablas a 0 con datos reales en DB
+
+### RESUMEN
+
+**1. Qué demostró el diagnóstico de sync**
+El diálogo de diagnóstico post-sync confirmó: `char_id=96891715`, `wallet_trans=794 (2026-04-11 → 2026-04-27)`, `wallet_journal=782`, `balance=873M ISK`. ESI devuelve datos, SQLite los guarda, char_id está alineado. El fallo NO era en OAuth, WalletPoller ni persistencia.
+
+**2. Por qué quedó descartado el fallo en ESI/persistencia**
+Prueba directa con SQL:
+- `SELECT COUNT(*) ... WHERE character_id=96891715 AND substr(date,1,10) BETWEEN '2026-03-28' AND '2026-04-27'` → 794 filas
+- Llamada directa a `PerformanceEngine` con `char_id=96891715`: `income=4.62B`, `cost=4.90B`, `profit=-574M`, 55 items, 4 días PnL
+
+**3. Dónde estaba exactamente la rotura**
+Dos causas combinadas:
+- `on_sync_finished()` llamaba `refresh_view()` ANTES de `box.exec()`. El diálogo modal iniciaba un nested event loop que procesaba los repaints. Cuando el usuario cerraba el popup, Qt podría procesar señales pendientes que relanzaban `refresh_view()` con `char_id=-1` (item inicial del combo antes de autenticación). Los ceros eran visibles al salir del popup.
+- No había captura de excepciones en `refresh_view()`. Cualquier excepción silenciosa (en `format_isk`, en `build_item_summary`, en la query SQL) terminaba el slot sin actualizar la UI, dejando los valores previos (ceros del estado inicial).
+
+**4. Cómo se corrigió**
+- `refresh_view()` convertida en wrapper try/except que captura cualquier excepción y la muestra como QMessageBox.critical — nunca más fallos silenciosos
+- Lógica real movida a `_do_refresh()` que implementa todas las fases
+- `on_sync_finished()` reordenado: (1) limpia hilo worker, (2) construye mensaje diagnóstico, (3) muestra popup, (4) llama `refresh_view()` DESPUÉS de que el usuario cierra el popup
+- Eliminado `poller_thread.wait(2000)` como bloqueo post-popup (movido a antes del popup)
+
+**5. Qué pruebas/logs se añadieron**
+- Barra de diagnóstico permanente (`_diag_label`) debajo del header: muestra `char_id`, `tx_rango`, `journal_rango`, `items`, `income`, `profit`, `wallet` después de cada refresh exitoso
+- SQL directo pre-engine dentro de `_do_refresh()`: confirma cuántas filas hay en DB para ese char_id y rango antes de llamar al engine
+- Log `[REFRESH] ▶ char_id=... tipo=...` al entrar: revela si char_id es None/-1/int correcto
+- Log `[REFRESH] SQL directo →` con conteos directos
+- Log `[REFRESH] Engine →` con todos los valores calculados
+- Log `[REFRESH] Recent Transactions: N filas` para la tabla inferior
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/performance_view.py` | `setup_ui()`: añadida `_diag_label`. `refresh_view()` → wrapper try/except → llama `_do_refresh()`. `_do_refresh()`: SQL directo + logs exhaustivos + `_diag_label` actualizado. `on_sync_finished()`: `poller_thread.quit/wait` antes del popup; `refresh_view()` después del popup. |
+
+### CHECKS
+- `refresh_view()` nunca falla silenciosamente — cualquier excepción se muestra en popup
+- `_diag_label` es prueba visible permanente de que el engine devuelve datos reales
+- `refresh_view()` se llama DESPUÉS del popup de sync → el usuario ve los datos nada más cerrar el diálogo
+- SQL directo antes del engine confirma que char_id y rango coinciden con los datos en DB
+- `poller_thread.wait(2000)` ya no bloquea la UI después de que el usuario cierra el popup
+
+### NOTES
+- El orden `refresh_view() → box.exec()` era un anti-patrón: el nested event loop del QMessageBox podía entregar señales pendientes que sobreescribían la vista
+- Los slots de PySide6 silencian excepciones por defecto — siempre wrappear en try/except
+
+*Estado: Performance View muestra datos reales tras sync. Diagnóstico permanente visible.*
