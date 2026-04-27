@@ -1,3 +1,4 @@
+# VERSION_STAMP: 2026-04-27_18-25_STABLE_V1
 import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
@@ -19,6 +20,7 @@ class MarketAdvancedView(QWidget):
         self.worker = None
         self.all_opportunities = []
         self.current_config = load_market_filters()
+        self.lbl_status = None # Pre-inicialización
         self.setup_ui()
         
     def setup_ui(self):
@@ -191,7 +193,7 @@ class MarketAdvancedView(QWidget):
         ops_v = QVBoxLayout()
         ops_v.addWidget(QLabel("MÉTRICAS DE FLUJO", styleSheet="color: #475569; font-size: 8px; font-weight: 800;"))
         self.lbl_det_vol = QLabel("Vol: ---"); self.lbl_det_vol.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 700;")
-        self.lbl_det_depth = QLabel("Deep: ---"); self.lbl_det_depth.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 600;")
+        self.lbl_det_depth = QLabel("Deep: ---"); self.lbl_det_depth.setStyleSheet("color: #64748b; font-size: 10px; font-600;")
         ops_v.addWidget(self.lbl_det_vol); ops_v.addWidget(self.lbl_det_depth); ops_v.addStretch()
         dl.addLayout(ops_v, 1)
 
@@ -201,8 +203,9 @@ class MarketAdvancedView(QWidget):
         from core.auth_manager import AuthManager
         auth = AuthManager.instance()
         def feedback(msg, color):
-            self.lbl_status.setText(f"● {msg.upper()}")
-            self.lbl_status.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            if self.lbl_status:
+                self.lbl_status.setText(f"● {msg.upper()}")
+                self.lbl_status.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         ItemInteractionHelper.open_market_with_fallback(ESIClient(), auth.char_id, type_id, item_name, feedback)
 
     def on_refresh_clicked(self):
@@ -221,22 +224,25 @@ class MarketAdvancedView(QWidget):
         self.worker.start()
 
     def on_status_received(self, text):
-        self.lbl_status.setText(f"● {text.upper()}")
-        self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        if self.lbl_status:
+            self.lbl_status.setText(f"● {text.upper()}")
+            self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_finished(self, opportunities):
         self.all_opportunities = opportunities
         self.table.populate(opportunities)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
-        self.lbl_status.setText(f"● ESCANEO COMPLETADO: {len(opportunities)} ITEMS")
-        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        if self.lbl_status:
+            self.lbl_status.setText(f"● ESCANEO COMPLETADO: {len(opportunities)} ITEMS")
+            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_error(self, err_msg):
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
-        self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
-        self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        if self.lbl_status:
+            self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
+            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_apply_filters(self):
         self.update_config_from_ui()
