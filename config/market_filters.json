@@ -1,5 +1,5 @@
 {
-  "capital_max": 1000000000.0,
+  "capital_max": 5000000000.0,
   "vol_min_day": 20,
   "margin_min_pct": 5.0,
   "spread_max_pct": 100.0,

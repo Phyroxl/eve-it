@@ -1,3 +1,7 @@
+# WARNING: THIS IS A DEVELOPMENT TOOL ONLY.
+# DO NOT RUN THIS SCRIPT IN A PRODUCTION ENVIRONMENT.
+# It is intended only for generating mock data for UI testing.
+
 import sys
 import os
 

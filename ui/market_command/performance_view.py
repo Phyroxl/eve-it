@@ -631,17 +631,21 @@ class MarketPerformanceView(QWidget):
         if char_id is None or char_id == -1:
             _log.info(f"[REFRESH] char_id inválido ({char_id!r}) → salida temprana")
             self._diag_label.setText(
-                f"▸ char_id={char_id!r} — sin personaje válido. Haz login ESI y sincroniza."
+                "▸ Selecciona un personaje y pulsa SINCRONIZAR ESI para cargar datos."
             )
             self._diag_label.setStyleSheet(
-                "color: #f59e0b; font-size: 9px; font-weight: 700; "
+                "color: #94a3b8; font-size: 9px; font-weight: 700; "
                 "padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;"
             )
-            self.kpi_realized.update_value("0 ISK")
+            # Resetear todos los KPIs
+            self.kpi_cashflow.update_value("0 ISK")
             self.kpi_income.update_value("0 ISK")
             self.kpi_cost.update_value("0 ISK")
-            self.kpi_fees.update_value("0 ISK")
+            self.kpi_broker.update_value("0 ISK")
+            self.kpi_tax.update_value("0 ISK")
+            self.kpi_realized.update_value("0 ISK")
             self.kpi_exposure.update_value("0 ISK", "No sync")
+            
             self.context_lbl.setText("SIN DATOS")
             self.chart.set_data([])
             self.top_items_table.setRowCount(0)
