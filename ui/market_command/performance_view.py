@@ -866,8 +866,8 @@ class MarketPerformanceView(QWidget):
         item = table.itemAt(pos)
         if not item: return
         
-        # En la tabla de top items, el nombre está en la columna 1. En transacciones, en la 1.
-        col_name = 1
+        # Dinamismo táctico: identificar columna de item según la tabla
+        col_name = 1 if table == self.top_items_table else 2
         name_item = table.item(item.row(), col_name)
         if not name_item: return
         
@@ -883,7 +883,11 @@ class MarketPerformanceView(QWidget):
     def _on_table_double_click(self, item):
         table = self.sender()
         row = item.row()
-        name_item = table.item(row, 1)
+        
+        # Dinamismo táctico: la columna del item varía según la tabla
+        col_name = 1 if table == self.top_items_table else 2
+        name_item = table.item(row, col_name)
+        
         if not name_item: return
         
         item_name = name_item.text()

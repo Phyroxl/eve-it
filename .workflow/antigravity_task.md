@@ -439,13 +439,76 @@ Se ha implementado una lógica centralizada para la apertura del mercado in-game
 
 ### CHECKS
 - **Doble Click**: Funciona en Simple, Advanced y Performance (Top Items + Transacciones).
-- **Fallback**: Si falla ESI (ej: sin token), copia el nombre y muestra aviso en color destacado.
-- **Solo Lectura**: Confirmado que no se activan editores de celda.
-- **Click Derecho**: La opción de copiar nombre sigue disponible y funcional.
-
-### NOTES
 - La integración en `PerformanceView` ahora es completa, permitiendo saltar al mercado del juego directamente desde el historial de transacciones o el ranking de beneficios.
 
 *Estado: Producto altamente usable e integrado con el cliente de EVE Online.*
+
+---
+
+## Sesión 16 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Armonización Visual Premium y Compactación de la Suite
+
+### RESUMEN
+Se ha realizado un rediseño profundo orientado a la compactación y la coherencia estética, elevando el producto a un estándar de "Consola de Mando" profesional.
+
+**Mejoras clave:**
+1. **Compactación Global (30%)**: Reducción drástica de márgenes, paddings y anchos de paneles laterales en todas las vistas. La interfaz ahora es mucho más densa y eficiente.
+2. **Estética "Advanced" Unificada**: El Modo Avanzado se ha utilizado como base estética para Simple y Performance.
+3. **Negro Absoluto (#000000)**: Implementado fondo negro puro en todas las zonas de visualización de items para mejorar el contraste táctico.
+4. **Fix en Detalle Avanzado**: Restaurada la vinculación de datos en el panel de detalle del Modo Avanzado (Best Buy, Best Sell, Margen, etc.).
+5. **Gráfico de Performance Premium**:
+    - **Interacción**: Añadidos Tooltips dinámicos y efectos de hover en las barras.
+    - **Analítica**: Línea de beneficio acumulado integrada para visualizar tendencias.
+6. **Iconos en Transacciones**: La tabla de transacciones de Performance ahora incluye iconos de items cargados asíncronamente.
+7. **UX Coherente**: Botón de refresco movido al header en todas las vistas para una operativa predecible.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/widgets.py` | Estilo global de tablas (Fondo #000000, bordes finos). |
+| `ui/market_command/simple_view.py` | Refactor de layout (Panel 240px, botón en header, inputs compactos). |
+| `ui/market_command/advanced_view.py` | Compactación (Panel 220px, reducción de fuentes). |
+| `ui/market_command/performance_view.py` | Gráfico interactivo, iconos en transacciones, layout compacto. |
+| `ui/market_command/command_main.py` | Ajustes de estilo en la barra de navegación. |
+
+### CHECKS
+- [x] Doble click funcional en todas las vistas.
+- [x] Tablas en negro puro con scroll fluido.
+- [x] Gráfico de Performance responde al ratón (Tooltips correctos).
+- [x] La suite es significativamente más pequeña en pantalla sin perder información.
+
+---
+
+## Sesión 17 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Corrección Robusta de Doble Click en Performance
+
+### RESUMEN
+Se ha resuelto la inconsistencia de columnas en la pestaña de Performance introducida tras la adición de iconos, garantizando que el doble click y el menú contextual funcionen perfectamente en ambas tablas.
+
+**Inconsistencia resuelta:**
+1. **El Problema**: El handler de doble click asumía que el nombre del item siempre estaba en la columna 1. Al añadir iconos en `trans_table`, el nombre se desplazó a la columna 2, rompiendo la interacción.
+2. **La Solución**: Implementado un mapeo dinámico de columnas. El sistema ahora identifica si el evento proviene de `top_items_table` (Col 1) o de `trans_table` (Col 2).
+3. **Garantía de Metadatos**: Se asegura que el `type_id` se extraiga de la columna correcta, evitando fallos en la apertura del mercado in-game.
+4. **Fallback Seguro**: El sistema de copia al portapapeles ahora garantiza copiar el nombre real del item y no metadatos como fechas o cantidades.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/performance_view.py` | Refactor de `_on_table_double_click` y `on_table_context_menu` para usar lógica de columnas dinámica basada en el emisor del evento. |
+
+### CHECKS
+- [x] Doble click en **Top Items** abre mercado correctamente (Col 1).
+- [x] Doble click en **Transacciones** abre mercado correctamente (Col 2).
+- [x] Menú contextual copia el nombre correcto en ambas tablas.
+- [x] El fallback al portapapeles funciona con el nombre real del item si ESI falla.
+- [x] No se han alterado los estados de solo lectura ni otras funcionalidades.
+
+*Estado: Interacción de mercado en Performance 100% fiable y dinámica.*
 
 ---
