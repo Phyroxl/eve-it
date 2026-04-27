@@ -7,7 +7,8 @@ import os
 from datetime import datetime, timezone
 
 def debug_db():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # Al estar en tools/, subimos un nivel para encontrar data/
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, "data", "market_performance.db")
 
     print(f"\n{'='*60}")

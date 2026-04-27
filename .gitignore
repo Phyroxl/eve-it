@@ -40,8 +40,11 @@ _main_char.json
 translator_config.json
 logs/
 cache/
+data/
+*.local.json
 
-# User Scratch
+# User Scratch & Tools
+tools/
 check_imports.py
 debug_translation.py
 debug_zh.py

@@ -5,8 +5,8 @@
 import sys
 import os
 
-# Añadir el directorio actual al path para importar core
-sys.path.append(os.getcwd())
+# Añadir la raíz del proyecto al path para importar core
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.wallet_poller import WalletPoller
 

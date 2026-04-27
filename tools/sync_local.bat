@@ -5,6 +5,7 @@ echo ========================================
 echo.
 
 cd /d "%~dp0"
+cd ..
 
 echo Verificando repositorio git...
 git status >nul 2>&1

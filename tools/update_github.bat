@@ -1,5 +1,7 @@
 @echo off
 title GitHub Uploader - EVE Replicator
+cd /d "%~dp0"
+cd ..
 echo.
 echo  =========================================
 echo    EVE REPLICATOR - ACTUALIZAR GITHUB
