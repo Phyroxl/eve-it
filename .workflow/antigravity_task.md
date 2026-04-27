@@ -97,3 +97,46 @@ Dos bugs críticos corregidos de forma quirúrgica sin alterar lógica existente
 - Si tras estos fixes los counts en DB siguen siendo 0, la causa es en ESI (token expirado, scope incorrecto o personaje sin historial). El log `[POLL]` + `[SYNC DONE]` lo confirmarán.
 
 *Estado: Flujo ESI → DB → UI completamente trazable y funcional.*
+
+---
+
+## Sesión 5 — 2026-04-27
+
+### STATUS: DIAGNÓSTICO ACTIVO 🔍
+
+### FASE: Instrumentación completa del flujo ESI → DB → UI
+
+### RESUMEN
+
+El problema persiste tras el fix del filtro de fecha. La causa exacta no se puede confirmar sin ver los números reales del sistema del usuario. Se añadió instrumentación de diagnóstico completa para identificar el punto de rotura con certeza.
+
+**Tres causas posibles identificadas:**
+1. ESI devuelve 0 transacciones (personaje sin historial reciente o token con scope limitado)
+2. Las transacciones se guardan con un char_id distinto al que consulta PerformanceEngine
+3. El engine o la UI filtran correctamente pero los datos caen fuera del rango de fechas
+
+**Instrumentación añadida:**
+- `WalletPoller.sync_report` (nuevo Signal(dict)): emite TODOS los conteos reales antes de `finished`
+  - char_id usado, balance recibido, conteo ESI trans/journal, filas guardadas, estado DB tras save, rango de fechas en DB
+- Diálogo de diagnóstico en `on_sync_finished`: muestra todos esos números en pantalla tras cada sync
+- `debug_db.py`: herramienta de diagnóstico de terminal completamente reescrita con análisis de desalineación de char_ids, conteos por tabla y diagnóstico final automático
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/wallet_poller.py` | `sync_report = Signal(dict)`. `poll()` reescrito para recolectar diagnóstico completo y emitirlo antes de `finished`. Incluye query directa a DB tras el save para confirmar filas reales. |
+| `ui/market_command/performance_view.py` | `_on_sync_report()` recibe el diagnóstico. `on_sync_finished()` muestra QMessageBox con todos los números reales: char_id, ESI counts, DB counts, rango de fechas. |
+| `debug_db.py` | Reescrito completamente: snapshots, transacciones agrupadas por char_id, últimas 10 filas, journal por tipo, diagnóstico final con detección de desalineación de IDs. |
+
+### CHECKS
+- El diálogo de sync muestra: char_id autenthicado, combo_data, ESI trans/journal recibidas, trans/journal guardadas, totales en DB, rango de fechas mínimo-máximo en DB
+- debug_db.py detecta automáticamente si hay desalineación de char_ids entre tablas
+- Si ESI devuelve 0, el diálogo lo muestra explícitamente con causas probables
+- Si los datos están en DB pero la UI no los muestra, el diagnóstico lo evidencia
+
+### NOTES
+- El usuario debe hacer sync y copiar el contenido del diálogo para diagnosticar
+- Alternativamente: `python debug_db.py` desde el directorio del proyecto tras la sync
+- La causa real quedará confirmada con los números del diálogo de diagnóstico
+
+*Estado: Instrumentación completa. Pendiente de ejecución real para confirmar causa.*

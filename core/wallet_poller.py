@@ -8,6 +8,7 @@ from core.esi_client import ESIClient
 class WalletPoller(QObject):
     finished = Signal()
     error = Signal(str)
+    sync_report = Signal(dict)  # diagnóstico completo emitido antes de finished
 
     def __init__(self, db_path="data/market_performance.db"):
         super().__init__()
@@ -69,9 +70,24 @@ class WalletPoller(QObject):
         """Ejecuta un ciclo de sincronización completo."""
         log = logging.getLogger('eve.wallet_poller')
         log.info(f"[POLL] Iniciando sync para char_id={character_id}")
+        report = {
+            'char_id': character_id,
+            'balance': None,
+            'esi_journal_count': 0,
+            'esi_trans_count': 0,
+            'saved_journal': 0,
+            'saved_trans': 0,
+            'db_snapshots': 0,
+            'db_transactions': 0,
+            'db_journal': 0,
+            'db_trans_date_min': None,
+            'db_trans_date_max': None,
+            'error': None,
+        }
         try:
             # 1. Wallet Balance
             balance = self.client.character_wallet(character_id, token)
+            report['balance'] = balance
             if balance is not None:
                 self._save_snapshot(character_id, balance)
                 log.info(f"[POLL] Balance guardado: {balance:.0f} ISK para char_id={character_id}")
@@ -80,24 +96,54 @@ class WalletPoller(QObject):
 
             # 2. Wallet Journal (Fees/Taxes)
             journal_entries = self.client.character_wallet_journal(character_id, token)
-            saved_journal = 0
+            report['esi_journal_count'] = len(journal_entries) if journal_entries else 0
             if journal_entries:
-                saved_journal = self._save_journal(character_id, journal_entries)
-            log.info(f"[POLL] Journal: {len(journal_entries) if journal_entries else 0} recibidas, {saved_journal} guardadas para char_id={character_id}")
+                report['saved_journal'] = self._save_journal(character_id, journal_entries)
+            log.info(f"[POLL] Journal: {report['esi_journal_count']} recibidas, {report['saved_journal']} guardadas")
 
             # 3. Wallet Transactions (Sales/Purchases)
             transactions = self.client.character_wallet_transactions(character_id, token)
-            saved_trans = 0
+            report['esi_trans_count'] = len(transactions) if transactions else 0
             if transactions:
-                saved_trans = self._save_transactions(character_id, transactions)
-            log.info(f"[POLL] Transacciones: {len(transactions) if transactions else 0} recibidas, {saved_trans} guardadas para char_id={character_id}")
+                report['saved_trans'] = self._save_transactions(character_id, transactions)
+            log.info(f"[POLL] Transacciones: {report['esi_trans_count']} recibidas, {report['saved_trans']} guardadas")
 
             if not transactions and not journal_entries:
-                log.warning(f"[POLL] ESI devolvió 0 transacciones Y 0 journal para char_id={character_id}. ¿Personaje sin historial? ¿Token expirado?")
+                log.warning(f"[POLL] ESI devolvió 0 transacciones Y 0 journal — personaje sin historial o token expirado")
 
+            # 4. Verificar estado real en DB tras el guardado
+            conn = sqlite3.connect(self.db_path)
+            try:
+                report['db_snapshots'] = conn.execute(
+                    "SELECT COUNT(*) FROM wallet_snapshots WHERE character_id=?", (character_id,)
+                ).fetchone()[0]
+                report['db_transactions'] = conn.execute(
+                    "SELECT COUNT(*) FROM wallet_transactions WHERE character_id=?", (character_id,)
+                ).fetchone()[0]
+                report['db_journal'] = conn.execute(
+                    "SELECT COUNT(*) FROM wallet_journal WHERE character_id=?", (character_id,)
+                ).fetchone()[0]
+                row = conn.execute(
+                    "SELECT MIN(substr(date,1,10)), MAX(substr(date,1,10)) FROM wallet_transactions WHERE character_id=?",
+                    (character_id,)
+                ).fetchone()
+                report['db_trans_date_min'] = row[0]
+                report['db_trans_date_max'] = row[1]
+            finally:
+                conn.close()
+
+            log.info(
+                f"[POLL] DB final: {report['db_snapshots']} snaps, "
+                f"{report['db_transactions']} trans ({report['db_trans_date_min']} → {report['db_trans_date_max']}), "
+                f"{report['db_journal']} journal"
+            )
+
+            self.sync_report.emit(report)
             self.finished.emit()
         except Exception as e:
-            logging.error(f"WalletPoller Error: {e}", exc_info=True)
+            log.error(f"WalletPoller Error: {e}", exc_info=True)
+            report['error'] = str(e)
+            self.sync_report.emit(report)
             self.error.emit(str(e))
 
     def _save_snapshot(self, char_id, balance):

@@ -299,10 +299,12 @@ class MarketPerformanceView(QWidget):
         self.poller = WalletPoller()
         self.poller.moveToThread(self.poller_thread)
         
+        self._last_sync_report = None
         self.poller_thread.started.connect(lambda: self.poller.poll(char_id, auth.current_token))
+        self.poller.sync_report.connect(self._on_sync_report)
         self.poller.finished.connect(self.on_sync_finished)
         self.poller.error.connect(self.on_sync_error)
-        
+
         self.poller_thread.start()
 
     def on_sync_finished(self):
@@ -310,11 +312,11 @@ class MarketPerformanceView(QWidget):
         self.btn_refresh.setEnabled(True)
 
         from core.auth_manager import AuthManager
-        char_id = self.combo_char.currentData() or AuthManager.instance().char_id
-        _log.info(f"[SYNC DONE] on_sync_finished: combo_data={self.combo_char.currentData()}, auth.char_id={AuthManager.instance().char_id}, usando char_id={char_id}")
+        auth = AuthManager.instance()
+        char_id = self.combo_char.currentData() or auth.char_id
+        _log.info(f"[SYNC DONE] combo_data={self.combo_char.currentData()}, auth.char_id={auth.char_id}, char_id={char_id}")
 
-        # Garantizar que el rango sea al menos 30 días para que los datos sean visibles
-        # (ESI devuelve historial de hasta 30 días; con "Hoy" la mayoría de transacciones quedaría fuera)
+        # Garantizar rango ≥ 30 días antes de refrescar (ESI devuelve hasta 30 días de historial)
         if self.combo_range.currentIndex() < 2:
             self.combo_range.blockSignals(True)
             self.combo_range.setCurrentIndex(2)
@@ -322,47 +324,59 @@ class MarketPerformanceView(QWidget):
 
         self.refresh_view()
 
-        # Conteo total en DB para ese personaje (sin filtro de fecha, para diagnóstico)
-        conn = sqlite3.connect(self.engine.db_path)
-        try:
-            count_trans = conn.execute(
-                "SELECT COUNT(*) FROM wallet_transactions WHERE character_id = ?", (char_id,)
-            ).fetchone()[0]
-            count_snap = conn.execute(
-                "SELECT COUNT(*) FROM wallet_snapshots WHERE character_id = ?", (char_id,)
-            ).fetchone()[0]
-            count_journal = conn.execute(
-                "SELECT COUNT(*) FROM wallet_journal WHERE character_id = ?", (char_id,)
-            ).fetchone()[0]
-        finally:
-            conn.close()
+        # Construir mensaje de diagnóstico real
+        r = self._last_sync_report or {}
+        rep_char_id  = r.get('char_id', char_id)
+        balance      = r.get('balance')
+        esi_trans    = r.get('esi_trans_count', '?')
+        esi_journal  = r.get('esi_journal_count', '?')
+        saved_trans  = r.get('saved_trans', '?')
+        saved_journal= r.get('saved_journal', '?')
+        db_trans     = r.get('db_transactions', '?')
+        db_journal   = r.get('db_journal', '?')
+        db_snaps     = r.get('db_snapshots', '?')
+        date_min     = r.get('db_trans_date_min') or '—'
+        date_max     = r.get('db_trans_date_max') or '—'
 
-        _log.info(f"[SYNC DONE] DB para char_id={char_id}: {count_trans} transacciones, {count_journal} journal, {count_snap} snapshots")
+        balance_str = f"{balance:,.0f} ISK" if isinstance(balance, (int, float)) else "No recibido"
+
+        msg = (
+            f"═══ DIAGNÓSTICO DE SYNC ═══\n\n"
+            f"char_id usado:      {rep_char_id}\n"
+            f"auth.char_id:       {auth.char_id}\n"
+            f"combo currentData:  {self.combo_char.currentData()}\n\n"
+            f"── ESI recibido ──\n"
+            f"  Balance:          {balance_str}\n"
+            f"  Transacciones:    {esi_trans}\n"
+            f"  Journal entries:  {esi_journal}\n\n"
+            f"── Guardado en DB ──\n"
+            f"  Trans guardadas:  {saved_trans}\n"
+            f"  Journal guardado: {saved_journal}\n\n"
+            f"── Estado DB total para char_id ──\n"
+            f"  wallet_snapshots: {db_snaps}\n"
+            f"  wallet_trans:     {db_trans}  ({date_min} → {date_max})\n"
+            f"  wallet_journal:   {db_journal}\n"
+        )
+
+        _log.info(f"[SYNC DONE] Diagnóstico completo:\n{msg}")
 
         from PySide6.QtWidgets import QMessageBox
-        if count_trans > 0:
-            QMessageBox.information(
-                self, "Sincronización ESI",
-                f"¡Sync completada!\n\n"
-                f"• {count_trans} transacciones en DB\n"
-                f"• {count_journal} entradas de journal\n\n"
-                f"Mostrando últimos 30 días."
-            )
+        if isinstance(db_trans, int) and db_trans > 0:
+            box = QMessageBox(QMessageBox.Information, "Sincronización ESI", msg, parent=self)
         else:
-            QMessageBox.warning(
-                self, "Sincronización ESI",
-                f"Sync completada, pero ESI devolvió 0 transacciones para char_id={char_id}.\n\n"
-                f"Posibles causas:\n"
-                f"• El personaje no tiene historial de trading en los últimos 30 días\n"
-                f"• El token puede haber expirado (vuelve a hacer login)\n\n"
-                f"Revisa el log de la app para más detalle."
-            )
+            box = QMessageBox(QMessageBox.Warning, "Sincronización ESI — Sin datos", msg, parent=self)
+        box.exec()
 
         from PySide6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
         if hasattr(self, 'poller_thread'):
             self.poller_thread.quit()
             self.poller_thread.wait(2000)
+
+    def _on_sync_report(self, report: dict):
+        """Recibe el informe de diagnóstico emitido por WalletPoller desde el hilo worker."""
+        self._last_sync_report = report
+        _log.info(f"[SYNC_REPORT] {report}")
 
     def on_auth_success(self, name, tokens):
         """Slot para manejar el éxito de la autenticación desde el hilo de AuthManager."""
