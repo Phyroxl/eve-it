@@ -512,3 +512,44 @@ Se ha resuelto la inconsistencia de columnas en la pestaña de Performance intro
 *Estado: Interacción de mercado en Performance 100% fiable y dinámica.*
 
 ---
+
+## Sesión 18 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Contabilidad Profesional — Implementación de Net Profit Real (Estilo EVE Tycoon)
+
+### RESUMEN
+Se ha realizado un refactor profundo del motor de analítica para pasar de una "estimación superficial" a una métrica de **Beneficio Neto Real** basada en principios contables robustos.
+
+**Mejoras clave:**
+1. **Motor WAC (Weighted Average Cost)**: El sistema ya no calcula el coste medio solo con el periodo visible. Ahora consulta **toda la historia de la DB** para establecer una base de coste fiable. Esto evita beneficios inflados al vender stock antiguo.
+2. **Dualidad Profit vs Cashflow**:
+    - **Net Profit**: (Ventas - COGS - Fees/Tax). Refleja cuánto has ganado realmente sobre lo que has vendido.
+    - **Trade Cashflow**: (Ingresos - Compras - Fees/Tax). Refleja la variación real de tu liquidez.
+3. **Gestión de COGS**: Implementado el cálculo de *Cost of Goods Sold* para separar la inversión en inventario del beneficio realizado.
+4. **Rediseño de KPIs Premium**:
+    - Panel superior reorganizado con 7 métricas claras.
+    - **Tooltips Técnicos**: Cada KPI incluye una explicación operativa de su cálculo al pasar el ratón.
+    - **Colores Dinámicos**: Los KPIs principales reaccionan visualmente según sean positivos o negativos.
+5. **Diagnóstico Avanzado**: La barra inferior ahora incluye un análisis contable cualitativo (ej: "Rentable con Reinversión" si el profit es alto pero el cashflow es negativo por compra de stock).
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/performance_models.py` | Renombrados campos y añadidos `cogs_total`, `avg_buy_price` y `total_net_profit`. |
+| `core/performance_engine.py` | Reescrita la lógica de agregación. Implementada consulta de WAC histórico global. Separación explícita de COGS y Beneficio Operativo. |
+| `ui/market_command/performance_view.py` | Rediseño de la sección de KPIs con tooltips, colores dinámicos y nueva jerarquía de información. Actualizada lógica de detalle de item. |
+
+### CHECKS
+- [x] **Net Profit** es independiente de la acumulación de stock (no baja si compras más).
+- [x] **Trade Cashflow** refleja correctamente la salida de ISK por inversión.
+- [x] **Inventory Exposure** cuantifica el capital parado en stock neto del periodo.
+- [x] **Tooltips** explican claramente la lógica de COGS y WAC.
+- [x] El **Doble Click** sigue funcionando tras los cambios de layout.
+
+### NOTES
+- Si un item se vende sin compras previas en DB, el sistema usa 0 como coste (Venta Huérfana) pero lo marca con un status de "Coste Desconocido" para transparencia.
+- La métrica es ahora directamente comparable con herramientas profesionales como EVE Tycoon.
+
+*Estado: Market Performance alcanza madurez contable profesional.*

@@ -43,11 +43,12 @@ class ItemPerformanceSummary:
     total_bought_units: int
     net_units: int
     gross_income: float
-    gross_cost: float
-    fees_paid: float
-    profit_net: float             # Crudo: Income - Cost - Fees
-    realized_profit_est: float    # Aproximado: Lo ganado en ventas cerradas
-    inventory_value_est: float    # Capital "atrapado" en el stock neto acumulado
+    gross_cost: float            # Inversión total en compras del periodo
+    fees_paid: float             # Gastos reales/estimados del periodo
+    net_profit: float            # Beneficio Operativo: Income - COGS - Fees
+    cogs_total: float            # Cost of Goods Sold (Unidades vendidas * WAC)
+    avg_buy_price: float         # WAC (Weighted Average Cost) usado para el cálculo
+    inventory_value_est: float    # Capital en stock (Unidades netas * WAC)
     margin_real_pct: float
     trade_count: int
     status_text: str = ""
@@ -64,15 +65,16 @@ class CharacterPerformanceSummary:
     total_cost: float
     broker_fees: float
     sales_tax: float
-    total_fees: float  # Combined fees + tax
+    total_fees: float
     
-    net_cashflow: float  # income - cost - fees - tax (Rolling Trade Profit in EVE Tycoon)
-    total_realized_profit: float  # Closed profit based on estimated COGS
+    net_cashflow: float           # Movimiento de caja: Income - Cost - Fees
+    total_net_profit: float       # Beneficio Realizado (Contabilidad cerrada)
+    total_cogs: float             # Coste total de adquisición de las unidades vendidas
     
-    inventory_exposure: float     # Valor estimado del stock acumulado en el periodo
+    inventory_exposure: float     # Valoración del stock neto positivo
     wallet_current: float
     last_synced_at: datetime
-    period_context: str = ""       # Diagnóstico: "Acumulación", "Liquidación", etc.
+    period_context: str = ""
 
 @dataclass
 class FeeBreakdown:

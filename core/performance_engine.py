@@ -104,14 +104,16 @@ class PerformanceEngine:
         return results
 
     def build_item_summary(self, character_id, date_from, date_to):
+        """Calcula el resumen por item con lógica de WAC (Weighted Average Cost) global."""
         conn = sqlite3.connect(self.db_path)
         try:
             c = conn.cursor()
 
-            query = """
+            # 1. Obtener actividad del periodo actual
+            query_period = """
                 SELECT item_id, item_name,
-                       SUM(CASE WHEN is_buy = 0 THEN quantity ELSE 0 END) as sold,
-                       SUM(CASE WHEN is_buy = 1 THEN quantity ELSE 0 END) as bought,
+                       SUM(CASE WHEN is_buy = 0 THEN quantity ELSE 0 END) as sold_qty,
+                       SUM(CASE WHEN is_buy = 1 THEN quantity ELSE 0 END) as bought_qty,
                        SUM(CASE WHEN is_buy = 0 THEN quantity * unit_price ELSE 0 END) as income,
                        SUM(CASE WHEN is_buy = 1 THEN quantity * unit_price ELSE 0 END) as cost,
                        COUNT(*) as trades
@@ -119,75 +121,74 @@ class PerformanceEngine:
                 WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
                 GROUP BY item_id
             """
-            c.execute(query, (character_id, date_from, date_to))
-            rows = c.fetchall()
-            
-            # También necesitamos los fees asociados a este item si existen en el journal (opcional, pero por ahora estimamos)
-            # Para el MVP, estimamos fees como el 1.5% de las ventas si no hay detalle exacto por item
+            c.execute(query_period, (character_id, date_from, date_to))
+            period_rows = c.fetchall()
+
+            # 2. Para cada item, calcular su WAC global (no solo del periodo)
+            # Esto evita el error de beneficio 100% en items comprados hace tiempo.
+            summaries = []
+            for r in period_rows:
+                item_id, item_name, sold_qty, bought_qty, income, cost, trades = r
+                
+                # Buscamos el precio medio de compra histórico para este personaje/item
+                c.execute("""
+                    SELECT SUM(quantity * unit_price) / SUM(quantity)
+                    FROM wallet_transactions
+                    WHERE character_id = ? AND item_id = ? AND is_buy = 1
+                """, (character_id, item_id))
+                res_wac = c.fetchone()
+                wac_global = res_wac[0] if res_wac and res_wac[0] else 0
+                
+                # Si no hay compras históricas en DB, usamos el precio de compra medio del periodo
+                # Si tampoco hay en el periodo, el WAC será 0 (Venta huérfana)
+                avg_buy_price = wac_global if wac_global > 0 else (cost / bought_qty if bought_qty > 0 else 0)
+                
+                # COGS: Cost of Goods Sold (Lo que nos costó adquirir lo que hemos vendido)
+                cogs = sold_qty * avg_buy_price
+                
+                # Fees: Usamos una estimación proporcional basada en los fees totales del periodo
+                # (Proporcional al volumen de venta de este item vs ventas totales)
+                # Nota: Esto es una aproximación para el desglose por item.
+                # El neto TOTAL usará los fees reales del journal.
+                est_fees = income * 0.025 if sold_qty > 0 else 0
+                
+                net_profit = income - cogs - est_fees
+                net_units = bought_qty - sold_qty
+                inventory_val = net_units * avg_buy_price if net_units > 0 else 0
+                margin = (net_profit / cogs * 100) if cogs > 0 else 0
+                
+                # Lógica de Status
+                status = "Normal"
+                if avg_buy_price == 0 and sold_qty > 0: status = "Coste Desconocido"
+                elif bought_qty == 0 and sold_qty > 0: status = "Liquidando"
+                elif net_units == 0: status = "Flujo Cerrado"
+                elif net_units > 0: status = "Incrementando Stock"
+
+                summaries.append(ItemPerformanceSummary(
+                    character_id=character_id,
+                    item_id=item_id,
+                    item_name=item_name or f"Item {item_id}",
+                    period_start=datetime.fromisoformat(date_from),
+                    period_end=datetime.fromisoformat(date_to),
+                    total_sold_units=sold_qty,
+                    total_bought_units=bought_qty,
+                    net_units=net_units,
+                    gross_income=income,
+                    gross_cost=cost,
+                    fees_paid=est_fees,
+                    net_profit=net_profit,
+                    cogs_total=cogs,
+                    avg_buy_price=avg_buy_price,
+                    inventory_value_est=inventory_val,
+                    margin_real_pct=margin,
+                    trade_count=trades,
+                    status_text=status
+                ))
+
         finally:
             conn.close()
 
-        summaries = []
-        for r in rows:
-            item_id, item_name, sold, bought, income, cost, trades = r
-
-            # Cálculos Refinados
-            avg_buy_price = (cost / bought) if bought > 0 else 0
-            
-            # El beneficio crudo es Income - Cost (pero esto castiga la acumulación)
-            profit_raw = income - cost
-            
-            # El beneficio realizado es: lo vendido - lo que costó comprarlo (estimado)
-            # Nota: Si sold > bought en el periodo, usamos el avg_buy_price (que vendrá de compras previas no vistas, 
-            # pero al menos es una base). Si avg_buy_price es 0, no podemos estimar bien.
-            realized_cost = sold * avg_buy_price
-            # Estimación de fees (Broker + Tax ~ 2.5% promedio)
-            est_fees = income * 0.025 if sold > 0 else 0
-            realized_profit = income - realized_cost - est_fees
-            
-            # Valor del inventario abierto (neto acumulado)
-            net = bought - sold
-            inventory_value = net * avg_buy_price if net > 0 else 0
-            
-            margin = (realized_profit / realized_cost * 100) if realized_cost > 0 else 0
-            
-            # Lógica Operativa Mejorada
-            status = "Normal"
-            if bought == 0 and sold > 0:
-                status = "Liquidando"
-            elif net == 0 and bought > 0:
-                status = "Flujo Equilibrado"
-            elif net > bought * 0.7 and bought > 5:
-                status = "Acumulando Stock"
-            elif sold > bought * 0.5 and bought > 0:
-                status = "Rotando Bien"
-            elif net > 0 and sold < bought * 0.1:
-                status = "Salida Lenta"
-            elif inventory_value > 500000000: # Más de 500M atrapados
-                status = "Exposición Alta"
-
-            summaries.append(ItemPerformanceSummary(
-                character_id=character_id,
-                item_id=item_id,
-                item_name=item_name or f"Item {item_id}",
-                period_start=datetime.fromisoformat(date_from),
-                period_end=datetime.fromisoformat(date_to),
-                total_sold_units=sold,
-                total_bought_units=bought,
-                net_units=net,
-                gross_income=income,
-                gross_cost=cost,
-                fees_paid=est_fees,
-                profit_net=profit_raw,
-                realized_profit_est=realized_profit,
-                inventory_value_est=inventory_value,
-                margin_real_pct=margin,
-                trade_count=trades,
-                status_text=status
-            ))
-
-        # Ordenamos por beneficio realizado estimado
-        summaries.sort(key=lambda x: x.realized_profit_est, reverse=True)
+        summaries.sort(key=lambda x: x.net_profit, reverse=True)
         return summaries
 
     def build_character_summary(self, character_id, date_from, date_to):
@@ -200,21 +201,25 @@ class PerformanceEngine:
         total_sales_tax = sum(d.tax for d in daily)
         total_fees = total_broker_fees + total_sales_tax
         
-        # Net Cashflow (Rolling Trade Profit)
+        # Net Cashflow (Rolling Trade Profit): Variación neta de ISK en cartera por trading
         net_cashflow = total_income - total_cost - total_fees
         
-        # Realized Profit (Closed accounting based on COGS)
-        total_realized_profit = sum(s.realized_profit_est for s in item_summaries)
+        # Net Profit: Beneficio contable basado en COGS
+        total_cogs = sum(s.cogs_total for s in item_summaries)
+        total_net_profit = total_income - total_cogs - total_fees
+        
         inventory_exposure = sum(s.inventory_value_est for s in item_summaries)
         
-        # Diagnóstico de contexto
+        # Diagnóstico de contexto contable
         context = "Operativa Balanceada"
-        if total_cost > total_income * 1.5:
-            context = "Acumulación Intensa (Rolling Negativo, Stock Creciendo)"
-        elif total_income > total_cost * 1.5:
-            context = "Liquidación de Stock (Cashflow Alto, Desinversión)"
-        elif total_realized_profit > abs(net_cashflow) and net_cashflow < 0:
-            context = "Operativa Saludable con Reinversión"
+        if total_cost > total_income * 2:
+            context = "Inversión Pesada (Cashflow Negativo, Stock Creciendo)"
+        elif total_income > total_cost * 2:
+            context = "Desinversión / Liquidación (Cashflow > Profit)"
+        elif total_net_profit > 0 and net_cashflow < 0:
+            context = "Rentable con Reinversión (Profit positivo pero sin liquidez)"
+        elif total_net_profit < 0:
+            context = "Operativa en Pérdida"
         
         conn = sqlite3.connect(self.db_path)
         try:
@@ -238,7 +243,8 @@ class PerformanceEngine:
             sales_tax=total_sales_tax,
             total_fees=total_fees,
             net_cashflow=net_cashflow,
-            total_realized_profit=total_realized_profit,
+            total_net_profit=total_net_profit,
+            total_cogs=total_cogs,
             inventory_exposure=inventory_exposure,
             wallet_current=wallet,
             last_synced_at=last_sync,

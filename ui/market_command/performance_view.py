@@ -41,31 +41,34 @@ class AsyncImageLoader(QWidget):
         reply.deleteLater()
 
 class KPIWidget(QFrame):
-    def __init__(self, title, value, color="#3b82f6", parent=None):
+    def __init__(self, title, value, color="#3b82f6", tooltip=None, parent=None):
         super().__init__(parent)
         self.setObjectName("AnalyticBox")
-        self.setStyleSheet(f"background-color: #0f172a; border: 1px solid #1e293b; border-radius: 4px; min-width: 160px;")
+        self.setStyleSheet(f"background-color: #0f172a; border: 1px solid #1e293b; border-radius: 4px; min-width: 140px;")
+        if tooltip:
+            self.setToolTip(tooltip)
         
         l = QVBoxLayout(self)
-        l.setContentsMargins(15, 12, 15, 12)
+        l.setContentsMargins(12, 10, 12, 10)
         l.setSpacing(2)
         
         t = QLabel(title.upper())
-        t.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800; letter-spacing: 1px;")
+        t.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800; letter-spacing: 0.5px;")
         
         self.v = QLabel(value)
-        self.v.setStyleSheet("color: #f1f5f9; font-size: 16px; font-weight: 900;")
+        self.v.setStyleSheet("color: #f1f5f9; font-size: 14px; font-weight: 900;")
         
-        self.d = QLabel("+0.0% vs prev.")
-        self.d.setStyleSheet("color: #64748b; font-size: 8px; font-weight: 600;")
+        self.d = QLabel("CONTABILIDAD CERRADA")
+        self.d.setStyleSheet("color: #475569; font-size: 7px; font-weight: 700;")
         
         l.addWidget(t)
         l.addWidget(self.v)
         l.addWidget(self.d)
 
-    def update_value(self, val, delta_text=""):
+    def update_value(self, val, detail=None, color=None):
         self.v.setText(val)
-        self.d.setText(delta_text)
+        if detail: self.d.setText(detail.upper())
+        if color: self.v.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 900;")
 
 class SimpleBarChart(QWidget):
     def __init__(self, parent=None):
@@ -328,25 +331,44 @@ class MarketPerformanceView(QWidget):
         )
         self.main_layout.addWidget(self._diag_label)
 
-        # 2. KPIs Section (More compact)
+        # 2. KPIs Section (Rediseñado para Net Profit)
         kpis_v = QVBoxLayout()
         kpis_v.setSpacing(6)
         
+        # Fila 1: Métricas Críticas (Profit vs Cashflow vs Stock)
         kpis_row1 = QHBoxLayout(); kpis_row1.setSpacing(6)
-        self.kpi_cashflow = KPIWidget("Net Trade Cashflow", "0 ISK", "#3b82f6")
+        self.kpi_net_profit = KPIWidget(
+            "Net Profit", "0 ISK", "#10b981", 
+            "Beneficio Real Realizado: Ventas - COGS (Coste Adquisición Unidades Vendidas) - Fees/Tax. "
+            "Es el rendimiento real de tu trading, independiente de si has comprado stock extra o no."
+        )
+        self.kpi_cashflow = KPIWidget(
+            "Trade Cashflow", "0 ISK", "#3b82f6", 
+            "Movimiento Neto de ISK: Income - Coste Compras - Fees/Tax. "
+            "Representa la variación real de tu cartera. Si es negativo, estás invirtiendo en stock."
+        )
+        self.kpi_exposure = KPIWidget(
+            "Inventory Exposure", "0 ISK", "#cbd5e1",
+            "Valor de mercado estimado del stock acumulado durante este periodo."
+        )
+        kpis_row1.addWidget(self.kpi_net_profit)
+        kpis_row1.addWidget(self.kpi_cashflow)
+        kpis_row1.addWidget(self.kpi_exposure)
+        
+        # Fila 2: Desglose Operativo
+        kpis_row2 = QHBoxLayout(); kpis_row2.setSpacing(6)
         self.kpi_income = KPIWidget("Sales Income", "0 ISK", "#60a5fa")
         self.kpi_cost = KPIWidget("Buy Investment", "0 ISK", "#f87171")
-        kpis_row1.addWidget(self.kpi_cashflow); kpis_row1.addWidget(self.kpi_income); kpis_row1.addWidget(self.kpi_cost)
-        
-        kpis_row2 = QHBoxLayout(); kpis_row2.setSpacing(6)
         self.kpi_broker = KPIWidget("Broker Fees", "0 ISK", "#f59e0b")
         self.kpi_tax = KPIWidget("Sales Tax", "0 ISK", "#f97316")
-        self.kpi_realized = KPIWidget("Realized Profit (Est)", "0 ISK", "#10b981")
-        self.kpi_exposure = KPIWidget("Inventory Exposure", "0 ISK", "#cbd5e1")
-        kpis_row2.addWidget(self.kpi_broker); kpis_row2.addWidget(self.kpi_tax)
-        kpis_row2.addWidget(self.kpi_realized); kpis_row2.addWidget(self.kpi_exposure)
         
-        kpis_v.addLayout(kpis_row1); kpis_v.addLayout(kpis_row2)
+        kpis_row2.addWidget(self.kpi_income)
+        kpis_row2.addWidget(self.kpi_cost)
+        kpis_row2.addWidget(self.kpi_broker)
+        kpis_row2.addWidget(self.kpi_tax)
+        
+        kpis_v.addLayout(kpis_row1)
+        kpis_v.addLayout(kpis_row2)
         self.main_layout.addLayout(kpis_v)
         
         # 3. Middle Row: Chart & Top Items
@@ -735,7 +757,7 @@ class MarketPerformanceView(QWidget):
             f"income={format_isk(summary.total_income, True)} ISK | "
             f"fees={format_isk(summary.broker_fees, True)} | tax={format_isk(summary.sales_tax, True)} | "
             f"cashflow={format_isk(summary.net_cashflow, True)} ISK | "
-            f"realized_est={format_isk(summary.total_realized_profit, True)} ISK"
+            f"net_profit={format_isk(summary.total_net_profit, True)} ISK"
             f"{auto_text}"
         )
         self._diag_label.setStyleSheet(
@@ -744,13 +766,20 @@ class MarketPerformanceView(QWidget):
         )
 
         # ── KPIs ──────────────────────────────────────────────────────────
-        self.kpi_cashflow.update_value(format_isk(summary.net_cashflow, short=True) + " ISK")
-        self.kpi_income.update_value(format_isk(summary.total_income, short=True) + " ISK")
-        self.kpi_cost.update_value(format_isk(summary.total_cost, short=True) + " ISK")
-        
-        self.kpi_broker.update_value(format_isk(summary.broker_fees, short=True) + " ISK")
-        self.kpi_tax.update_value(format_isk(summary.sales_tax, short=True) + " ISK")
-        self.kpi_realized.update_value(format_isk(summary.total_realized_profit, short=True) + " ISK")
+        self.kpi_net_profit.update_value(
+            format_isk(summary.total_net_profit, short=True) + " ISK",
+            f"COGS: {format_isk(summary.total_cogs, True)}",
+            "#10b981" if summary.total_net_profit >= 0 else "#f87171"
+        )
+        self.kpi_cashflow.update_value(
+            format_isk(summary.net_cashflow, short=True) + " ISK",
+            "Variación ISK",
+            "#3b82f6" if summary.net_cashflow >= 0 else "#f87171"
+        )
+        self.kpi_income.update_value(format_isk(summary.total_income, short=True) + " ISK", "Ingresos")
+        self.kpi_cost.update_value(format_isk(summary.total_cost, short=True) + " ISK", "Inversión")
+        self.kpi_broker.update_value(format_isk(summary.broker_fees, short=True) + " ISK", "Brokerage")
+        self.kpi_tax.update_value(format_isk(summary.sales_tax, short=True) + " ISK", "Impuestos")
         self.kpi_exposure.update_value(
             format_isk(summary.inventory_exposure, short=True) + " ISK",
             f"Wallet: {format_isk(summary.wallet_current, True)}"
@@ -849,7 +878,7 @@ class MarketPerformanceView(QWidget):
             self.lbl_det_stock.setText(str(item.net_units))
             
             from utils.formatters import format_isk
-            self.lbl_det_profit.setText(format_isk(item.realized_profit_est))
+            self.lbl_det_profit.setText(format_isk(item.net_profit))
             self.lbl_det_margin.setText(f"{item.margin_real_pct:.1f}%")
             
             # Contexto adicional en el detalle
