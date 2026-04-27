@@ -1,0 +1,4 @@
+{
+  "_comment": "Registra tu aplicación en https://developers.eveonline.com/ y coloca tu Client ID aquí, o define la variable de entorno EVE_CLIENT_ID.",
+  "client_id": ""
+}

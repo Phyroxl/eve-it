@@ -1,0 +1,271 @@
+"""
+main.py — Punto de entrada único de EVE ISK Tracker.
+"""
+
+from __future__ import annotations
+import logging
+import logging.handlers
+import os
+import socket
+import threading
+import sys
+from pathlib import Path
+
+# -- DPI Awareness --
+if os.name == 'nt':
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+# -- Redirección para pythonw (Headless) --
+if sys.executable.endswith("pythonw.exe"):
+    try:
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+    except: pass
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+APP_DATA = Path(os.environ.get('APPDATA', Path.home())) / 'EVEISKTracker'
+APP_DATA.mkdir(parents=True, exist_ok=True)
+
+def setup_logging():
+    log_file = APP_DATA / 'eve_isk_tracker.log'
+    fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s — %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    try:
+        fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except Exception as e:
+        print(f"[WARN] No se pudo inicializar el log en archivo: {e}", file=sys.__stderr__)
+    return logging.getLogger('eve.main')
+
+SINGLETON_PORT = 47288
+class SingletonLock:
+    def __init__(self): self._sock = None
+    def acquire(self) -> bool:
+        try:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+            self._sock.bind(('127.0.0.1', SINGLETON_PORT))
+            self._sock.listen(1)
+            t = threading.Thread(target=self._listen, daemon=True)
+            t.start()
+            return True
+        except: return False
+    def _listen(self):
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+                data = conn.recv(64).decode('utf-8', errors='ignore').strip()
+                if data == 'FOCUS': _signal_focus()
+                conn.close()
+            except Exception:
+                break
+    def signal_existing(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(1.0)
+            s.connect(('127.0.0.1', SINGLETON_PORT)); s.send(b'FOCUS\n'); s.close()
+        except Exception:
+            pass
+    def release(self):
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+
+_suite_window_ref = None
+
+def _signal_focus():
+    global _suite_window_ref
+    if _suite_window_ref:
+        try:
+            _suite_window_ref.showNormal()
+            _suite_window_ref.show()
+            _suite_window_ref.raise_()
+            _suite_window_ref.activateWindow()
+        except Exception as e:
+            logging.getLogger('eve.main').warning(f"_signal_focus error: {e}")
+
+_audio_refs = []
+
+def _play_sound(name):
+    """Reproduce un sonido táctico usando el motor nativo de Windows (MCI)."""
+    try:
+        import ctypes
+        path = PROJECT_ROOT / 'assets' / f"{name}.mp3"
+        if not path.exists(): return
+        
+        # Usamos mciSendString para máxima compatibilidad en Windows sin dependencias de QtMultimedia
+        mci = ctypes.windll.winmm.mciSendStringW
+        alias = f"sound_{name}"
+        
+        # Cerrar si ya estaba abierto (por si acaso)
+        mci(f"close {alias}", None, 0, 0)
+        # Abrir y reproducir
+        mci(f'open "{str(path)}" type mpegvideo alias {alias}', None, 0, 0)
+        mci(f"play {alias}", None, 0, 0)
+        
+        # Guardamos en log para diagnóstico
+        logging.getLogger('eve.main').info(f"Audio: {name}.mp3 reproducido.")
+    except Exception as e:
+        logging.getLogger('eve.main').warning(f"Error de audio nativo: {e}")
+
+def main():
+    lock = SingletonLock()
+    if not lock.acquire():
+        lock.signal_existing()
+        sys.exit(0)
+
+    log = setup_logging()
+    log.info("--- INICIANDO EVE iT ELITE ---")
+
+    from PySide6.QtWidgets import QApplication, QSplashScreen
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import Qt
+    
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    # --- Pantalla de Carga (Splash) ---
+    splash_pix = QPixmap(str(PROJECT_ROOT / 'assets' / 'fondo_pantalla.png'))
+    if splash_pix.isNull():
+        splash_pix = QPixmap(600, 400)
+        splash_pix.fill(QColor("#000000"))
+        
+    splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+    splash.show()
+    
+    # Sonido de inicio táctico (Reproducción inmediata)
+    _play_sound("login")
+    
+    splash.showMessage("INICIALIZANDO PUENTE DE MANDO...", Qt.AlignBottom | Qt.AlignCenter, QColor("#00c8ff"))
+    app.processEvents()
+
+    from controller.app_controller import AppController
+    from controller.tray_manager import TrayManager
+    from controller.control_window import ControlWindow
+    from ui.desktop.main_suite_window import MainSuiteWindow
+
+    controller = AppController()
+    tray = TrayManager(app, controller)
+    ctrl_win = ControlWindow(app, controller, tray)
+    suite_win = MainSuiteWindow(controller)
+
+    # Registro de referencias
+    global _suite_window_ref
+    _suite_window_ref = suite_win
+    
+    tray.set_control_window(ctrl_win)
+    tray.set_suite_window(suite_win)
+    suite_win.set_tray_manager(tray)
+
+    splash.showMessage("CARGANDO TELEMETRÍA...", Qt.AlignBottom | Qt.AlignCenter, QColor("#00c8ff"))
+    app.processEvents()
+
+    log.info("Desplegando Suite Principal...")
+    suite_win.show()
+    suite_win.raise_()
+    # [NUEVO] Modo Sigilo: Evitar que la propia Suite se vea en las réplicas
+    try:
+        from overlay.win32_capture import set_window_stealth
+        set_window_stealth(int(suite_win.winId()))
+        if ctrl_win: set_window_stealth(int(ctrl_win.winId()))
+    except Exception as e:
+        log.warning(f"No se pudo activar Modo Sigilo: {e}")
+    
+    # Finalizar splash
+    splash.finish(suite_win)
+
+    # Auto-start con persistencia completa
+    try:
+        _auto_start(controller, tray, suite_win, ctrl_win, log)
+    except Exception as e:
+        log.error(f"Error en auto-start: {e}")
+
+    import signal
+    signal.signal(signal.SIGINT, lambda *_: _on_sigint(controller, app, lock))
+
+    exec_fn = getattr(app, 'exec', None) or app.exec_
+    ret = exec_fn()
+
+    # Secuencia de Logoff Optimizada
+    if _suite_window_ref:
+        _suite_window_ref.showMinimized()
+    
+    log.info("Cerrando EVE iT Elite...")
+    _play_sound("logoff")
+    
+    # [NUEVO] Purga de Configuración del Replicador (Evitar datos residuales corruptos)
+    try:
+        repl_cfg = PROJECT_ROOT / 'config' / 'replicator.json'
+        if repl_cfg.exists():
+            # En lugar de borrar el archivo, lo reseteamos a un estado vacío limpio
+            with open(repl_cfg, 'w', encoding='utf-8') as f:
+                f.write('{"global":{"capture_fps":30,"current_profile":"Default"},"regions":{"Default":{"x":0.2,"y":0.2,"w":0.3,"h":0.3}},"selected_windows":[],"overlays":{},"region":{"x":0,"y":0,"w":0.1,"h":0.1}}')
+            log.info("Configuración del Replicador purgada exitosamente.")
+    except Exception as e:
+        log.warning(f"No se pudo purgar la configuración: {e}")
+
+    # Esperamos a que el sonido termine
+    import time
+    time.sleep(2.5)
+
+    controller.shutdown()
+    lock.release()
+    os._exit(ret)
+
+def _auto_start(controller, tray, suite_win, ctrl_win, log):
+    from PySide6.QtCore import QSettings
+    s = QSettings("EVE_iT", "Suite")
+
+    # 1. Cargar Log Dir guardado si existe y es válido
+    saved_log_dir = s.value("log_dir", "")
+    if saved_log_dir and os.path.exists(saved_log_dir):
+        log.info(f"Auto-start: Usando log_dir guardado: {saved_log_dir}")
+        controller.set_log_directory(saved_log_dir)
+    else:
+        # Auto-detección: buscar directorios de logs de EVE en el sistema
+        try:
+            from core.log_parser import find_all_log_dirs
+            dirs = find_all_log_dirs()
+            gamelogs = dirs.get('Gamelogs', [])
+            if gamelogs:
+                detected = str(gamelogs[0])
+                log.info(f"Auto-start: Directorio detectado automáticamente: {detected}")
+                controller.set_log_directory(detected)
+                # Guardar para futuras sesiones
+                s.setValue("log_dir", detected)
+                # Mostrar en la UI si está disponible
+                if suite_win and suite_win.edit_log_dir:
+                    suite_win.edit_log_dir.setText(detected)
+            else:
+                log.info("Auto-start: No se encontraron logs de EVE. Tracker iniciará en modo auto-scan.")
+        except Exception as e:
+            log.warning(f"Auto-start: Error en auto-detección de logs: {e}")
+
+    # 2. Cargar retención ESS
+    retention = float(s.value("ess_retention", 1.0))
+    controller.set_ess_retention(retention)
+
+    # 3. Iniciar Tracker SIEMPRE (con log_dir o sin él, en modo auto-scan)
+    # skip=False → lee eventos del log actual (sesión en curso) para que los personajes aparezcan activos
+    skip = s.value("skip_logs", "false") == "true"
+    log.info(f"Auto-start: Iniciando tracker (log_dir='{controller.log_directory}', skip={skip})")
+    controller.start_tracker(skip_existing=skip)
+
+def _on_sigint(controller, app, lock):
+    controller.shutdown(); lock.release(); app.quit()
+
+if __name__ == '__main__':
+    main()
