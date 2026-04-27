@@ -158,6 +158,8 @@ class MarketAdvancedView(QWidget):
         self.detail_panel = QFrame()
         self.detail_panel.setObjectName("AnalyticBox")
         self.detail_panel.setFixedHeight(220)
+        self.detail_panel.setFixedHeight(180)
+        self.detail_panel.setStyleSheet("background-color: #000000; border: 1px solid #1e293b; border-radius: 4px;")
         self.setup_detail_ui()
         right_panel.addWidget(self.detail_panel)
         
@@ -166,15 +168,8 @@ class MarketAdvancedView(QWidget):
         
         # Status Bar
         status_bar = QHBoxLayout()
-        self.progress = QProgressBar()
-        self.progress.setFixedHeight(4)
-        self.progress.setTextVisible(False)
-        self.progress.setStyleSheet("QProgressBar { background-color: #1e293b; border: none; } QProgressBar::chunk { background-color: #3b82f6; }")
-        
-        self.lbl_status = QLabel("● SISTEMA LISTO")
-        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
-        
-        status_bar.addWidget(self.lbl_status)
+        self.progress = QProgressBar(); self.progress.setFixedHeight(2); self.progress.setTextVisible(False)
+        self.progress.setStyleSheet("QProgressBar { background: #1e293b; border: none; } QProgressBar::chunk { background: #3b82f6; }")
         status_bar.addWidget(self.progress)
         self.main_layout.addLayout(status_bar)
 
@@ -437,6 +432,23 @@ class MarketAdvancedView(QWidget):
         else: self.combo_risk.setCurrentIndex(0)
 
     def update_detail(self, opp):
+        from utils.formatters import format_isk
+        
+        self.det_name.setText(opp.item_name.upper())
+        self.det_type_id.setText(f"TYPE ID: {opp.type_id}")
+        
+        # Métricas Principales
+        self.det_buy.val_lbl.setText(f"{format_isk(opp.best_buy_price)} ISK")
+        self.det_sell.val_lbl.setText(f"{format_isk(opp.best_sell_price)} ISK")
+        self.det_margin.val_lbl.setText(f"{opp.margin_net_pct:.2f}%")
+        self.det_profit_u.val_lbl.setText(f"{format_isk(opp.profit_per_unit)} ISK")
+        self.det_profit_d.val_lbl.setText(f"{format_isk(opp.profit_day_est)} ISK")
+        self.det_vol.val_lbl.setText(f"{opp.liquidity.volume_5d:,} units (5d)")
+        
+        depth_text = f"B: {opp.liquidity.buy_orders_count} / S: {opp.liquidity.sell_orders_count}"
+        self.det_depth.val_lbl.setText(depth_text)
+        self.det_hist.val_lbl.setText(f"{opp.liquidity.history_days} days available")
+        
         sb = opp.score_breakdown
         if sb:
             self.det_score.setText(f"{sb.final_score:.1f}")
@@ -460,9 +472,9 @@ class MarketAdvancedView(QWidget):
             from PySide6.QtNetwork import QNetworkRequest
             from PySide6.QtCore import QUrl
             req = QNetworkRequest(QUrl(url))
-            reply = self.table.network_manager.get(req)
+            reply = self.table.net_manager.get(req) # Cambiado network_manager por net_manager que es el nombre real
             def on_done():
-                if reply.error() == reply.NoError:
+                if reply.error() == QNetworkReply.NoError: # Import QNetworkReply if needed
                     pix = QPixmap()
                     if pix.loadFromData(reply.readAll()):
                         self.table.icon_cache[opp.type_id] = pix
@@ -476,12 +488,12 @@ class MarketAdvancedView(QWidget):
         if opp.risk_level == "High": safe_qty = int(safe_qty * 0.5)
         
         # Limitar por capital
-        config = self.worker.config if (self.worker and hasattr(self.worker, 'config')) else FilterConfig()
+        config = self.current_config
         max_afford = int(config.capital_max / opp.best_buy_price) if opp.best_buy_price > 0 else 0
         final_qty = max(1, min(safe_qty, max_afford))
         
         self.det_rec_qty.setText(f"{final_qty:,} units")
-        self.det_rec_cost.setText(f"Coste Est: {final_qty * opp.best_buy_price:,.0f} ISK")
+        self.det_rec_cost.setText(f"Coste Est: {format_isk(final_qty * opp.best_buy_price)} ISK")
 
     def on_item_action(self, action, item_name, type_id):
         if action == "copied":
@@ -491,19 +503,17 @@ class MarketAdvancedView(QWidget):
             self.lbl_status.setText(f"● EVE ONLINE: MERCADO ABIERTO ({item_name.upper()})")
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif action == "double_clicked":
-            # Intentar abrir en juego si hay token real
+            from ui.market_command.widgets import ItemInteractionHelper
+            from core.esi_client import ESIClient
             from core.auth_manager import AuthManager
-            auth = AuthManager.instance()
             
-            if type_id and auth.current_token and auth.current_token != "MOCK_TOKEN":
-                from core.esi_client import ESIClient
-                client = ESIClient()
-                success = client.open_market_window(type_id, auth.current_token)
-                if success:
-                    self.on_item_action("opened_in_game", item_name, type_id)
-                    return
+            auth = AuthManager.instance()
+            char_id = auth.char_id
+            
+            def feedback(msg, color):
+                self.lbl_status.setText(f"● {msg.upper()}")
+                self.lbl_status.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
-            # Fallback: Copiar al portapapeles
-            from PySide6.QtWidgets import QApplication
-            QApplication.clipboard().setText(item_name)
-            self.on_item_action("copied", item_name, type_id)
+            ItemInteractionHelper.open_market_with_fallback(
+                ESIClient(), char_id, type_id, item_name, feedback
+            )

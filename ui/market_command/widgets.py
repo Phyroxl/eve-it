@@ -13,6 +13,58 @@ class CustomTableWidgetItem(QTableWidgetItem):
             return self.sort_value < other.sort_value
         return super().__lt__(other)
 
+class ItemInteractionHelper:
+    """Helper centralizado para acciones sobre items (doble click, mercado, etc)."""
+    
+    @staticmethod
+    def open_market_with_fallback(esi_client, char_id, type_id, item_name, feedback_callback=None):
+        """
+        Intenta abrir el mercado in-game. 
+        Si falla (sin token, error ESI, etc), copia el nombre al portapapeles.
+        """
+        import logging
+        log = logging.getLogger('eve.interaction')
+        
+        success = False
+        error_msg = ""
+        
+        if not char_id or char_id == -1:
+            error_msg = "Sin personaje seleccionado"
+        elif not type_id:
+            error_msg = "ID de item no disponible"
+        else:
+            try:
+                # Obtener el token activo del AuthManager
+                from core.auth_manager import AuthManager
+                auth = AuthManager.instance()
+                token = auth.current_token
+                
+                if not token:
+                    error_msg = "ESI no autenticado"
+                else:
+                    res = esi_client.open_market_window(type_id, token)
+                    if res:
+                        success = True
+                        msg = f"Mercado in-game abierto: {item_name}"
+                        log.info(msg)
+                        if feedback_callback: feedback_callback(msg, "#34d399") # Verde
+                    else:
+                        error_msg = "Error ESI al abrir mercado"
+            except Exception as e:
+                error_msg = f"Fallo de conexión ESI: {str(e)}"
+                log.error(f"Error en open_market: {e}")
+
+        if not success:
+            # Fallback: Copiar al portapapeles
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(item_name)
+            
+            final_msg = f"Mercado no disponible ({error_msg}). Nombre copiado."
+            log.warning(final_msg)
+            if feedback_callback: feedback_callback(final_msg, "#f87171") # Rojo
+        
+        return success
+
 class MarketTableWidget(QTableWidget):
     item_action_triggered = Signal(str, str, int) # action_type, item_name, type_id
 
@@ -62,25 +114,25 @@ class MarketTableWidget(QTableWidget):
         
         self.setStyleSheet("""
             QTableWidget {
-                background-color: transparent;
+                background-color: #000000;
                 border: none;
                 color: #e2e8f0;
                 font-size: 11px;
             }
             QTableWidget::item {
-                padding: 4px;
-                border-bottom: 1px solid #1e293b;
+                padding: 2px 4px;
+                border-bottom: 1px solid #0f172a;
             }
             QTableWidget::item:selected {
-                background-color: rgba(59, 130, 246, 0.15);
-                border-left: 3px solid #3b82f6;
+                background-color: rgba(59, 130, 246, 0.1);
+                border-left: 2px solid #3b82f6;
             }
             QHeaderView::section {
-                background-color: #0f172a;
-                color: #64748b;
-                padding: 6px;
+                background-color: #000000;
+                color: #475569;
+                padding: 4px;
                 border: none;
-                border-bottom: 2px solid #1e293b;
+                border-bottom: 1px solid #1e293b;
                 font-weight: 800;
                 font-size: 9px;
                 text-transform: uppercase;

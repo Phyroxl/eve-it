@@ -71,10 +71,32 @@ class SimpleBarChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.data = [] # List of (date, value)
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(160)
+        self.setMouseTracking(True)
+        self.hover_index = -1
 
     def set_data(self, data):
         self.data = data
+        self.hover_index = -1
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        if not self.data: return
+        w = self.width()
+        padding_l, padding_r = 40, 40
+        chart_w = w - padding_l - padding_r
+        
+        rel_x = event.position().x() - padding_l
+        if rel_x < 0 or rel_x > chart_w:
+            self.hover_index = -1
+        else:
+            idx = int(rel_x / (chart_w / len(self.data))) if len(self.data) > 0 else -1
+            if idx != self.hover_index:
+                self.hover_index = idx
+                self.update()
+
+    def leaveEvent(self, event):
+        self.hover_index = -1
         self.update()
 
     def paintEvent(self, event):
@@ -83,12 +105,11 @@ class SimpleBarChart(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         
         w, h = self.width(), self.height()
-        padding_l, padding_r = 50, 60
-        padding_t, padding_b = 30, 30
+        padding_l, padding_r = 40, 40
+        padding_t, padding_b = 20, 20
         chart_w = w - padding_l - padding_r
         chart_h = h - padding_t - padding_b
         
-        # Data processing
         vals = [d[1] for d in self.data]
         cumulative = []
         curr = 0
@@ -98,58 +119,71 @@ class SimpleBarChart(QWidget):
             
         max_val = max([abs(v) for v in vals]) if vals else 1
         max_cum = max([abs(c) for c in cumulative]) if cumulative else 1
-        if max_val == 0: max_val = 1
-        if max_cum == 0: max_cum = 1
         
-        bar_w = (chart_w / len(self.data)) * 0.7 if len(self.data) > 0 else 10
-        spacing = (chart_w / len(self.data)) * 0.3 if len(self.data) > 0 else 5
+        bar_w_step = chart_w / len(self.data) if len(self.data) > 0 else 10
+        bar_w = bar_w_step * 0.6
+        spacing = bar_w_step * 0.4
         
         zero_line = padding_t + chart_h / 2
         
-        # Draw Axis Labels (Background)
-        p.setPen(QPen(QColor("#1e293b"), 1))
+        # Grid lines
+        p.setPen(QPen(QColor("#0f172a"), 1))
+        p.drawLine(padding_l, padding_t, padding_l, h-padding_b)
+        p.setPen(QPen(QColor("#1e293b"), 1, Qt.DashLine))
         p.drawLine(padding_l, zero_line, w - padding_r, zero_line)
         
-        # Bars (Daily Profit)
+        # Bars
         for i, val in enumerate(vals):
-            x = padding_l + i * (bar_w + spacing)
+            x = padding_l + i * bar_w_step + spacing/2
             norm_h = (val / max_val) * (chart_h / 2)
+            
             color = QColor("#10b981") if val >= 0 else QColor("#ef4444")
-            color.setAlpha(180)
+            if i == self.hover_index:
+                color = color.lighter(130)
+            else:
+                color.setAlpha(160)
+                
             p.setBrush(QBrush(color))
             p.setPen(Qt.NoPen)
             p.drawRect(x, zero_line, bar_w, -norm_h)
             
-        # Line (Cumulative Profit) - Secondary Axis
+        # Cumulative Line
         if len(cumulative) > 1:
-            path_pen = QPen(QColor("#3b82f6"), 2)
-            p.setPen(path_pen)
+            p.setPen(QPen(QColor("#3b82f6"), 2))
             p.setBrush(Qt.NoBrush)
-            
             points = []
             for i, cum_val in enumerate(cumulative):
-                x = padding_l + i * (bar_w + spacing) + bar_w/2
-                norm_cum_h = (cum_val / max_cum) * (chart_h / 2)
+                x = padding_l + i * bar_w_step + bar_w_step/2
+                norm_cum_h = (cum_val / max_cum) * (chart_h * 0.4)
                 points.append((x, zero_line - norm_cum_h))
             
             for i in range(len(points)-1):
                 p.drawLine(points[i][0], points[i][1], points[i+1][0], points[i+1][1])
-                
-            # Draw point at end
-            p.setBrush(QBrush(QColor("#3b82f6")))
-            p.drawEllipse(points[-1][0]-3, points[-1][1]-3, 6, 6)
 
-        # Labels
-        from utils.formatters import format_isk
-        p.setPen(QColor("#64748b"))
-        p.setFont(QFont("Segoe UI", 7))
-        # Left scale (Daily)
-        p.drawText(5, padding_t + 10, "DIARIO")
-        p.drawText(5, padding_t + 22, format_isk(max_val, True))
-        # Right scale (Cumulative)
-        p.drawText(w - 55, padding_t + 10, "ACUMULADO")
-        p.setPen(QColor("#3b82f6"))
-        p.drawText(w - 55, padding_t + 22, format_isk(cumulative[-1] if cumulative else 0, True))
+        # Tooltip
+        if self.hover_index != -1 and self.hover_index < len(self.data):
+            date, val = self.data[self.hover_index]
+            cum = cumulative[self.hover_index]
+            from utils.formatters import format_isk
+            
+            tip_w, tip_h = 130, 45
+            tip_x = padding_l + self.hover_index * bar_w_step + bar_w_step/2 - tip_w/2
+            tip_y = padding_t
+            
+            # Clamp tooltip in window
+            tip_x = max(5, min(tip_x, w - tip_w - 5))
+            
+            p.setBrush(QBrush(QColor("#1e293b")))
+            p.setPen(QPen(QColor("#3b82f6"), 1))
+            p.drawRoundedRect(tip_x, tip_y, tip_w, tip_h, 3, 3)
+            
+            p.setPen(QColor("#f1f5f9"))
+            p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            p.drawText(tip_x + 8, tip_y + 15, date)
+            p.setFont(QFont("Segoe UI", 7))
+            p.drawText(tip_x + 8, tip_y + 28, f"DIARIO: {format_isk(val, True)}")
+            p.setPen(QColor("#3b82f6"))
+            p.drawText(tip_x + 8, tip_y + 40, f"TOTAL: {format_isk(cum, True)}")
 
 class MarketPerformanceView(QWidget):
     def __init__(self, parent=None):
@@ -294,32 +328,25 @@ class MarketPerformanceView(QWidget):
         )
         self.main_layout.addWidget(self._diag_label)
 
-        # 2. KPIs Section (Two Rows for detail)
+        # 2. KPIs Section (More compact)
         kpis_v = QVBoxLayout()
-        kpis_v.setSpacing(10)
+        kpis_v.setSpacing(6)
         
-        # Row 1: Primary Metrics
-        kpis_row1 = QHBoxLayout()
-        self.kpi_cashflow = KPIWidget("Net Trade Cashflow", "0 ISK", "#3b82f6") # Blue (Main metric)
+        kpis_row1 = QHBoxLayout(); kpis_row1.setSpacing(6)
+        self.kpi_cashflow = KPIWidget("Net Trade Cashflow", "0 ISK", "#3b82f6")
         self.kpi_income = KPIWidget("Sales Income", "0 ISK", "#60a5fa")
         self.kpi_cost = KPIWidget("Buy Investment", "0 ISK", "#f87171")
-        kpis_row1.addWidget(self.kpi_cashflow)
-        kpis_row1.addWidget(self.kpi_income)
-        kpis_row1.addWidget(self.kpi_cost)
+        kpis_row1.addWidget(self.kpi_cashflow); kpis_row1.addWidget(self.kpi_income); kpis_row1.addWidget(self.kpi_cost)
         
-        # Row 2: Detailed Accounting
-        kpis_row2 = QHBoxLayout()
+        kpis_row2 = QHBoxLayout(); kpis_row2.setSpacing(6)
         self.kpi_broker = KPIWidget("Broker Fees", "0 ISK", "#f59e0b")
         self.kpi_tax = KPIWidget("Sales Tax", "0 ISK", "#f97316")
         self.kpi_realized = KPIWidget("Realized Profit (Est)", "0 ISK", "#10b981")
         self.kpi_exposure = KPIWidget("Inventory Exposure", "0 ISK", "#cbd5e1")
-        kpis_row2.addWidget(self.kpi_broker)
-        kpis_row2.addWidget(self.kpi_tax)
-        kpis_row2.addWidget(self.kpi_realized)
-        kpis_row2.addWidget(self.kpi_exposure)
+        kpis_row2.addWidget(self.kpi_broker); kpis_row2.addWidget(self.kpi_tax)
+        kpis_row2.addWidget(self.kpi_realized); kpis_row2.addWidget(self.kpi_exposure)
         
-        kpis_v.addLayout(kpis_row1)
-        kpis_v.addLayout(kpis_row2)
+        kpis_v.addLayout(kpis_row1); kpis_v.addLayout(kpis_row2)
         self.main_layout.addLayout(kpis_v)
         
         # 3. Middle Row: Chart & Top Items
@@ -358,6 +385,7 @@ class MarketPerformanceView(QWidget):
         self.top_items_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.top_items_table.setSelectionMode(QTableWidget.SingleSelection)
         self.top_items_table.itemSelectionChanged.connect(self.on_item_selection_changed)
+        self.top_items_table.itemDoubleClicked.connect(self._on_table_double_click)
         middle_layout.addWidget(self.top_items_table, 4)
         
         self.main_layout.addLayout(middle_layout)
@@ -403,16 +431,19 @@ class MarketPerformanceView(QWidget):
         self.main_layout.addWidget(self.detail_frame)
         
         # 4. Bottom Row: Recent Transactions
-        self.trans_table = QTableWidget(0, 6)
-        self.trans_table.setHorizontalHeaderLabels(["Fecha", "Item", "Tipo", "Cantidad", "Total", "Fee Est."])
-        self.trans_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.trans_table = QTableWidget(0, 7)
+        self.trans_table.setHorizontalHeaderLabels(["", "Fecha", "Item", "Tipo", "Cantidad", "Total", "Fee Est."])
+        self.trans_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.trans_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.trans_table.setColumnWidth(0, 32)
         self.trans_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.trans_table.itemDoubleClicked.connect(self._on_table_double_click)
         self.trans_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.trans_table.customContextMenuRequested.connect(self.on_table_context_menu)
-        self.trans_table.setStyleSheet("background: #0f172a; color: #f1f5f9; border: none;")
+        self.trans_table.setStyleSheet("background: #000000; color: #f1f5f9; border: none; font-size: 10px;")
         self.trans_table.setShowGrid(False)
         self.trans_table.verticalHeader().setVisible(False)
-        self.trans_table.setMinimumHeight(300)
+        self.trans_table.setMinimumHeight(250)
         self.main_layout.addWidget(self.trans_table)
         
         self.main_layout.addStretch()
@@ -753,24 +784,26 @@ class MarketPerformanceView(QWidget):
             self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
             self.top_items_table.setCellWidget(i, 0, icon_lbl)
 
-            self.top_items_table.setItem(i, 1, QTableWidgetItem(item.item_name))
+            item_cell = QTableWidgetItem(item.item_name)
+            item_cell.setData(Qt.UserRole, item.item_id)
+            self.top_items_table.setItem(i, 1, item_cell)
             self.top_items_table.setItem(i, 2, QTableWidgetItem(str(item.total_bought_units)))
             self.top_items_table.setItem(i, 3, QTableWidgetItem(str(item.total_sold_units)))
             stock_item = QTableWidgetItem(str(item.net_units))
             if item.net_units > 0:
                 stock_item.setForeground(QColor("#60a5fa"))
             self.top_items_table.setItem(i, 4, stock_item)
-            # Mostramos el Realized Profit (estimado) en la tabla para mayor utilidad
-            self.top_items_table.setItem(i, 5, QTableWidgetItem(format_isk(item.realized_profit_est, short=True)))
             status_item = QTableWidgetItem(item.status_text)
             status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 6, status_item)
+
+        self.top_items_table.setStyleSheet("background: #000000; color: #f1f5f9; border: none; font-size: 10px;")
 
         # ── Recent Transactions (sin filtro de fecha) ─────────────────────
         conn2 = sqlite3.connect(self.engine.db_path)
         try:
             rows = conn2.execute(
-                "SELECT date, item_name, is_buy, quantity, unit_price "
+                "SELECT date, item_name, is_buy, quantity, unit_price, item_id "
                 "FROM wallet_transactions "
                 "WHERE character_id=? ORDER BY date DESC LIMIT 50",
                 (char_id,)
@@ -781,17 +814,25 @@ class MarketPerformanceView(QWidget):
 
         self.trans_table.setRowCount(len(rows))
         for i, r in enumerate(rows):
+            # Icono
+            icon_lbl = QLabel(); icon_lbl.setFixedSize(24, 24); icon_lbl.setScaledContents(True)
+            icon_url = f"https://images.evetech.net/types/{r[5]}/icon?size=32"
+            self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
+            self.trans_table.setCellWidget(i, 0, icon_lbl)
+
             date_short = r[0].split("T")[0]
             tipo  = "COMPRA" if r[2] == 1 else "VENTA"
             color = "#f87171" if r[2] == 1 else "#34d399"
-            self.trans_table.setItem(i, 0, QTableWidgetItem(date_short))
-            self.trans_table.setItem(i, 1, QTableWidgetItem(r[1] or "Unknown"))
+            self.trans_table.setItem(i, 1, QTableWidgetItem(date_short))
+            name_cell = QTableWidgetItem(r[1] or "Unknown")
+            name_cell.setData(Qt.UserRole, r[5]) # r[5] es item_id
+            self.trans_table.setItem(i, 2, name_cell)
             type_item = QTableWidgetItem(tipo)
             type_item.setForeground(QColor(color))
-            self.trans_table.setItem(i, 2, type_item)
-            self.trans_table.setItem(i, 3, QTableWidgetItem(str(r[3])))
-            self.trans_table.setItem(i, 4, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
-            self.trans_table.setItem(i, 5, QTableWidgetItem("~3.0%"))
+            self.trans_table.setItem(i, 3, type_item)
+            self.trans_table.setItem(i, 4, QTableWidgetItem(str(r[3])))
+            self.trans_table.setItem(i, 5, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
+            self.trans_table.setItem(i, 6, QTableWidgetItem("~3.0%"))
 
     def on_item_selection_changed(self):
         sel = self.top_items_table.selectedItems()
@@ -838,6 +879,30 @@ class MarketPerformanceView(QWidget):
         
         if action == copy_action:
             QGuiApplication.clipboard().setText(name)
+
+    def _on_table_double_click(self, item):
+        table = self.sender()
+        row = item.row()
+        name_item = table.item(row, 1)
+        if not name_item: return
+        
+        item_name = name_item.text()
+        type_id = name_item.data(Qt.UserRole)
+        char_id = self.combo_char.currentData()
+        
+        from ui.market_command.widgets import ItemInteractionHelper
+        from core.esi_client import ESIClient
+        
+        def feedback(msg, color):
+            self._diag_label.setText(f"▸ {msg.upper()}")
+            self._diag_label.setStyleSheet(
+                f"color: {color}; font-size: 9px; font-weight: 700; "
+                f"padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;"
+            )
+
+        ItemInteractionHelper.open_market_with_fallback(
+            ESIClient(), char_id, type_id, item_name, feedback
+        )
 
     # ── Auto-Refresh Logic ───────────────────────────────────────────
     

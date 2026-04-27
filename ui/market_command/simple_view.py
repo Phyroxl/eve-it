@@ -284,35 +284,45 @@ class MarketSimpleView(QWidget):
         self.lbl_det_score.setStyleSheet("color: #f1f5f9; font-size: 24px; font-weight: 900;")
         self.lbl_det_pens = QLabel("Ninguna")
         self.lbl_det_pens.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 600;")
-        s_l.addWidget(self.lbl_det_score)
-        s_l.addWidget(self.lbl_det_pens)
-        s_l.addStretch()
-        dl.addLayout(s_l, 2)
-        
-        # Section 4: Operations
-        o_l = QVBoxLayout()
-        o_l.setSpacing(2)
-        lbl_rec_buy = QLabel("RECOMENDACIÓN COMPRA")
-        lbl_rec_buy.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800;")
-        o_l.addWidget(lbl_rec_buy)
-        self.lbl_det_rec_qty = QLabel("0 uds")
-        self.lbl_det_rec_qty.setStyleSheet("color: #fbbf24; font-size: 18px; font-weight: 900;")
-        self.lbl_det_rec_cost = QLabel("Coste Estimado: 0 ISK")
-        self.lbl_det_rec_cost.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 600;")
-        o_l.addWidget(self.lbl_det_rec_qty)
-        o_l.addWidget(self.lbl_det_rec_cost)
-        o_l.addStretch()
-        dl.addLayout(o_l, 2)
+        self.lbl_det_tags.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 700;")
+        name_v.addWidget(self.lbl_det_item); name_v.addWidget(self.lbl_det_tags); name_v.addStretch()
+        dl.addWidget(self.lbl_det_icon); dl.addLayout(name_v, 1)
 
-        right_layout.addWidget(self.detail_panel)
-        
-        main_layout.addWidget(filter_panel)
-        main_layout.addWidget(right_panel)
+        # Section 2: Metrics Grid
+        m_g = QGridLayout()
+        m_g.setSpacing(5)
+        def add_det_metric(layout, row, col, lbl_txt, val_obj, color="#e2e8f0"):
+            layout.addWidget(QLabel(lbl_txt, styleSheet="color: #475569; font-size: 7px; font-weight: 800;"), row*2, col)
+            val_obj.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 800;")
+            layout.addWidget(val_obj, row*2+1, col)
+
+        self.lbl_det_buy = QLabel("---"); self.lbl_det_sell = QLabel("---")
+        self.lbl_det_profit = QLabel("---"); self.lbl_det_margin = QLabel("---")
+        add_det_metric(m_g, 0, 0, "BUY PRICE", self.lbl_det_buy)
+        add_det_metric(m_g, 0, 1, "SELL PRICE", self.lbl_det_sell)
+        add_det_metric(m_g, 1, 0, "NET PROFIT", self.lbl_det_profit, "#10b981")
+        add_det_metric(m_g, 1, 1, "MARGIN %", self.lbl_det_margin, "#3b82f6")
+        dl.addLayout(m_g, 1)
+
+        # Section 3: Score & Risk
+        s_v = QVBoxLayout()
+        s_v.addWidget(QLabel("SCORE & RISK", styleSheet="color: #475569; font-size: 7px; font-weight: 800;"))
+        self.lbl_det_score = QLabel("0.0"); self.lbl_det_score.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900;")
+        self.lbl_det_pens = QLabel("---"); self.lbl_det_pens.setStyleSheet("color: #64748b; font-size: 8px; font-weight: 600;")
+        s_v.addWidget(self.lbl_det_score); s_v.addWidget(self.lbl_det_pens); s_v.addStretch()
+        dl.addLayout(s_v, 1)
+
+        # Section 4: Recommendation
+        r_v = QVBoxLayout()
+        r_v.addWidget(QLabel("RECOMMENDED QTY", styleSheet="color: #475569; font-size: 7px; font-weight: 800;"))
+        self.lbl_det_rec_qty = QLabel("0 uds"); self.lbl_det_rec_qty.setStyleSheet("color: #fbbf24; font-size: 14px; font-weight: 900;")
+        self.lbl_det_rec_cost = QLabel("Cost: 0 ISK"); self.lbl_det_rec_cost.setStyleSheet("color: #64748b; font-size: 8px; font-weight: 600;")
+        r_v.addWidget(self.lbl_det_rec_qty); r_v.addWidget(self.lbl_det_rec_cost); r_v.addStretch()
+        dl.addLayout(r_v, 1)
 
     def create_label(self, text):
         l = QLabel(text.upper())
         l.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800;")
-        return l
         
     def on_item_action(self, action, item_name, type_id):
         if action == "copied":
@@ -322,22 +332,20 @@ class MarketSimpleView(QWidget):
             self.lbl_status.setText(f"● EVE ONLINE: MERCADO ABIERTO ({item_name.upper()})")
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif action == "double_clicked":
-            # Intentar abrir en juego si hay token real
+            from ui.market_command.widgets import ItemInteractionHelper
+            from core.esi_client import ESIClient
             from core.auth_manager import AuthManager
-            auth = AuthManager.instance()
             
-            if type_id and auth.current_token and auth.current_token != "MOCK_TOKEN":
-                from core.esi_client import ESIClient
-                client = ESIClient()
-                success = client.open_market_window(type_id, auth.current_token)
-                if success:
-                    self.on_item_action("opened_in_game", item_name, type_id)
-                    return
+            auth = AuthManager.instance()
+            char_id = auth.char_id
+            
+            def feedback(msg, color):
+                self.lbl_status.setText(f"● {msg.upper()}")
+                self.lbl_status.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
-            # Fallback: Copiar al portapapeles
-            from PySide6.QtWidgets import QApplication
-            QApplication.clipboard().setText(item_name)
-            self.on_item_action("copied", item_name, type_id)
+            ItemInteractionHelper.open_market_with_fallback(
+                ESIClient(), char_id, type_id, item_name, feedback
+            )
 
     def on_refresh_clicked(self):
         if self.worker and self.worker.isRunning():

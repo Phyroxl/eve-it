@@ -407,3 +407,45 @@ Se han movido las herramientas de desarrollo a `/tools` y se ha actualizado el `
 Se han forzado los defaults profesionales en `performance_config.json` y se ha confirmado que `market_performance.db` está fuera del control de versiones.
 
 *Estado: Repositorio profesional, limpio y sellado.*
+
+---
+
+## Sesión 15 — 2026-04-27
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Interacción Unificada de Mercado (Doble Click)
+
+### RESUMEN
+Se ha implementado una lógica centralizada para la apertura del mercado in-game mediante doble click, cubriendo todas las vistas del Market Command.
+
+**Mejoras clave:**
+1. **ItemInteractionHelper**: Nueva clase centralizada que unifica la llamada a ESI `open_market_window` con un sistema de fallback automático (copy-to-clipboard) y feedback visual.
+2. **PerformanceView (Deep Refactor)**:
+   - Se ha modificado la consulta SQL de transacciones recientes para recuperar y almacenar el `item_id`.
+   - Implementado soporte de doble click en la tabla de ranking y en la tabla de transacciones.
+   - Feedback integrado en la barra de diagnóstico.
+3. **Unificación Simple/Advanced**: Refactorización de handlers para eliminar código duplicado y usar el helper centralizado.
+4. **Higiene UI**: Verificado el estado de solo lectura en todas las tablas para evitar entradas accidentales en modo edición.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/widgets.py` | Añadido `ItemInteractionHelper`. |
+| `ui/market_command/performance_view.py` | SQL query actualizada, inyección de `type_id` en tablas, conexión de señales de doble click. |
+| `ui/market_command/simple_view.py` | Refactorizado para usar el helper. |
+| `ui/market_command/advanced_view.py` | Refactorizado para usar el helper. |
+| `core/esi_client.py` | Verificada robustez de `open_market_window`. |
+
+### CHECKS
+- **Doble Click**: Funciona en Simple, Advanced y Performance (Top Items + Transacciones).
+- **Fallback**: Si falla ESI (ej: sin token), copia el nombre y muestra aviso en color destacado.
+- **Solo Lectura**: Confirmado que no se activan editores de celda.
+- **Click Derecho**: La opción de copiar nombre sigue disponible y funcional.
+
+### NOTES
+- La integración en `PerformanceView` ahora es completa, permitiendo saltar al mercado del juego directamente desde el historial de transacciones o el ranking de beneficios.
+
+*Estado: Producto altamente usable e integrado con el cliente de EVE Online.*
+
+---
