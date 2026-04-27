@@ -399,21 +399,31 @@ class MarketPerformanceView(QWidget):
         _log.info(f"[SYNC_REPORT] {report}")
 
     def _poll_auth_completion(self):
-        """Polling en hilo principal cada 500ms — detecta cuando el token ESI ya está disponible."""
+        """Polling en hilo principal cada 500ms — detecta token disponible o error de auth."""
         from core.auth_manager import AuthManager
+        from PySide6.QtWidgets import QMessageBox
         auth = AuthManager.instance()
         self._auth_poll_count += 1
+
         if auth.current_token:
             self._auth_poll_timer.stop()
             self.btn_refresh.setText("SINCRONIZAR ESI")
             self.btn_refresh.setEnabled(True)
             _log.info(f"[AUTH] Token detectado tras {self._auth_poll_count * 500}ms — iniciando sync")
             self.on_sync_clicked()
+        elif auth.auth_error:
+            # El servidor de callback ya terminó con error — no tiene sentido seguir esperando
+            self._auth_poll_timer.stop()
+            self.btn_refresh.setText("SINCRONIZAR ESI")
+            self.btn_refresh.setEnabled(True)
+            _log.error(f"[AUTH] Error reportado por AuthManager: {auth.auth_error}")
+            QMessageBox.critical(self, "Error de Autenticación ESI", auth.auth_error)
         elif self._auth_poll_count >= 120:  # 60 segundos de timeout
             self._auth_poll_timer.stop()
             self.btn_refresh.setText("SINCRONIZAR ESI")
             self.btn_refresh.setEnabled(True)
             _log.warning("[AUTH] Timeout esperando token de autenticación (60s)")
+            QMessageBox.warning(self, "Login ESI", "No se recibió respuesta de EVE SSO en 60 segundos.\nIntenta de nuevo.")
 
     def on_sync_error(self, msg):
         _log.error(f"[SYNC ERROR] {msg}")
