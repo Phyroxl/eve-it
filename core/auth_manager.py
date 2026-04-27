@@ -105,26 +105,43 @@ class AuthManager(QObject):
                                 try:
                                     config_data = json.loads(_CONFIG_FILE.read_text())
                                     client_id = config_data.get('client_id')
-                                    client_secret = config_data.get('client_secret')
+                                    client_secret = config_data.get('client_secret', '')
 
-                                    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+                                    post_data = {
+                                        "grant_type": "authorization_code",
+                                        "code": code,
+                                        "redirect_uri": self.redirect_uri,
+                                    }
 
-                                    # redirect_uri DEBE coincidir con el registrado en developers.eveonline.com
-                                    res = requests.post(
-                                        "https://login.eveonline.com/v2/oauth/token",
-                                        data={
-                                            "grant_type": "authorization_code",
-                                            "code": code,
-                                            "redirect_uri": self.redirect_uri,
-                                        },
-                                        headers={
-                                            "Authorization": f"Basic {auth_header}",
-                                            "Content-Type": "application/x-www-form-urlencoded",
-                                        },
-                                        timeout=15,
-                                    )
+                                    # Intentar primero como cliente confidencial (con secret)
+                                    if client_secret:
+                                        auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+                                        res = requests.post(
+                                            "https://login.eveonline.com/v2/oauth/token",
+                                            data=post_data,
+                                            headers={
+                                                "Authorization": f"Basic {auth_header}",
+                                                "Content-Type": "application/x-www-form-urlencoded",
+                                            },
+                                            timeout=15,
+                                        )
+                                        logger.info(f"AuthManager: Token exchange (confidential) → HTTP {res.status_code}")
+                                    else:
+                                        res = None
 
-                                    logger.info(f"AuthManager: Token exchange → HTTP {res.status_code}")
+                                    # Si no hay secret, o si falló con 401 (app pública/nativa sin secret):
+                                    # reintentar con solo client_id en el body (PKCE native app)
+                                    if res is None or res.status_code == 401:
+                                        if res is not None:
+                                            logger.warning("AuthManager: 401 con Basic auth → reintentando como public client (native app)")
+                                        public_data = {**post_data, "client_id": client_id}
+                                        res = requests.post(
+                                            "https://login.eveonline.com/v2/oauth/token",
+                                            data=public_data,
+                                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                                            timeout=15,
+                                        )
+                                        logger.info(f"AuthManager: Token exchange (public/native) → HTTP {res.status_code}")
 
                                     if res.status_code == 200:
                                         tokens = res.json()
