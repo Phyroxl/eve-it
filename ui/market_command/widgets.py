@@ -14,12 +14,12 @@ class CustomTableWidgetItem(QTableWidgetItem):
         return super().__lt__(other)
 
 class MarketTableWidget(QTableWidget):
-    item_action_triggered = Signal(str, str) # action_type, item_name
+    item_action_triggered = Signal(str, str, int) # action_type, item_name, type_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(9)
-        headers = ["Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas"]
+        headers = ["Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas (?)"]
         self.setHorizontalHeaderLabels(headers)
         
         tooltips = [
@@ -31,7 +31,13 @@ class MarketTableWidget(QTableWidget):
             "Beneficio en ISK estimado si capturas parte del volumen diario.",
             "Diferencia porcentual bruta entre órdenes Buy y Sell.",
             "Estimación de riesgo según capital requerido y volatilidad.",
-            "Etiquetas inteligentes para toma de decisiones rápida."
+            "ETIQUETAS INTELIGENTES:\n"
+            "• RÁPIDA: Alto volumen (>500/5d).\n"
+            "• LENTA: Bajo volumen (<50/5d).\n"
+            "• BUEN MARGEN: Margen >20%.\n"
+            "• SÓLIDA: Bajo riesgo y margen >15%.\n"
+            "• CAPITAL ALTO: Ítem caro (>100M ISK).\n"
+            "• CUIDADO: Spread extremo o margen <2%."
         ]
         for i, tip in enumerate(tooltips):
             self.horizontalHeaderItem(i).setToolTip(tip)
@@ -92,6 +98,7 @@ class MarketTableWidget(QTableWidget):
         if item is not None:
             row = item.row()
             item_name = self.item(row, 1).text()
+            type_id = self.item(row, 1).data(Qt.UserRole)
             
             menu = QMenu(self)
             menu.setStyleSheet("QMenu { background-color: #1e293b; color: #f8fafc; border: 1px solid #3b82f6; } QMenu::item:selected { background-color: #3b82f6; }")
@@ -101,13 +108,13 @@ class MarketTableWidget(QTableWidget):
             
             if action == copy_action:
                 QApplication.clipboard().setText(item_name)
-                self.item_action_triggered.emit("copied", item_name)
+                self.item_action_triggered.emit("copied", item_name, type_id)
 
     def on_item_double_clicked(self, item):
         row = item.row()
         item_name = self.item(row, 1).text()
-        QApplication.clipboard().setText(item_name)
-        self.item_action_triggered.emit("double_clicked", item_name)
+        type_id = self.item(row, 1).data(Qt.UserRole)
+        self.item_action_triggered.emit("double_clicked", item_name, type_id)
 
     def populate(self, opportunities):
         self.setSortingEnabled(False)
@@ -117,6 +124,7 @@ class MarketTableWidget(QTableWidget):
             rank = CustomTableWidgetItem(str(row + 1), row + 1)
             
             item = QTableWidgetItem(opp.item_name)
+            item.setData(Qt.UserRole, opp.type_id)
             # Support for async icon loading
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
@@ -198,7 +206,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
         headers = [
             "Rank", "Item", "Score", "Vol/Día", "Margen %", 
             "Profit/U", "Profit/Día", "Spread %", "Riesgo", 
-            "Buy Ord", "Sell Ord", "Hist Days", "Etiquetas"
+            "Buy Ord", "Sell Ord", "Hist Days", "Etiquetas (?)"
         ]
         self.setHorizontalHeaderLabels(headers)
         
@@ -206,7 +214,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             "Ranking.", "Nombre del Item.", "Score Final.", "Volumen 5d.", "Margen Neto %.",
             "Beneficio por unidad vendida.", "Beneficio diario estimado.", "Spread %.", 
             "Nivel de riesgo.", "Cantidad de órdenes de compra.", "Cantidad de órdenes de venta.",
-            "Días de historial disponibles.", "Etiquetas tácticas."
+            "Días de historial disponibles.", "ETIQUETAS INTELIGENTES (Ver modo simple para leyenda)."
         ]
         for i, tip in enumerate(tooltips):
             if i < self.columnCount():
@@ -230,6 +238,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             
             # 1. Item
             item = QTableWidgetItem(opp.item_name)
+            item.setData(Qt.UserRole, opp.type_id)
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:

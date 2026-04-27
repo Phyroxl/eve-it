@@ -3,8 +3,13 @@ from datetime import datetime, timedelta
 from core.performance_models import DailyPnLEntry, ItemPerformanceSummary, CharacterPerformanceSummary
 
 class PerformanceEngine:
-    def __init__(self, db_path="data/market_performance.db"):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        import os
+        if db_path is None:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.db_path = os.path.join(base_dir, "data", "market_performance.db")
+        else:
+            self.db_path = db_path
 
     def find_active_characters(self):
         """Descubre personajes leyendo los logs locales y resolviendo IDs vía ESI público."""
@@ -45,8 +50,8 @@ class PerformanceEngine:
                    SUM(CASE WHEN is_buy = 1 THEN quantity * unit_price ELSE 0 END) as cost,
                    COUNT(*) as count
             FROM wallet_transactions
-            WHERE character_id = ? AND day BETWEEN ? AND ?
-            GROUP BY day
+            WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
+            GROUP BY substr(date, 1, 10)
         """
         c.execute(query_trans, (character_id, date_from, date_to))
         trans_rows = {row[0]: row for row in c.fetchall()}
@@ -57,8 +62,8 @@ class PerformanceEngine:
                    SUM(CASE WHEN ref_type = 'brokers_fee' THEN ABS(amount) ELSE 0 END) as fees,
                    SUM(CASE WHEN ref_type = 'transaction_tax' THEN ABS(amount) ELSE 0 END) as tax
             FROM wallet_journal
-            WHERE character_id = ? AND day BETWEEN ? AND ?
-            GROUP BY day
+            WHERE character_id = ? AND substr(date, 1, 10) BETWEEN ? AND ?
+            GROUP BY substr(date, 1, 10)
         """
         c.execute(query_journal, (character_id, date_from, date_to))
         journal_rows = {row[0]: row for row in c.fetchall()}
@@ -113,29 +118,41 @@ class PerformanceEngine:
         
         summaries = []
         for r in rows:
-            # Una simplificación para el MVP: no podemos asignar fees exactos por item 
-            # desde el journal sin un tracking de order_id muy preciso.
-            # Estimamos un 3% de fees promedio sobre el volumen si no hay tracking.
-            # Pero para el MVP, reportaremos profit bruto del item (ventas - compras).
-            income = r[4]
-            cost = r[5]
+            item_id, item_name, sold, bought, income, cost, trades = r
+            
             profit = income - cost
             margin = (profit / cost * 100) if cost > 0 else 0
+            net = bought - sold
             
+            # Lógica operativa simple
+            status = "Normal"
+            if bought == 0 and sold > 0:
+                status = "Liquidando"
+            elif net == 0 and bought > 0:
+                status = "Flujo Equilibrado"
+            elif net > bought * 0.7 and bought > 10:
+                status = "Acumulando Stock"
+            elif sold > bought * 0.7 and bought > 0:
+                status = "Rotando Bien"
+            elif bought > 0 and sold < bought * 0.2:
+                status = "Salida Lenta"
+
             summaries.append(ItemPerformanceSummary(
                 character_id=character_id,
-                item_id=r[0],
-                item_name=r[1] or f"Item {r[0]}",
+                item_id=item_id,
+                item_name=item_name or f"Item {item_id}",
                 period_start=datetime.fromisoformat(date_from),
                 period_end=datetime.fromisoformat(date_to),
-                total_sold_units=r[2],
-                total_bought_units=r[3],
+                total_sold_units=sold,
+                total_bought_units=bought,
+                net_units=net,
                 gross_income=income,
                 gross_cost=cost,
-                fees_paid=0, # MVP simplification
+                fees_paid=0,
                 profit_net=profit,
                 margin_real_pct=margin,
-                trade_count=r[6]
+                trade_count=trades,
+                status_text=status
             ))
             
         conn.close()

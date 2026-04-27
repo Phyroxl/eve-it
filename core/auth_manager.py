@@ -40,6 +40,7 @@ class AuthManager(QObject):
         self.scopes = "esi-ui.open_window.v1 esi-wallet.read_character_wallet.v1"
         self.current_token = None
         self.char_name = None
+        self.char_id = None
         
     @classmethod
     def instance(cls):
@@ -68,6 +69,9 @@ class AuthManager(QObject):
         return True
 
     def start_callback_server(self):
+        import requests
+        import base64
+
         def run_server():
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -85,13 +89,48 @@ class AuthManager(QObject):
                             code = params.get('code', [None])[0]
                             
                             if code:
-                                # Aquí normalmente haríamos el intercambio por el token
-                                # Pero eso requiere el Client Secret o usar PKCE.
-                                # Por ahora, notificamos que tenemos el código o pedimos al usuario
-                                # que lo complete si el flujo es PKCE (implementación futura).
-                                self.current_token = "MOCK_TOKEN" # Placeholder
-                                self.char_name = "PILOTO EVE"
-                                self.authenticated.emit(self.char_name, {"access_token": "MOCK"})
+                                try:
+                                    # 1. Exchange code for tokens
+                                    from core.auth_manager import _CONFIG_FILE
+                                    import json
+                                    config_data = json.loads(_CONFIG_FILE.read_text())
+                                    client_id = config_data.get('client_id')
+                                    client_secret = config_data.get('client_secret')
+                                    
+                                    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+                                    
+                                    res = requests.post(
+                                        "https://login.eveonline.com/v2/oauth/token",
+                                        data={"grant_type": "authorization_code", "code": code},
+                                        headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"}
+                                    )
+                                    
+                                    logger.info(f"AuthManager: Token exchange status: {res.status_code}")
+                                    
+                                    if res.status_code == 200:
+                                        tokens = res.json()
+                                        self.current_token = tokens.get('access_token')
+                                        logger.info("AuthManager: Token obtenido con éxito.")
+                                        
+                                        # 2. Verify token to get CharacterID and Name
+                                        verify_res = requests.get(
+                                            "https://login.eveonline.com/oauth/verify",
+                                            headers={"Authorization": f"Bearer {self.current_token}"}
+                                        )
+                                        
+                                        if verify_res.status_code == 200:
+                                            verify_data = verify_res.json()
+                                            self.char_name = verify_data.get('CharacterName')
+                                            self.char_id = verify_data.get('CharacterID')
+                                            
+                                            logger.info(f"AuthManager: Autenticado como {self.char_name} ({self.char_id})")
+                                            self.authenticated.emit(self.char_name, tokens)
+                                        else:
+                                            logger.error(f"AuthManager: Error verificando token: {verify_res.status_code} - {verify_res.text}")
+                                    else:
+                                        logger.error(f"AuthManager: Error intercambiando código: {res.status_code} - {res.text}")
+                                except Exception as e:
+                                    logger.error(f"AuthManager: Excepción en intercambio: {e}")
                                 
                             # Responder al navegador
                             response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"

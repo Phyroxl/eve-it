@@ -84,20 +84,21 @@ class MarketPerformanceView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.engine = PerformanceEngine()
-        # Inicializar poller para datos demo si no hay nada
+        
+        # Generar datos demo si está vacío para facilitar la primera vista
         from core.wallet_poller import WalletPoller
         WalletPoller().ensure_demo_data(0)
         
         self.setup_ui()
         self.discover_characters()
-        self.refresh_view() # Cargar datos iniciales
+        self.refresh_view() # Intentar cargar si hay algo ya en DB
 
     def discover_characters(self):
         """Busca personajes en los logs y llena el combo."""
         chars = self.engine.find_active_characters()
         self.combo_char.clear()
         if not chars:
-            self.combo_char.addItem("Sin personajes detectados", 0)
+            self.combo_char.addItem("Sin personajes detectados", -1)
         else:
             for c in chars:
                 self.combo_char.addItem(c['name'], c['id'])
@@ -179,16 +180,60 @@ class MarketPerformanceView(QWidget):
         middle_layout.addWidget(self.chart_frame, 3)
         
         # Top Items Table
-        self.top_items_table = QTableWidget(0, 4)
-        self.top_items_table.setHorizontalHeaderLabels(["Item", "Ventas", "Profit", "Margen"])
-        self.top_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.top_items_table.setStyleSheet("background: #0f172a; color: #f1f5f9; border: none;")
+        self.top_items_table = QTableWidget(0, 6)
+        self.top_items_table.setHorizontalHeaderLabels(["Item", "In", "Out", "Stock", "Profit", "Estado"])
+        self.top_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.top_items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.top_items_table.setStyleSheet("background: #0f172a; color: #f1f5f9; border: none; font-size: 10px;")
         self.top_items_table.setShowGrid(False)
         self.top_items_table.verticalHeader().setVisible(False)
         self.top_items_table.setFixedHeight(250)
-        middle_layout.addWidget(self.top_items_table, 2)
+        self.top_items_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.top_items_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.top_items_table.itemSelectionChanged.connect(self.on_item_selection_changed)
+        middle_layout.addWidget(self.top_items_table, 4)
         
         self.main_layout.addLayout(middle_layout)
+        
+        # 3.5 Item Detail Panel (New)
+        self.detail_frame = QFrame()
+        self.detail_frame.setFixedHeight(80)
+        self.detail_frame.setStyleSheet("background: #1e293b; border: 1px solid #334155; border-radius: 4px;")
+        self.detail_frame.setVisible(False)
+        dl = QHBoxLayout(self.detail_frame)
+        
+        self.lbl_det_name = QLabel("ITEM DETAIL")
+        self.lbl_det_name.setStyleSheet("color: #f1f5f9; font-size: 14px; font-weight: 800;")
+        
+        def create_det_box(label, color="#94a3b8"):
+            w = QWidget()
+            v_l = QVBoxLayout(w)
+            v_l.setContentsMargins(0,0,0,0)
+            v_l.setSpacing(1)
+            l = QLabel(label.upper())
+            l.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800;")
+            val = QLabel("---")
+            val.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: 700;")
+            v_l.addWidget(l)
+            v_l.addWidget(val)
+            return w, val
+
+        dl.addWidget(self.lbl_det_name, 2)
+        self.det_in, self.lbl_det_in = create_det_box("Total Bought")
+        self.det_out, self.lbl_det_out = create_det_box("Total Sold")
+        self.det_stock, self.lbl_det_stock = create_det_box("Net Stock", "#3b82f6")
+        self.det_profit, self.lbl_det_profit = create_det_box("Profit", "#10b981")
+        self.det_margin, self.lbl_det_margin = create_det_box("Margin")
+        self.det_status, self.lbl_det_status = create_det_box("Operational Status", "#fbbf24")
+        
+        dl.addWidget(self.det_in)
+        dl.addWidget(self.det_out)
+        dl.addWidget(self.det_stock)
+        dl.addWidget(self.det_profit)
+        dl.addWidget(self.det_margin)
+        dl.addWidget(self.det_status)
+        
+        self.main_layout.addWidget(self.detail_frame)
         
         # 4. Bottom Row: Recent Transactions
         self.trans_table = QTableWidget(0, 6)
@@ -208,19 +253,37 @@ class MarketPerformanceView(QWidget):
         from PySide6.QtCore import QThread
         
         auth = AuthManager.instance()
-        token = auth.current_token
         
-        # Para el MVP, si no hay token (porque no se ha configurado el Client ID)
-        # avisamos de que se necesita configuración real.
-        if not token or token == "MOCK_TOKEN":
-            self.btn_refresh.setText("REQ. CLIENT ID")
-            self.btn_refresh.setStyleSheet("background: #ef4444; color: white; font-weight: 800; border-radius: 4px;")
+        # Si no hay token, loguear primero
+        if not auth.current_token:
+            try:
+                auth.authenticated.disconnect(self.on_auth_success)
+            except: pass
+            auth.authenticated.connect(self.on_auth_success)
+            auth.login()
+            return
+            
+        char_id = self.combo_char.currentData()
+        
+        # Si el char_id no es válido pero acabamos de loguear, usar el de auth
+        if auth.char_id:
+            char_id = auth.char_id
+            # Asegurarnos de que el combo tenga este personaje con el ID correcto
+            found = False
+            for i in range(self.combo_char.count()):
+                if self.combo_char.itemData(i) == char_id:
+                    self.combo_char.setCurrentIndex(i)
+                    found = True
+                    break
+            
+            if not found:
+                self.combo_char.addItem(auth.char_name, auth.char_id)
+                self.combo_char.setCurrentIndex(self.combo_char.count() - 1)
+            
+        if not char_id or char_id <= 0:
+            self.btn_refresh.setText("SELECT CHAR")
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(3000, lambda: (
-                self.btn_refresh.setText("SINCRONIZAR ESI"), 
-                self.btn_refresh.setEnabled(True),
-                self.btn_refresh.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; border-radius: 4px;")
-            ))
+            QTimer.singleShot(2000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
             return
 
         self.btn_refresh.setText("SINCRONIZANDO...")
@@ -231,7 +294,7 @@ class MarketPerformanceView(QWidget):
         self.poller = WalletPoller()
         self.poller.moveToThread(self.poller_thread)
         
-        self.poller_thread.started.connect(lambda: self.poller.poll(0, token)) # Usando ID 0 para MVP
+        self.poller_thread.started.connect(lambda: self.poller.poll(char_id, auth.current_token))
         self.poller.finished.connect(self.on_sync_finished)
         self.poller.error.connect(self.on_sync_error)
         
@@ -240,18 +303,43 @@ class MarketPerformanceView(QWidget):
     def on_sync_finished(self):
         self.btn_refresh.setText("COMPLETO")
         self.btn_refresh.setEnabled(True)
+        
+        # Obtener el char_id actual (el real que acabamos de usar)
+        from core.auth_manager import AuthManager
+        char_id = self.combo_char.currentData() or AuthManager.instance().char_id
+        
         self.refresh_view()
+        
+        # Obtener conteo de la DB para ese personaje específico
+        import sqlite3
+        conn = sqlite3.connect(self.engine.db_path)
+        count = conn.execute("SELECT COUNT(*) FROM wallet_transactions WHERE character_id = ?", (char_id,)).fetchone()[0]
+        conn.close()
+        
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Sincronización ESI", f"¡Éxito!\n\nSe han importado {count} transacciones para tu personaje.\n\nSi no ves nada en la tabla, cambia el filtro de tiempo a 'Últimos 30 días'.")
+        
         from PySide6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.btn_refresh.setText("SINCRONIZAR ESI"))
-        self.poller_thread.quit()
+        if hasattr(self, 'poller_thread'):
+            self.poller_thread.quit()
+
+    def on_auth_success(self, name, tokens):
+        """Slot para manejar el éxito de la autenticación desde el hilo de AuthManager."""
+        from PySide6.QtCore import QTimer
+        # Usar un timer de 0ms para forzar la ejecución en el hilo de la UI
+        QTimer.singleShot(0, self.on_sync_clicked)
 
     def on_sync_error(self, msg):
         self.btn_refresh.setText("ERROR")
         self.btn_refresh.setEnabled(True)
+        self.btn_refresh.setStyleSheet("background: #ef4444; color: white; font-weight: 800; border-radius: 4px;")
         print(f"Sync Error: {msg}")
-        self.poller_thread.quit()
+        if hasattr(self, 'poller_thread'):
+            self.poller_thread.quit()
 
     def refresh_view(self):
+        self.detail_frame.setVisible(False)
         # Calculate range
         days_map = {0: 1, 1: 7, 2: 30, 3: 90}
         days = days_map.get(self.combo_range.currentIndex(), 7)
@@ -259,7 +347,18 @@ class MarketPerformanceView(QWidget):
         date_from = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
         
         # Obtener personaje seleccionado
-        char_id = self.combo_char.currentData() or 0
+        char_id = self.combo_char.currentData()
+        if char_id is None or char_id == -1:
+            # Limpiar vista si no hay personaje
+            self.kpi_profit.update_value("0 ISK")
+            self.kpi_income.update_value("0 ISK")
+            self.kpi_cost.update_value("0 ISK")
+            self.kpi_fees.update_value("0 ISK")
+            self.kpi_wallet.update_value("0 ISK", "No sync")
+            self.chart.set_data([])
+            self.top_items_table.setRowCount(0)
+            self.trans_table.setRowCount(0)
+            return
         
         summary = self.engine.build_character_summary(char_id, date_from, date_to)
         daily_pnl = self.engine.build_daily_pnl(char_id, date_from, date_to)
@@ -277,12 +376,50 @@ class MarketPerformanceView(QWidget):
         self.chart.set_data(chart_data)
         
         # Update Top Items
-        self.top_items_table.setRowCount(len(items[:10]))
-        for i, item in enumerate(items[:10]):
+        self.current_items = items # Guardar para detalle
+        self.top_items_table.setRowCount(len(items[:15]))
+        for i, item in enumerate(items[:15]):
             self.top_items_table.setItem(i, 0, QTableWidgetItem(item.item_name))
-            self.top_items_table.setItem(i, 1, QTableWidgetItem(str(item.total_sold_units)))
-            self.top_items_table.setItem(i, 2, QTableWidgetItem(format_isk(item.profit_net, short=True)))
-            self.top_items_table.setItem(i, 3, QTableWidgetItem(f"{item.margin_real_pct:.1f}%"))
+            self.top_items_table.setItem(i, 1, QTableWidgetItem(str(item.total_bought_units)))
+            self.top_items_table.setItem(i, 2, QTableWidgetItem(str(item.total_sold_units)))
+            
+            stock_item = QTableWidgetItem(str(item.net_units))
+            if item.net_units > 0: stock_item.setForeground(QColor("#60a5fa"))
+            self.top_items_table.setItem(i, 3, stock_item)
+            
+            self.top_items_table.setItem(i, 4, QTableWidgetItem(format_isk(item.profit_net, short=True)))
+            
+            status_item = QTableWidgetItem(item.status_text)
+            status_colors = {
+                "Rotando Bien": "#10b981", 
+                "Acumulando Stock": "#fbbf24", 
+                "Liquidando": "#f87171", 
+                "Flujo Equilibrado": "#60a5fa",
+                "Salida Lenta": "#94a3b8"
+            }
+            status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
+            self.top_items_table.setItem(i, 5, status_item)
+
+    def on_item_selection_changed(self):
+        sel = self.top_items_table.selectedItems()
+        if not sel:
+            self.detail_frame.setVisible(False)
+            return
+            
+        row = sel[0].row()
+        if hasattr(self, 'current_items') and row < len(self.current_items):
+            item = self.current_items[row]
+            self.lbl_det_name.setText(item.item_name.upper())
+            self.lbl_det_in.setText(str(item.total_bought_units))
+            self.lbl_det_out.setText(str(item.total_sold_units))
+            self.lbl_det_stock.setText(str(item.net_units))
+            
+            from utils.formatters import format_isk
+            self.lbl_det_profit.setText(format_isk(item.profit_net))
+            self.lbl_det_margin.setText(f"{item.margin_real_pct:.1f}%")
+            self.lbl_det_status.setText(item.status_text.upper())
+            
+            self.detail_frame.setVisible(True)
 
         # Update Recent Transactions
         conn = sqlite3.connect(self.engine.db_path)

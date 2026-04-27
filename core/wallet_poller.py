@@ -11,9 +11,10 @@ class WalletPoller(QObject):
 
     def __init__(self, db_path="data/market_performance.db"):
         super().__init__()
-        # Ensure data directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.db_path = db_path
+        # Usar ruta absoluta para evitar problemas de directorio de ejecución
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.db_path = os.path.join(base_dir, "data", "market_performance.db")
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.client = ESIClient()
         self._init_db()
 
@@ -99,24 +100,42 @@ class WalletPoller(QObject):
     def _save_journal(self, char_id, entries):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        # Solo guardamos los tipos que nos interesan para el MVP
         valid_types = ["market_transaction", "brokers_fee", "transaction_tax"]
         for e in entries:
             if e.get('ref_type') in valid_types:
-                c.execute("INSERT OR IGNORE INTO wallet_journal (id, character_id, date, ref_type, amount, balance, description) VALUES (?,?,?,?,?,?,?)",
+                # Usamos REPLACE para asegurar que si el ID era 0, se actualice al real
+                c.execute("INSERT OR REPLACE INTO wallet_journal (id, character_id, date, ref_type, amount, balance, description) VALUES (?,?,?,?,?,?,?)",
                           (e['id'], char_id, e['date'], e['ref_type'], e['amount'], e.get('balance'), e.get('description')))
         conn.commit()
         conn.close()
 
     def _save_transactions(self, char_id, transactions):
+        if not transactions: return
+        
+        # 1. Resolver nombres de items que falten
+        type_ids = list(set([t['type_id'] for t in transactions]))
+        names_map = {}
+        try:
+            # Pedir nombres en bloques de 500 (límite ESI)
+            for i in range(0, len(type_ids), 500):
+                chunk = type_ids[i:i+500]
+                res = self.client.universe_names(chunk)
+                if res:
+                    for item in res:
+                        names_map[item['id']] = item['name']
+        except Exception as e:
+            logging.error(f"Error resolviendo nombres: {e}")
+
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         for t in transactions:
-            c.execute("""INSERT OR IGNORE INTO wallet_transactions 
+            item_name = names_map.get(t['type_id'], "")
+            # Usamos REPLACE para vincular transacciones antiguas (ID 0) al ID real
+            c.execute("""INSERT OR REPLACE INTO wallet_transactions 
                          (transaction_id, character_id, date, item_id, item_name, quantity, unit_price, is_buy, order_id, client_id, location_id)
                          VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                      (t['transaction_id'], char_id, t['date'], t['type_id'], "", t['quantity'], t['unit_price'], 
-                       1 if t['is_buy'] else 0, t['client_id'], t['client_id'], t['location_id']))
+                      (t['transaction_id'], char_id, t['date'], t['type_id'], item_name, t['quantity'], t['unit_price'], 
+                       1 if t['is_buy'] else 0, t.get('client_id'), t.get('client_id'), t.get('location_id')))
         conn.commit()
         conn.close()
 

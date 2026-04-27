@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPixmap
 
 from core.market_models import FilterConfig
+from core.config_manager import save_market_filters, load_market_filters
 from ui.market_command.refresh_worker import MarketRefreshWorker
 from ui.market_command.widgets import AdvancedMarketTableWidget
 
@@ -15,6 +16,7 @@ class MarketAdvancedView(QWidget):
         super().__init__(parent)
         self.worker = None
         self.all_opportunities = []
+        self.current_config = load_market_filters()
         self.setup_ui()
         
     def setup_ui(self):
@@ -117,9 +119,28 @@ class MarketAdvancedView(QWidget):
         filter_l.addWidget(self.spin_hist_days)
         
         self.check_plex = QCheckBox("EXCLUIR PLEX / SKINS")
-        self.check_plex.setChecked(True)
+        self.check_plex.setChecked(self.current_config.exclude_plex)
         self.check_plex.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 600;")
         filter_l.addWidget(self.check_plex)
+        
+        # Action Buttons
+        self.btn_apply = QPushButton("APLICAR FILTROS")
+        self.btn_apply.setFixedHeight(35)
+        self.btn_apply.setCursor(Qt.PointingHandCursor)
+        self.btn_apply.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; border-radius: 4px;")
+        self.btn_apply.clicked.connect(self.on_apply_filters)
+        
+        self.btn_reset = QPushButton("RESET")
+        self.btn_reset.setFixedHeight(25)
+        self.btn_reset.setFixedWidth(60)
+        self.btn_reset.setCursor(Qt.PointingHandCursor)
+        self.btn_reset.setStyleSheet("background: #334155; color: #94a3b8; font-size: 9px; font-weight: 800; border-radius: 4px;")
+        self.btn_reset.clicked.connect(self.on_reset_filters)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.btn_apply)
+        btn_row.addWidget(self.btn_reset)
+        filter_l.addLayout(btn_row)
         
         filter_l.addStretch()
         content_split.addWidget(filter_panel)
@@ -320,25 +341,10 @@ class MarketAdvancedView(QWidget):
         if self.worker and self.worker.isRunning():
             return
             
-        config = FilterConfig(
-            capital_max=self.spin_capital.spin.value(),
-            vol_min_day=self.spin_vol.spin.value(),
-            margin_min_pct=self.spin_margin.spin.value(),
-            spread_max_pct=self.spin_spread.spin.value(),
-            score_min=self.spin_score.spin.value(),
-            profit_day_min=self.spin_profit_day.spin.value(),
-            buy_orders_min=self.spin_buy_orders.spin.value(),
-            sell_orders_min=self.spin_sell_orders.spin.value(),
-            history_days_min=self.spin_hist_days.spin.value(),
-            exclude_plex=self.check_plex.isChecked()
-        )
+        self.update_config_from_ui()
+        save_market_filters(self.current_config)
         
-        risk_idx = self.combo_risk.currentIndex()
-        if risk_idx == 1: config.risk_max = 2 
-        elif risk_idx == 2: config.risk_max = 1 
-        else: config.risk_max = 3 
-        
-        self.worker = MarketRefreshWorker("10000002", config)
+        self.worker = MarketRefreshWorker("10000002", self.current_config)
         self.worker.progress.connect(self.progress.setValue)
         self.worker.status.connect(self.on_status_received)
         self.worker.finished.connect(self.on_scan_finished)
@@ -383,21 +389,54 @@ class MarketAdvancedView(QWidget):
         if opp:
             self.update_detail(opp)
 
+    def update_config_from_ui(self):
+        self.current_config.capital_max = self.spin_capital.spin.value()
+        self.current_config.vol_min_day = self.spin_vol.spin.value()
+        self.current_config.margin_min_pct = self.spin_margin.spin.value()
+        self.current_config.spread_max_pct = self.spin_spread.spin.value()
+        self.current_config.score_min = self.spin_score.spin.value()
+        self.current_config.profit_day_min = self.spin_profit_day.spin.value()
+        self.current_config.buy_orders_min = self.spin_buy_orders.spin.value()
+        self.current_config.sell_orders_min = self.spin_sell_orders.spin.value()
+        self.current_config.history_days_min = self.spin_hist_days.spin.value()
+        self.current_config.exclude_plex = self.check_plex.isChecked()
+        
+        risk_idx = self.combo_risk.currentIndex()
+        if risk_idx == 1: self.current_config.risk_max = 2
+        elif risk_idx == 2: self.current_config.risk_max = 1
+        else: self.current_config.risk_max = 3
+
+    def on_apply_filters(self):
+        self.update_config_from_ui()
+        save_market_filters(self.current_config)
+        if self.all_opportunities:
+            from core.market_engine import apply_filters
+            filtered = apply_filters(self.all_opportunities, self.current_config)
+            self.table.populate(filtered)
+
+    def on_reset_filters(self):
+        self.current_config = FilterConfig()
+        save_market_filters(self.current_config)
+        self.update_ui_from_config()
+        self.on_apply_filters()
+
+    def update_ui_from_config(self):
+        self.spin_capital.spin.setValue(self.current_config.capital_max)
+        self.spin_vol.spin.setValue(self.current_config.vol_min_day)
+        self.spin_margin.spin.setValue(self.current_config.margin_min_pct)
+        self.spin_spread.spin.setValue(self.current_config.spread_max_pct)
+        self.spin_score.spin.setValue(self.current_config.score_min)
+        self.spin_profit_day.spin.setValue(self.current_config.profit_day_min)
+        self.spin_buy_orders.spin.setValue(self.current_config.buy_orders_min)
+        self.spin_sell_orders.spin.setValue(self.current_config.sell_orders_min)
+        self.spin_hist_days.spin.setValue(self.current_config.history_days_min)
+        self.check_plex.setChecked(self.current_config.exclude_plex)
+        
+        if self.current_config.risk_max == 1: self.combo_risk.setCurrentIndex(2)
+        elif self.current_config.risk_max == 2: self.combo_risk.setCurrentIndex(1)
+        else: self.combo_risk.setCurrentIndex(0)
+
     def update_detail(self, opp):
-        self.det_name.setText(opp.item_name.upper())
-        self.det_type_id.setText(f"TYPE ID: {opp.type_id}")
-        
-        # Metrics using stored references
-        self.det_buy.val_lbl.setText(f"{opp.best_buy_price:,.2f}")
-        self.det_sell.val_lbl.setText(f"{opp.best_sell_price:,.2f}")
-        self.det_margin.val_lbl.setText(f"{opp.margin_net_pct:.2f}%")
-        self.det_profit_u.val_lbl.setText(f"{opp.profit_per_unit:,.2f}")
-        self.det_profit_d.val_lbl.setText(f"{opp.profit_day_est:,.0f}")
-        self.det_vol.val_lbl.setText(str(opp.liquidity.volume_5d))
-        self.det_depth.val_lbl.setText(f"{opp.liquidity.buy_orders_count} / {opp.liquidity.sell_orders_count}")
-        self.det_hist.val_lbl.setText(f"{opp.liquidity.history_days} días")
-        
-        # Score Breakdown
         sb = opp.score_breakdown
         if sb:
             self.det_score.setText(f"{sb.final_score:.1f}")
@@ -444,8 +483,27 @@ class MarketAdvancedView(QWidget):
         self.det_rec_qty.setText(f"{final_qty:,} units")
         self.det_rec_cost.setText(f"Coste Est: {final_qty * opp.best_buy_price:,.0f} ISK")
 
-    def on_item_action(self, action, item_name):
+    def on_item_action(self, action, item_name, type_id):
         if action == "copied":
             self.lbl_status.setText(f"● PORTAPAPELES: {item_name.upper()}")
+            self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        elif action == "opened_in_game":
+            self.lbl_status.setText(f"● EVE ONLINE: MERCADO ABIERTO ({item_name.upper()})")
+            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif action == "double_clicked":
-            self.lbl_status.setText(f"● JUEGO (COPIADO): BUSCA {item_name.upper()}")
+            # Intentar abrir en juego si hay token real
+            from core.auth_manager import AuthManager
+            auth = AuthManager.instance()
+            
+            if type_id and auth.current_token and auth.current_token != "MOCK_TOKEN":
+                from core.esi_client import ESIClient
+                client = ESIClient()
+                success = client.open_market_window(type_id, auth.current_token)
+                if success:
+                    self.on_item_action("opened_in_game", item_name, type_id)
+                    return
+
+            # Fallback: Copiar al portapapeles
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(item_name)
+            self.on_item_action("copied", item_name, type_id)

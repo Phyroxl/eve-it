@@ -41,12 +41,14 @@ class ItemPerformanceSummary:
     period_end: datetime
     total_sold_units: int
     total_bought_units: int
+    net_units: int
     gross_income: float
     gross_cost: float
     fees_paid: float
     profit_net: float
     margin_real_pct: float
     trade_count: int
+    status_text: str = ""
 
 @dataclass
 class CharacterPerformanceSummary:

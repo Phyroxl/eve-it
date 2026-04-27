@@ -1,19 +1,20 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame, QGridLayout
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame, QGridLayout, QScrollArea
 )
 from PySide6.QtCore import Qt
 from ui.market_command.widgets import MarketTableWidget
 from ui.market_command.refresh_worker import MarketRefreshWorker
 from core.market_engine import apply_filters
 from core.market_models import FilterConfig
+from core.config_manager import save_market_filters, load_market_filters
 
 class MarketSimpleView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
         self.all_opportunities = []
-        self.current_config = FilterConfig()
+        self.current_config = load_market_filters()
         self.setup_ui()
         
     def create_insight_box(self, title, color):
@@ -38,64 +39,136 @@ class MarketSimpleView(QWidget):
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        # Left Panel: Filters
-        filter_panel = QGroupBox("Filtros Modo Simple")
-        filter_panel.setFixedWidth(300)
-        filter_layout = QFormLayout(filter_panel)
-        
+        # Left Panel: Filters (Tactical Design)
+        filter_panel = QFrame()
+        filter_panel.setObjectName("AnalyticBox")
+        filter_panel.setStyleSheet("background-color: #0f172a; border-right: 1px solid #1e293b; min-width: 320px; max-width: 320px;")
+        filter_l = QVBoxLayout(filter_panel)
+        filter_l.setContentsMargins(20, 20, 20, 20)
+        filter_l.setSpacing(20)
+
+        # Title
+        title_l = QLabel("CONFIGURACIÓN TÁCTICA")
+        title_l.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: 900; letter-spacing: 1.5px; margin-bottom: 10px;")
+        filter_l.addWidget(title_l)
+
+        # Scroll Area for filters
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 10, 0)
+        scroll_layout.setSpacing(25)
+
+        # Reusable helper to create a labeled input
+        def add_input(layout, label, widget):
+            w_container = QWidget()
+            w_l = QVBoxLayout(w_container)
+            w_l.setContentsMargins(0, 0, 0, 0)
+            w_l.setSpacing(5)
+            lbl = QLabel(label.upper())
+            lbl.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 800; letter-spacing: 0.5px;")
+            widget.setStyleSheet("background: #1e293b; color: white; padding: 8px; border-radius: 4px; border: 1px solid #334155;")
+            widget.setFixedHeight(35)
+            w_l.addWidget(lbl)
+            w_l.addWidget(widget)
+            layout.addWidget(w_container)
+
+        # 1. Capital
         self.spin_capital = QDoubleSpinBox()
         self.spin_capital.setRange(0, 1000000000000)
         self.spin_capital.setValue(self.current_config.capital_max)
         self.spin_capital.setSuffix(" ISK")
         self.spin_capital.setDecimals(0)
-        
+        add_input(scroll_layout, "Capital Máximo Operativo", self.spin_capital)
+
+        # 2. Volume & Margin
         self.spin_vol = QSpinBox()
         self.spin_vol.setRange(0, 10000)
         self.spin_vol.setValue(self.current_config.vol_min_day)
-        
+        add_input(scroll_layout, "Volumen Mínimo (5 días)", self.spin_vol)
+
         self.spin_margin = QDoubleSpinBox()
         self.spin_margin.setRange(0, 100)
         self.spin_margin.setValue(self.current_config.margin_min_pct)
         self.spin_margin.setSuffix("%")
-        
+        add_input(scroll_layout, "Margen Neto Mínimo", self.spin_margin)
+
         self.spin_spread = QDoubleSpinBox()
         self.spin_spread.setRange(0, 100)
         self.spin_spread.setValue(self.current_config.spread_max_pct)
         self.spin_spread.setSuffix("%")
-        
-        self.chk_plex = QCheckBox("Excluir PLEX")
-        self.chk_plex.setChecked(self.current_config.exclude_plex)
-        
+        add_input(scroll_layout, "Spread Máximo Permitido", self.spin_spread)
+
+        # 3. Fees
         self.spin_broker = QDoubleSpinBox()
         self.spin_broker.setRange(0, 100)
         self.spin_broker.setValue(self.current_config.broker_fee_pct)
         self.spin_broker.setSuffix("%")
-        
+        add_input(scroll_layout, "Broker Fee (Skill/Standing)", self.spin_broker)
+
         self.spin_tax = QDoubleSpinBox()
         self.spin_tax.setRange(0, 100)
         self.spin_tax.setValue(self.current_config.sales_tax_pct)
         self.spin_tax.setSuffix("%")
-        
-        filter_layout.addRow("Capital Max:", self.spin_capital)
-        filter_layout.addRow("Min Vol/Día:", self.spin_vol)
-        filter_layout.addRow("Min Margen:", self.spin_margin)
-        filter_layout.addRow("Max Spread:", self.spin_spread)
-        filter_layout.addRow("Broker Fee:", self.spin_broker)
-        filter_layout.addRow("Sales Tax:", self.spin_tax)
-        filter_layout.addRow("", self.chk_plex)
-        
-        self.btn_apply = QPushButton("Aplicar Filtros")
+        add_input(scroll_layout, "Sales Tax (Skill)", self.spin_tax)
+
+        # 4. Plex
+        self.chk_plex = QCheckBox("EXCLUIR PLEX / ITEMS VOLÁTILES")
+        self.chk_plex.setChecked(self.current_config.exclude_plex)
+        self.chk_plex.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 800; margin-top: 10px;")
+        scroll_layout.addWidget(self.chk_plex)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        filter_l.addWidget(scroll)
+
+        # Action Buttons
+        self.btn_apply = QPushButton("APLICAR FILTROS")
+        self.btn_apply.setFixedHeight(40)
+        self.btn_apply.setCursor(Qt.PointingHandCursor)
+        self.btn_apply.setStyleSheet("""
+            QPushButton {
+                background: #3b82f6; color: white; font-weight: 900; border-radius: 4px; letter-spacing: 1px;
+            }
+            QPushButton:hover { background: #2563eb; }
+        """)
         self.btn_apply.clicked.connect(self.on_apply_filters)
-        filter_layout.addRow("", self.btn_apply)
+        filter_l.addWidget(self.btn_apply)
         
-        self.btn_refresh = QPushButton("Refrescar Mercado (ESI)")
+        self.btn_reset = QPushButton("RESTAURAR VALORES POR DEFECTO")
+        self.btn_reset.setFixedHeight(30)
+        self.btn_reset.setCursor(Qt.PointingHandCursor)
+        self.btn_reset.setStyleSheet("""
+            QPushButton {
+                background: #1e293b; color: #94a3b8; font-size: 10px; font-weight: 800; border: 1px solid #334155; border-radius: 4px;
+            }
+            QPushButton:hover { color: #f1f5f9; border-color: #475569; }
+        """)
+        self.btn_reset.clicked.connect(self.on_reset_filters)
+        filter_l.addWidget(self.btn_reset)
+        
+        self.btn_refresh = QPushButton("REFRESCAR MERCADO (ESI)")
+        self.btn_refresh.setFixedHeight(45)
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #3b82f6; border: 2px solid #3b82f6; font-weight: 900; border-radius: 4px; margin-top: 10px;
+            }
+            QPushButton:hover { background: rgba(59, 130, 246, 0.1); }
+        """)
         self.btn_refresh.clicked.connect(self.on_refresh_clicked)
-        filter_layout.addRow("", self.btn_refresh)
-        
+        filter_l.addWidget(self.btn_refresh)
+
         # Right Panel: Table and Progress
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(15, 15, 15, 15)
         right_layout.setSpacing(10)
         
         # HEADER
@@ -235,42 +308,36 @@ class MarketSimpleView(QWidget):
         
         main_layout.addWidget(filter_panel)
         main_layout.addWidget(right_panel)
+
+    def create_label(self, text):
+        l = QLabel(text.upper())
+        l.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800;")
+        return l
         
-    def on_item_action(self, action, item_name):
+    def on_item_action(self, action, item_name, type_id):
         if action == "copied":
             self.lbl_status.setText(f"● PORTAPAPELES: {item_name.upper()}")
             self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif action == "opened_in_game":
             self.lbl_status.setText(f"● EVE ONLINE: MERCADO ABIERTO ({item_name.upper()})")
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        elif action == "double_clicked":
+            # Intentar abrir en juego si hay token real
+            from core.auth_manager import AuthManager
+            auth = AuthManager.instance()
+            
+            if type_id and auth.current_token and auth.current_token != "MOCK_TOKEN":
+                from core.esi_client import ESIClient
+                client = ESIClient()
+                success = client.open_market_window(type_id, auth.current_token)
+                if success:
+                    self.on_item_action("opened_in_game", item_name, type_id)
+                    return
 
-    def on_item_double_clicked(self, item):
-        row = item.row()
-        item_name = self.table.item(row, 1).text()
-        
-        # Buscar el ID del ítem
-        type_id = None
-        for opp in getattr(self, 'all_opportunities', []):
-            if opp.item_name == item_name:
-                type_id = opp.type_id
-                break
-        
-        # Intentar abrir en juego si hay token
-        from core.auth_manager import AuthManager
-        auth = AuthManager.instance()
-        
-        if type_id and auth.current_token and auth.current_token != "MOCK_TOKEN":
-            from core.esi_client import ESIClient
-            client = ESIClient()
-            success = client.open_market_window(type_id, auth.current_token)
-            if success:
-                self.on_item_action("opened_in_game", item_name)
-                return
-
-        # Fallback: Copiar al portapapeles
-        from PySide6.QtWidgets import QApplication
-        QApplication.clipboard().setText(item_name)
-        self.on_item_action("copied", item_name)
+            # Fallback: Copiar al portapapeles
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(item_name)
+            self.on_item_action("copied", item_name, type_id)
 
     def on_refresh_clicked(self):
         if self.worker and self.worker.isRunning():
@@ -320,7 +387,23 @@ class MarketSimpleView(QWidget):
         
     def on_apply_filters(self):
         self.update_config_from_ui()
+        save_market_filters(self.current_config)
         self.apply_and_display()
+        
+    def on_reset_filters(self):
+        self.current_config = FilterConfig()
+        save_market_filters(self.current_config)
+        self.update_ui_from_config()
+        self.apply_and_display()
+
+    def update_ui_from_config(self):
+        self.spin_capital.setValue(self.current_config.capital_max)
+        self.spin_vol.setValue(self.current_config.vol_min_day)
+        self.spin_margin.setValue(self.current_config.margin_min_pct)
+        self.spin_spread.setValue(self.current_config.spread_max_pct)
+        self.chk_plex.setChecked(self.current_config.exclude_plex)
+        self.spin_broker.setValue(self.current_config.broker_fee_pct)
+        self.spin_tax.setValue(self.current_config.sales_tax_pct)
         
     def apply_and_display(self):
         filtered = apply_filters(self.all_opportunities, self.current_config)

@@ -1,0 +1,15 @@
+{
+  "capital_max": 1000000000.0,
+  "vol_min_day": 20,
+  "margin_min_pct": 5.0,
+  "spread_max_pct": 40.0,
+  "exclude_plex": true,
+  "broker_fee_pct": 3.0,
+  "sales_tax_pct": 1.0,
+  "score_min": 0.0,
+  "risk_max": 3,
+  "buy_orders_min": 0,
+  "sell_orders_min": 0,
+  "history_days_min": 0,
+  "profit_day_min": 0.0
+}

@@ -1,4 +1,5 @@
 {
-  "_comment": "Registra tu aplicación en https://developers.eveonline.com/ y coloca tu Client ID aquí, o define la variable de entorno EVE_CLIENT_ID.",
-  "client_id": ""
+  "_comment": "Registra tu aplicación en https://developers.eveonline.com/ y coloca tu Client ID aquí.",
+  "client_id": "8f695be5064f4d46be72273ca15cb5e7",
+  "client_secret": "eat_tNKmC6iVyG63350OUoyqmADUbga34y9y_3dPVAG"
 }
