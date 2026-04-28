@@ -1746,4 +1746,33 @@ Se ha refinado la inteligencia visual de `Mis Pedidos` añadiendo transparencia 
 **Archivos Modificados:**
 - `ui/market_command/my_orders_view.py`: Implementación de la barra de taxes, lógica de columna de referencia y refinamiento de estados.
 
-*Estado: Interfaz de trading avanzada con feedback dinámico de impuestos.*
+### SESIÓN 24 SKILLS REALES (PRECISIÓN TOTAL) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha eliminado la dependencia de valores estimados para los impuestos, garantizando que el sistema utilice siempre las habilidades reales del personaje para los cálculos de profit.
+
+**Mejoras de Autenticación y Datos:**
+1. **Nuevo Scope ESI**: Se ha integrado el scope `esi-skills.read_skills.v1` en el flujo de autenticación. Esto permite al sistema leer los niveles exactos de **Accounting** y **Broker Relations**.
+2. **Gestión de Estados de TaxService**:
+   - El servicio ahora distingue entre `ready` (datos reales), `missing_scope` (falta permiso) y `error`.
+   - Los cálculos se realizan por `character_id`, permitiendo manejar múltiples personajes con diferentes niveles de skills en la misma sesión si fuera necesario.
+
+**Mejoras de UI:**
+1. **Barra de Taxes Informativa**:
+   - **Verde**: Indica que se están usando skills reales del personaje.
+   - **Rojo**: Alerta clara cuando falta el permiso de skills, instando al usuario a reautorizar para obtener precisión total.
+   - Se ha eliminado el mensaje de "valores estimados" como estado por defecto para personajes autenticados.
+
+**Archivos Modificados:**
+- `core/auth_manager.py`: Añadido scope de skills al login.
+- `core/tax_service.py`: Refinado con estados de error y gestión per-personaje.
+- `ui/market_command/my_orders_view.py`: Actualización de la barra de taxes con alertas de permisos.
+
+**Pruebas Realizadas:**
+- [x] **Autenticación**: Verificación de que el nuevo scope se solicita correctamente.
+- [x] **Alertas**: Confirmación de que el mensaje rojo aparece si el token no tiene el permiso de skills.
+- [x] **Cálculos**: Verificación de que el profit cambia instantáneamente al detectar niveles reales de skills.
+
+*Estado: Precisión financiera absoluta basada en el ADN técnico del personaje.*

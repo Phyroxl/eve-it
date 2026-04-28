@@ -428,12 +428,16 @@ class MarketMyOrdersView(QWidget):
         taxes = TaxService.instance().get_taxes(auth.char_id)
         self.lbl_sales_tax.setText(f"SALES TAX: {taxes.sales_tax_pct:.2f}%")
         self.lbl_broker_fee.setText(f"BROKER FEE: {taxes.broker_fee_pct:.2f}%")
-        if taxes.is_estimated:
+        
+        if taxes.status == "ready":
+            self.lbl_tax_source.setText(f"FUENTE: SKILLS REALES (Accounting Lvl {taxes.accounting_lvl})")
+            self.lbl_tax_source.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800;")
+        elif taxes.status == "missing_scope":
+            self.lbl_tax_source.setText("FALTA PERMISO DE SKILLS — REAUTORIZA PARA TAXES REALES")
+            self.lbl_tax_source.setStyleSheet("color: #ef4444; font-size: 9px; font-weight: 800;")
+        else:
             self.lbl_tax_source.setText("FUENTE: VALORES ESTIMADOS (FALLBACK)")
             self.lbl_tax_source.setStyleSheet("color: #f59e0b; font-size: 9px; font-weight: 800;")
-        else:
-            self.lbl_tax_source.setText(f"FUENTE: SKILLS DEL PERSONAJE (Acc Lvl {taxes.accounting_lvl})")
-            self.lbl_tax_source.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 800;")
 
     def _start_inventory_preload(self):
         auth = AuthManager.instance()
