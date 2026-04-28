@@ -1,4 +1,4 @@
-import logging # VERSION: 1.1.13-AUTHORDER (Robust Auth, Sorting, Semantic States)
+import logging # VERSION: 1.1.14-FIXTABLE (Explicit Sort/Display Roles)
 import time
 import threading
 from PySide6.QtWidgets import (
@@ -22,21 +22,22 @@ from utils.formatters import format_isk
 _log = logging.getLogger('eve.market.my_orders')
 
 class NumericTableWidgetItem(QTableWidgetItem):
+    """Item de tabla que ordena numéricamente pero muestra texto formateado."""
+    def __init__(self, text, value):
+        super().__init__(text)
+        self.sort_value = float(value) if value is not None else -1e18
+
     def __lt__(self, other):
-        try:
-            d1 = self.data(Qt.EditRole)
-            d2 = other.data(Qt.EditRole)
-            v1 = float(d1) if d1 is not None else -1e18
-            v2 = float(d2) if d2 is not None else -1e18
-            return v1 < v2
-        except:
-            return super().__lt__(other)
+        if isinstance(other, NumericTableWidgetItem):
+            return self.sort_value < other.sort_value
+        return super().__lt__(other)
 
 class SemanticTableWidgetItem(QTableWidgetItem):
+    """Item de tabla que ordena por prioridad semántica (colores/estados)."""
     PRIORITY = {
         # Estados Órdenes
-        "liderando": 100, "competitiva": 90, "sana": 85, "rentable": 80,
-        "superada con beneficio": 50, "ajustado": 40, "superada": 35,
+        "liderando": 100, "competitiva": 95, "sana": 90, "rentable": 85,
+        "superada con beneficio": 60, "ajustado": 50, "superada": 40,
         "fuera de mercado": 25, "pérdida": 20, "no rentable": 15, "error": 0,
         # Recomendaciones Inventario
         "vender": 100, "mantener": 50, "revisar": 10
@@ -66,8 +67,6 @@ class SyncWorker(QThread):
         try:
             client = ESIClient()
             self.status_update.emit("CONECTANDO CON ESI...", 10)
-            
-            # Forzar refresh si es necesario antes de empezar
             AuthManager.instance().get_token()
             
             self.status_update.emit("DESCARGANDO ÓRDENES...", 20)
@@ -81,8 +80,6 @@ class SyncWorker(QThread):
             
             self.status_update.emit("CARGANDO DATOS DE MERCADO...", 60)
             type_ids = list(set(o['type_id'] for o in orders))
-            
-            # Limpiar caché de mercado para asegurar datos frescos
             client.cache.cache.pop(f"market_orders_10000002", None)
             all_market_orders = client.market_orders(10000002)
             relevant_market_orders = [mo for mo in all_market_orders if mo['type_id'] in type_ids]
@@ -97,7 +94,6 @@ class SyncWorker(QThread):
             
             self.status_update.emit("FINALIZANDO ANÁLISIS...", 95)
             analyzed = analyze_character_orders(orders, relevant_market_orders, item_names, load_market_filters(), char_id=self.char_id, token=self.token)
-            
             self.status_update.emit("SINCRONIZACIÓN COMPLETADA", 100)
             self.finished_data.emit(analyzed)
         except Exception as e:
@@ -152,8 +148,6 @@ class InventoryWorker(QThread):
 
             self.status_update.emit("OBTENIENDO PRECIOS JITA...", 70)
             type_ids = list(set(a['type_id'] for a in filtered_assets))
-            
-            # Forzar actualización de mercado para inventario también
             client.cache.cache.pop(f"market_orders_10000002", None)
             all_market_orders = client.market_orders(10000002)
             
@@ -239,21 +233,18 @@ class InventoryAnalysisDialog(QDialog):
             self.image_loader.load(ItemMetadataHelper.get_icon_url(item.type_id), lambda px, it=i_icon: it.setIcon(QIcon(px)))
             
             i_name = QTableWidgetItem(item.item_name)
-            i_qty = NumericTableWidgetItem(f"{item.quantity:,}")
-            i_qty.setData(Qt.EditRole, item.quantity)
+            
+            i_qty = NumericTableWidgetItem(f"{item.quantity:,}", item.quantity)
             i_qty.setTextAlignment(Qt.AlignCenter)
             
-            i_avg = NumericTableWidgetItem(format_isk(avg_buy) if avg_buy > 0 else "Sin registros")
-            i_avg.setData(Qt.EditRole, avg_buy)
+            i_avg = NumericTableWidgetItem(format_isk(avg_buy) if avg_buy > 0 else "Sin registros", avg_buy)
             i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             i_avg.setForeground(QColor("#94a3b8") if avg_buy > 0 else QColor("#334155"))
             
-            i_price = NumericTableWidgetItem(format_isk(a.est_net_sell_unit))
-            i_price.setData(Qt.EditRole, a.est_net_sell_unit)
+            i_price = NumericTableWidgetItem(format_isk(a.est_net_sell_unit), a.est_net_sell_unit)
             i_price.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             
-            i_profit = NumericTableWidgetItem(format_isk(net_profit_total) if avg_buy > 0 else "Sin registros")
-            i_profit.setData(Qt.EditRole, net_profit_total if avg_buy > 0 else -1.0)
+            i_profit = NumericTableWidgetItem(format_isk(net_profit_total) if avg_buy > 0 else "Sin registros", net_profit_total if avg_buy > 0 else -1e15)
             i_profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if avg_buy > 0:
                 if net_profit_total > 0: i_profit.setForeground(QColor("#10b981"))
@@ -261,8 +252,7 @@ class InventoryAnalysisDialog(QDialog):
             else: i_profit.setForeground(QColor("#334155"))
             
             pct = (a.est_total_value / total_val * 100) if total_val > 0 else 0
-            i_pct = NumericTableWidgetItem(f"{pct:.1f}%")
-            i_pct.setData(Qt.EditRole, pct)
+            i_pct = NumericTableWidgetItem(f"{pct:.1f}%", pct)
             i_pct.setTextAlignment(Qt.AlignCenter)
             
             i_rec = SemanticTableWidgetItem(a.recommendation.upper())
@@ -405,20 +395,23 @@ class MarketMyOrdersView(QWidget):
             self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_ico: it.setIcon(QIcon(px)))
             i_name = QTableWidgetItem(o.item_name)
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL"); i_type.setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
-            i_price = NumericTableWidgetItem(format_isk(o.price)); i_price.setData(Qt.EditRole, o.price)
+            
+            i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
             avg = cost.average_buy_price if cost else 0.0
-            i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---"); i_avg.setData(Qt.EditRole, avg)
+            i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)
             ref_v = a.best_sell if o.is_buy_order else a.best_buy
-            i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 else "---"); i_ref.setData(Qt.EditRole, ref_v)
-            i_tot = NumericTableWidgetItem(str(o.volume_total)); i_tot.setData(Qt.EditRole, o.volume_total)
-            i_rem = NumericTableWidgetItem(str(o.volume_remain)); i_rem.setData(Qt.EditRole, o.volume_remain)
-            i_spr = NumericTableWidgetItem(f"{a.spread_pct:.1f}%"); i_spr.setData(Qt.EditRole, a.spread_pct)
-            i_mar = NumericTableWidgetItem(f"{a.margin_pct:.1f}%" if a.margin_pct != 0 else "---"); i_mar.setData(Qt.EditRole, a.margin_pct)
+            i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 else "---", ref_v)
+            i_tot = NumericTableWidgetItem(str(o.volume_total), o.volume_total)
+            i_rem = NumericTableWidgetItem(str(o.volume_remain), o.volume_remain)
+            i_spr = NumericTableWidgetItem(f"{a.spread_pct:.1f}%", a.spread_pct)
+            i_mar = NumericTableWidgetItem(f"{a.margin_pct:.1f}%" if a.margin_pct != 0 else "---", a.margin_pct)
             if a.margin_pct > 15: i_mar.setForeground(QColor("#10b981"))
             elif a.margin_pct < 0: i_mar.setForeground(QColor("#ef4444"))
-            i_prof = NumericTableWidgetItem(format_isk(a.net_profit_total) if a.net_profit_total != 0 else "---"); i_prof.setData(Qt.EditRole, a.net_profit_total)
+            
+            i_prof = NumericTableWidgetItem(format_isk(a.net_profit_total) if a.net_profit_total != 0 else "---", a.net_profit_total)
             if a.net_profit_total > 0: i_prof.setForeground(QColor("#10b981"))
             elif a.net_profit_total < 0: i_prof.setForeground(QColor("#ef4444"))
+            
             i_state = SemanticTableWidgetItem(a.state.upper())
             s_low = a.state.lower()
             if any(x in s_low for x in ["liderando", "competitiva", "sana", "rentable"]): i_state.setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#10b981"))
@@ -464,13 +457,9 @@ class MarketMyOrdersView(QWidget):
         self._start_sync_ui("CARGANDO INVENTARIO..."); self.inventory_status = "loading"
         self.inv_worker = InventoryWorker(auth.char_id, t); self.inv_worker.status_update.connect(self._on_sync_update)
         def on_done(data):
-            self.inventory_cache = data
-            self.inventory_status = "ready"
-            self._stop_sync_ui("INVENTARIO CARGADO")
-            if data:
-                InventoryAnalysisDialog(data, self.inventory_loc_name, self.image_loader, self).exec()
-            else:
-                QMessageBox.information(self, "Vacio", "No hay items en esta ubicacion.")
+            self.inventory_cache = data; self.inventory_status = "ready"; self._stop_sync_ui("INVENTARIO CARGADO")
+            if data: InventoryAnalysisDialog(data, self.inventory_loc_name, self.image_loader, self).exec()
+            else: QMessageBox.information(self, "Vacio", "No hay items en esta ubicacion.")
         self.inv_worker.finished_data.connect(on_done); self.inv_worker.location_info.connect(lambda n: setattr(self, "inventory_loc_name", n)); self.inv_worker.start()
 
     def update_taxes_info(self):
@@ -480,6 +469,6 @@ class MarketMyOrdersView(QWidget):
 
     def on_error(self, err): self._stop_sync_ui(f"ERROR: {err[:40]}", "#ef4444")
     def on_inventory_error(self, msg): self._stop_sync_ui(f"ERR INV: {msg[:30]}", "#ef4444")
-    def _load_ui_state(self): pass # Simplificado para brevedad
+    def _load_ui_state(self): pass
     def _on_header_resized(self, table, idx, size): pass
     def _save_ui_state(self): pass

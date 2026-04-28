@@ -1972,5 +1972,6 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Refresh**: Verificación de renovación exitosa tras simular expiración.
 - [x] **Sorting**: Comprobación de que 1,000,000 va después de 900,000 al ordenar.
 - [x] **Fresh Data**: Confirmado que cambiar un precio en el juego se refleja como cambio de estado tras sincronizar en la app.
+- [x] **Hotfix Formato**: Corregido error que mostraba números en notación científica y raw floats en lugar de ISK formateado al activar la ordenación.
 
-*Estado: Plataforma financiera estable, automatizada y altamente navegable.*
+*Estado: Plataforma financiera estable, automatizada y con formato visual corregido.*
