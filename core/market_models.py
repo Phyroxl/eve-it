@@ -56,3 +56,31 @@ class FilterConfig:
 class PerformanceConfig:
     auto_refresh_enabled: bool = False
     refresh_interval_min: int = 5
+
+@dataclass
+class OpenOrderAnalysis:
+    is_buy: bool
+    state: str
+    gross_profit_per_unit: float
+    net_profit_per_unit: float
+    net_profit_total: float
+    margin_pct: float
+    best_buy: float
+    best_sell: float
+    spread_pct: float
+    competitive: bool
+    difference_to_best: float
+
+@dataclass
+class OpenOrder:
+    order_id: int
+    type_id: int
+    item_name: str
+    is_buy_order: bool
+    price: float
+    volume_total: int
+    volume_remain: int
+    issued: str
+    location_id: int
+    range: str
+    analysis: Optional[OpenOrderAnalysis] = None

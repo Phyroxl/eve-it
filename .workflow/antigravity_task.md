@@ -553,3 +553,67 @@ Se ha realizado un refactor profundo del motor de analítica para pasar de una "
 - La métrica es ahora directamente comparable con herramientas profesionales como EVE Tycoon.
 
 *Estado: Market Performance alcanza madurez contable profesional.*
+
+---
+
+## Sesión 19 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Nueva pestaña “Mis pedidos”
+
+### RESUMEN
+1. **Necesidad**: Ofrecer al usuario una vista operativa de todas sus órdenes de compra y venta abiertas, permitiendo un seguimiento rápido de su estado.
+2. **Análisis Buy/Sell**: Se analizan las órdenes de compra para ver si el margen al vender es rentable (incluyendo best buy, spread y taxes), y las de venta comparando nuestro precio con el mejor del mercado y calculando el profit estimado.
+3. **Cálculo "Vale la pena"**: El motor de mercado clasifica las órdenes en estados operativos (ej. "Sana (Buen Margen)", "Rotación Sana", "Margen Ajustado", "No Rentable", "Fuera de Mercado"). Se calcula el profit neto unitario y el profit estimado por la cantidad restante de la orden.
+4. **Panel Inferior**: Muestra la información detallada de la orden seleccionada, incluyendo los best buy/sell, el profit neto, el margen, el profit total estimado y el estado de la competencia ("Liderando por..." o "Superado por...").
+5. **Integración**: La nueva pestaña `MarketMyOrdersView` se integró como la cuarta pestaña dentro de `Market Command`, situada a la derecha de "Performance". Mantiene el estilo oscuro premium de la suite, no permite edición manual (solo lectura), y reutiliza la funcionalidad de doble clic (`ItemInteractionHelper`) para abrir la ventana del mercado del juego.
+
+### FILES_CHANGED
+- `core/auth_manager.py`: Añadido el scope `esi-markets.read_character_orders.v1`.
+- `core/esi_client.py`: Añadido endpoint `character_orders` para leer órdenes del jugador.
+- `core/market_models.py`: Añadidas clases `OpenOrder` y `OpenOrderAnalysis`.
+- `core/market_engine.py`: Añadida función `analyze_character_orders` para cruzar órdenes con el mercado.
+- `ui/market_command/my_orders_view.py`: Creado archivo nuevo con vista.
+- `ui/market_command/command_main.py`: Registrado el botón y la vista `MarketMyOrdersView` en la UI principal.
+
+### CHECKS
+- [x] Lectura de órdenes abiertas desde ESI (buy y sell).
+- [x] Cálculo correcto del profit (con taxes/fees) y clasificación de rentabilidad.
+- [x] La tabla principal y el panel inferior son de solo lectura y muestran cálculos de rentabilidad.
+- [x] Doble clic usa el comportamiento heredado para abrir el mercado dentro de EVE.
+- [x] Total coherencia visual con Market Command.
+
+### NOTES
+- Se usan los items de las órdenes abiertas para buscar sus equivalentes en Jita 4-4 (Region 10000002) y se comparan contra las mejores órdenes en el mercado.
+- Si una orden de venta no tiene costo conocido claro (al no ser WAC completo para este panel por su naturaleza predictiva), se estima usando el `best_buy` o 50% de la venta para ofrecer una lectura útil del estado de rentabilidad en rotación.
+
+---
+
+## Sesión 20 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Refinamiento UX de “Mis pedidos” (Estilo EVE Online Market)
+
+### RESUMEN
+1. **Problema de Legibilidad**: La tabla unificada mezclaba las órdenes de compra y venta, dificultando la lectura rápida (las órdenes BUY y SELL estaban juntas). En EVE Online, el panel del mercado siempre separa a los vendedores (arriba) de los compradores (abajo).
+2. **Reorganización Estilo EVE**: Se ha implementado un sistema de doble tabla dentro de la vista. Ahora hay una `table_sell` en la mitad superior bajo el título "ÓRDENES DE VENTA" (en color rojo táctico) y una `table_buy` en la mitad inferior bajo "ÓRDENES DE COMPRA" (en color azul táctico). 
+3. **Botón ACTUALIZAR**: Se añadió el botón `ACTUALIZAR` justo a la izquierda de `SINCRONIZAR ÓRDENES`. Este botón permite repoblar y reordenar las tablas utilizando los datos ya cargados en memoria, sin necesidad de realizar nuevas peticiones ESI de red pesadas, lo que otorga agilidad operativa.
+4. **Funciones Mantenidas**: 
+    - El panel de detalle inferior sigue funcionando fluidamente: al seleccionar un elemento en una tabla, se deselecciona automáticamente el de la otra para evitar confusiones de contexto.
+    - Se mantuvo el **Doble Clic** para abrir el mercado in-game y se añadió un menú contextual (**Click Derecho**) para copiar rápidamente el nombre del ítem.
+
+### FILES_CHANGED
+- `ui/market_command/my_orders_view.py`: Refactorización de `setup_ui()` para crear dos tablas independientes, integración del nuevo botón `btn_repopulate`, manejo de contexto mutuo exclusivo en `on_selection_changed`, y adición explícita de `on_context_menu` para el clic derecho.
+
+### CHECKS
+- [x] Órdenes SELL agrupadas en la tabla superior.
+- [x] Órdenes BUY agrupadas en la tabla inferior.
+- [x] Botón ACTUALIZAR funcional (recarga visual local).
+- [x] Doble clic funciona de forma nativa en ambas tablas.
+- [x] Clic derecho implementado explícitamente en ambas tablas para copiar nombre.
+- [x] Al hacer clic en un lado, la selección de la otra tabla se limpia para mantener coherencia en el panel inferior.
+
+### NOTES
+- La aproximación de utilizar dos `QTableWidget` independientes pero mutuamente excluyentes en su selección garantiza la mejor experiencia de usuario posible al imitar a la perfección el comportamiento y la apariencia de las interfaces in-game.

@@ -206,6 +206,20 @@ class ESIClient:
         logger.info(f"ESI wallet_transactions char={char_id} → {len(all_data)} transacciones totales en {page} páginas")
         return all_data
 
+    def character_orders(self, char_id, token):
+        url = f"{self.BASE_URL}/characters/{char_id}/orders/"
+        try:
+            self._rate_limit()
+            res = self.session.get(url, headers=self._headers(token), timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                logger.info(f"ESI character_orders char={char_id} → {len(data)} órdenes")
+                return data
+            logger.warning(f"ESI character_orders char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logger.error(f"ESI character_orders char={char_id} excepción: {e}")
+        return []
+
     def open_market_window(self, type_id: int, access_token: str):
         """
         Abre la ventana de mercado regional en el cliente de EVE Online.

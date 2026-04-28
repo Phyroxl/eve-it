@@ -14,7 +14,7 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
         if t_id not in grouped_orders:
             grouped_orders[t_id] = {'buy': [], 'sell': []}
             
-        if order['is_buy_order']:
+        if order.get('is_buy_order', False):
             grouped_orders[t_id]['buy'].append(order)
         else:
             grouped_orders[t_id]['sell'].append(order)
@@ -187,3 +187,130 @@ def score_opportunity(opp: MarketOpportunity, config: FilterConfig) -> ScoreBrea
         penalties=penalties,
         final_score=final_score
     )
+
+def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: List[Dict[str, Any]], item_names: Dict[int, str] = None, config: FilterConfig = None):
+    from .market_models import OpenOrder, OpenOrderAnalysis
+    if config is None:
+        config = FilterConfig()
+    if item_names is None:
+        item_names = {}
+        
+    grouped_market = {}
+    for o in market_orders:
+        t_id = o['type_id']
+        if t_id not in grouped_market:
+            grouped_market[t_id] = {'buy': [], 'sell': []}
+        if o.get('is_buy_order', False):
+            grouped_market[t_id]['buy'].append(o)
+        else:
+            grouped_market[t_id]['sell'].append(o)
+            
+    best_prices = {}
+    for t_id, data in grouped_market.items():
+        best_buy = max([o['price'] for o in data['buy']]) if data['buy'] else 0.0
+        best_sell = min([o['price'] for o in data['sell']]) if data['sell'] else 0.0
+        best_prices[t_id] = (best_buy, best_sell)
+
+    parsed_orders = []
+    
+    b_fee = config.broker_fee_pct / 100.0
+    s_tax = config.sales_tax_pct / 100.0
+
+    for eo in esi_orders:
+        t_id = eo['type_id']
+        price = eo['price']
+        is_buy = eo.get('is_buy_order', False)
+        
+        bb, bs = best_prices.get(t_id, (0.0, 0.0))
+        
+        spread_pct = 0.0
+        if bb > 0 and bs > 0:
+            spread_pct = ((bs - bb) / bb) * 100
+            
+        competitive = False
+        difference = 0.0
+        state = "Desconocido"
+        
+        gross_profit = 0.0
+        net_profit = 0.0
+        margin_pct = 0.0
+        
+        if is_buy:
+            difference = bb - price
+            competitive = difference <= 0
+            
+            gross_profit = bs - price if bs > 0 else 0
+            if bs > 0:
+                net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
+                margin_pct = (net_profit / price) * 100 if price > 0 else 0
+            
+            if competitive:
+                if margin_pct > 15:
+                    state = "Sana (Buen Margen)"
+                elif margin_pct > 5:
+                    state = "Competitiva"
+                elif margin_pct > 0:
+                    state = "Margen Ajustado"
+                else:
+                    state = "No Rentable"
+            else:
+                if margin_pct > 5:
+                    state = "Superada (Aún Rentable)"
+                else:
+                    state = "Fuera de Mercado"
+                
+        else:
+            difference = price - bs
+            competitive = difference <= 0
+            
+            cost_est = bb if bb > 0 else price * 0.5
+            gross_profit = price - cost_est
+            net_profit = price * (1.0 - s_tax - b_fee) - cost_est * (1.0 + b_fee)
+            margin_pct = (net_profit / cost_est) * 100 if cost_est > 0 else 0
+            
+            if competitive:
+                if margin_pct > 10:
+                    state = "Rotación Sana"
+                elif margin_pct > 0:
+                    state = "Margen Ajustado"
+                else:
+                    state = "Pérdida Estimada"
+            else:
+                if margin_pct > 5:
+                    state = "Superada"
+                else:
+                    state = "Fuera de Mercado / Rota"
+                    
+        vol_remain = eo.get('volume_remain', 0)
+        net_profit_total = net_profit * vol_remain
+        
+        analysis = OpenOrderAnalysis(
+            is_buy=is_buy,
+            state=state,
+            gross_profit_per_unit=gross_profit,
+            net_profit_per_unit=net_profit,
+            net_profit_total=net_profit_total,
+            margin_pct=margin_pct,
+            best_buy=bb,
+            best_sell=bs,
+            spread_pct=spread_pct,
+            competitive=competitive,
+            difference_to_best=difference
+        )
+        
+        o = OpenOrder(
+            order_id=eo['order_id'],
+            type_id=t_id,
+            item_name=item_names.get(t_id, f"Type {t_id}"),
+            is_buy_order=is_buy,
+            price=price,
+            volume_total=eo.get('volume_total', 0),
+            volume_remain=vol_remain,
+            issued=eo.get('issued', ''),
+            location_id=eo.get('location_id', 0),
+            range=eo.get('range', ''),
+            analysis=analysis
+        )
+        parsed_orders.append(o)
+        
+    return parsed_orders
