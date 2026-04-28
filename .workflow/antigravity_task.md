@@ -2365,3 +2365,108 @@ Diagnostico completo del pipeline de filtrado de categorias. Se identificaron y 
 - [x] py_compile OK: core/item_categories.py
 - [x] Thread safety: _save_cache() solo llamado desde hilo principal al finalizar prefetch.
 - [x] AttributeError eliminado: panel de detalle en Advanced mode funciona sin crash.
+
+
+## Sesion 31 - 2026-04-29 (Category-Aware Pipeline)
+
+### STATUS: COMPLETADO
+
+### PROBLEMA REAL ENCONTRADO
+El fallo del top 150 global antes de la categoria era la causa raiz de que Naves, Drones y Ore/Menas
+dieran 0 resultados. El worker hacia:
+  scored_candidates[:150]  # corte global ANTES de cualquier filtro de categoria
+
+En Jita, el top 150 global lo dominan modulos, municion y otros items de alto volumen.
+Naves (cat 6), Drones (cat 18) y Ore (cat 25) tienen menor volumen/orders y quedaban fuera del corte.
+Resultado: aunque la metadata y el filtro de categoria estuviesen OK, el pool ya no tenia items de esas categorias.
+
+### SOLUCION IMPLEMENTADA
+
+Pipeline category-aware en refresh_worker.py:
+
+CASO A - selected_category == Todos (rapido):
+- Pool economico: todos los type_ids con buy+sell, sin filtro capital/margen
+- Sort por score = max(0, margin) * min(orders_count, 50)
+- Tomar top 200 (_TODOS_POOL_SIZE)
+- Sin prefetch metadata
+- Descargar historial y nombres para estos 200
+- Emitir raw (sin apply_filters)
+
+CASO B - selected_category != Todos (category-aware):
+- Pool economico: top 2000 (_BROAD_POOL_SIZE) -- red mucho mas amplia
+- prefetch_type_metadata() para los 2000 (usa cache en disco, rapido en reintentos)
+- Para cada type_id: resolve_category_info(blocking=False)
+  y is_type_in_category(..., broad=True) -- omite check de keywords
+- Filtrar a category_ids: solo los type_ids que pertenecen a la categoria
+- Limitar a top 300 (_CATEGORY_LIMIT) ya ordenados por score economico
+- Descargar historial y nombres solo para estos 300
+- Emitir raw (sin apply_filters)
+
+Resultado:
+- Naves: el worker busca ships entre 2000 candidatos en lugar de 150 -> los encuentra
+- Drones: igual
+- Ore/Menas: igual
+- Todos: sin cambio de comportamiento, sigue siendo rapido
+
+Mejoras adicionales:
+
+1. item_categories.py: parametro broad=True en is_type_in_category
+   - Omite el check de keywords para categorias como Municion avanzada
+   - Permite pre-seleccion en worker sin nombres cargados
+   - apply_filters en la UI usa broad=False (default) con nombres reales
+
+2. item_resolver.py: _load_cache robusta
+   - Si el JSON esta corrupto, renombra el archivo a .corrupt.TIMESTAMP
+   - Arranca con cache vacio en lugar de fallar silenciosamente
+
+3. market_engine.py: logs de diagnostico mejorados
+   - [FILTER DEBUG] muestra filtro dominante si after_base=0
+   - [CATEGORY WARNING] distingue entre:
+     * 0 resultados por filtros base (capital, volumen, margen)
+     * 0 resultados por falta de metadata (cat_fail_no_meta)
+     * 0 resultados porque el pool no tiene items de esa categoria (cat_fail_wrong_cat)
+   - cat_fail_no_meta y cat_fail_wrong_cat separados
+
+4. refresh_worker.py: optimizacion de parse
+   - Solo parsea ordenes de candidatos (relevant_orders)
+   - Reduce trabajo de O(15000) a O(300) en parse_opportunities
+
+5. tests/test_market_category_pipeline.py: nuevo
+   - 48 casos: Naves, Drones, Ore, Modulos, Rigs, Skins, Skills, Municion avanzada
+   - Resultado: 48/48 passed
+
+### PIPELINE NUEVO
+ESI market_orders() -> raw_orders
+Worker: Agrupar por type_id -> economic_candidates -> sort por score
+  Si Todos: top 200 directamente
+  Si categoria: top 2000 -> prefetch metadata -> is_type_in_category(broad=True) -> category_ids[:300]
+Worker: market_history() para candidatos finales
+Worker: universe_names() en batch
+Worker: parse_opportunities() solo con relevant_orders
+Worker: score_opportunity()
+Worker: emit raw opps -> Vista.all_opportunities (SIN apply_filters)
+Vista: apply_filters(all_opportunities, config) una sola vez
+
+### ARCHIVOS MODIFICADOS
+| Archivo | Cambio |
+|---|---|
+| ui/market_command/refresh_worker.py | Pipeline category-aware. Pool economico sin recorte previo. Broad pool 2000. |
+| core/item_categories.py | Parametro broad=True. |
+| core/item_resolver.py | _load_cache renombra archivos JSON corruptos. |
+| core/market_engine.py | Logs mejorados: filtro dominante, cat_fail_no_meta vs cat_fail_wrong_cat. |
+| tests/test_market_category_pipeline.py | Nuevo: 48 casos sin ESI real. |
+
+### LIMITACIONES PENDIENTES
+- Cambiar de categoria en UI SIN re-escanear solo funciona si la nueva categoria estaba en el pool.
+  Si se escaneo con Naves, cambiar a Drones da 0 resultados. Hay que re-escanear con Drones seleccionado.
+- vol_min_day=20 sigue comparando contra vol_5d (total 5 dias). Para ships de bajo volumen, bajar a 0.
+- Primera vez con categoria especifica: prefetch de 2000 tarda ~50s si no hay cache.
+  Reintentos son instantaneos.
+
+### CHECKS
+- [x] py_compile OK todos los archivos modificados
+- [x] py_compile OK: widgets.py command_main.py
+- [x] test_market_category_pipeline.py: 48/48 passed
+- [x] Worker no llama apply_filters
+- [x] Todos bypassa metadata
+- [x] broad=True en worker, broad=False en apply_filters

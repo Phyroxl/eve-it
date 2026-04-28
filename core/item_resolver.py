@@ -26,10 +26,17 @@ class ItemResolver:
             try:
                 with open(self._cache_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    # Convertir keys a int
                     self.cache = {int(k): v for k, v in data.items()}
             except Exception as e:
                 logger.error(f"Error cargando caché de items: {e}")
+                # Renombrar el archivo corrupto para no bloquear arranques futuros
+                import time as _time
+                corrupt_path = self._cache_file + f".corrupt.{int(_time.time())}"
+                try:
+                    os.rename(self._cache_file, corrupt_path)
+                    logger.warning(f"Caché corrupto renombrado a: {corrupt_path}")
+                except Exception as rename_err:
+                    logger.error(f"No se pudo renombrar el caché corrupto: {rename_err}")
 
     def _save_cache(self):
         os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)

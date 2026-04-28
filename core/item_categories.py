@@ -46,14 +46,15 @@ CATEGORY_MAPPING = {
 def get_all_categories() -> List[str]:
     return ["Todos"] + list(CATEGORY_MAPPING.keys())
 
-def is_type_in_category(category: str, category_id: int, group_id: int, item_name: str = "") -> Tuple[bool, str]:
+def is_type_in_category(category: str, category_id: int, group_id: int, item_name: str = "", broad: bool = False) -> Tuple[bool, str]:
     """
     Retorna (match, reason).
     Filtro ESTRICTO basado en metadatos reales de EVE.
+    broad=True: omite el filtro por keywords (para pre-selección en worker sin nombres cargados).
     """
     if category == "Todos":
         return True, "Modo Todos"
-    
+
     mapping = CATEGORY_MAPPING.get(category)
     if not mapping:
         return True, "Categoría no definida en mapping"
@@ -67,12 +68,14 @@ def is_type_in_category(category: str, category_id: int, group_id: int, item_nam
         # Verificar exclusiones (ej: Rigs fuera de Módulos)
         if "exclude_groups" in mapping and group_id in mapping["exclude_groups"]:
             return False, f"Excluido por grupo ID {group_id}"
-        
+
         # Verificar keywords solo si la categoría las requiere (ej: Munición avanzada)
         if "keywords" in mapping:
+            if broad:
+                return True, "Broad match - keywords omitidos en pre-selección del worker"
             match = any(kw.lower() in item_name.lower() for kw in mapping["keywords"])
             return match, "Coincidencia de keyword avanzada" if match else "Keyword avanzada no coincide"
-            
+
         return True, f"Coincidencia por categoría ID {category_id}"
 
     # 2. Verificar por IDs de Grupo
