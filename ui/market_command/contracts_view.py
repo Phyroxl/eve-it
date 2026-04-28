@@ -522,6 +522,10 @@ class MarketContractsView(QWidget):
         self.results_table.setItem(row, 7, i_exp)
         self.results_table.setItem(row, 8, i_score)
         
+        for col in range(9):
+            it = self.results_table.item(row, col)
+            if it: it.setTextAlignment(Qt.AlignCenter)
+        
         # Guardar ref oculta en la fila
         i_num.setData(Qt.UserRole, c)
 
@@ -661,6 +665,10 @@ class MarketContractsView(QWidget):
             self.items_table.setItem(r, 3, i_price)
             self.items_table.setItem(r, 4, i_val)
             self.items_table.setItem(r, 5, i_pct)
+            
+            for col in range(6):
+                it = self.items_table.item(r, col)
+                if it: it.setTextAlignment(Qt.AlignCenter)
 
     def on_item_double_clicked(self, row, col):
         item_obj = self.items_table.item(row, 1)

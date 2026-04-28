@@ -813,18 +813,11 @@ class MarketPerformanceView(QWidget):
             self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
             self.top_items_table.setCellWidget(i, 0, icon_lbl)
 
-            item_cell = QTableWidgetItem(item.item_name)
-            item_cell.setData(Qt.UserRole, item.item_id)
-            self.top_items_table.setItem(i, 1, item_cell)
-            self.top_items_table.setItem(i, 2, QTableWidgetItem(str(item.total_bought_units)))
-            self.top_items_table.setItem(i, 3, QTableWidgetItem(str(item.total_sold_units)))
-            stock_item = QTableWidgetItem(str(item.net_units))
-            if item.net_units > 0:
-                stock_item.setForeground(QColor("#60a5fa"))
-            self.top_items_table.setItem(i, 4, stock_item)
-            status_item = QTableWidgetItem(item.status_text)
-            status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 6, status_item)
+            
+            for col in range(1, 7):
+                it = self.top_items_table.item(i, col)
+                if it: it.setTextAlignment(Qt.AlignCenter)
 
         self.top_items_table.setStyleSheet("background: #000000; color: #f1f5f9; border: none; font-size: 10px;")
 
@@ -849,19 +842,11 @@ class MarketPerformanceView(QWidget):
             self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
             self.trans_table.setCellWidget(i, 0, icon_lbl)
 
-            date_short = r[0].split("T")[0]
-            tipo  = "COMPRA" if r[2] == 1 else "VENTA"
-            color = "#f87171" if r[2] == 1 else "#34d399"
-            self.trans_table.setItem(i, 1, QTableWidgetItem(date_short))
-            name_cell = QTableWidgetItem(r[1] or "Unknown")
-            name_cell.setData(Qt.UserRole, r[5]) # r[5] es item_id
-            self.trans_table.setItem(i, 2, name_cell)
-            type_item = QTableWidgetItem(tipo)
-            type_item.setForeground(QColor(color))
-            self.trans_table.setItem(i, 3, type_item)
-            self.trans_table.setItem(i, 4, QTableWidgetItem(str(r[3])))
-            self.trans_table.setItem(i, 5, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
             self.trans_table.setItem(i, 6, QTableWidgetItem("~3.0%"))
+            
+            for col in range(1, 7):
+                it = self.trans_table.item(i, col)
+                if it: it.setTextAlignment(Qt.AlignCenter)
 
     def on_item_selection_changed(self):
         sel = self.top_items_table.selectedItems()

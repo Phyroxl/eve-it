@@ -1978,6 +1978,9 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
 - [x] **Hotfix SyncWorker**: Corregido error crítico de atributo inexistente (`self.client` -> `client`) en el proceso de sincronización.
-- [x] **Estabilidad de Sincronización**: Confirmado que `ACTUALIZAR` ahora completa el ciclo de carga de órdenes y refresco de taxes sin interrumpirse.
+- [x] **Estados en Tiempo Real**: Forzada la limpieza de caché de market orders al pulsar `ACTUALIZAR`, asegurando que los estados como `COMPETITIVA` se reflejen tras cambios in-game.
+- [x] **Alineación Armonizada**: Todas las tablas de Market Command (Simple, Avanzado, Mis Pedidos, Inventario, Contratos, Performance) ahora muestran la información centrada.
+- [x] **Fix Reabrir Inventario**: Corregido bug que impedía volver a abrir el diálogo de Inventario tras cerrarlo.
+- [x] **Panel de Detalle Robusto**: El panel inferior de `Mis Pedidos` ya no se deforma con nombres largos gracias al uso de texto elidido y tooltips.
 
-*Estado: Plataforma estable y sincronización recuperada.*
+*Estado: Plataforma financiera 100% estable, armonizada y con telemetría de alta fidelidad.*

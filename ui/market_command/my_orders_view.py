@@ -96,7 +96,9 @@ class SyncWorker(QThread):
             
             self.status_update.emit("CARGANDO PRECIOS DE MERCADO...", 60)
             type_ids = list(set(o['type_id'] for o in orders))
-            client.cache.cache.pop("market_orders_10000002", None)
+            # FORZAR ACTUALIZACIÓN DE PRECIOS: Limpiar caché de market orders
+            cache_key = "market_orders_10000002"
+            client.cache.cache.pop(cache_key, None)
             all_market_orders = client.market_orders(10000002)
             
             self.status_update.emit("CALCULANDO WAC...", 80)
@@ -316,6 +318,7 @@ class InventoryAnalysisDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["", "ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "PROFIT DE VENTA", "VALOR %", "RECOMENDACIÓN", "MOTIVO"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
+        self.table.setAttribute(Qt.WA_DeleteOnClose)
         self.table.setStyleSheet("QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 11px; } QHeaderView::section { background: #000000; color: #64748b; font-weight: 900; border: none; border-bottom: 1px solid #1e293b; padding: 10px; } QTableWidget::item { border-bottom: 1px solid #0f172a; padding: 8px; }")
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
@@ -356,15 +359,9 @@ class InventoryAnalysisDialog(QDialog):
             else:
                 i_reason.setForeground(QColor("#64748b"))
             
-            self.table.setItem(row, 0, i_icon)
-            self.table.setItem(row, 1, i_name)
-            self.table.setItem(row, 2, i_qty)
-            self.table.setItem(row, 3, i_avg)
-            self.table.setItem(row, 4, i_price)
-            self.table.setItem(row, 5, i_profit)
-            self.table.setItem(row, 6, i_pct)
-            self.table.setItem(row, 7, i_rec)
-            self.table.setItem(row, 8, i_reason)
+            for i, it in enumerate([i_icon, i_name, i_qty, i_avg, i_price, i_profit, i_pct, i_rec, i_reason]):
+                it.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, i, it)
             
         self.table.setSortingEnabled(True)
         self.table.itemDoubleClicked.connect(self.on_double_click)
@@ -504,7 +501,10 @@ class TradeProfitsDialog(QDialog):
             p_col = QColor("#10b981" if t['profit'] > 0 else "#ef4444")
             i_prof = NumericTableWidgetItem(format_isk(t['profit']), t['profit'])
             i_prof.setForeground(p_col)
-            self.table.setItem(r, 10, i_prof)
+            
+            for i, it in enumerate([QTableWidgetItem(dt), i_ico, QTableWidgetItem(t['name']), NumericTableWidgetItem(f"{t['qty']:,}", t['qty']), NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit']), NumericTableWidgetItem(format_isk(t['sell_unit']), t['sell_unit']), NumericTableWidgetItem(format_isk(t['buy_total']), t['buy_total']), NumericTableWidgetItem(format_isk(t['sell_total']), t['sell_total']), NumericTableWidgetItem(format_isk(t['fees']), t['fees']), i_mar, i_prof]):
+                it.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(r, i, it)
             
         self.table.setSortingEnabled(True)
         tot = (len(self.filtered_trades) + self.page_size - 1) // self.page_size
@@ -677,6 +677,7 @@ class MarketMyOrdersView(QWidget):
         
         info_v = QVBoxLayout()
         self.lbl_det_item = QLabel("SELECCIONA UNA ORDEN")
+        self.lbl_det_item.setFixedWidth(300)
         self.lbl_det_item.setStyleSheet("color:#f1f5f9; font-size:14px; font-weight:900;")
         self.lbl_det_type = QLabel("---")
         self.lbl_det_cost_msg = QLabel("---")
@@ -814,8 +815,7 @@ class MarketMyOrdersView(QWidget):
             
             items = [i_ico, i_name, i_type, i_price, i_avg, i_ref, i_tot, i_rem, i_spr, i_mar, i_prof, i_state]
             for i, it in enumerate(items):
-                if i in [3, 4, 5, 10]: it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                elif i in [2, 6, 7, 8, 9, 11]: it.setTextAlignment(Qt.AlignCenter)
+                it.setTextAlignment(Qt.AlignCenter)
                 t.setItem(r, i, it)
                 
         t.setSortingEnabled(True)
@@ -833,7 +833,15 @@ class MarketMyOrdersView(QWidget):
         if o: self.update_det(o)
 
     def update_det(self, o):
-        self.lbl_det_item.setText(o.item_name.upper())
+        item_name = o.item_name.upper()
+        self.lbl_det_item.setText(item_name)
+        self.lbl_det_item.setToolTip(item_name)
+        
+        # Elide text manually if needed or let label handle it if set up
+        metrics = self.lbl_det_item.fontMetrics()
+        elided = metrics.elidedText(item_name, Qt.ElideRight, self.lbl_det_item.width())
+        self.lbl_det_item.setText(elided)
+
         self.lbl_det_type.setText("COMPRA" if o.is_buy_order else "VENTA")
         self.lbl_det_type.setStyleSheet("color:#3b82f6;" if o.is_buy_order else "color:#ef4444;")
         self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px: self.lbl_det_icon.setPixmap(px.scaled(64, 64, Qt.KeepAspectRatio)))

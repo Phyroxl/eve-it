@@ -263,6 +263,10 @@ class MarketTableWidget(QTableWidget):
             self.setItem(row, 7, risk)
             self.setItem(row, 8, tags_item)
             
+            for i in range(9):
+                it = self.item(row, i)
+                if it: it.setTextAlignment(Qt.AlignCenter)
+            
         self.setSortingEnabled(True)
         # Default sort by score descending
         self.sortItems(2, Qt.DescendingOrder)
@@ -401,6 +405,10 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             self.setItem(row, 10, so)
             self.setItem(row, 11, hd)
             self.setItem(row, 12, tags_item)
+            
+            for i in range(13):
+                it = self.item(row, i)
+                if it: it.setTextAlignment(Qt.AlignCenter)
             
         self.setSortingEnabled(True)
         self.sortItems(2, Qt.DescendingOrder)
