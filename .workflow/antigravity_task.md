@@ -1706,4 +1706,18 @@ Se ha resuelto un error crítico de sintaxis introducido en la última actualiza
 **Archivos Modificados:**
 - `ui/market_command/my_orders_view.py`: Corrección de sintaxis y limpieza de código.
 
-*Estado: Módulo operativo y estable.*
+### SESIÓN 24 AJUSTE VISUAL (ÓRDENES DE COMPRA) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE CORRECCIÓN
+Se ha corregido la visibilidad de las métricas financieras en las órdenes de compra para proporcionar una visión completa del potencial de beneficio.
+
+**Cambios Aplicados:**
+- **Visibilidad Total**: Las columnas `MARGEN` y `PROFIT` ahora muestran datos en las órdenes de compra (calculados como beneficio potencial basado en los precios de venta actuales de Jita).
+- **Coloreado Semántico**: Se ha habilitado el coloreado táctico (Verde/Rojo) para las órdenes de compra, permitiendo identificar rápidamente oportunidades de inversión rentables o ajustes necesarios.
+
+**Archivos Modificados:**
+- `ui/market_command/my_orders_view.py`: Actualización de lógica de población de tablas.
+
+*Estado: Visualización financiera completa para todo tipo de órdenes.*

@@ -445,17 +445,21 @@ class MarketMyOrdersView(QWidget):
                     QTableWidgetItem(format_isk(a.best_buy if o.is_buy_order else a.best_sell)),
                     QTableWidgetItem(str(o.volume_total)), QTableWidgetItem(str(o.volume_remain)),
                     QTableWidgetItem(f"{a.spread_pct:.1f}%"), 
-                    QTableWidgetItem(f"{a.margin_pct:.1f}%" if not o.is_buy_order and cost else "---"),
-                    QTableWidgetItem(format_isk(a.net_profit_total) if not o.is_buy_order and cost else "---"),
+                    QTableWidgetItem(f"{a.margin_pct:.1f}%" if a.margin_pct != 0 else "---"),
+                    QTableWidgetItem(format_isk(a.net_profit_total) if a.net_profit_total != 0 else "---"),
                     i_state
                 ]
                 for i in [3,4,5,10]: items[i].setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 for i in [2,6,7,8,9,11]: items[i].setTextAlignment(Qt.AlignCenter)
                 
                 items[2].setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
-                if not o.is_buy_order and cost:
-                    if a.margin_pct > 15: items[9].setForeground(QColor("#10b981"))
-                    if a.net_profit_total > 0: items[10].setForeground(QColor("#10b981"))
+                
+                # Colorear Margen y Profit (tanto real como potencial)
+                if a.margin_pct > 15: items[9].setForeground(QColor("#10b981"))
+                elif a.margin_pct < 0: items[9].setForeground(QColor("#ef4444"))
+                
+                if a.net_profit_total > 0: items[10].setForeground(QColor("#10b981"))
+                elif a.net_profit_total < 0: items[10].setForeground(QColor("#ef4444"))
 
                 for c, item in enumerate(items): t.setItem(r, c, item)
 
