@@ -1,4 +1,4 @@
-import logging # VERSION: 1.1.7-TAXINFO (Taxes UI, Refined States, Referencia column)
+import logging # VERSION: 1.1.10-ADVANCEDTAX (Location-aware Fees, Standings support)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout, QDialog, QMessageBox
@@ -36,6 +36,7 @@ class SyncWorker(QThread):
                 self.finished_data.emit([])
                 return
             
+            # Refrescar tasas (skills + standings)
             TaxService.instance().refresh_from_esi(self.char_id, self.token)
             
             type_ids = list(set(o['type_id'] for o in orders))
@@ -51,7 +52,8 @@ class SyncWorker(QThread):
             if cost_service.has_wallet_scope():
                 cost_service.refresh_from_esi(self.char_id, self.token)
             
-            analyzed = analyze_character_orders(orders, relevant_market_orders, item_names, config, char_id=self.char_id)
+            # Pasar el token para que TaxService pueda hacer lookups de estructuras si es necesario
+            analyzed = analyze_character_orders(orders, relevant_market_orders, item_names, config, char_id=self.char_id, token=self.token)
             self.finished_data.emit(analyzed)
         except Exception as e:
             self.error.emit(str(e))
@@ -91,7 +93,7 @@ class InventoryWorker(QThread):
             item_names = {n['id']: n['name'] for n in names_data}
             
             config = load_market_filters()
-            analyzed = analyze_inventory(filtered_assets, all_market_orders, item_names, config, char_id=self.char_id)
+            analyzed = analyze_inventory(filtered_assets, all_market_orders, item_names, config, char_id=self.char_id, token=self.token)
             self.finished_data.emit(analyzed)
         except Exception as e:
             self.error.emit(str(e))
@@ -243,7 +245,7 @@ class MarketMyOrdersView(QWidget):
         self.table_sell = self.create_table(is_buy=False)
         self.main_layout.addWidget(self.table_sell, 1)
 
-        # BLOQUE DE INFORMACIÓN DE TAXES (Premium info block)
+        # BLOQUE DE INFORMACIÓN DE TAXES
         self.setup_taxes_bar()
 
         # SECCIÓN ÓRDENES DE COMPRA
@@ -292,7 +294,6 @@ class MarketMyOrdersView(QWidget):
         self.main_layout.addWidget(self.taxes_bar)
 
     def create_table(self, is_buy=False):
-        # Columnas: "", ÍTEM, TIPO, MI PRECIO, MI PROMEDIO, [MEJOR COMPRA / MEJOR VENTA], TOTAL, RESTO, SPREAD, MARGEN, PROFIT, ESTADO
         ref_col = "MEJOR VENTA" if is_buy else "MEJOR COMPRA"
         t = QTableWidget(0, 12)
         t.setHorizontalHeaderLabels(["", "ÍTEM", "TIPO", "MI PRECIO", "MI PROMEDIO", ref_col, "TOTAL", "RESTO", "SPREAD", "MARGEN", "PROFIT", "ESTADO"])
@@ -427,16 +428,20 @@ class MarketMyOrdersView(QWidget):
         auth = AuthManager.instance()
         taxes = TaxService.instance().get_taxes(auth.char_id)
         self.lbl_sales_tax.setText(f"SALES TAX: {taxes.sales_tax_pct:.2f}%")
-        self.lbl_broker_fee.setText(f"BROKER FEE: {taxes.broker_fee_pct:.2f}%")
+        self.lbl_broker_fee.setText(f"BROKER FEE: {taxes.broker_fee_pct:.2f}% (BASE)")
         
         if taxes.status == "ready":
-            self.lbl_tax_source.setText(f"FUENTE: SKILLS REALES (Broker Fee Estimado*)")
+            src_text = "FUENTE: SKILLS REALES (Broker Fee Dinámico*)"
+            self.lbl_tax_source.setText(src_text)
             self.lbl_tax_source.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800;")
-            self.lbl_tax_source.setToolTip("El Broker Fee es estimado (3% base - skills). No incluye variaciones por Standings o Estructuras.")
+            tip = "Sales Tax basado en Accounting. Broker Fee ajustado por Standings en estaciones NPC."
+            if taxes.standings_status != "ready":
+                tip += "\nNOTA: Falta permiso de Standings. El fee NPC no incluye rebaja por reputación."
+            self.lbl_tax_source.setToolTip(tip)
         elif taxes.status == "missing_scope":
-            self.lbl_tax_source.setText("FALTA PERMISO DE SKILLS — REAUTORIZA PARA TAXES REALES")
+            self.lbl_tax_source.setText("FALTA PERMISO DE SKILLS/STANDINGS — REAUTORIZAR")
             self.lbl_tax_source.setStyleSheet("color: #ef4444; font-size: 9px; font-weight: 800;")
-            self.lbl_tax_source.setToolTip("Haz login de nuevo para conceder permiso de lectura de skills.")
+            self.lbl_tax_source.setToolTip("Haz login de nuevo para conceder todos los permisos.")
         else:
             self.lbl_tax_source.setText("FUENTE: VALORES ESTIMADOS (FALLBACK)")
             self.lbl_tax_source.setStyleSheet("color: #f59e0b; font-size: 9px; font-weight: 800;")
@@ -485,30 +490,23 @@ class MarketMyOrdersView(QWidget):
             i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             i_avg.setForeground(QColor("#f1f5f9") if cost else QColor("#475569"))
             
-            # Referencia dinámica (Mejor Compra en Sell, Mejor Venta en Buy)
             ref_val = a.best_sell if o.is_buy_order else a.best_buy
             ref_txt = format_isk(ref_val) if ref_val > 0 else "Sin datos"
             i_ref = QTableWidgetItem(ref_txt)
             i_ref.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             
-            # Colores de Estado Refinados
-            # Verde: sana, liderando, competitiva, rentable
-            # Rojo: perdida, no rentable, error
-            # Amarillo: superada, ajustada, revisar
-            # Azul: potencial, esperando compra, datos estimados, rentable (en compras)
             i_state = QTableWidgetItem(a.state.upper())
             s_txt = a.state.lower()
             
-            # Lógica de colores unificada
             if any(x in s_txt for x in ["sana", "liderando", "competitiva", "rentable"]):
-                if o.is_buy_order: i_state.setForeground(QColor("#3b82f6")) # Azul para compras rentables/potenciales
-                else: i_state.setForeground(QColor("#10b981")) # Verde para ventas sanas
+                if o.is_buy_order: i_state.setForeground(QColor("#3b82f6"))
+                else: i_state.setForeground(QColor("#10b981"))
             elif any(x in s_txt for x in ["superada", "ajustado", "revisar", "beneficio"]):
-                i_state.setForeground(QColor("#f59e0b")) # Amarillo
+                i_state.setForeground(QColor("#f59e0b"))
             elif any(x in s_txt for x in ["pérdida", "no rentable", "error", "fuera"]):
-                i_state.setForeground(QColor("#ef4444")) # Rojo
+                i_state.setForeground(QColor("#ef4444"))
             else:
-                i_state.setForeground(QColor("#3b82f6")) # Azul (Fallback / Potencial)
+                i_state.setForeground(QColor("#3b82f6"))
 
             items = [
                 i_ico, QTableWidgetItem(o.item_name), 
@@ -527,10 +525,9 @@ class MarketMyOrdersView(QWidget):
             
             items[2].setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
             
-            # Colorear Margen y Profit
             if a.margin_pct > 15: items[9].setForeground(QColor("#10b981"))
             elif a.margin_pct < 0: items[9].setForeground(QColor("#ef4444"))
-            elif a.margin_pct > 0: items[9].setForeground(QColor("#f59e0b")) # Amarillo para márgenes bajos
+            elif a.margin_pct > 0: items[9].setForeground(QColor("#f59e0b"))
             
             if a.net_profit_total > 0: items[10].setForeground(QColor("#10b981"))
             elif a.net_profit_total < 0: items[10].setForeground(QColor("#ef4444"))
@@ -538,7 +535,6 @@ class MarketMyOrdersView(QWidget):
             for c, item in enumerate(items): t.setItem(r, c, item)
 
     def on_selection_changed(self):
-        # Deseleccionar de la otra tabla si existe selección
         sender = self.sender()
         if sender == self.table_sell: self.table_buy.clearSelection()
         else: self.table_sell.clearSelection()
@@ -559,12 +555,16 @@ class MarketMyOrdersView(QWidget):
         cost = CostBasisService.instance().get_cost_basis(o.type_id)
         avg = cost.average_buy_price if cost else 0.0
         
+        # Mostrar info de la fuente del fee en el mensaje de coste
+        fee_source = getattr(o, "_fee_source", "Skills fallback")
+        fee_val = getattr(o, "_b_fee_pct", 3.0)
+        
         if o.is_buy_order:
-            self.lbl_det_cost_msg.setText("Profit potencial basado en Jita Sell")
+            self.lbl_det_cost_msg.setText(f"Profit potencial (Jita Sell) | Fee: {fee_val:.2f}% via {fee_source}")
         elif avg > 0:
-            self.lbl_det_cost_msg.setText("Profit real basado en Coste Medio Ponderado (WAC)")
+            self.lbl_det_cost_msg.setText(f"Profit real (WAC) | Fee: {fee_val:.2f}% via {fee_source}")
         else:
-            self.lbl_det_cost_msg.setText("Sin registros de coste real para calcular beneficio")
+            self.lbl_det_cost_msg.setText(f"Sin registros de coste real | Fee: {fee_val:.2f}% via {fee_source}")
         
         self.det_price.setText(format_isk(o.price))
         self.det_avg.setText(format_isk(avg) if avg > 0 else "SIN REGISTROS")

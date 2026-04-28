@@ -1802,4 +1802,40 @@ Se han realizado los ajustes finales de configuración y transparencia informati
 - [x] **Git**: Confirmado que `ui_my_orders.json` ya no aparece como modificado para el repo tras el cambio.
 - [x] **UI**: Verificación de tooltips en la barra de taxes.
 
-*Estado: Código limpio, transparente y listo para producción.*
+### SESIÓN 24 TAXES AVANZADOS (LOCATION & STANDINGS) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha implementado el cálculo de Broker Fee más avanzado del mercado, integrando standings de personaje y detección inteligente de ubicación para una precisión financiera sin precedentes.
+
+**Mejoras de Inteligencia de Mercado:**
+1. **Detección de Ubicación**:
+   - El sistema ahora identifica si una orden está en una **Estación NPC** o en una **Estructura Upwell** (Player-owned).
+   - Utiliza una caché de ubicación para minimizar las llamadas a ESI y optimizar el rendimiento.
+2. **Integración de Standings**:
+   - Añadido el scope `esi-characters.read_standings.v1`.
+   - El sistema lee los standings reales del personaje hacia la Corporación y Facción propietaria de las estaciones NPC.
+3. **Fórmula de Precisión NPC**:
+   - Aplicada la fórmula real: `Fee = 3.0% - (0.1% * Broker Relations) - (0.03% * Faction Standing) - (0.02% * Corp Standing)`.
+   - Esto permite que el profit mostrado sea exacto para personajes con alta reputación.
+4. **Soporte para Estructuras**:
+   - Las órdenes en estructuras se marcan como "Estructura (Estimado)" (fallback al 1.0%), ya que las tasas son configurables por el dueño, pero se informa claramente al usuario.
+
+**Mejoras de UI:**
+1. **Barra de Taxes Dinámica**: Muestra si los taxes son reales, si falta el permiso de standings o si se están usando valores estimados.
+2. **Panel de Detalle Extendido**: Al seleccionar una orden, el panel inferior indica la fuente exacta del cálculo: `NPC + STANDINGS`, `NPC (Solo Skills)` o `ESTRUCTURA`.
+
+**Archivos Modificados:**
+- `core/auth_manager.py`: Añadido scope de standings.
+- `core/esi_client.py`: Nuevos métodos para standings y detalles de ubicación.
+- `core/tax_service.py`: Motor de cálculo avanzado con soporte para standings y caché de estaciones.
+- `core/market_engine.py`: Análisis per-orden con inyección de fees localizados.
+- `ui/market_command/my_orders_view.py`: Visualización de fuentes de fee y tooltips de advertencia.
+
+**Pruebas Realizadas:**
+- [x] **NPC**: Verificación de reducción de fee al detectar standings positivos.
+- [x] **Estructuras**: Identificación correcta de IDs de estructura (>1B) y aplicación de fallback.
+- [x] **Permisos**: Alerta roja funcional si falta el nuevo scope de standings.
+
+*Estado: Motor financiero de grado industrial con soporte para reputación.*

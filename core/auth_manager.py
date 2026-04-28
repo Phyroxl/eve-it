@@ -37,7 +37,7 @@ class AuthManager(QObject):
         super().__init__()
         self.client_id = _load_client_id()
         self.redirect_uri = "http://localhost:12543/callback"
-        self.scopes = "esi-ui.open_window.v1 esi-wallet.read_character_wallet.v1 esi-markets.read_character_orders.v1 esi-assets.read_assets.v1 esi-skills.read_skills.v1"
+        self.scopes = "esi-ui.open_window.v1 esi-wallet.read_character_wallet.v1 esi-markets.read_character_orders.v1 esi-assets.read_assets.v1 esi-skills.read_skills.v1 esi-characters.read_standings.v1"
         self.current_token = None
         self.char_name = None
         self.char_id = None
