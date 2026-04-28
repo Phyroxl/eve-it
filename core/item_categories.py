@@ -22,7 +22,7 @@ from typing import List, Dict, Set, Tuple
 # 1982 = Abyssal Filaments
 
 CATEGORY_MAPPING = {
-    "Naves": {"categories": {6, 32}}, 
+    "Naves": {"categories": {6}}, 
     "Drones": {"categories": {18}},
     "Módulos": {
         "categories": {7, 42}, 

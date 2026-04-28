@@ -264,8 +264,16 @@ class MarketAdvancedView(QWidget):
 
     def on_scan_finished(self, opportunities):
         self.all_opportunities = opportunities
+        
+        _log.info(f"[PIPELINE] parsed_opportunities={len(opportunities)}")
+        _log.info(f"[PIPELINE] before_apply_filters={len(opportunities)}")
+        
         from core.market_engine import apply_filters
         filtered = apply_filters(opportunities, self.current_config)
+        
+        _log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
+        _log.info(f"[PIPELINE] table_populate_count={len(filtered)}")
+        
         self.table.populate(filtered)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
@@ -282,12 +290,17 @@ class MarketAdvancedView(QWidget):
 
     def on_apply_filters(self):
         self.update_config_from_ui()
-        import logging
-        logging.getLogger('eve.market.advanced').info(f"[CATEGORY UI] mode=Advanced selected_category={self.current_config.selected_category}")
+        _log.info(f"[CATEGORY UI] mode=Advanced selected_category={self.current_config.selected_category}")
+        _log.info(f"[PIPELINE] before_apply_filters={len(self.all_opportunities)}")
+        
         save_market_filters(self.current_config)
         
         from core.market_engine import apply_filters
         filtered = apply_filters(self.all_opportunities, self.current_config)
+        
+        _log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
+        _log.info(f"[PIPELINE] table_populate_count={len(filtered)}")
+        
         self.table.populate(filtered)
 
     def on_reset_filters(self):

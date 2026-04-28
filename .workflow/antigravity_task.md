@@ -2246,3 +2246,34 @@ Se ha resuelto la causa raíz de que las categorías se mostraran vacías: el motor
 - [x] Compilación exitosa.
 
 *Estado: Filtro de categorías profesional, estricto y de alto rendimiento.*
+
+## Sesión 28 — 2026-04-29 (Pipeline Audit)
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Auditoría y Refactorización del Pipeline de Filtrado
+
+### RESUMEN
+Se ha implementado un sistema de diagnóstico exhaustivo para localizar el punto exacto donde se pierden los resultados durante el filtrado por categorías.
+
+**Mejoras realizadas:**
+1. **Pipeline de Diagnóstico**: Añadidos logs [PIPELINE] en cada fase del proceso (escaneo -> filtros base -> prefetch -> filtro categoría -> populate).
+2. **Refactorización de apply_filters**: El motor ahora separa los filtros base de los filtros de categoría y cuenta cuántos ítems descarta cada regla (capital, volumen, spread, etc.) en logs [FILTER DEBUG].
+3. **Preservación de Resultados Raw**: Confirmado que las vistas (SimpleView, AdvancedView) mantienen la lista original ll_opportunities y no filtran sobre resultados previamente filtrados.
+4. **Verificación de Metadata**: ItemResolver.prefetch_type_metadata ahora verifica y loguea una muestra ([METADATA VERIFY]) para asegurar que los IDs se están descargando correctamente.
+5. **Filtro Estricto de Naves**: Eliminada la categoría 32 (Subsystems) de " Naves\ para evitar falsos positivos, manteniéndolo en categoría 6 pura.
+
+**Archivos Modificados:**
+- core/market_engine.py (Refactorización y contadores)
+- core/item_resolver.py (Verificación de prefetch)
+- ui/market_command/simple_view.py (Logs de pipeline)
+- ui/market_command/advanced_view.py (Logs de pipeline y corrección de populate)
+- core/item_categories.py (Ajuste estricto de Naves)
+
+### CHECKS
+- [x] Logs de pipeline visibles en consola.
+- [x] Contadores de filtros base operativos.
+- [x] Filtro \Todos\ verificado.
+- [x] Compilación exitosa.
+
+*Estado: Pipeline de filtrado totalmente auditable y depurado.*

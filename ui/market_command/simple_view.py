@@ -298,6 +298,11 @@ class MarketSimpleView(QWidget):
         self.progress_bar.setVisible(False)
         self.lbl_status.setText("● SISTEMA LISTO")
         self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        
+        import logging
+        log = logging.getLogger('eve.market.simple')
+        log.info(f"[PIPELINE] parsed_opportunities={len(opps)}")
+        
         self.all_opportunities = opps
         self.apply_and_display()
 
@@ -341,10 +346,20 @@ class MarketSimpleView(QWidget):
         self.combo_category.setCurrentText(self.current_config.selected_category)
 
     def apply_and_display(self):
+        import logging
+        log = logging.getLogger('eve.market.simple')
+        log.info(f"[PIPELINE] before_apply_filters={len(self.all_opportunities)}")
+        
         filtered = apply_filters(self.all_opportunities, self.current_config)
         filtered.sort(key=lambda x: x.score_breakdown.final_score if x.score_breakdown else 0, reverse=True)
+        
+        log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
+        
         top_50 = filtered[:50]
         self.table.populate(top_50)
+        
+        log.info(f"[PIPELINE] table_populate_count={len(top_50)}")
+        
         self.lbl_sum_count.setText(f"{len(filtered)}")
         if top_50:
             self.lbl_sum_top.setText(top_50[0].item_name)

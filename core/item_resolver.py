@@ -67,28 +67,51 @@ class ItemResolver:
         """Precarga metadata para una lista de items de forma concurrente."""
         from concurrent.futures import ThreadPoolExecutor
         
-        missing = [tid for tid in type_ids if tid not in self.cache]
+        # Eliminar duplicados y asegurar ints
+        unique_ids = list(set(int(tid) for tid in type_ids))
+        missing = [tid for tid in unique_ids if tid not in self.cache]
+        
         if not missing:
-            return {"total": len(type_ids), "cached": len(type_ids), "fetched": 0, "failed": 0}
+            return {"total": len(unique_ids), "cached": len(unique_ids), "fetched": 0, "failed": 0, "failed_ids": []}
             
-        logger.info(f"[METADATA] Prefetching {len(missing)} items...")
+        logger.info(f"[METADATA] total_unique={len(unique_ids)} | cached={len(unique_ids) - len(missing)} | missing={len(missing)}")
         fetched = 0
         failed = 0
+        failed_ids = []
         
         def fetch_one(tid):
-            return tid, self.get_type_info(tid, blocking=True)
+            try:
+                info = self.get_type_info(tid, blocking=True)
+                return tid, info, None
+            except Exception as e:
+                return tid, None, str(e)
             
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = list(executor.map(fetch_one, missing))
             
-        for tid, info in results:
+        for tid, info, err in results:
             if info:
                 fetched += 1
             else:
                 failed += 1
+                failed_ids.append(tid)
+                if err:
+                    logger.debug(f"[METADATA FETCH ERROR] type_id={tid} error={err}")
                 
         self._save_cache()
-        return {"total": len(type_ids), "cached": len(type_ids) - len(missing), "fetched": fetched, "failed": failed}
+        
+        res = {
+            "total": len(unique_ids), 
+            "cached": len(unique_ids) - len(missing), 
+            "fetched": fetched, 
+            "failed": failed,
+            "failed_ids": failed_ids[:10] # Solo una muestra
+        }
+        logger.info(f"[METADATA] prefetch_done: fetched={fetched} failed={failed}")
+        if failed > 0:
+            logger.warning(f"[METADATA] Failed IDs sample: {failed_ids[:10]}")
+            
+        return res
 
     def _get_detailed_info(self, group_id: int) -> Tuple[Optional[int], str, str]:
         if not group_id: return None, "Unknown Group", "Unknown Category"
