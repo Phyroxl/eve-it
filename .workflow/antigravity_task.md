@@ -1878,4 +1878,40 @@ Se ha rediseñado por completo el módulo de Inventario para convertirlo en una 
 - [x] **UI**: Comprobación del diseño sin grid y carga de iconos.
 - [x] **Doble Click**: Apertura exitosa de la ventana de mercado en el cliente de EVE.
 
-*Estado: Gestión de activos profesional, local y rentable.*
+### SESIÓN 24 INVENTARIO PROFIT & ESI SYNC UI — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha refinado el análisis de inventario para centrarse en el beneficio neto real y se ha mejorado la retroalimentación visual durante las operaciones con ESI.
+
+**Inteligencia de Profit (Inventario):**
+1. **Columna PROFIT DE VENTA**:
+   - Reemplaza a "Valor Total" para ofrecer una métrica de rentabilidad pura.
+   - **Fórmula**: `(Precio Neto Jita - Mi Promedio) * Cantidad`.
+   - Considera: WAC real, Sales Tax, Broker Fee localizado y cantidad disponible.
+   - **Codificación de Colores**: Verde (Beneficio), Rojo (Pérdida), Gris (Sin registros de coste).
+   - El Valor Total Neto sigue disponible como tooltip sobre la celda de profit y en la cabecera del diálogo.
+2. **Recomendaciones Basadas en ROI**:
+   - `VENDER`: Solo si el profit es positivo y el ROI sobre el coste es significativo (>10%).
+   - `MANTENER`: Si el profit es negativo (evitar malvender) o el margen es demasiado estrecho.
+   - `REVISAR`: Si falta el WAC o no hay liquidez en Jita.
+
+**Mejoras de UI / Sincronización:**
+1. **Barra de Progreso ESI**:
+   - Implementada una barra de progreso visual que muestra estados granulares: `Conectando...`, `Descargando órdenes...`, `Calculando WAC...`, etc.
+   - Añadido un **spinner animado** (`| / - \`) que indica actividad constante durante la espera.
+2. **Seguridad Operativa**:
+   - Los botones de sincronización e inventario se desactivan automáticamente durante las operaciones para evitar duplicidad de hilos y errores de concurrencia.
+3. **Feedback de Errores**: Los estados de error se muestran ahora integrados en la barra de estado con colores críticos (rojo) y mensajes descriptivos.
+
+**Archivos Modificados:**
+- `core/market_engine.py`: Motor de análisis de inventario actualizado con cálculo de `net_profit_total`.
+- `ui/market_command/my_orders_view.py`: Refactorización completa de `InventoryAnalysisDialog` y `MarketMyOrdersView` para la nueva UI de sincronización.
+
+**Pruebas Realizadas:**
+- [x] **Profit**: Verificación de cálculos correctos en items con y sin historial de compra.
+- [x] **Sync UI**: Comprobación de que la barra y el spinner funcionan fluidamente durante la descarga de órdenes.
+- [x] **Bloqueo de Botones**: Confirmado que no se pueden lanzar dos sincronizaciones simultáneas.
+
+*Estado: Interfaz de alta gama con inteligencia de negocio integrada.*

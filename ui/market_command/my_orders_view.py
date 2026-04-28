@@ -1,9 +1,10 @@
-import logging # VERSION: 1.1.11-PREMIUMINV (Location Filter, WAC Support, Clean UI)
+import logging # VERSION: 1.1.12-SYNCPRO (Profit Inventory, ESI Sync Progress, Spinner)
+import time
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
-    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout, QDialog, QMessageBox
+    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout, QDialog, QMessageBox, QProgressBar
 )
-from PySide6.QtCore import Qt, QThread, Signal, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap
 
 from core.esi_client import ESIClient
@@ -21,6 +22,7 @@ _log = logging.getLogger('eve.market.my_orders')
 
 class SyncWorker(QThread):
     finished_data = Signal(list)
+    status_update = Signal(str, int) # (mensaje, progreso_0_100)
     error = Signal(str)
 
     def __init__(self, char_id, token):
@@ -31,14 +33,18 @@ class SyncWorker(QThread):
     def run(self):
         try:
             client = ESIClient()
+            self.status_update.emit("CONECTANDO CON ESI...", 10)
+            
+            self.status_update.emit("DESCARGANDO ÓRDENES...", 20)
             orders = client.character_orders(self.char_id, self.token)
             if not orders:
                 self.finished_data.emit([])
                 return
             
-            # Refrescar tasas (skills + standings)
+            self.status_update.emit("APLICANDO TAXES Y STANDINGS...", 40)
             TaxService.instance().refresh_from_esi(self.char_id, self.token)
             
+            self.status_update.emit("CARGANDO DATOS DE MERCADO...", 60)
             type_ids = list(set(o['type_id'] for o in orders))
             all_market_orders = client.market_orders(10000002)
             relevant_market_orders = [mo for mo in all_market_orders if mo['type_id'] in type_ids]
@@ -48,11 +54,15 @@ class SyncWorker(QThread):
             
             config = load_market_filters()
             
+            self.status_update.emit("CALCULANDO WAC (MI PROMEDIO)...", 80)
             cost_service = CostBasisService.instance()
             if cost_service.has_wallet_scope():
                 cost_service.refresh_from_esi(self.char_id, self.token)
             
+            self.status_update.emit("FINALIZANDO ANÁLISIS...", 95)
             analyzed = analyze_character_orders(orders, relevant_market_orders, item_names, config, char_id=self.char_id, token=self.token)
+            
+            self.status_update.emit("SINCRONIZACIÓN COMPLETADA", 100)
             self.finished_data.emit(analyzed)
         except Exception as e:
             self.error.emit(str(e))
@@ -60,6 +70,7 @@ class SyncWorker(QThread):
 class InventoryWorker(QThread):
     finished_data = Signal(list)
     location_info = Signal(str)
+    status_update = Signal(str, int)
     error = Signal(str)
 
     def __init__(self, char_id, token):
@@ -70,8 +81,8 @@ class InventoryWorker(QThread):
     def run(self):
         try:
             client = ESIClient()
+            self.status_update.emit("LOCALIZANDO PERSONAJE...", 10)
             
-            # 1. Ubicación actual
             loc_res = client.character_location(self.char_id, self.token)
             curr_loc_id = None
             loc_name = "TODO EL INVENTARIO (FALLBACK)"
@@ -88,14 +99,13 @@ class InventoryWorker(QThread):
                     names = client.universe_names([curr_loc_id])
                     if names: loc_name = names[0]['name']
                 else:
-                    # Si no está en estación/estructura, quizá en el espacio (solar_system)
                     ss_id = loc_res.get('solar_system_id')
                     names = client.universe_names([ss_id])
                     if names: loc_name = f"ESPACIO: {names[0]['name']}"
                     
                 self.location_info.emit(loc_name)
 
-            # 2. Assets
+            self.status_update.emit("DESCARGANDO ASSETS...", 40)
             assets = client.character_assets(self.char_id, self.token)
             if assets == "missing_scope":
                 self.error.emit("missing_scope")
@@ -104,31 +114,31 @@ class InventoryWorker(QThread):
                 self.finished_data.emit([])
                 return
             
-            # 3. Filtrado por ubicación
             if curr_loc_id:
                 filtered_assets = [a for a in assets if a.get('location_id') == curr_loc_id]
             else:
-                # Si no hay ubicación específica (espacio o falta permiso), mostrar assets no equipados
                 filtered_assets = [a for a in assets if 'slot' not in a.get('location_flag', '').lower()]
 
             if not filtered_assets:
                 self.finished_data.emit([])
                 return
 
+            self.status_update.emit("OBTENIENDO PRECIOS JITA...", 70)
             type_ids = list(set(a['type_id'] for a in filtered_assets))
             all_market_orders = client.market_orders(10000002)
             
             names_data = client.universe_names(type_ids)
             item_names = {n['id']: n['name'] for n in names_data}
             
+            self.status_update.emit("CALCULANDO BENEFICIOS...", 90)
             config = load_market_filters()
             
-            # Refrescar costes si es posible
             cost_service = CostBasisService.instance()
             if cost_service.has_wallet_scope():
                 cost_service.refresh_from_esi(self.char_id, self.token)
                 
             analyzed = analyze_inventory(filtered_assets, all_market_orders, item_names, config, char_id=self.char_id, token=self.token)
+            self.status_update.emit("LISTO", 100)
             self.finished_data.emit(analyzed)
         except Exception as e:
             self.error.emit(str(e))
@@ -140,7 +150,7 @@ class InventoryAnalysisDialog(QDialog):
         self.loc_name = loc_name
         self.image_loader = image_loader
         self.setWindowTitle("INVENTARIO - VALOR DE ACTIVOS")
-        self.setMinimumSize(1100, 700)
+        self.setMinimumSize(1150, 750)
         self.setStyleSheet("background-color: #000000;")
         self.setup_ui()
 
@@ -150,7 +160,7 @@ class InventoryAnalysisDialog(QDialog):
         layout.setSpacing(15)
         
         header = QFrame()
-        header.setFixedHeight(80)
+        header.setFixedHeight(85)
         header.setStyleSheet("background-color: #0f172a; border-radius: 8px; border: 1px solid #1e293b;")
         hl = QHBoxLayout(header)
         
@@ -171,7 +181,8 @@ class InventoryAnalysisDialog(QDialog):
         val_v = QVBoxLayout()
         val_lbl = QLabel(format_isk(total_val))
         val_lbl.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900; border:none;")
-        val_sub = QLabel("VALOR TOTAL ESTIMADO")
+        val_sub = QLabel("VALOR ESTIMADO NETO")
+        val_sub.setToolTip("Suma del valor de mercado (Sell Jita) descontando impuestos.")
         val_sub.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800; border:none;")
         val_sub.setAlignment(Qt.AlignRight)
         val_v.addWidget(val_lbl)
@@ -181,7 +192,7 @@ class InventoryAnalysisDialog(QDialog):
 
         self.table = QTableWidget(len(self.items), 9)
         self.table.setHorizontalHeaderLabels([
-            "", "ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "VALOR TOTAL", "VALOR %", "RECOMENDACIÓN", "MOTIVO"
+            "", "ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "PROFIT DE VENTA", "VALOR %", "RECOMENDACIÓN", "MOTIVO"
         ])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
@@ -196,13 +207,21 @@ class InventoryAnalysisDialog(QDialog):
         self.table.setIconSize(QSize(32, 32))
         self.table.setColumnWidth(0, 45)
         self.table.setColumnWidth(1, 220)
+        self.table.setColumnWidth(5, 140)
         self.table.setColumnWidth(7, 120)
+
+        # Tooltip para Profit
+        h = self.table.horizontalHeader()
+        h.setSectionsClickable(True)
+        self.table.horizontalHeaderItem(5).setToolTip("Beneficio real estimado: (Precio Neto Jita - Mi Promedio) * Cantidad")
 
         self.table.itemDoubleClicked.connect(self.on_double_click)
 
-        sorted_items = sorted(self.items, key=lambda x: x.analysis.est_total_value, reverse=True)
+        sorted_items = sorted(self.items, key=lambda x: getattr(x, "_net_profit_total", 0.0), reverse=True)
         for row, item in enumerate(sorted_items):
             a = item.analysis
+            avg_buy = getattr(item, "_avg_buy", 0.0)
+            net_profit_total = getattr(item, "_net_profit_total", 0.0)
             
             i_icon = QTableWidgetItem()
             i_icon.setData(Qt.UserRole, item.type_id)
@@ -213,7 +232,6 @@ class InventoryAnalysisDialog(QDialog):
             i_qty = QTableWidgetItem(f"{item.quantity:,}")
             i_qty.setTextAlignment(Qt.AlignCenter)
             
-            avg_buy = getattr(item, "_avg_buy", 0.0)
             i_avg = QTableWidgetItem(format_isk(avg_buy) if avg_buy > 0 else "Sin registros")
             i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             i_avg.setForeground(QColor("#94a3b8") if avg_buy > 0 else QColor("#334155"))
@@ -221,9 +239,16 @@ class InventoryAnalysisDialog(QDialog):
             i_price = QTableWidgetItem(format_isk(a.est_net_sell_unit))
             i_price.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             
-            i_total = QTableWidgetItem(format_isk(a.est_total_value))
-            i_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            i_total.setForeground(QColor("#10b981"))
+            if avg_buy > 0:
+                i_profit = QTableWidgetItem(format_isk(net_profit_total))
+                if net_profit_total > 0: i_profit.setForeground(QColor("#10b981"))
+                elif net_profit_total < 0: i_profit.setForeground(QColor("#ef4444"))
+                else: i_profit.setForeground(QColor("#94a3b8"))
+            else:
+                i_profit = QTableWidgetItem("Sin registros")
+                i_profit.setForeground(QColor("#334155"))
+            i_profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            i_profit.setToolTip(f"Valor Total Estimado: {format_isk(a.est_total_value)}")
             
             pct = (a.est_total_value / total_val * 100) if total_val > 0 else 0
             i_pct = QTableWidgetItem(f"{pct:.1f}%")
@@ -243,14 +268,14 @@ class InventoryAnalysisDialog(QDialog):
             self.table.setItem(row, 2, i_qty)
             self.table.setItem(row, 3, i_avg)
             self.table.setItem(row, 4, i_price)
-            self.table.setItem(row, 5, i_total)
+            self.table.setItem(row, 5, i_profit)
             self.table.setItem(row, 6, i_pct)
             self.table.setItem(row, 7, i_rec)
             self.table.setItem(row, 8, i_reason)
             
         layout.addWidget(self.table)
         
-        footer = QLabel("* Valores basados en el mejor precio de venta en Jita menos impuestos estimados.")
+        footer = QLabel("* PROFIT DE VENTA: Ganancia estimada restando el coste de compra e impuestos al valor de mercado actual.")
         footer.setStyleSheet("color: #334155; font-size: 9px; font-weight: 700;")
         layout.addWidget(footer)
 
@@ -273,6 +298,12 @@ class MarketMyOrdersView(QWidget):
         self.inventory_error_msg = ""
         self._syncing_headers = False
         
+        # Spinner logic
+        self.spinner_chars = ["|", "/", "-", "\\"]
+        self.spinner_idx = 0
+        self.spinner_timer = QTimer(self)
+        self.spinner_timer.timeout.connect(self._update_spinner)
+        
         self.setup_ui()
         self._load_ui_state()
         AuthManager.instance().authenticated.connect(self._on_authenticated)
@@ -289,10 +320,29 @@ class MarketMyOrdersView(QWidget):
         title_v = QVBoxLayout()
         title_lbl = QLabel("MIS PEDIDOS")
         title_lbl.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900; letter-spacing: 1px;")
+        
+        self.status_container = QHBoxLayout()
+        self.lbl_spinner = QLabel("")
+        self.lbl_spinner.setFixedWidth(15)
+        self.lbl_spinner.setStyleSheet("color: #3b82f6; font-weight: 900;")
+        
         self.lbl_status = QLabel("● SINCRONIZACIÓN REQUERIDA")
         self.lbl_status.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: 800;")
+        
+        self.status_container.addWidget(self.lbl_spinner)
+        self.status_container.addWidget(self.lbl_status)
+        self.status_container.addStretch()
+        
         title_v.addWidget(title_lbl)
-        title_v.addWidget(self.lbl_status)
+        title_v.addLayout(self.status_container)
+
+        # Progress bar (hidden by default)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("QProgressBar { background: #1e293b; border: none; border-radius: 2px; } QProgressBar::chunk { background: #3b82f6; border-radius: 2px; }")
+        self.progress_bar.hide()
+        title_v.addWidget(self.progress_bar)
 
         self.btn_repopulate = QPushButton("ACTUALIZAR")
         self.btn_refresh = QPushButton("SINCRONIZAR ÓRDENES")
@@ -304,6 +354,7 @@ class MarketMyOrdersView(QWidget):
             b.setStyleSheet(
                 "QPushButton { background-color: #1e293b; color: #94a3b8; font-size: 10px; font-weight: 900; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; }"
                 "QPushButton:hover { background-color: #334155; color: #f1f5f9; }"
+                "QPushButton:disabled { background-color: #0f172a; color: #475569; border: 1px solid #1e293b; }"
             )
         self.btn_refresh.setStyleSheet(self.btn_refresh.styleSheet().replace("#1e293b", "#3b82f6").replace("#94a3b8", "white"))
         self.btn_inventory.setStyleSheet(self.btn_inventory.styleSheet().replace("#1e293b", "#10b981").replace("#94a3b8", "white"))
@@ -328,7 +379,6 @@ class MarketMyOrdersView(QWidget):
         self.table_sell = self.create_table(is_buy=False)
         self.main_layout.addWidget(self.table_sell, 1)
 
-        # BLOQUE DE INFORMACIÓN DE TAXES
         self.setup_taxes_bar()
 
         # SECCIÓN ÓRDENES DE COMPRA
@@ -438,6 +488,34 @@ class MarketMyOrdersView(QWidget):
         
         dl.addLayout(self.grid, 5)
 
+    def _update_spinner(self):
+        self.lbl_spinner.setText(self.spinner_chars[self.spinner_idx])
+        self.spinner_idx = (self.spinner_idx + 1) % len(self.spinner_chars)
+
+    def _start_sync_ui(self, msg="INICIANDO..."):
+        self.btn_refresh.setEnabled(False)
+        self.btn_repopulate.setEnabled(False)
+        self.btn_inventory.setEnabled(False)
+        self.lbl_status.setText(msg)
+        self.lbl_status.setStyleSheet("color: #3b82f6;")
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.spinner_timer.start(100)
+
+    def _stop_sync_ui(self, msg="LISTO", color="#10b981"):
+        self.btn_refresh.setEnabled(True)
+        self.btn_repopulate.setEnabled(True)
+        self.btn_inventory.setEnabled(True)
+        self.lbl_status.setText(msg)
+        self.lbl_status.setStyleSheet(f"color: {color};")
+        self.lbl_spinner.setText("")
+        self.spinner_timer.stop()
+        QTimer.singleShot(3000, lambda: self.progress_bar.hide())
+
+    def _on_sync_update(self, msg, val):
+        self.lbl_status.setText(msg)
+        self.progress_bar.setValue(val)
+
     def _on_header_resized(self, source_table, index, size):
         if self._syncing_headers: return
         self._syncing_headers = True
@@ -486,12 +564,9 @@ class MarketMyOrdersView(QWidget):
             auth.login()
             return
         
-        self.btn_refresh.setEnabled(False)
-        self.btn_repopulate.setEnabled(False)
-        self.lbl_status.setText("● SINCRONIZANDO CON ESI...")
-        self.lbl_status.setStyleSheet("color:#3b82f6;")
-        
+        self._start_sync_ui("SINCRONIZANDO ÓRDENES...")
         self.worker = SyncWorker(auth.char_id, auth.current_token)
+        self.worker.status_update.connect(self._on_sync_update)
         self.worker.finished_data.connect(self.on_data_ready)
         self.worker.error.connect(self.on_error)
         self.worker.start()
@@ -500,10 +575,7 @@ class MarketMyOrdersView(QWidget):
         self.all_orders = orders
         self.update_taxes_info()
         self.populate_all(orders)
-        self.btn_refresh.setEnabled(True)
-        self.btn_repopulate.setEnabled(True)
-        self.lbl_status.setText(f"● LISTO: {len(orders)} ÓRDENES")
-        self.lbl_status.setStyleSheet("color:#10b981;")
+        self._stop_sync_ui(f"SINCRONIZACIÓN EXITOSA ({len(orders)} ÓRDENES)")
         self._start_inventory_preload()
 
     def update_taxes_info(self):
@@ -536,6 +608,7 @@ class MarketMyOrdersView(QWidget):
         self.inv_worker = InventoryWorker(auth.char_id, auth.current_token)
         self.inv_worker.finished_data.connect(self._on_inv_preloaded)
         self.inv_worker.location_info.connect(self._on_inv_loc_ready)
+        self.inv_worker.status_update.connect(lambda m, v: None) # Silencioso para preload
         self.inv_worker.error.connect(self._on_inv_error)
         self.inv_worker.start()
 
@@ -697,8 +770,7 @@ class MarketMyOrdersView(QWidget):
             QMessageBox.information(self, "Cargando", "Analizando inventario local...")
             return
         
-        self.lbl_status.setText("● CARGANDO INVENTARIO LOCAL...")
-        self.lbl_status.setStyleSheet("color:#3b82f6;")
+        self._start_sync_ui("CARGANDO INVENTARIO LOCAL...")
         auth = AuthManager.instance()
         if not auth.current_token:
             auth.login()
@@ -706,10 +778,12 @@ class MarketMyOrdersView(QWidget):
         
         self.inventory_status = "loading"
         self.inv_worker = InventoryWorker(auth.char_id, auth.current_token)
+        self.inv_worker.status_update.connect(self._on_sync_update)
         
         def on_done(data): 
             self.inventory_cache = data
             self.inventory_status = "ready"
+            self._stop_sync_ui("INVENTARIO CARGADO")
             if not data:
                 QMessageBox.information(self, "Inventario Local Vacío", f"No se encontraron activos valorables en {self.inventory_loc_name}.")
             else:
@@ -721,12 +795,10 @@ class MarketMyOrdersView(QWidget):
         self.inv_worker.start()
 
     def on_inventory_error(self, msg):
+        self._stop_sync_ui(f"ERROR: {msg[:30]}", "#ef4444")
         if msg == "missing_scope": QMessageBox.warning(self, "Permiso Faltante", "Falta el permiso 'esi-assets.read_assets.v1' o 'esi-location.read_location.v1'. Reautoriza el personaje.")
         elif msg == "pricing_error": QMessageBox.critical(self, "Error de Precios", "No se pudieron obtener precios de Jita.")
         else: QMessageBox.critical(self, "Error", f"Fallo al cargar inventario: {msg}")
 
     def on_error(self, err):
-        self.btn_refresh.setEnabled(True)
-        self.btn_repopulate.setEnabled(True)
-        self.lbl_status.setText(f"● ERROR: {err[:50]}")
-        self.lbl_status.setStyleSheet("color:#ef4444;")
+        self._stop_sync_ui(f"ERROR ESI: {err[:30]}", "#ef4444")

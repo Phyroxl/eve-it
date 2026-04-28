@@ -202,7 +202,11 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
         est_net_sell = bs * (1.0 - s_tax - b_fee) if bs > 0 else 0.0
         est_total_value = est_net_sell * qty
         
-        # Recomendación profesional
+        # Cálculo de Profit Real
+        net_profit_unit = est_net_sell - avg_buy if avg_buy > 0 else 0.0
+        net_profit_total = net_profit_unit * qty
+        
+        # Recomendación profesional basada en Profit
         recommendation = "MANTENER"
         reason = "Mercado estable"
         
@@ -212,21 +216,27 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
         elif spread_pct > 35:
             recommendation = "MANTENER"
             reason = "Spread excesivo (>35%)"
-        elif avg_buy > 0 and est_net_sell < avg_buy:
+        elif avg_buy == 0:
+            recommendation = "REVISAR"
+            reason = "Falta registro de coste (WAC)"
+        elif net_profit_unit < 0:
             recommendation = "MANTENER"
-            reason = "Precio neto < Coste medio"
-        elif est_net_sell > bb * 1.15:
-            recommendation = "VENDER"
-            reason = "Oportunidad de salida (+15% vs Buy)"
-        elif est_net_sell > bb:
-            recommendation = "VENDER"
-            reason = "Margen positivo vs Buy"
+            reason = f"Venta con pérdida ({format_isk(abs(net_profit_unit))} / u)"
+        elif net_profit_unit > 0:
+            margin_on_cost = (net_profit_unit / avg_buy) * 100
+            if margin_on_cost > 10:
+                recommendation = "VENDER"
+                reason = f"Profit sólido (+{margin_on_cost:.1f}% ROI)"
+            else:
+                recommendation = "MANTENER"
+                reason = "Margen de beneficio bajo"
         else:
             recommendation = "MANTENER"
             reason = "Mejor esperar mejores precios"
 
         analysis = InventoryAnalysis(best_buy=bb, best_sell=bs, spread_pct=spread_pct, est_net_sell_unit=est_net_sell, est_total_value=est_total_value, recommendation=recommendation, reason=reason)
         item = InventoryItem(type_id=t_id, item_name=item_names.get(t_id, f"Type {t_id}"), quantity=qty, location_id=loc_id, analysis=analysis)
-        item._avg_buy = avg_buy # Atributo dinámico para el diálogo
+        item._avg_buy = avg_buy 
+        item._net_profit_total = net_profit_total
         results.append(item)
     return results
