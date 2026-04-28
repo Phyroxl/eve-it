@@ -1563,4 +1563,33 @@ Se ha realizado una reconstrucción completa de los archivos funcionales para ga
 - [x] **Inventario**: Sincronización activa la precarga; botón abre el diálogo sin retardo tras 5s.
 - [x] **Visual**: Columna Mi Promedio alineada correctamente con separadores ISK.
 
-*Estado: Implementación funcional confirmada y sincronizada.*
+### SESIÓN 24 BUGFIX (POST-NUCLEAR) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE CORRECCIONES
+Se han corregido errores críticos introducidos durante la reescritura nuclear del commit `a50c4a7`, enfocándose en la integridad del modelo de datos y la gestión de permisos.
+
+**Correcciones Realizadas:**
+1. **InventoryAnalysisDialog (Model Fix)**:
+   - Se ha corregido el uso de campos en el diálogo de inventario. Ahora utiliza `item.item_name`, `item.analysis.est_total_value` y `item.analysis.best_sell` en lugar de campos planos inexistentes.
+   - Se ha añadido una ordenación automática por valor total (descendente) para mejorar la usabilidad.
+2. **Gestión de Permisos (missing_scope)**:
+   - El estado `missing_scope` ya no se trata como inventario vacío.
+   - Se ha implementado un manejador de errores específico en `on_inventory_error` que informa al usuario que debe re-autenticarse para otorgar permisos de activos.
+3. **Optimización de Caché**:
+   - La precarga ahora guarda correctamente el estado de error.
+   - Si la precarga falla o el permiso falta, el botón "Analizar Inventario" permite reintentar o informa del error detallado en lugar de quedar bloqueado o mostrar una ventana vacía.
+4. **Verificación de UI**:
+   - Confirmada la alineación numérica en `My Orders` (columna 3, 4, 5 y 10).
+   - Verificado que el doble click y la selección de filas mantienen la integridad de los datos.
+
+**Archivos Modificados:**
+- `ui/market_command/my_orders_view.py`: Corrección de modelos, permisos y lógica de diálogos.
+
+**Pruebas Realizadas:**
+- [x] **Compilación**: `py_compile` exitoso en archivos modificados.
+- [x] **Modelos**: Verificación de estructura `item.analysis.est_total_value`.
+- [x] **Flujo de Error**: Simulación de `missing_scope` capturada correctamente.
+
+*Estado: Sistema estabilizado y modelos sincronizados con core.*

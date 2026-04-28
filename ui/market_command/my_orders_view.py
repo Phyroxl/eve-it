@@ -1,4 +1,4 @@
-import logging # VERSION: 1.1.0-STABILITY (Functional Sync & Inventory Pre-loading)
+import logging # VERSION: 1.1.1-BUGFIX (Real Models & Permissions)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout, QDialog
@@ -67,7 +67,12 @@ class InventoryWorker(QThread):
         try:
             client = ESIClient()
             assets = client.character_assets(self.char_id, self.token)
-            if assets == "missing_scope" or not assets:
+            
+            if assets == "missing_scope":
+                self.error.emit("missing_scope")
+                return
+                
+            if not assets:
                 self.finished_data.emit([])
                 return
             
@@ -117,7 +122,7 @@ class InventoryAnalysisDialog(QDialog):
         hl.addLayout(title_v)
         hl.addStretch()
         
-        total_val = sum(item.total_value for item in self.items)
+        total_val = sum(item.analysis.est_total_value for item in self.items)
         val_v = QVBoxLayout()
         val_lbl = QLabel(format_isk(total_val))
         val_lbl.setStyleSheet("color: #10b981; font-size: 20px; font-weight: 900; border:none;")
@@ -144,21 +149,27 @@ class InventoryAnalysisDialog(QDialog):
         self.table.setColumnWidth(0, 40)
         self.table.setColumnWidth(1, 300)
 
-        for row, item in enumerate(self.items):
+        # Sort items by value descending
+        sorted_items = sorted(self.items, key=lambda x: x.analysis.est_total_value, reverse=True)
+
+        for row, item in enumerate(sorted_items):
             i_icon = QTableWidgetItem()
             url = ItemMetadataHelper.get_icon_url(item.type_id)
             self.image_loader.load(url, lambda px, it=i_icon: it.setIcon(QIcon(px)))
 
-            i_name = QTableWidgetItem(item.name)
+            i_name = QTableWidgetItem(item.item_name)
             i_qty = QTableWidgetItem(f"{item.quantity:,}")
             i_qty.setTextAlignment(Qt.AlignCenter)
-            i_price = QTableWidgetItem(format_isk(item.price))
+            
+            unit_price = item.analysis.best_sell
+            i_price = QTableWidgetItem(format_isk(unit_price))
             i_price.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            i_total = QTableWidgetItem(format_isk(item.total_value))
+            
+            i_total = QTableWidgetItem(format_isk(item.analysis.est_total_value))
             i_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             i_total.setForeground(QColor("#10b981"))
             
-            pct = (item.total_value / total_val * 100) if total_val > 0 else 0
+            pct = (item.analysis.est_total_value / total_val * 100) if total_val > 0 else 0
             i_pct = QTableWidgetItem(f"{pct:.1f}%")
             i_pct.setTextAlignment(Qt.AlignCenter)
 
@@ -208,7 +219,6 @@ class MarketMyOrdersView(QWidget):
         self.btn_refresh = QPushButton("SINCRONIZAR ÓRDENES")
         self.btn_inventory = QPushButton("ANALIZAR INVENTARIO")
         
-        # Estilo Compacto Premium
         for b in [self.btn_repopulate, self.btn_refresh, self.btn_inventory]:
             b.setCursor(Qt.PointingHandCursor)
             b.setFixedHeight(35)
@@ -257,7 +267,6 @@ class MarketMyOrdersView(QWidget):
         self.main_layout.addWidget(QLabel("ÓRDENES DE COMPRA", styleSheet="color:#3b82f6; font-weight:900; font-size:10px;"))
         self.main_layout.addWidget(self.table_buy, 1)
 
-        # Panel Detalle Rediseñado
         self.detail_panel = QFrame()
         self.detail_panel.setFixedHeight(130)
         self.detail_panel.setStyleSheet("background-color: #000000; border: 1px solid #1e293b; border-radius: 4px;")
@@ -326,8 +335,6 @@ class MarketMyOrdersView(QWidget):
         self.btn_repopulate.setEnabled(True)
         self.lbl_status.setText(f"● LISTO: {len(orders)} ÓRDENES")
         self.lbl_status.setStyleSheet("color:#10b981;")
-        
-        # PRECARGA AUTOMÁTICA
         self._start_inventory_preload()
 
     def _start_inventory_preload(self):
@@ -359,18 +366,15 @@ class MarketMyOrdersView(QWidget):
                 a = o.analysis
                 cost = CostBasisService.instance().get_cost_basis(o.type_id)
                 
-                # Icono
                 i_ico = QTableWidgetItem()
                 i_ico.setData(Qt.UserRole, o.type_id)
                 i_ico.setData(Qt.UserRole + 1, o.order_id)
                 self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_ico: it.setIcon(QIcon(px)))
 
-                # Mi Promedio - REAL FIX
                 i_avg = QTableWidgetItem(format_isk(cost.average_buy_price) if cost else "Sin registros")
                 i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 i_avg.setForeground(QColor("#f1f5f9") if cost else QColor("#475569"))
 
-                # Resto de columnas
                 items = [
                     i_ico, QTableWidgetItem(o.item_name), 
                     QTableWidgetItem("BUY" if o.is_buy_order else "SELL"),
@@ -383,11 +387,9 @@ class MarketMyOrdersView(QWidget):
                     QTableWidgetItem(format_isk(a.net_profit_total) if not o.is_buy_order and cost else "---"),
                     QTableWidgetItem(a.state)
                 ]
-                # Alineación numérica
-                for i in [3,5,10]: items[i].setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                for i in [3,4,5,10]: items[i].setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 for i in [2,6,7,8,9,11]: items[i].setTextAlignment(Qt.AlignCenter)
                 
-                # Colores
                 items[2].setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
                 if not o.is_buy_order and cost:
                     if a.margin_pct > 15: items[9].setForeground(QColor("#10b981"))
@@ -430,7 +432,7 @@ class MarketMyOrdersView(QWidget):
         
         if not o.is_buy_order and cost:
             self.det_margin.setText(f"{a.margin_pct:.1f}%")
-            self.det_profit_u.setText(format_isk(a.net_profit_unit))
+            self.det_profit_u.setText(format_isk(a.net_profit_per_unit))
             self.det_profit_t.setText(format_isk(a.net_profit_total))
         else:
             self.det_margin.setText("---")
@@ -448,8 +450,17 @@ class MarketMyOrdersView(QWidget):
         elif self.inventory_status == "loading":
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(self, "Cargando", "Analizando inventario en segundo plano...")
+        elif self.inventory_status == "error":
+            self.on_inventory_error(self.inventory_error_msg)
         else:
-            self._start_inventory_preload() # Reintentar
+            self._start_inventory_preload()
+
+    def on_inventory_error(self, msg):
+        from PySide6.QtWidgets import QMessageBox
+        if msg == "missing_scope":
+            QMessageBox.warning(self, "Permiso Faltante", "Falta el permiso 'esi-assets.read_assets.v1'. Re-autentica para activarlo.")
+        else:
+            QMessageBox.critical(self, "Error", f"Fallo al cargar inventario: {msg}")
 
     def on_error(self, err):
         self.btn_refresh.setEnabled(True); self.btn_repopulate.setEnabled(True)
