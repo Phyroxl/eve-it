@@ -821,6 +821,11 @@ class MarketPerformanceView(QWidget):
             item_cell = QTableWidgetItem(item.item_name)
             item_cell.setData(Qt.UserRole, item.item_id)
             
+            # Placeholder
+            placeholder = QPixmap(32, 32)
+            placeholder.fill(QColor("#0f172a"))
+            item_cell.setIcon(QIcon(placeholder))
+            
             icon_url = f"https://images.evetech.net/types/{item.item_id}/icon?size=32"
             self._load_icon_into_table_item(self.top_items_table, i, 0, item.item_id, icon_url, gen)
             
@@ -874,6 +879,12 @@ class MarketPerformanceView(QWidget):
             
             name_cell = QTableWidgetItem(r[1] or "Unknown")
             name_cell.setData(Qt.UserRole, r[5])
+            
+            # Placeholder
+            placeholder = QPixmap(32, 32)
+            placeholder.fill(QColor("#0f172a"))
+            name_cell.setIcon(QIcon(placeholder))
+            
             icon_url = f"https://images.evetech.net/types/{r[5]}/icon?size=32"
             self._load_icon_into_table_item(self.trans_table, i, 1, r[5], icon_url, gen)
             self.trans_table.setItem(i, 1, name_cell)

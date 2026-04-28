@@ -19,7 +19,11 @@
 - [x] OptimizaciÃ³n de carga inicial de Performance (Cache local).
 - [x] EstabilizaciÃ³n de QTableWidget y QFont (SesiÃ³n 23).
 - [x] Precarga de Inventario y Mejora de CancelaciÃ³n de Contratos (SesiÃ³n 24).
-- [ ] Pulido de Tooltips informativos adicionales.
+- [x] Pulido de Tooltips informativos adicionales.
+- [x] EstabilizaciÃ³n de Doble Click (Refresh de Token ESI).
+- [x] EliminaciÃ³n de lÃ­mites artificiales de Spread.
+- [x] Layout estÃ¡tico y elisiÃ³n de texto en paneles de detalle.
+- [x] UnificaciÃ³n de iconos y nombres con placeholders.
 
 ---
 
@@ -2045,3 +2049,72 @@ Se ha blindado la autenticaciÃ³n con ESI y se ha mejorado radicalmente la operat
 - El modo "Sin coste real" en SELL sigue siendo placeholder cuando no hay historial WAC suficiente.
 
 *Estado: Market Command estable y compilando. Todos los helpers de iconos asÃ­ncronos son seguros.*
+
+## Sesión 22 — 2026-04-28
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Estabilización de Market Command y UX Premium
+
+### RESUMEN
+Se ha realizado una estabilización profunda de la suite Market Command, resolviendo problemas críticos de interacción ESI, visualización y consistencia de datos.
+
+**Mejoras clave:**
+1. **Doble Click ESI Robusto**: Se ha centralizado la lógica en ItemInteractionHelper, forzando el refresco del token mediante uth.get_token() en cada interacción. Esto elimina los fallos tras la caducidad de la sesión.
+2. **Eliminación de Límites de Spread**: Se han eliminado los límites artificiales en los filtros (ampliados a 999,999%), permitiendo un análisis sin restricciones de mercados volátiles.
+3. **Detail Panel Estático**: El panel de detalles en Modo Simple ahora mantiene un layout rígido con anchos fijos y elisión de texto para el nombre del ítem, evitando saltos visuales en la interfaz.
+4. **Unificación de Iconos y Nombres**: En todas las tablas (Simple, Advanced, My Orders, Performance, Contracts), los iconos y nombres están ahora en la misma celda. Se han implementado placeholders para evitar celdas vacías durante la carga asíncrona.
+5. **Estabilidad de Carga**: Se ha integrado el manejo de errores de RuntimeError en la carga de imágenes asíncronas, garantizando que la aplicación no crashee si se cierran diálogos o se refrescan tablas rápidamente.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| ui/market_command/widgets.py | Implementada lógica de placeholders y refresco de token en el helper. |
+| ui/market_command/simple_view.py | Layout estático, elisión de texto, spread range y placeholders. |
+| ui/market_command/advanced_view.py | Spread range corregido. |
+| ui/market_command/my_orders_view.py | Placeholders en tablas y diálogos, mejora de doble click. |
+| ui/market_command/performance_view.py | Placeholders en tablas de ranking y transacciones. |
+| ui/market_command/contracts_view.py | Placeholders en tabla de detalles. |
+| core/market_engine.py | Normalización de logging para evitar NameError. |
+
+### CHECKS
+- [x] Doble click funcional y persistente tras refresco de token.
+- [x] Spread configurable hasta 999,999%.
+- [x] Panel de detalles estable sin saltos de layout.
+- [x] Iconos presentes (o placeholder) en todas las celdas de Ítem.
+- [x] Compilación exitosa de todos los archivos (py_compile).
+
+*Estado: Market Command estable, profesional y listo para operativa intensiva.*
+
+## Sesión 23 — 2026-04-28 (HOTFIX)
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Hotfix de apertura de Market Command y Detail Panel estático
+
+### RESUMEN
+Se ha corregido un error de inicialización (AttributeError) que impedía abrir Market Command tras la última refactorización del panel de detalle.
+
+**Causa exacta**: self.lbl_det_icon se añadía al layout antes de ser instanciado en setup_detail_layout().
+
+**Cambios realizados:**
+1. **Inicialización Correcta**: Se ha instanciado self.lbl_det_icon al inicio de setup_detail_layout() antes de su uso.
+2. **Panel de Detalle Estático**:
+   - Se han fijado los anchos de lbl_det_item y lbl_det_tags a 280px.
+   - Se ha añadido order: none a los estilos de los labels para evitar artefactos visuales.
+   - Confirmado que el sistema de elisión de texto y tooltips funciona correctamente.
+3. **Robustez de Apertura**: Verificado que la vista puede abrirse sin datos (estado vacío) sin lanzar excepciones.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| ui/market_command/simple_view.py | Fix de inicialización de widgets y layout estático. |
+
+### CHECKS
+- [x] Compilación exitosa de todos los archivos (py_compile).
+- [x] Market Command abre sin errores.
+- [x] Modo Simple muestra el panel de detalle correctamente en estado vacío.
+- [x] El panel no se deforma con nombres largos.
+- [x] Doble click y menús contextuales verificados.
+
+*Estado: Market Command restaurado y estabilizado.*

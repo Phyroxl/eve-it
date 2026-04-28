@@ -341,6 +341,12 @@ class InventoryAnalysisDialog(QDialog):
             
             i_name = QTableWidgetItem(item.item_name)
             i_name.setData(Qt.UserRole, item.type_id)
+            
+            # Placeholder
+            placeholder = QPixmap(32, 32)
+            placeholder.fill(QColor("#0f172a"))
+            i_name.setIcon(QIcon(placeholder))
+            
             icon_url = ItemMetadataHelper.get_icon_url(item.type_id)
             self._load_icon_into_table_item(self.table, row, 0, item.type_id, icon_url, gen)
             
@@ -380,7 +386,7 @@ class InventoryAnalysisDialog(QDialog):
     def on_double_click(self, item):
         tid = self.table.item(item.row(), 0).data(Qt.UserRole)
         name = self.table.item(item.row(), 0).text()
-        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: None)
+        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
 
     def save_layout(self):
         cfg = {"widths": [self.table.columnWidth(i) for i in range(self.table.columnCount())]}
@@ -512,6 +518,12 @@ class TradeProfitsDialog(QDialog):
             # Columna ÍTEM (Icono + Nombre)
             i_item = QTableWidgetItem(t['name'])
             i_item.setData(Qt.UserRole, t['type_id'])
+            
+            # Placeholder
+            placeholder = QPixmap(24, 24)
+            placeholder.fill(QColor("#0f172a"))
+            i_item.setIcon(QIcon(placeholder))
+            
             icon_url = ItemMetadataHelper.get_icon_url(t['type_id'])
             self._load_icon_into_table_item(self.table, r, 1, t['type_id'], icon_url, gen)
             
@@ -572,7 +584,7 @@ class TradeProfitsDialog(QDialog):
         row = item.row()
         tid = self.table.item(row, 1).data(Qt.UserRole)
         name = self.table.item(row, 1).text()
-        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: None)
+        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
 
 # --- Main View ---
 
@@ -881,6 +893,12 @@ class MarketMyOrdersView(QWidget):
             i_name = QTableWidgetItem(o.item_name)
             i_name.setData(Qt.UserRole, o.type_id)
             i_name.setData(Qt.UserRole + 1, o.order_id)
+            
+            # Placeholder
+            placeholder = QPixmap(24, 24)
+            placeholder.fill(QColor("#0f172a"))
+            i_name.setIcon(QIcon(placeholder))
+            
             icon_url = ItemMetadataHelper.get_icon_url(o.type_id)
             self._load_icon_into_table_item(t, r, 0, o.type_id, icon_url, gen)
             

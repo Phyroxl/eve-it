@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QComboBox, QSplitter
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QGuiApplication, QIcon
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 from core.contracts_models import ContractsFilterConfig
@@ -652,6 +652,11 @@ class MarketContractsView(QWidget):
                 for it in [i_name, i_qty, i_price, i_val, i_pct]:
                     it.setForeground(QColor("#f59e0b"))
 
+            # Placeholder
+            placeholder = QPixmap(24, 24)
+            placeholder.fill(QColor("#0f172a"))
+            i_name.setIcon(QIcon(placeholder))
+            
             icon_url = ItemMetadataHelper.get_icon_url(
                 item.type_id, 
                 is_blueprint=item.is_blueprint, 

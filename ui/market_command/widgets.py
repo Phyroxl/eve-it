@@ -28,19 +28,24 @@ class ItemInteractionHelper:
         success = False
         error_msg = ""
         
-        if not char_id or char_id == -1:
-            error_msg = "Sin personaje seleccionado"
+        # Obtener AuthManager
+        from core.auth_manager import AuthManager
+        auth = AuthManager.instance()
+        
+        # Siempre intentar usar el char_id actual si el pasado es inválido
+        active_char_id = char_id if (char_id and char_id > 0) else auth.char_id
+        
+        if not active_char_id or active_char_id <= 0:
+            error_msg = "Personaje no vinculado o sesión expirada"
         elif not type_id:
-            error_msg = "ID de item no disponible"
+            error_msg = "ID de ítem no disponible"
         else:
             try:
-                # Obtener el token activo del AuthManager
-                from core.auth_manager import AuthManager
-                auth = AuthManager.instance()
-                token = auth.current_token
+                # Obtener el token ACTUALIZADO (refresca si es necesario)
+                token = auth.get_token()
                 
                 if not token:
-                    error_msg = "ESI no autenticado"
+                    error_msg = "ESI no autenticado o token caducado. Reautoriza el personaje."
                 else:
                     res = esi_client.open_market_window(type_id, token)
                     if res:
@@ -49,9 +54,9 @@ class ItemInteractionHelper:
                         log.info(msg)
                         if feedback_callback: feedback_callback(msg, "#34d399") # Verde
                     else:
-                        error_msg = "Error ESI al abrir mercado"
+                        error_msg = "Error ESI al abrir mercado (¿Sesión expirada?)"
             except Exception as e:
-                error_msg = f"Fallo de conexión ESI: {str(e)}"
+                error_msg = f"Error de conexión ESI: {str(e)}"
                 log.error(f"Error en open_market: {e}")
 
         if not success:
@@ -72,10 +77,10 @@ class ItemInteractionHelper:
         
         from core.auth_manager import AuthManager
         auth = AuthManager.instance()
-        token = auth.current_token
+        token = auth.get_token() # Usar get_token para refresco
         
         if not token:
-            msg = "ESI no autenticado"
+            msg = "ESI no autenticado o sesión expirada. Reautoriza el personaje."
             if feedback_callback: feedback_callback(msg, "#f87171")
             return False
 
@@ -214,10 +219,16 @@ class MarketTableWidget(QTableWidget):
             
             item = QTableWidgetItem(opp.item_name)
             item.setData(Qt.UserRole, opp.type_id)
-            # Support for async icon loading
+            
+            # Icon setup with placeholder
+            from core.item_metadata import ItemMetadataHelper
+            placeholder = QPixmap(32, 32)
+            placeholder.fill(QColor("#0f172a"))
+            
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
+                item.setIcon(QIcon(placeholder))
                 self.load_icon_async(opp.type_id, item, row, gen)
             
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
@@ -342,9 +353,15 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             # 1. Item
             item = QTableWidgetItem(opp.item_name)
             item.setData(Qt.UserRole, opp.type_id)
+            
+            from core.item_metadata import ItemMetadataHelper
+            placeholder = QPixmap(32, 32)
+            placeholder.fill(QColor("#0f172a"))
+
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
+                item.setIcon(QIcon(placeholder))
                 self.load_icon_async(opp.type_id, item, row, gen)
             
             # 2. Score

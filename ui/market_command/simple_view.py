@@ -121,7 +121,7 @@ class MarketSimpleView(QWidget):
         add_compact_input(scroll_layout, "Margen Mínimo %", self.spin_margin)
 
         self.spin_spread = QDoubleSpinBox()
-        self.spin_spread.setRange(0, 100); self.spin_spread.setSuffix("%"); self.spin_spread.setValue(self.current_config.spread_max_pct)
+        self.spin_spread.setRange(0, 999999); self.spin_spread.setSuffix("%"); self.spin_spread.setValue(self.current_config.spread_max_pct)
         add_compact_input(scroll_layout, "Spread Máximo %", self.spin_spread)
 
         self.spin_broker = QDoubleSpinBox()
@@ -199,22 +199,31 @@ class MarketSimpleView(QWidget):
         dl.setContentsMargins(10, 10, 10, 10)
         dl.setSpacing(15)
         
-        self.lbl_det_icon = QLabel(); self.lbl_det_icon.setFixedSize(48, 48)
+        self.lbl_det_icon = QLabel()
+        self.lbl_det_icon.setFixedSize(48, 48)
         self.lbl_det_icon.setStyleSheet("background: #0f172a; border-radius: 4px;")
+        dl.addWidget(self.lbl_det_icon)
         
         name_v = QVBoxLayout()
         self.lbl_det_item = QLabel("SELECCIONA ITEM")
-        self.lbl_det_item.setStyleSheet("color: #f1f5f9; font-size: 13px; font-weight: 900;")
+        self.lbl_det_item.setFixedHeight(20)
+        self.lbl_det_item.setFixedWidth(280) # Ancho fijo para evitar que crezca la grid
+        self.lbl_det_item.setStyleSheet("color: #f1f5f9; font-size: 13px; font-weight: 900; border: none;")
         self.lbl_det_tags = QLabel("---")
-        self.lbl_det_tags.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 700;")
+        self.lbl_det_tags.setFixedHeight(12)
+        self.lbl_det_tags.setFixedWidth(280)
+        self.lbl_det_tags.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 700; border: none;")
         name_v.addWidget(self.lbl_det_item); name_v.addWidget(self.lbl_det_tags); name_v.addStretch()
         
-        dl.addWidget(self.lbl_det_icon); dl.addLayout(name_v, 1)
+        dl.addLayout(name_v)
 
         m_g = QGridLayout()
         m_g.setSpacing(5)
         def add_det_metric(layout, row, col, lbl_txt, val_obj, color="#e2e8f0"):
-            layout.addWidget(QLabel(lbl_txt, styleSheet="color: #475569; font-size: 7px; font-weight: 800;"), row*2, col)
+            lbl = QLabel(lbl_txt, styleSheet="color: #475569; font-size: 7px; font-weight: 800;")
+            lbl.setFixedWidth(80)
+            layout.addWidget(lbl, row*2, col)
+            val_obj.setFixedWidth(80)
             val_obj.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 800;")
             layout.addWidget(val_obj, row*2+1, col)
 
@@ -224,7 +233,7 @@ class MarketSimpleView(QWidget):
         add_det_metric(m_g, 0, 1, "SELL PRICE", self.lbl_det_sell)
         add_det_metric(m_g, 1, 0, "NET PROFIT", self.lbl_det_profit, "#10b981")
         add_det_metric(m_g, 1, 1, "MARGIN %", self.lbl_det_margin, "#3b82f6")
-        dl.addLayout(m_g, 1)
+        dl.addLayout(m_g)
 
         s_v = QVBoxLayout()
         s_v.addWidget(QLabel("SCORE & RISK", styleSheet="color: #475569; font-size: 7px; font-weight: 800;"))
@@ -355,13 +364,22 @@ class MarketSimpleView(QWidget):
         item_name = self.table.item(row, 1).text()
         opp = next((o for o in self.all_opportunities if o.item_name == item_name), None)
         if opp:
-            self.lbl_det_item.setText(opp.item_name.upper())
+            # Texto elidido para el nombre
+            metrics = self.lbl_det_item.fontMetrics()
+            elided = metrics.elidedText(opp.item_name.upper(), Qt.ElideRight, self.lbl_det_item.width())
+            self.lbl_det_item.setText(elided)
+            self.lbl_det_item.setToolTip(opp.item_name.upper())
+
             tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
             self.lbl_det_tags.setText(tags_str if tags_str else "SIN ETIQUETAS")
             if opp.type_id in self.table.icon_cache:
                 pixmap = self.table.icon_cache[opp.type_id]
                 self.lbl_det_icon.setPixmap(pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            else: self.lbl_det_icon.clear()
+            else: 
+                # Placeholder si no hay icono aún
+                placeholder = QPixmap(48, 48)
+                placeholder.fill(QColor("#0f172a"))
+                self.lbl_det_icon.setPixmap(placeholder)
             
             from utils.formatters import format_isk
             self.lbl_det_buy.setText(f"{format_isk(opp.best_buy_price, short=True)} ISK")

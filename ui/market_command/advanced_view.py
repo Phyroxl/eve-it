@@ -101,7 +101,7 @@ class MarketAdvancedView(QWidget):
         add_adv_input(scroll_layout, "Margen Mínimo %", self.spin_margin)
 
         self.spin_spread = QDoubleSpinBox()
-        self.spin_spread.setRange(0, 1000); self.spin_spread.setSuffix("%"); self.spin_spread.setDecimals(1)
+        self.spin_spread.setRange(0, 999999); self.spin_spread.setSuffix("%"); self.spin_spread.setDecimals(1)
         add_adv_input(scroll_layout, "Spread Máximo %", self.spin_spread)
 
         # ─── BLOQUE 2: LIQUIDEZ Y VOLUMEN ───
