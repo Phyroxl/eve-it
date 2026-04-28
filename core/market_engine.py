@@ -207,33 +207,30 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
         net_profit_unit = est_net_sell - avg_buy if avg_buy > 0 else 0.0
         net_profit_total = net_profit_unit * qty
         
-        # Recomendación profesional basada en Profit
+        # Recomendación profesional basada en Profit Real (WAC)
         recommendation = "MANTENER"
         reason = "Mercado estable"
         
         if bs == 0:
             recommendation = "REVISAR"
-            reason = "Sin liquidez en Jita"
-        elif spread_pct > 35:
-            recommendation = "MANTENER"
-            reason = "Spread excesivo (>35%)"
+            reason = "Sin datos de mercado"
         elif avg_buy == 0:
             recommendation = "REVISAR"
-            reason = "Falta registro de coste (WAC)"
+            reason = "Sin registro de coste (WAC)"
+        elif net_profit_unit > 0:
+            recommendation = "VENDER"
+            margin_on_cost = (net_profit_unit / avg_buy) * 100
+            reason = f"Profit positivo (+{margin_on_cost:.1f}% ROI)"
         elif net_profit_unit < 0:
             recommendation = "MANTENER"
-            reason = f"Venta con pérdida ({format_isk(abs(net_profit_unit))} / u)"
-        elif net_profit_unit > 0:
-            margin_on_cost = (net_profit_unit / avg_buy) * 100
-            if margin_on_cost > 10:
-                recommendation = "VENDER"
-                reason = f"Profit sólido (+{margin_on_cost:.1f}% ROI)"
-            else:
-                recommendation = "MANTENER"
-                reason = "Margen de beneficio bajo"
+            reason = "Venta con pérdida"
         else:
             recommendation = "MANTENER"
-            reason = "Mejor esperar mejores precios"
+            reason = "Margen de beneficio bajo"
+            
+        # Añadir advertencia de spread si es excesivo
+        if spread_pct > 35 and bs > 0:
+            reason += " (Spread alto: confirmar liquidez)"
 
         analysis = InventoryAnalysis(best_buy=bb, best_sell=bs, spread_pct=spread_pct, est_net_sell_unit=est_net_sell, est_total_value=est_total_value, recommendation=recommendation, reason=reason)
         item = InventoryItem(type_id=t_id, item_name=item_names.get(t_id, f"Type {t_id}"), quantity=qty, location_id=loc_id, analysis=analysis)

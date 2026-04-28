@@ -1974,6 +1974,7 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Fresh Data**: Confirmado que cambiar un precio en el juego se refleja como cambio de estado tras sincronizar en la app.
 - [x] **Hotfix Formato**: Corregido error que mostraba números en notación científica y raw floats en lugar de ISK formateado al activar la ordenación.
 - [x] **Fix WAC (Mi Promedio)**: Corregido error de mapeo de nombres de métodos (`wallet_transactions`) que impedía cargar el historial de la wallet y calcular el coste medio (WAC).
-- [x] **Bucle Infinito**: Eliminado bucle infinito en la descarga de transacciones de la wallet.
+- [x] **Lógica Inventario**: Ajustada la lógica para priorizar el Profit sobre el Spread. Ahora se recomienda `VENDER` si hay beneficio, indicando el spread alto solo como advertencia.
+- [x] **Estilo Visual**: Implementado color `#87E101` para motivos relacionados con Spread en el Inventario.
 
-*Estado: Inteligencia financiera restaurada y operativa.*
+*Estado: Lógica de recomendación optimizada y visuales tácticos ajustados.*

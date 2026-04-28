@@ -196,10 +196,16 @@ class InventoryAnalysisDialog(QDialog):
             else: i_rec.setForeground(QColor("#3b82f6"))
             
             i_reason = SemanticTableWidgetItem(a.reason); r_txt = a.reason.lower()
-            if any(x in r_txt for x in ["spread excesivo", "profit sólido", "margen positivo"]): i_reason.setForeground(QColor("#10b981"))
-            elif "bajo" in r_txt: i_reason.setForeground(QColor("#f59e0b"))
-            elif "pérdida" in r_txt or "bajo el coste" in r_txt: i_reason.setForeground(QColor("#ef4444"))
-            else: i_reason.setForeground(QColor("#64748b"))
+            if "spread alto" in r_txt or "spread excesivo" in r_txt:
+                i_reason.setForeground(QColor("#87E101"))
+            elif any(x in r_txt for x in ["profit sólido", "profit positivo", "margen positivo"]):
+                i_reason.setForeground(QColor("#10b981"))
+            elif "bajo" in r_txt:
+                i_reason.setForeground(QColor("#f59e0b"))
+            elif "pérdida" in r_txt or "bajo el coste" in r_txt:
+                i_reason.setForeground(QColor("#ef4444"))
+            else:
+                i_reason.setForeground(QColor("#64748b"))
             
             self.table.setItem(row, 0, i_icon); self.table.setItem(row, 1, i_name); self.table.setItem(row, 2, i_qty)
             self.table.setItem(row, 3, i_avg); self.table.setItem(row, 4, i_price); self.table.setItem(row, 5, i_profit)
