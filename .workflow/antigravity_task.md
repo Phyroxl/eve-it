@@ -1592,4 +1592,41 @@ Se han corregido errores críticos introducidos durante la reescritura nuclear d
 - [x] **Modelos**: Verificación de estructura `item.analysis.est_total_value`.
 - [x] **Flujo de Error**: Simulación de `missing_scope` capturada correctamente.
 
-*Estado: Sistema estabilizado y modelos sincronizados con core.*
+### SESIÓN 24 UX & FLUIDEZ (POST-BUGFIX) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se han implementado mejoras significativas en la fluidez y la experiencia de usuario de la pestaña `Mis Pedidos`, enfocándose en la persistencia visual y la claridad de datos.
+
+**Mejoras Implementadas:**
+1. **Sincronización de Columnas (Bidireccional)**:
+   - Las tablas de Compras y Ventas ahora actúan como un solo espejo. Si el usuario redimensiona o mueve una columna en una, el cambio se aplica instantáneamente en la otra.
+   - Implementado control de señales para evitar bucles infinitos durante la sincronización.
+2. **Persistencia de UI (Guardar/Cargar)**:
+   - El orden y la anchura de las columnas se guardan automáticamente en `config/ui_my_orders.json`.
+   - La configuración se restaura al abrir la aplicación, manteniendo el layout personalizado del usuario.
+3. **Coloreado Dinámico de Estados**:
+   - La columna **Estado** ahora usa colores semánticos:
+     - **Verde**: Sana, Liderando, Competitiva.
+     - **Naranja/Amarillo**: Superado, Ajustado, Rentable.
+     - **Rojo**: Pérdida, Error, No rentable.
+4. **Mejora del Botón de Inventario**:
+   - Renombrado a `INVENTARIO` para una estética más limpia.
+   - Lógica mejorada: si los datos no están precargados, el botón inicia la carga y abre el diálogo automáticamente al finalizar, en lugar de solo mostrar un aviso.
+5. **Enriquecimiento Visual del Detalle**:
+   - El panel inferior ahora utiliza colores tácticos:
+     - Precios de mercado en **Azul** (compra) y **Rojo** (venta).
+     - Métricas de beneficio en **Verde/Rojo** según rentabilidad.
+     - Mi Promedio destacado según disponibilidad de datos.
+
+**Archivos Modificados:**
+- `core/config_manager.py`: Añadidas funciones de guardado/carga de UI genéricas.
+- `ui/market_command/my_orders_view.py`: Implementada lógica de sincronización, persistencia y coloreado.
+
+**Pruebas Realizadas:**
+- [x] **Columnas**: Movimiento y redimensionado sincronizado entre tablas.
+- [x] **Persistencia**: Cierre y apertura de app mantiene anchos de columna.
+- [x] **Colores**: Verificación de estados y métricas con colores premium.
+
+*Estado: Interfaz de trading profesional y fluida.*

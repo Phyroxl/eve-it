@@ -101,3 +101,23 @@ def save_contracts_filters(config) -> None:
     path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'config', 'contracts_filters.json'))
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(dataclasses.asdict(config), f, indent=2)
+
+def save_ui_config(view_id: str, config: dict):
+    """Guarda la configuración de la interfaz (columnas, etc.)"""
+    _CONFIG_DIR.mkdir(exist_ok=True)
+    file = _CONFIG_DIR / f'ui_{view_id}.json'
+    try:
+        file.write_text(json.dumps(config, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"Error guardando ui config {view_id}: {e}")
+
+def load_ui_config(view_id: str) -> dict:
+    """Carga la configuración de la interfaz."""
+    file = _CONFIG_DIR / f'ui_{view_id}.json'
+    if not file.exists():
+        return {}
+    try:
+        return json.loads(file.read_text(encoding='utf-8'))
+    except Exception as e:
+        print(f"Error cargando ui config {view_id}: {e}")
+        return {}
