@@ -286,6 +286,7 @@ class InventoryAnalysisDialog(QDialog):
         self.items = items
         self.loc_name = loc_name
         self.image_loader = image_loader
+        self._image_generation = 0
         self.setWindowTitle("INVENTARIO - VALOR DE ACTIVOS")
         self.setMinimumSize(1150, 750)
         self.setStyleSheet("background-color: #000000;")
@@ -326,6 +327,9 @@ class InventoryAnalysisDialog(QDialog):
         self.table.setIconSize(QSize(32, 32))
         self.table.setSortingEnabled(False)
         
+        self._image_generation += 1
+        gen = self._image_generation
+        
         for row, item in enumerate(self.items):
             a = item.analysis
             avg = getattr(item, "_avg_buy", 0.0)
@@ -337,7 +341,8 @@ class InventoryAnalysisDialog(QDialog):
             
             i_name = QTableWidgetItem(item.item_name)
             i_name.setData(Qt.UserRole, item.type_id)
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(item.type_id), lambda px, it=i_name: it.setIcon(QIcon(px)))
+            icon_url = ItemMetadataHelper.get_icon_url(item.type_id)
+            self._load_icon_into_table_item(self.table, row, 0, item.type_id, icon_url, gen)
             
             i_qty = NumericTableWidgetItem(f"{item.quantity:,}", item.quantity)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "Sin registros", avg)
@@ -389,12 +394,23 @@ class InventoryAnalysisDialog(QDialog):
                 if i < self.table.columnCount():
                     self.table.setColumnWidth(i, w)
 
+    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
+        def apply_icon(pixmap):
+            try:
+                if generation != self._image_generation: return
+                it = table.item(row, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap))
+            except RuntimeError: pass
+        self.image_loader.load_safe(icon_url, apply_icon)
+
 class TradeProfitsDialog(QDialog):
     def __init__(self, char_id, token, image_loader, parent=None):
         super().__init__(parent)
         self.char_id = char_id
         self.token = token
         self.image_loader = image_loader
+        self._image_generation = 0
         self.all_trades = []
         self.filtered_trades = []
         self.page_size = 50
@@ -475,6 +491,8 @@ class TradeProfitsDialog(QDialog):
     def update_table(self):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
+        self._image_generation += 1
+        gen = self._image_generation
         start = self.current_page * self.page_size
         end = (self.current_page + 1) * self.page_size
         page_items = self.filtered_trades[start:end]
@@ -487,7 +505,8 @@ class TradeProfitsDialog(QDialog):
             # Columna ÍTEM (Icono + Nombre)
             i_item = QTableWidgetItem(t['name'])
             i_item.setData(Qt.UserRole, t['type_id'])
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(t['type_id']), lambda px, it=i_item: it.setIcon(QIcon(px)))
+            icon_url = ItemMetadataHelper.get_icon_url(t['type_id'])
+            self._load_icon_into_table_item(self.table, r, 1, t['type_id'], icon_url, gen)
             
             i_qty = NumericTableWidgetItem(f"{t['qty']:,}", t['qty'])
             i_buy_u = NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit'])
@@ -498,6 +517,16 @@ class TradeProfitsDialog(QDialog):
             
             # Margen
             m_col = QColor("#10b981" if t['margin'] > 15 else ("#f59e0b" if t['margin'] >= 0 else "#ef4444"))
+            
+    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
+        def apply_icon(pixmap):
+            try:
+                if generation != self._image_generation: return
+                it = table.item(row, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap))
+            except RuntimeError: pass
+        self.image_loader.load_safe(icon_url, apply_icon)
             i_mar = NumericTableWidgetItem(f"{t['margin']:.1f}%", t['margin'])
             i_mar.setForeground(m_col)
             
@@ -555,6 +584,7 @@ class MarketMyOrdersView(QWidget):
         self.worker = None
         self.all_orders = []
         self.current_location_id = 0
+        self._image_generation = 0
         self.image_loader = AsyncImageLoader()
         self.spinner_chars = ["|", "/", "-", "\\"]
         self.spinner_idx = 0
@@ -841,6 +871,8 @@ class MarketMyOrdersView(QWidget):
     def fill_table(self, t, data):
         t.setSortingEnabled(False)
         t.setRowCount(len(data))
+        self._image_generation += 1
+        gen = self._image_generation
         for r, o in enumerate(data):
             a = o.analysis
             cost = CostBasisService.instance().get_cost_basis(o.type_id)
@@ -849,7 +881,8 @@ class MarketMyOrdersView(QWidget):
             i_name = QTableWidgetItem(o.item_name)
             i_name.setData(Qt.UserRole, o.type_id)
             i_name.setData(Qt.UserRole + 1, o.order_id)
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_name: it.setIcon(QIcon(px)))
+            icon_url = ItemMetadataHelper.get_icon_url(o.type_id)
+            self._load_icon_into_table_item(t, r, 0, o.type_id, icon_url, gen)
             
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
             i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
@@ -959,6 +992,16 @@ class MarketMyOrdersView(QWidget):
         self.lbl_broker_fee.setText(f"BROKER FEE: {b_fee:.2f}%")
         self.lbl_tax_source.setText(f"FUENTE: {source}")
         _log.info(f"[TAX_UI_DIAG] char={auth.char_id} loc={loc_id} -> {debug}")
+
+    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
+        def apply_icon(pixmap):
+            try:
+                if generation != self._image_generation: return
+                it = table.item(row, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap))
+            except RuntimeError: pass
+        self.image_loader.load_safe(icon_url, apply_icon)
 
     def do_inventory(self):
         auth = AuthManager.instance()

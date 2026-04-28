@@ -176,6 +176,7 @@ class MarketTableWidget(QTableWidget):
         
         self.net_manager = QNetworkAccessManager(self)
         self.icon_cache = {}
+        self._image_generation = 0
         
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
 
@@ -205,6 +206,8 @@ class MarketTableWidget(QTableWidget):
     def populate(self, opportunities):
         self.setSortingEnabled(False)
         self.setRowCount(len(opportunities))
+        self._image_generation += 1
+        gen = self._image_generation
         
         for row, opp in enumerate(opportunities):
             rank = CustomTableWidgetItem(str(row + 1), row + 1)
@@ -215,7 +218,7 @@ class MarketTableWidget(QTableWidget):
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
-                self.load_icon_async(opp.type_id, item)
+                self.load_icon_async(opp.type_id, item, row, gen)
             
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
@@ -271,21 +274,29 @@ class MarketTableWidget(QTableWidget):
         # Default sort by score descending
         self.sortItems(2, Qt.DescendingOrder)
 
-    def load_icon_async(self, type_id, table_item):
+    def load_icon_async(self, type_id, table_item, row, generation):
         url = f"https://images.evetech.net/types/{type_id}/icon?size=32"
         request = QNetworkRequest(QUrl(url))
         reply = self.net_manager.get(request)
         
-        # We need to keep a reference to table_item or find it again.
-        # Capturing variables in a closure for the callback:
         def on_finished():
-            if reply.error() == QNetworkReply.NoError:
-                data = reply.readAll()
-                pixmap = QPixmap()
-                if pixmap.loadFromData(data):
-                    self.icon_cache[type_id] = pixmap
-                    table_item.setIcon(QIcon(pixmap))
-            reply.deleteLater()
+            try:
+                if generation != self._image_generation:
+                    reply.deleteLater()
+                    return
+                if reply.error() == QNetworkReply.NoError:
+                    data = reply.readAll()
+                    pixmap = QPixmap()
+                    if pixmap.loadFromData(data):
+                        self.icon_cache[type_id] = pixmap
+                        # Buscar el item en la columna 1 (donde va el nombre/icono)
+                        it = self.item(row, 1)
+                        if it and it.data(Qt.UserRole) == type_id:
+                            it.setIcon(QIcon(pixmap))
+            except RuntimeError:
+                pass
+            finally:
+                reply.deleteLater()
             
         reply.finished.connect(on_finished)
 class AdvancedMarketTableWidget(MarketTableWidget):
@@ -316,6 +327,8 @@ class AdvancedMarketTableWidget(MarketTableWidget):
     def populate(self, opportunities):
         self.setSortingEnabled(False)
         self.setRowCount(len(opportunities))
+        self._image_generation += 1
+        gen = self._image_generation
         
         for row, opp in enumerate(opportunities):
             # Reuse logic from MarketTableWidget for common columns if possible, 
@@ -332,7 +345,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
-                self.load_icon_async(opp.type_id, item)
+                self.load_icon_async(opp.type_id, item, row, gen)
             
             # 2. Score
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0

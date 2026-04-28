@@ -50,6 +50,7 @@ class MarketContractsView(QWidget):
         self.worker = None
         self._all_results = []
         self.config = load_contracts_filters()
+        self._image_generation = 0
         self.image_loader = AsyncImageLoader()
         self.setup_ui()
         self._load_config()
@@ -549,6 +550,8 @@ class MarketContractsView(QWidget):
             return
         self._save_config()
         self.results_table.setRowCount(0)
+        self._image_generation += 1
+        gen = self._image_generation
         
         from core.contracts_engine import apply_contracts_filters
         filtered = apply_contracts_filters(self._all_results, self.config)
@@ -619,6 +622,8 @@ class MarketContractsView(QWidget):
         
         self.items_table.setRowCount(0)
         self.items_table.setRowCount(len(items))
+        self._image_generation += 1 # Nuevo refresh de la tabla de detalles
+        gen = self._image_generation
         for r, item in enumerate(items):
             i_name = QTableWidgetItem(item.item_name)
             i_qty = QTableWidgetItem(f"{item.quantity:,}")
@@ -652,7 +657,7 @@ class MarketContractsView(QWidget):
                 is_blueprint=item.is_blueprint, 
                 is_copy=item.is_copy
             )
-            self.image_loader.load(icon_url, lambda px, it=i_name: it.setIcon(QIcon(px)))
+            self._load_icon_into_table_item(self.items_table, r, 0, item.type_id, icon_url, gen)
 
             self.items_table.setItem(r, 0, i_name)
             i_name.setData(Qt.UserRole, item.type_id)
@@ -700,3 +705,13 @@ class MarketContractsView(QWidget):
 
     def copy_contract_id(self, contract_id):
         QGuiApplication.clipboard().setText(str(contract_id))
+
+    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
+        def apply_icon(pixmap):
+            try:
+                if generation != self._image_generation: return
+                it = table.item(row, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap))
+            except RuntimeError: pass
+        self.image_loader.load_safe(icon_url, apply_icon)
