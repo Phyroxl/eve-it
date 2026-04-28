@@ -75,7 +75,7 @@ class MarketContractsView(QWidget):
             v_l = QVBoxLayout()
             v_l.setSpacing(2)
             lbl = QLabel(label)
-            lbl.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
+            lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 800; border: none;")
             spin = QDoubleSpinBox()
             spin.setRange(min_v, max_v)
             spin.setSingleStep(step)

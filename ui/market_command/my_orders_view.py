@@ -170,6 +170,8 @@ class InventoryAnalysisDialog(QDialog):
         layout.addLayout(btn_h)
 
     def populate_table(self):
+        self.table.clearContents()
+        self.table.setRowCount(0)
         self.table.setRowCount(len(self.items))
         for r, item in enumerate(self.items):
             a = item.analysis
@@ -190,12 +192,12 @@ class InventoryAnalysisDialog(QDialog):
             i_total.setForeground(QColor("#10b981"))
             
             i_rec = QTableWidgetItem(a.recommendation.upper())
-            if a.recommendation == "Sell": i_rec.setForeground(QColor("#10b981"))
-            elif a.recommendation == "Hold": i_rec.setForeground(QColor("#f59e0b"))
+            if a.recommendation == "Vender": i_rec.setForeground(QColor("#10b981"))
+            elif a.recommendation == "Mantener": i_rec.setForeground(QColor("#f59e0b"))
             else: i_rec.setForeground(QColor("#ef4444"))
             
             i_reason = QTableWidgetItem(a.reason)
-            i_reason.setStyleSheet("color: #64748b; font-size: 9px;")
+            i_reason.setForeground(QColor("#64748b"))
 
             self.table.setItem(r, 1, i_name)
             self.table.setItem(r, 2, i_qty)
@@ -360,7 +362,7 @@ class MarketMyOrdersView(QWidget):
         m_g.setSpacing(10)
         
         def add_metric(layout, row, col, label, color="#e2e8f0"):
-            layout.addWidget(QLabel(label, styleSheet="color: #475569; font-size: 8px; font-weight: 800;"), row*2, col)
+            layout.addWidget(QLabel(label, styleSheet="color: #475569; font-size: 10px; font-weight: 800;"), row*2, col)
         def _create_det_row(layout, label):
             count = layout.count()
             row = count // 3
@@ -368,7 +370,7 @@ class MarketMyOrdersView(QWidget):
             w = QWidget()
             v = QVBoxLayout(w)
             v.setContentsMargins(0,0,0,0)
-            lbl = QLabel(label, styleSheet="color: #475569; font-size: 8px; font-weight: 800;")
+            lbl = QLabel(label, styleSheet="color: #475569; font-size: 10px; font-weight: 800;")
             val = QLabel("---")
             val.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 800;")
             v.addWidget(lbl)
@@ -459,6 +461,7 @@ class MarketMyOrdersView(QWidget):
         buy_orders = [o for o in orders if o.is_buy_order]
 
         def fill_table(table, data):
+            table.clearContents()
             table.setRowCount(0)
             table.setRowCount(len(data))
             for row, o in enumerate(data):
@@ -467,7 +470,6 @@ class MarketMyOrdersView(QWidget):
                 i_icon = QTableWidgetItem()
                 i_icon.setData(Qt.UserRole, o.type_id)
                 i_icon.setData(Qt.UserRole + 1, o.order_id)
-                table.setItem(row, 0, i_icon)
                 url = ItemMetadataHelper.get_icon_url(o.type_id)
                 self.image_loader.load(url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
 

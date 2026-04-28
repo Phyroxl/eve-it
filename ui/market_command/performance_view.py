@@ -53,13 +53,13 @@ class KPIWidget(QFrame):
         l.setSpacing(2)
         
         t = QLabel(title.upper())
-        t.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800; letter-spacing: 0.5px;")
+        t.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         
         self.v = QLabel(value)
         self.v.setStyleSheet("color: #f1f5f9; font-size: 14px; font-weight: 900;")
         
         self.d = QLabel("CONTABILIDAD CERRADA")
-        self.d.setStyleSheet("color: #475569; font-size: 7px; font-weight: 700;")
+        self.d.setStyleSheet("color: #475569; font-size: 9px; font-weight: 700;")
         
         l.addWidget(t)
         l.addWidget(self.v)
