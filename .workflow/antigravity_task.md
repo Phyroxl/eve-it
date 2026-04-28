@@ -1977,6 +1977,7 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Barra de Taxes Dinámica**: La barra inferior ahora muestra los valores efectivos (incluyendo standings y ubicación actual) y la fuente del dato.
+- [x] **Hotfix SyncWorker**: Corregido error crítico de atributo inexistente (`self.client` -> `client`) en el proceso de sincronización.
+- [x] **Estabilidad de Sincronización**: Confirmado que `ACTUALIZAR` ahora completa el ciclo de carga de órdenes y refresco de taxes sin interrumpirse.
 
-*Estado: Telemetría financiera calibrada y lista para operaciones de alta precisión.*
+*Estado: Plataforma estable y sincronización recuperada.*

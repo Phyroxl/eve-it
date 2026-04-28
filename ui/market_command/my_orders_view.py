@@ -86,7 +86,7 @@ class SyncWorker(QThread):
             
             # Obtener ubicación para calibrar taxes locales en el reporte
             self.status_update.emit("LOCALIZANDO PERSONAJE...", 25)
-            self.client.character_location(self.char_id, self.token) 
+            client.character_location(self.char_id, self.token) 
 
             self.status_update.emit("DESCARGANDO ÓRDENES...", 40)
             orders = client.character_orders(self.char_id, self.token)
