@@ -362,6 +362,7 @@ class ESIClient:
             return []
         except Exception:
             return []
+
     def character_standings(self, char_id: int, token: str):
         url = f"{self.BASE_URL}/characters/{char_id}/standings/"
         try:
@@ -387,4 +388,17 @@ class ESIClient:
                 return res.json()
         except Exception as e:
             logger.error(f"ESI universe_structures exception: {e}")
+        return None
+
+    def character_location(self, char_id: int, token: str):
+        url = f"{self.BASE_URL}/characters/{char_id}/location/"
+        try:
+            self._rate_limit()
+            res = self.session.get(url, headers=self._headers(token), timeout=15)
+            if res.status_code == 200:
+                return res.json()
+            if res.status_code in (401, 403):
+                return "missing_scope"
+        except Exception as e:
+            logger.error(f"ESI character_location exception: {e}")
         return None

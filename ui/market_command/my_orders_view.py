@@ -1,4 +1,4 @@
-import logging # VERSION: 1.1.10-ADVANCEDTAX (Location-aware Fees, Standings support)
+import logging # VERSION: 1.1.11-PREMIUMINV (Location Filter, WAC Support, Clean UI)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout, QDialog, QMessageBox
@@ -52,7 +52,6 @@ class SyncWorker(QThread):
             if cost_service.has_wallet_scope():
                 cost_service.refresh_from_esi(self.char_id, self.token)
             
-            # Pasar el token para que TaxService pueda hacer lookups de estructuras si es necesario
             analyzed = analyze_character_orders(orders, relevant_market_orders, item_names, config, char_id=self.char_id, token=self.token)
             self.finished_data.emit(analyzed)
         except Exception as e:
@@ -60,6 +59,7 @@ class SyncWorker(QThread):
 
 class InventoryWorker(QThread):
     finished_data = Signal(list)
+    location_info = Signal(str)
     error = Signal(str)
 
     def __init__(self, char_id, token):
@@ -70,6 +70,32 @@ class InventoryWorker(QThread):
     def run(self):
         try:
             client = ESIClient()
+            
+            # 1. Ubicación actual
+            loc_res = client.character_location(self.char_id, self.token)
+            curr_loc_id = None
+            loc_name = "TODO EL INVENTARIO (FALLBACK)"
+            
+            if loc_res == "missing_scope":
+                self.location_info.emit("missing_scope")
+            elif loc_res:
+                if loc_res.get('station_id'):
+                    curr_loc_id = loc_res.get('station_id')
+                elif loc_res.get('structure_id'):
+                    curr_loc_id = loc_res.get('structure_id')
+                
+                if curr_loc_id:
+                    names = client.universe_names([curr_loc_id])
+                    if names: loc_name = names[0]['name']
+                else:
+                    # Si no está en estación/estructura, quizá en el espacio (solar_system)
+                    ss_id = loc_res.get('solar_system_id')
+                    names = client.universe_names([ss_id])
+                    if names: loc_name = f"ESPACIO: {names[0]['name']}"
+                    
+                self.location_info.emit(loc_name)
+
+            # 2. Assets
             assets = client.character_assets(self.char_id, self.token)
             if assets == "missing_scope":
                 self.error.emit("missing_scope")
@@ -78,105 +104,161 @@ class InventoryWorker(QThread):
                 self.finished_data.emit([])
                 return
             
-            filtered_assets = [a for a in assets if 'slot' not in a.get('location_flag', '').lower()]
+            # 3. Filtrado por ubicación
+            if curr_loc_id:
+                filtered_assets = [a for a in assets if a.get('location_id') == curr_loc_id]
+            else:
+                # Si no hay ubicación específica (espacio o falta permiso), mostrar assets no equipados
+                filtered_assets = [a for a in assets if 'slot' not in a.get('location_flag', '').lower()]
+
             if not filtered_assets:
                 self.finished_data.emit([])
                 return
 
             type_ids = list(set(a['type_id'] for a in filtered_assets))
             all_market_orders = client.market_orders(10000002)
-            if not all_market_orders:
-                self.error.emit("pricing_error")
-                return
-
+            
             names_data = client.universe_names(type_ids)
             item_names = {n['id']: n['name'] for n in names_data}
             
             config = load_market_filters()
+            
+            # Refrescar costes si es posible
+            cost_service = CostBasisService.instance()
+            if cost_service.has_wallet_scope():
+                cost_service.refresh_from_esi(self.char_id, self.token)
+                
             analyzed = analyze_inventory(filtered_assets, all_market_orders, item_names, config, char_id=self.char_id, token=self.token)
             self.finished_data.emit(analyzed)
         except Exception as e:
             self.error.emit(str(e))
 
 class InventoryAnalysisDialog(QDialog):
-    def __init__(self, items, image_loader, parent=None):
+    def __init__(self, items, loc_name, image_loader, parent=None):
         super().__init__(parent)
         self.items = items
+        self.loc_name = loc_name
         self.image_loader = image_loader
         self.setWindowTitle("INVENTARIO - VALOR DE ACTIVOS")
-        self.setMinimumSize(950, 650)
+        self.setMinimumSize(1100, 700)
         self.setStyleSheet("background-color: #000000;")
         self.setup_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
         
         header = QFrame()
-        header.setFixedHeight(70)
-        header.setStyleSheet("background-color: #1e293b; border-radius: 4px; border: 1px solid #334155;")
+        header.setFixedHeight(80)
+        header.setStyleSheet("background-color: #0f172a; border-radius: 8px; border: 1px solid #1e293b;")
         hl = QHBoxLayout(header)
+        
         title_v = QVBoxLayout()
-        title = QLabel("VALORACIÓN DE ACTIVOS")
-        title.setStyleSheet("color: #f1f5f9; font-size: 16px; font-weight: 900; letter-spacing: 1px; border:none;")
-        subtitle = QLabel("PRECIOS DE VENTA JITA 4-4 (NETOS)")
-        subtitle.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 700; border:none;")
+        title = QLabel("INVENTARIO LOCAL")
+        title.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900; letter-spacing: 1px; border:none;")
+        
+        loc_lbl = QLabel(f"UBICACIÓN: {self.loc_name.upper()}")
+        loc_color = "#3b82f6" if "FALLBACK" not in self.loc_name else "#f59e0b"
+        loc_lbl.setStyleSheet(f"color: {loc_color}; font-size: 10px; font-weight: 800; border:none;")
+        
         title_v.addWidget(title)
-        title_v.addWidget(subtitle)
+        title_v.addWidget(loc_lbl)
         hl.addLayout(title_v)
         hl.addStretch()
         
         total_val = sum(item.analysis.est_total_value for item in self.items)
         val_v = QVBoxLayout()
         val_lbl = QLabel(format_isk(total_val))
-        val_lbl.setStyleSheet("color: #10b981; font-size: 20px; font-weight: 900; border:none;")
+        val_lbl.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900; border:none;")
         val_sub = QLabel("VALOR TOTAL ESTIMADO")
-        val_sub.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800; border:none;")
+        val_sub.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800; border:none;")
         val_sub.setAlignment(Qt.AlignRight)
         val_v.addWidget(val_lbl)
         val_v.addWidget(val_sub)
         hl.addLayout(val_v)
         layout.addWidget(header)
 
-        self.table = QTableWidget(len(self.items), 6)
-        self.table.setHorizontalHeaderLabels(["", "ÍTEM", "CANTIDAD", "PRECIO UNIT. (NETO)", "VALOR TOTAL", "%"])
+        self.table = QTableWidget(len(self.items), 9)
+        self.table.setHorizontalHeaderLabels([
+            "", "ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "VALOR TOTAL", "VALOR %", "RECOMENDACIÓN", "MOTIVO"
+        ])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setShowGrid(False)
         self.table.setStyleSheet(
-            "QTableWidget { background: #000000; color: #f1f5f9; gridline-color: #1e293b; border: 1px solid #1e293b; font-size: 11px; } "
-            "QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; padding: 8px; } "
-            "QTableWidget::item:selected { background: #1e293b; }"
+            "QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 11px; } "
+            "QHeaderView::section { background: #000000; color: #64748b; font-weight: 900; border: none; border-bottom: 1px solid #1e293b; padding: 10px; } "
+            "QTableWidget::item { border-bottom: 1px solid #0f172a; padding: 8px; } "
+            "QTableWidget::item:selected { background: #0f172a; color: white; }"
         )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setIconSize(QSize(32, 32))
-        self.table.setColumnWidth(0, 40)
-        self.table.setColumnWidth(1, 300)
+        self.table.setColumnWidth(0, 45)
+        self.table.setColumnWidth(1, 220)
+        self.table.setColumnWidth(7, 120)
+
+        self.table.itemDoubleClicked.connect(self.on_double_click)
 
         sorted_items = sorted(self.items, key=lambda x: x.analysis.est_total_value, reverse=True)
         for row, item in enumerate(sorted_items):
+            a = item.analysis
+            
             i_icon = QTableWidgetItem()
+            i_icon.setData(Qt.UserRole, item.type_id)
             url = ItemMetadataHelper.get_icon_url(item.type_id)
             self.image_loader.load(url, lambda px, it=i_icon: it.setIcon(QIcon(px)))
+            
             i_name = QTableWidgetItem(item.item_name)
             i_qty = QTableWidgetItem(f"{item.quantity:,}")
             i_qty.setTextAlignment(Qt.AlignCenter)
-            i_price = QTableWidgetItem(format_isk(item.analysis.est_net_sell_unit))
+            
+            avg_buy = getattr(item, "_avg_buy", 0.0)
+            i_avg = QTableWidgetItem(format_isk(avg_buy) if avg_buy > 0 else "Sin registros")
+            i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            i_avg.setForeground(QColor("#94a3b8") if avg_buy > 0 else QColor("#334155"))
+            
+            i_price = QTableWidgetItem(format_isk(a.est_net_sell_unit))
             i_price.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            i_total = QTableWidgetItem(format_isk(item.analysis.est_total_value))
+            
+            i_total = QTableWidgetItem(format_isk(a.est_total_value))
             i_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             i_total.setForeground(QColor("#10b981"))
-            pct = (item.analysis.est_total_value / total_val * 100) if total_val > 0 else 0
+            
+            pct = (a.est_total_value / total_val * 100) if total_val > 0 else 0
             i_pct = QTableWidgetItem(f"{pct:.1f}%")
             i_pct.setTextAlignment(Qt.AlignCenter)
+            
+            i_rec = QTableWidgetItem(a.recommendation.upper())
+            i_rec.setTextAlignment(Qt.AlignCenter)
+            if a.recommendation == "VENDER": i_rec.setForeground(QColor("#10b981"))
+            elif a.recommendation == "REVISAR": i_rec.setForeground(QColor("#f59e0b"))
+            else: i_rec.setForeground(QColor("#3b82f6"))
+            
+            i_reason = QTableWidgetItem(a.reason)
+            i_reason.setForeground(QColor("#64748b"))
             
             self.table.setItem(row, 0, i_icon)
             self.table.setItem(row, 1, i_name)
             self.table.setItem(row, 2, i_qty)
-            self.table.setItem(row, 3, i_price)
-            self.table.setItem(row, 4, i_total)
-            self.table.setItem(row, 5, i_pct)
+            self.table.setItem(row, 3, i_avg)
+            self.table.setItem(row, 4, i_price)
+            self.table.setItem(row, 5, i_total)
+            self.table.setItem(row, 6, i_pct)
+            self.table.setItem(row, 7, i_rec)
+            self.table.setItem(row, 8, i_reason)
+            
         layout.addWidget(self.table)
+        
+        footer = QLabel("* Valores basados en el mejor precio de venta en Jita menos impuestos estimados.")
+        footer.setStyleSheet("color: #334155; font-size: 9px; font-weight: 700;")
+        layout.addWidget(footer)
+
+    def on_double_click(self, item):
+        row = item.row()
+        tid = self.table.item(row, 0).data(Qt.UserRole)
+        name = self.table.item(row, 1).text()
+        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: None)
 
 class MarketMyOrdersView(QWidget):
     def __init__(self, parent=None):
@@ -186,6 +268,7 @@ class MarketMyOrdersView(QWidget):
         self.all_orders = []
         self.image_loader = AsyncImageLoader()
         self.inventory_cache = None
+        self.inventory_loc_name = "DESCONOCIDA"
         self.inventory_status = "idle" 
         self.inventory_error_msg = ""
         self._syncing_headers = False
@@ -263,7 +346,6 @@ class MarketMyOrdersView(QWidget):
         self.setup_detail_layout()
         self.main_layout.addWidget(self.detail_panel)
 
-        # Sincronización de cabeceras
         self.table_sell.horizontalHeader().sectionResized.connect(lambda i, o, n: self._on_header_resized(self.table_sell, i, n))
         self.table_buy.horizontalHeader().sectionResized.connect(lambda i, o, n: self._on_header_resized(self.table_buy, i, n))
         self.table_sell.horizontalHeader().sectionMoved.connect(lambda i, o, n: self._on_header_moved(self.table_sell, i, o, n))
@@ -453,8 +535,12 @@ class MarketMyOrdersView(QWidget):
         self.inventory_status = "loading"
         self.inv_worker = InventoryWorker(auth.char_id, auth.current_token)
         self.inv_worker.finished_data.connect(self._on_inv_preloaded)
+        self.inv_worker.location_info.connect(self._on_inv_loc_ready)
         self.inv_worker.error.connect(self._on_inv_error)
         self.inv_worker.start()
+
+    def _on_inv_loc_ready(self, name):
+        self.inventory_loc_name = name
 
     def _on_inv_preloaded(self, data):
         self.inventory_cache = data
@@ -558,7 +644,6 @@ class MarketMyOrdersView(QWidget):
         cost = CostBasisService.instance().get_cost_basis(o.type_id)
         avg = cost.average_buy_price if cost else 0.0
         
-        # Mostrar info de la fuente del fee en el mensaje de coste
         fee_source = getattr(o, "_fee_source", "Skills fallback")
         fee_val = getattr(o, "_b_fee_pct", 3.0)
         
@@ -604,19 +689,15 @@ class MarketMyOrdersView(QWidget):
     def do_inventory_analysis(self):
         if self.inventory_status == "ready" and self.inventory_cache is not None:
             if not self.inventory_cache:
-                QMessageBox.information(self, "Inventario Vacío", "No se encontraron activos valorables.")
+                QMessageBox.information(self, "Inventario Local Vacío", f"No se encontraron activos valorables en {self.inventory_loc_name}.")
                 return
-            InventoryAnalysisDialog(self.inventory_cache, self.image_loader, self).exec()
+            InventoryAnalysisDialog(self.inventory_cache, self.inventory_loc_name, self.image_loader, self).exec()
             return
         if self.inventory_status == "loading":
-            QMessageBox.information(self, "Cargando", "Analizando inventario...")
-            return
-        if self.inventory_status == "error":
-            self.on_inventory_error(self.inventory_error_msg)
-            self.inventory_status = "idle"
+            QMessageBox.information(self, "Cargando", "Analizando inventario local...")
             return
         
-        self.lbl_status.setText("● CARGANDO INVENTARIO...")
+        self.lbl_status.setText("● CARGANDO INVENTARIO LOCAL...")
         self.lbl_status.setStyleSheet("color:#3b82f6;")
         auth = AuthManager.instance()
         if not auth.current_token:
@@ -630,16 +711,17 @@ class MarketMyOrdersView(QWidget):
             self.inventory_cache = data
             self.inventory_status = "ready"
             if not data:
-                QMessageBox.information(self, "Inventario Vacío", "No se encontraron activos valorables.")
+                QMessageBox.information(self, "Inventario Local Vacío", f"No se encontraron activos valorables en {self.inventory_loc_name}.")
             else:
-                InventoryAnalysisDialog(data, self.image_loader, self).exec()
+                InventoryAnalysisDialog(data, self.inventory_loc_name, self.image_loader, self).exec()
         
         self.inv_worker.finished_data.connect(on_done)
+        self.inv_worker.location_info.connect(lambda n: setattr(self, "inventory_loc_name", n))
         self.inv_worker.error.connect(self.on_inventory_error)
         self.inv_worker.start()
 
     def on_inventory_error(self, msg):
-        if msg == "missing_scope": QMessageBox.warning(self, "Permiso Faltante", "Falta el permiso 'esi-assets.read_assets.v1'.")
+        if msg == "missing_scope": QMessageBox.warning(self, "Permiso Faltante", "Falta el permiso 'esi-assets.read_assets.v1' o 'esi-location.read_location.v1'. Reautoriza el personaje.")
         elif msg == "pricing_error": QMessageBox.critical(self, "Error de Precios", "No se pudieron obtener precios de Jita.")
         else: QMessageBox.critical(self, "Error", f"Fallo al cargar inventario: {msg}")
 

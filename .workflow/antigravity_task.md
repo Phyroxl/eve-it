@@ -1838,4 +1838,44 @@ Se ha implementado el cálculo de Broker Fee más avanzado del mercado, integran
 - [x] **Estructuras**: Identificación correcta de IDs de estructura (>1B) y aplicación de fallback.
 - [x] **Permisos**: Alerta roja funcional si falta el nuevo scope de standings.
 
-*Estado: Motor financiero de grado industrial con soporte para reputación.*
+### SESIÓN 24 INVENTARIO PREMIUM (LOCATION & WAC) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha rediseñado por completo el módulo de Inventario para convertirlo en una herramienta de decisión táctica, filtrada por ubicación y enriquecida con costes reales.
+
+**Inteligencia de Inventario:**
+1. **Filtro de Ubicación Real**:
+   - Integrado el scope `esi-location.read_location.v1`.
+   - El inventario ahora detecta automáticamente dónde está tu personaje (Estación NPC o Estructura) y muestra **solo los items que tienes a mano**.
+   - Si no hay permiso de ubicación, el sistema avisa y permite ver todo el inventario como fallback.
+2. **Integración con CostBasisService (WAC)**:
+   - Añadida la columna **MI PROMEDIO**.
+   - Muestra el coste medio ponderado real de cada item en tu stock actual, permitiéndote saber si la venta en Jita es realmente rentable.
+3. **Motor de Recomendaciones v2**:
+   - Algoritmo mejorado que analiza: Precio neto Jita, Coste medio (WAC), Spread y Competitividad.
+   - Categorías claras: `VENDER`, `MANTENER`, `REVISAR`.
+   - Se incluye el **Motivo** detallado (ej. "Precio neto < Coste medio" o "Oportunidad de salida").
+
+**Mejoras de UI/UX:**
+1. **Diseño "Clean & Premium"**:
+   - Eliminadas las líneas de grid para un aspecto más moderno y minimalista sobre fondo negro.
+   - Cabeceras estilizadas y filas con separadores sutiles.
+2. **Interactividad**:
+   - **Doble Click**: Ahora puedes abrir cualquier item del inventario directamente en la ventana de mercado del juego (ESI UI).
+3. **Optimización de Iconos**: Sistema de carga asíncrona con fallback mejorado para asegurar que ningún ítem se quede sin imagen.
+
+**Archivos Modificados:**
+- `core/auth_manager.py`: Añadido scope de ubicación.
+- `core/esi_client.py`: Nuevo método para ubicación del personaje.
+- `core/market_engine.py`: Lógica de recomendación de inventario enriquecida con WAC.
+- `ui/market_command/my_orders_view.py`: Nuevo `InventoryWorker` con filtrado y `InventoryAnalysisDialog` premium.
+
+**Pruebas Realizadas:**
+- [x] **Filtro**: Verificación de que solo aparecen items de la estación actual al estar atracado.
+- [x] **WAC**: Confirmación de que `MI PROMEDIO` coincide con el historial de compras.
+- [x] **UI**: Comprobación del diseño sin grid y carga de iconos.
+- [x] **Doble Click**: Apertura exitosa de la ventana de mercado en el cliente de EVE.
+
+*Estado: Gestión de activos profesional, local y rentable.*
