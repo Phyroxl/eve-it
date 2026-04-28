@@ -216,6 +216,12 @@ class MarketMyOrdersView(QWidget):
         self.inv_worker = None
         self.all_orders = []
         self.image_loader = AsyncImageLoader()
+        
+        # Cache de Inventario
+        self.inventory_cache = None
+        self.inventory_status = "idle" # idle, loading, ready, error
+        self.inventory_error_msg = ""
+        
         self.setup_ui()
         
         AuthManager.instance().authenticated.connect(self._on_authenticated)
@@ -339,40 +345,42 @@ class MarketMyOrdersView(QWidget):
 
     def setup_detail_ui(self):
         dl = QHBoxLayout(self.detail_panel)
-        dl.setContentsMargins(15, 15, 15, 15)
-        dl.setSpacing(20)
+        dl.setContentsMargins(15, 12, 15, 12)
+        dl.setSpacing(25)
 
         self.lbl_det_icon = QLabel()
         self.lbl_det_icon.setFixedSize(64, 64)
         self.lbl_det_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_det_icon.setStyleSheet("background: #1e293b; border-radius: 4px; border: 1px solid #334155;")
+        self.lbl_det_icon.setStyleSheet("background: #1e293b; border-radius: 6px; border: 1px solid #334155;")
         dl.addWidget(self.lbl_det_icon)
 
         info_v = QVBoxLayout()
+        info_v.setSpacing(2)
         self.lbl_det_item = QLabel("SELECCIONA UNA ORDEN")
-        self.lbl_det_item.setStyleSheet("color: #f1f5f9; font-size: 15px; font-weight: 900;")
+        self.lbl_det_item.setStyleSheet("color: #f8fafc; font-size: 14px; font-weight: 900; letter-spacing: 0.5px;")
         self.lbl_det_type = QLabel("---")
-        self.lbl_det_type.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 700;")
+        self.lbl_det_type.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase;")
+        info_v.addStretch()
         info_v.addWidget(self.lbl_det_item)
         info_v.addWidget(self.lbl_det_type)
         info_v.addStretch()
-        dl.addLayout(info_v, 1)
+        dl.addLayout(info_v, 2)
 
         m_g = QGridLayout()
-        m_g.setSpacing(10)
+        m_g.setSpacing(8)
+        m_g.setVerticalSpacing(4)
         
-        def add_metric(layout, row, col, label, color="#e2e8f0"):
-            layout.addWidget(QLabel(label, styleSheet="color: #475569; font-size: 10px; font-weight: 800;"), row*2, col)
         def _create_det_row(layout, label):
             count = layout.count()
-            row = count // 3
-            col = count % 3
+            row = count // 4
+            col = count % 4
             w = QWidget()
             v = QVBoxLayout(w)
             v.setContentsMargins(0,0,0,0)
-            lbl = QLabel(label, styleSheet="color: #475569; font-size: 10px; font-weight: 800;")
+            v.setSpacing(1)
+            lbl = QLabel(label, styleSheet="color: #475569; font-size: 9px; font-weight: 800; text-transform: uppercase;")
             val = QLabel("---")
-            val.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 800;")
+            val.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 900;")
             v.addWidget(lbl)
             v.addWidget(val)
             layout.addWidget(w, row, col)
@@ -384,16 +392,16 @@ class MarketMyOrdersView(QWidget):
         self.lbl_det_best_buy = self._create_det_row(m_g, "MEJOR COMPRA")
         self.lbl_det_best_sell = self._create_det_row(m_g, "MEJOR VENTA")
         self.lbl_det_margin = self._create_det_row(m_g, "MARGEN NETO")
-        self.lbl_det_profit_u = self._create_det_row(m_g, "BENEFICIO NETO / U")
-        self.lbl_det_profit_total = self._create_det_row(m_g, "BENEFICIO TOTAL EST.")
-        self.lbl_det_state = self._create_det_row(m_g, "ESTADO OPERATIVO")
+        self.lbl_det_profit_u = self._create_det_row(m_g, "BENEFICIO / U")
+        self.lbl_det_profit_total = self._create_det_row(m_g, "BENEFICIO TOTAL")
+        self.lbl_det_state = self._create_det_row(m_g, "ESTADO")
         
         self.lbl_det_reason = QLabel()
         self.lbl_det_reason.setWordWrap(True)
-        self.lbl_det_reason.setStyleSheet("color: #94a3b8; font-size: 10px; font-style: italic; margin-top: 5px;")
-        m_g.addWidget(self.lbl_det_reason, 3, 0, 1, 3)
+        self.lbl_det_reason.setStyleSheet("color: #94a3b8; font-size: 10px; font-style: italic; border-top: 1px solid #1e293b; padding-top: 4px;")
+        m_g.addWidget(self.lbl_det_reason, 2, 0, 1, 4)
         
-        dl.addLayout(m_g, 2)
+        dl.addLayout(m_g, 5)
 
     def do_sync(self, is_update=False):
         if self.worker and self.worker.isRunning():
@@ -442,6 +450,34 @@ class MarketMyOrdersView(QWidget):
         if not orders:
             self.lbl_det_item.setText("SELECCIONA UNA ORDEN")
             self.lbl_det_type.setText("---")
+            
+        # Iniciar precarga de inventario automáticamente
+        self._preload_inventory()
+
+    def _preload_inventory(self):
+        auth = AuthManager.instance()
+        if not auth.current_token: return
+        
+        if self.inv_worker and self.inv_worker.isRunning():
+            return
+            
+        self.inventory_status = "loading"
+        self.inv_worker = InventoryWorker(auth.char_id, auth.current_token)
+        # Conectamos a señales de precarga
+        self.inv_worker.finished_data.connect(self._on_inventory_preloaded)
+        self.inv_worker.error.connect(self._on_inventory_preload_error)
+        self.inv_worker.start()
+
+    def _on_inventory_preloaded(self, items):
+        self.inventory_cache = items
+        self.inventory_status = "ready"
+        _log.info(f"Inventario precargado: {len(items)} items.")
+
+    def _on_inventory_preload_error(self, msg):
+        # No mostramos error UI aquí porque es una precarga silenciosa
+        self.inventory_status = "error"
+        self.inventory_error_msg = msg
+        _log.warning(f"Error en precarga de inventario: {msg}")
 
     def on_error(self, msg):
         self.btn_refresh.setEnabled(True)
@@ -480,14 +516,19 @@ class MarketMyOrdersView(QWidget):
                 
                 i_myprice = QTableWidgetItem(format_isk(o.price))
                 i_myprice.setData(Qt.UserRole, float(o.price))
+                i_myprice.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 
                 best_comp = a.best_buy if o.is_buy_order else a.best_sell
                 i_best = QTableWidgetItem(format_isk(best_comp))
+                i_best.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 
                 i_total = QTableWidgetItem(f"{o.volume_total:,}")
+                i_total.setTextAlignment(Qt.AlignCenter)
                 i_remain = QTableWidgetItem(f"{o.volume_remain:,}")
+                i_remain.setTextAlignment(Qt.AlignCenter)
                 
                 i_spread = QTableWidgetItem(f"{a.spread_pct:.1f}%")
+                i_spread.setTextAlignment(Qt.AlignCenter)
                 
                 cost_basis = CostBasisService.instance().get_cost_basis(o.type_id)
                 has_avg = cost_basis is not None
@@ -497,16 +538,20 @@ class MarketMyOrdersView(QWidget):
                 
                 if show_profit:
                     i_margin = QTableWidgetItem(f"{a.margin_pct:.1f}%")
+                    i_margin.setTextAlignment(Qt.AlignCenter)
                     if a.margin_pct > 15: i_margin.setForeground(QColor("#10b981"))
                     elif a.margin_pct < 0: i_margin.setForeground(QColor("#ef4444"))
                     
                     i_profit = QTableWidgetItem(format_isk(a.net_profit_total))
+                    i_profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     if a.net_profit_total > 0: i_profit.setForeground(QColor("#10b981"))
                     elif a.net_profit_total < 0: i_profit.setForeground(QColor("#ef4444"))
                 else:
                     i_margin = QTableWidgetItem("---")
+                    i_margin.setTextAlignment(Qt.AlignCenter)
                     i_margin.setForeground(QColor("#475569"))
                     i_profit = QTableWidgetItem("---")
+                    i_profit.setTextAlignment(Qt.AlignCenter)
                     i_profit.setForeground(QColor("#475569"))
                 
                 i_state = QTableWidgetItem(a.state)
@@ -521,7 +566,7 @@ class MarketMyOrdersView(QWidget):
                 cost_basis = CostBasisService.instance().get_cost_basis(o.type_id)
                 if cost_basis:
                     i_avg = QTableWidgetItem(format_isk(cost_basis.average_buy_price))
-                    i_avg.setForeground(QColor("#94a3b8"))
+                    i_avg.setForeground(QColor("#f1f5f9"))
                 else:
                     i_avg = QTableWidgetItem("Sin registros")
                     i_avg.setForeground(QColor("#475569"))
@@ -658,6 +703,22 @@ class MarketMyOrdersView(QWidget):
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800;")
 
     def do_inventory_analysis(self):
+        # Si ya tenemos caché y está lista, abrir al instante
+        if self.inventory_status == "ready" and self.inventory_cache is not None:
+            self.on_inventory_ready(self.inventory_cache)
+            return
+            
+        if self.inventory_status == "loading":
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Cargando", "El inventario se está analizando en segundo plano. Por favor, espera un momento...")
+            return
+            
+        if self.inventory_status == "error":
+            self.on_inventory_error(self.inventory_error_msg)
+            # Resetear para reintentar si el usuario pulsa de nuevo
+            self.inventory_status = "idle"
+            return
+
         auth = AuthManager.instance()
         if not auth.current_token:
             self.lbl_status.setText("● ERROR: DEBES ESTAR AUTENTICADO")
@@ -676,6 +737,7 @@ class MarketMyOrdersView(QWidget):
         self.inv_worker.finished_data.connect(self.on_inventory_ready)
         self.inv_worker.error.connect(self.on_inventory_error)
         self.inv_worker.start()
+
 
     def on_inventory_ready(self, items):
         self.btn_inventory.setEnabled(True)

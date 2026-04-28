@@ -58,24 +58,32 @@ class ContractsScanWorker(QThread):
             for i, contract in enumerate(candidates):
                 if self._cancelled:
                     break
+                
                 pct = 20 + int((i / len(candidates)) * 75)
                 self.progress.emit(pct)
                 self.status.emit(
                     f"Analizando contrato {i + 1}/{len(candidates)} — "
                     f"{len(all_results)} oportunidades encontradas"
                 )
+                
+                if self._cancelled: break
                 items_raw = client.contract_items(contract['contract_id'])
                 if not items_raw:
                     continue
+                
                 new_ids = list(set(r['type_id'] for r in items_raw if r.get('type_id') not in name_map))
                 if new_ids:
                     for chunk_idx in range(0, len(new_ids), 500):
+                        if self._cancelled: break
                         chunk = new_ids[chunk_idx:chunk_idx+500]
                         try:
                             for n in client.universe_names(chunk):
+                                if self._cancelled: break
                                 name_map[n['id']] = n['name']
                         except Exception:
                             pass
+                
+                if self._cancelled: break
                 items = analyze_contract_items(items_raw, price_index, name_map, self.config)
                 result = calculate_contract_metrics(contract, items, self.config)
                 result.score = score_contract(result)
