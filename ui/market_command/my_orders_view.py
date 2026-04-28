@@ -536,8 +536,11 @@ class MarketMyOrdersView(QWidget):
 
     def on_selection_changed(self):
         sender = self.sender()
-        if sender == self.table_sell: self.table_buy.clearSelection()
-        else: self.table_sell.clearSelection()
+        target = self.table_buy if sender == self.table_sell else self.table_sell
+        
+        target.blockSignals(True)
+        target.clearSelection()
+        target.blockSignals(False)
         
         si = sender.selectedItems()
         if not si: return
