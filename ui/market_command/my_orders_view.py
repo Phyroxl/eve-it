@@ -517,16 +517,6 @@ class TradeProfitsDialog(QDialog):
             
             # Margen
             m_col = QColor("#10b981" if t['margin'] > 15 else ("#f59e0b" if t['margin'] >= 0 else "#ef4444"))
-            
-    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
-        def apply_icon(pixmap):
-            try:
-                if generation != self._image_generation: return
-                it = table.item(row, col)
-                if it and it.data(Qt.UserRole) == type_id:
-                    it.setIcon(QIcon(pixmap))
-            except RuntimeError: pass
-        self.image_loader.load_safe(icon_url, apply_icon)
             i_mar = NumericTableWidgetItem(f"{t['margin']:.1f}%", t['margin'])
             i_mar.setForeground(m_col)
             
@@ -544,6 +534,7 @@ class TradeProfitsDialog(QDialog):
                 self.table.setItem(r, col, it)
             
         self.table.setSortingEnabled(True)
+
         tot = (len(self.filtered_trades) + self.page_size - 1) // self.page_size
         self.lbl_page.setText(f"Página {self.current_page + 1} de {max(1, tot)}")
         self.btn_prev.setEnabled(self.current_page > 0)
