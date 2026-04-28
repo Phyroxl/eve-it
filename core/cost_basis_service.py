@@ -40,7 +40,7 @@ class CostBasisService:
         """
         logger.info(f"Refrescando WAC para char={char_id}...")
         try:
-            transactions = self.client.character_wallet_transactions(char_id, token)
+            transactions = self.client.wallet_transactions(char_id, token)
             if not transactions:
                 logger.warning("No se obtuvieron transacciones de la wallet.")
                 return False

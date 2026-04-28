@@ -1973,5 +1973,7 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Sorting**: Comprobación de que 1,000,000 va después de 900,000 al ordenar.
 - [x] **Fresh Data**: Confirmado que cambiar un precio en el juego se refleja como cambio de estado tras sincronizar en la app.
 - [x] **Hotfix Formato**: Corregido error que mostraba números en notación científica y raw floats en lugar de ISK formateado al activar la ordenación.
+- [x] **Fix WAC (Mi Promedio)**: Corregido error de mapeo de nombres de métodos (`wallet_transactions`) que impedía cargar el historial de la wallet y calcular el coste medio (WAC).
+- [x] **Bucle Infinito**: Eliminado bucle infinito en la descarga de transacciones de la wallet.
 
-*Estado: Plataforma financiera estable, automatizada y con formato visual corregido.*
+*Estado: Inteligencia financiera restaurada y operativa.*

@@ -187,21 +187,13 @@ class ESIClient:
         return all_data
 
     def wallet_transactions(self, char_id, token):
-        all_data = []
-        page = 1
-        while True:
-            res = self._request_auth("GET", f"/characters/{char_id}/wallet/transactions/", token, params={'page': page})
-            if res and res.status_code == 200:
-                data = res.json()
-                if not data: break
-                all_data.extend(data)
-                # Las transacciones no suelen tener X-Pages, se cortan cuando hay menos de 2500 o vacío
-                if len(data) < 2500: break
-                page += 1
-            else:
-                if res and res.status_code in (401, 403): return "missing_scope"
-                break
-        return all_data
+        """Obtiene las últimas 2500 transacciones de la wallet. No usa 'page'."""
+        res = self._request_auth("GET", f"/characters/{char_id}/wallet/transactions/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        if res and res.status_code in (401, 403):
+            return "missing_scope"
+        return []
 
     def character_orders(self, char_id, token):
         res = self._request_auth("GET", f"/characters/{char_id}/orders/", token)
@@ -229,17 +221,11 @@ class ESIClient:
         return all_assets
 
     def character_skills(self, char_id, token):
-        url = f"{self.BASE_URL}/characters/{char_id}/skills/"
-        try:
-            self._rate_limit()
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                return res.json()
-            logger.warning(f"ESI character_skills char={char_id} → HTTP {res.status_code}")
-            if res.status_code in (401, 403):
-                return "missing_scope"
-        except Exception as e:
-            logger.error(f"ESI character_skills char={char_id} excepción: {e}")
+        res = self._request_auth("GET", f"/characters/{char_id}/skills/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        if res and res.status_code in (401, 403):
+            return "missing_scope"
         return None
 
     def open_market_window(self, type_id: int, access_token: str):
