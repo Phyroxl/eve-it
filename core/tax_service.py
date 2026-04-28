@@ -142,11 +142,16 @@ class TaxService:
             
         debug_info = f"ST={sales_tax}% ({source_st}), BF={broker_fee}% ({source_bf})"
         
-        # DIAGNÓSTICO OBLIGATORIO EN CONSOLA
-        print(f"[TAX DEBUG] char_id={char_id} location_id={location_id}")
-        print(f"[TAX DEBUG] overrides_path={path.absolute()} exists={path.exists()}")
-        print(f"[TAX DEBUG] override_match={'True' if 'CALIBRADO' in final_source else 'False'} source={final_source}")
-        print(f"[TAX DEBUG] final_sales_tax={sales_tax} final_broker_fee={broker_fee}")
+        # DIAGNÓSTICO EN CONSOLA (una sola vez por combinación char+loc en esta sesión)
+        _debug_key = (char_id, location_id)
+        if not hasattr(self, '_debug_printed'):
+            self._debug_printed = set()
+        if _debug_key not in self._debug_printed:
+            self._debug_printed.add(_debug_key)
+            print(f"[TAX DEBUG] char_id={char_id} location_id={location_id}")
+            print(f"[TAX DEBUG] overrides_path={path.absolute()} exists={path.exists()}")
+            print(f"[TAX DEBUG] override_match={'True' if 'CALIBRADO' in final_source else 'False'} source={final_source}")
+            print(f"[TAX DEBUG] final_sales_tax={sales_tax} final_broker_fee={broker_fee}")
         
         logger.info(f"[TAX_DIAG] char={char_id} loc={location_id} -> {debug_info} | final_source={final_source}")
         
@@ -160,6 +165,7 @@ class TaxService:
         logger.info(f"[TAX_RELOAD] Archivo existe: {path.exists()}")
         
         self.overrides = load_tax_overrides() # Recargar al refrescar
+        self._debug_printed = set()  # Resetear caché de debug para mostrar logs en este refresh
         try:
             # 1. REFRESH SKILLS
             s_res = self.client.character_skills(char_id, token)

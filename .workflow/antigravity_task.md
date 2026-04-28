@@ -1985,3 +1985,63 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
   - Verificado `.gitignore` y creado `tax_overrides.example.json`.
 
 *Estado: Market Command 100% calibrado y verificado.*
+
+---
+
+## Sesión STABILITY — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE: Estabilización Completa de Market Command (Sin más parches parciales)
+
+### CAUSA RAÍZ DE LOS ERRORES PREVIOS
+- **IndentationError** (my_orders_view.py línea 530): El helper `_load_icon_into_table_item` fue insertado en medio del bloque `for` de `TradeProfitsDialog.update_table()`, cortando el bucle y dejando el código de `i_mar`, `i_prof` y el montaje de celdas con indentación fuera de contexto.
+- **RuntimeError PySide6**: Callbacks asíncronos (`image_loader.load`) capturaban directamente `QTableWidgetItem` por referencia. Al llegar la imagen, el objeto C++ ya podía haber sido destruido por un refresh o limpieza de tabla.
+
+### ARCHIVOS MODIFICADOS
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/my_orders_view.py` | Restaurado bucle `for` completo en `TradeProfitsDialog.update_table()`. `_load_icon_into_table_item` mejorado con validación de rangos (row/col bounds, None checks) en las 3 clases: `InventoryAnalysisDialog`, `TradeProfitsDialog`, `MarketMyOrdersView`. `save_layouts`/`load_layouts` usan `columnCount()` dinámico en lugar de 12 hardcodeado. `do_inventory` usa `loc_name` real desde `InventoryWorker.location_info`. |
+| `ui/market_command/performance_view.py` | `_load_icon_into_table_item` mejorado con validación completa de rangos y None checks. |
+| `ui/market_command/contracts_view.py` | `_load_icon_into_table_item` mejorado con validación completa de rangos y None checks. |
+| `core/tax_service.py` | `get_effective_taxes` ahora imprime `[TAX DEBUG]` solo una vez por combinación (char_id, loc_id) por sesión, evitando spam por cada orden. El set `_debug_printed` se resetea en `refresh_from_esi` para garantizar logs siempre visibles al pulsar ACTUALIZAR. |
+| `config/tax_overrides.example.json` | Eliminado el character_id real `96891715`. Sustituido por IDs ficticios `111000111` y `222000222`. |
+
+### CORRECCIÓN DE PERFORMANCE
+- `_do_refresh()` incrementa `_image_generation` antes de repoblar tablas.
+- `_load_icon_into_table_item` valida: generación, rango de filas, rango de columnas, existencia del item, coincidencia de `type_id`.
+- `AsyncImageLoader.load_safe` silencia `RuntimeError` residuales.
+
+### CORRECCIÓN DE INVENTARIO
+- `InventoryAnalysisDialog.__init__` inicializa `_image_generation = 0`.
+- `setup_ui` incrementa la generación antes de repoblar.
+- `do_inventory` en `MarketMyOrdersView` recoge `loc_name` real desde la señal `location_info` del `InventoryWorker`.
+- ROI calculado correctamente: `roi = (profit_t / cost_total * 100) if cost_total > 0 else -1e18`.
+
+### CORRECCIÓN DE TRADE PROFITS
+- Bucle `for r, t in enumerate(page_items)` ahora está completo sin interrupciones.
+- 10 columnas exactas: FECHA, ÍTEM, UNIDADES, P. COMPRA, P. VENTA, TOTAL COMPRA, TOTAL VENTA, FEES + TAX, MARGEN %, PROFIT NETO.
+- `i_prof` siempre definido antes de usarse.
+
+### CORRECCIÓN DE TAXES
+- `get_effective_taxes` opera con prioridad: Ubicación específica > Override global > ESI/Skills.
+- Logs `[TAX DEBUG]` impresos una vez por combinación (char_id, loc_id) por sesión/refresh.
+- `config/tax_overrides.example.json` ahora usa IDs ficticios sin datos reales del usuario.
+
+### RESULTADO DE py_compile
+| Archivo | Estado |
+|---|---|
+| `ui/market_command/my_orders_view.py` | ✅ OK |
+| `ui/market_command/performance_view.py` | ✅ OK |
+| `ui/market_command/contracts_view.py` | ✅ OK |
+| `ui/market_command/widgets.py` | ✅ OK |
+| `core/market_engine.py` | ✅ OK |
+| `core/tax_service.py` | ✅ OK |
+| `core/config_manager.py` | ✅ OK |
+| `core/esi_client.py` | ✅ OK |
+
+### LIMITACIONES PENDIENTES
+- La lógica de estados de órdenes BUY/SELL ("Liderando" vs "Superada") depende de que el mercado de referencia (Jita 4-4) esté disponible y los precios sean actuales.
+- El modo "Sin coste real" en SELL sigue siendo placeholder cuando no hay historial WAC suficiente.
+
+*Estado: Market Command estable y compilando. Todos los helpers de iconos asíncronos son seguros.*

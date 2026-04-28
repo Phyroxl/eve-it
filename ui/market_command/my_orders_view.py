@@ -397,11 +397,18 @@ class InventoryAnalysisDialog(QDialog):
     def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
         def apply_icon(pixmap):
             try:
-                if generation != self._image_generation: return
-                it = table.item(row, col)
-                if it and it.data(Qt.UserRole) == type_id:
-                    it.setIcon(QIcon(pixmap))
-            except RuntimeError: pass
+                if generation != self._image_generation:
+                    return
+                if table is None or row < 0 or row >= table.rowCount():
+                    return
+                if col < 0 or col >= table.columnCount():
+                    return
+                item = table.item(row, col)
+                if item is None or item.data(Qt.UserRole) != type_id:
+                    return
+                item.setIcon(QIcon(pixmap))
+            except RuntimeError:
+                return
         self.image_loader.load_safe(icon_url, apply_icon)
 
 class TradeProfitsDialog(QDialog):
@@ -761,26 +768,28 @@ class MarketMyOrdersView(QWidget):
         self.save_layouts()
 
     def save_layouts(self):
+        n_cols = self.table_sell.columnCount()
         cfg = {
-            "w": [self.table_sell.columnWidth(i) for i in range(12)],
-            "v": [self.table_sell.horizontalHeader().visualIndex(i) for i in range(12)]
+            "w": [self.table_sell.columnWidth(i) for i in range(n_cols)],
+            "v": [self.table_sell.horizontalHeader().visualIndex(i) for i in range(n_cols)]
         }
         save_ui_config("my_orders", cfg)
 
     def load_layouts(self):
         cfg = load_ui_config("my_orders")
+        n_cols = self.table_sell.columnCount()
         w = cfg.get("w")
         v = cfg.get("v")
-        if w: 
+        if w:
             for i, val in enumerate(w):
-                if i < 12:
+                if i < n_cols:
                     self.table_sell.setColumnWidth(i, val)
                     self.table_buy.setColumnWidth(i, val)
         if v:
             self.table_sell.blockSignals(True)
             self.table_buy.blockSignals(True)
             for visual_idx, logical_idx in enumerate(v):
-                if visual_idx < 12 and logical_idx < 12:
+                if visual_idx < n_cols and logical_idx < n_cols:
                     self.table_sell.horizontalHeader().moveSection(self.table_sell.horizontalHeader().visualIndex(logical_idx), visual_idx)
                     self.table_buy.horizontalHeader().moveSection(self.table_buy.horizontalHeader().visualIndex(logical_idx), visual_idx)
             self.table_sell.blockSignals(False)
@@ -987,11 +996,18 @@ class MarketMyOrdersView(QWidget):
     def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
         def apply_icon(pixmap):
             try:
-                if generation != self._image_generation: return
-                it = table.item(row, col)
-                if it and it.data(Qt.UserRole) == type_id:
-                    it.setIcon(QIcon(pixmap))
-            except RuntimeError: pass
+                if generation != self._image_generation:
+                    return
+                if table is None or row < 0 or row >= table.rowCount():
+                    return
+                if col < 0 or col >= table.columnCount():
+                    return
+                item = table.item(row, col)
+                if item is None or item.data(Qt.UserRole) != type_id:
+                    return
+                item.setIcon(QIcon(pixmap))
+            except RuntimeError:
+                return
         self.image_loader.load_safe(icon_url, apply_icon)
 
     def do_inventory(self):
@@ -999,12 +1015,15 @@ class MarketMyOrdersView(QWidget):
         t = auth.get_token()
         if not t: return
         self._start_sync_ui()
+        self._pending_loc_name = "TODO EL INVENTARIO"
         self.inv_worker = InventoryWorker(auth.char_id, t)
         self.inv_worker.status_update.connect(lambda m, v: (self.lbl_status.setText(m), self.progress_bar.setValue(v)))
+        self.inv_worker.location_info.connect(lambda name: setattr(self, '_pending_loc_name', name))
         def on_done(data):
             self._stop_sync_ui()
+            loc_name = getattr(self, '_pending_loc_name', 'INVENTARIO')
             if data:
-                InventoryAnalysisDialog(data, "Loc", self.image_loader, self).exec()
+                InventoryAnalysisDialog(data, loc_name, self.image_loader, self).exec()
             else:
                 QMessageBox.information(self, "Vacío", "No hay items en esta ubicación.")
         self.inv_worker.finished_data.connect(on_done)

@@ -1012,12 +1012,14 @@ class MarketPerformanceView(QWidget):
             try:
                 if generation != self._image_generation:
                     return
+                if table is None or row < 0 or row >= table.rowCount():
+                    return
+                if col < 0 or col >= table.columnCount():
+                    return
                 item = table.item(row, col)
-                if item and item.data(Qt.UserRole) == type_id:
-                    item.setIcon(QIcon(pixmap))
+                if item is None or item.data(Qt.UserRole) != type_id:
+                    return
+                item.setIcon(QIcon(pixmap))
             except RuntimeError:
-                pass 
-            except Exception:
-                pass
-
+                return
         self.image_loader.load_safe(icon_url, apply_icon)

@@ -709,9 +709,16 @@ class MarketContractsView(QWidget):
     def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
         def apply_icon(pixmap):
             try:
-                if generation != self._image_generation: return
-                it = table.item(row, col)
-                if it and it.data(Qt.UserRole) == type_id:
-                    it.setIcon(QIcon(pixmap))
-            except RuntimeError: pass
+                if generation != self._image_generation:
+                    return
+                if table is None or row < 0 or row >= table.rowCount():
+                    return
+                if col < 0 or col >= table.columnCount():
+                    return
+                item = table.item(row, col)
+                if item is None or item.data(Qt.UserRole) != type_id:
+                    return
+                item.setIcon(QIcon(pixmap))
+            except RuntimeError:
+                return
         self.image_loader.load_safe(icon_url, apply_icon)

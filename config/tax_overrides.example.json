@@ -1,16 +1,25 @@
 {
-  "96891715": {
+  "_comment": "Este archivo es un EJEMPLO. Copia como tax_overrides.json y ajusta con tus datos reales.",
+  "_comment2": "Formato global por personaje (todas las ubicaciones):",
+  "111000111": {
     "sales_tax_pct": 3.37,
     "broker_fee_pct": 1.43
   },
-  "123456789": [
+  "_comment3": "Formato por ubicacion especifica (prioridad sobre global):",
+  "222000222": [
     {
       "location_id": 60003760,
-      "sales_tax_pct": 3.37,
+      "sales_tax_pct": 2.90,
       "broker_fee_pct": 1.43
     },
     {
-      "sales_tax_pct": 3.60
+      "location_id": 60004588,
+      "sales_tax_pct": 3.37,
+      "broker_fee_pct": 1.50
+    },
+    {
+      "sales_tax_pct": 3.60,
+      "broker_fee_pct": 1.80
     }
   ]
 }
