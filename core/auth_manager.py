@@ -39,15 +39,74 @@ class AuthManager(QObject):
         self.redirect_uri = "http://localhost:12543/callback"
         self.scopes = "esi-ui.open_window.v1 esi-wallet.read_character_wallet.v1 esi-markets.read_character_orders.v1 esi-assets.read_assets.v1 esi-skills.read_skills.v1 esi-characters.read_standings.v1 esi-location.read_location.v1"
         self.current_token = None
+        self.refresh_token = None
+        self.expiry = 0
         self.char_name = None
         self.char_id = None
-        self.auth_error = None  # None = sin error, str = descripción del fallo
+        self.auth_error = None
+        self._lock = threading.Lock()
         
     @classmethod
     def instance(cls):
         if cls._instance is None:
             cls._instance = AuthManager()
         return cls._instance
+
+    def get_token(self) -> str:
+        """Retorna el access token actual, refrescándolo si es necesario."""
+        with self._lock:
+            if not self.current_token:
+                return None
+            
+            # Si expira en menos de 60 segundos, renovar
+            if self.refresh_token and time.time() > self.expiry - 60:
+                logger.info("AuthManager: Token por expirar, refrescando...")
+                if not self._do_refresh():
+                    return None
+            
+            return self.current_token
+
+    def _do_refresh(self) -> bool:
+        """Lógica interna de refresh (llamada dentro del lock)."""
+        import requests
+        import base64
+        try:
+            config_data = json.loads(_CONFIG_FILE.read_text())
+            client_id = config_data.get('client_id')
+            client_secret = config_data.get('client_secret', '')
+
+            post_data = {
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+            }
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            if client_secret:
+                auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+                headers["Authorization"] = f"Basic {auth_header}"
+            else:
+                post_data["client_id"] = client_id
+
+            res = requests.post(
+                "https://login.eveonline.com/v2/oauth/token",
+                data=post_data,
+                headers=headers,
+                timeout=15,
+            )
+
+            if res.status_code == 200:
+                data = res.json()
+                self.current_token = data.get('access_token')
+                self.refresh_token = data.get('refresh_token', self.refresh_token)
+                self.expiry = time.time() + data.get('expires_in', 3600)
+                logger.info("AuthManager: Token refrescado exitosamente.")
+                return True
+            else:
+                logger.error(f"AuthManager: Fallo al refrescar token: HTTP {res.status_code} — {res.text[:200]}")
+                return False
+        except Exception as e:
+            logger.error(f"AuthManager: Excepción al refrescar token: {e}")
+            return False
         
     def login(self):
         """Inicia el flujo SSO en el navegador."""
@@ -146,7 +205,9 @@ class AuthManager(QObject):
                                     if res.status_code == 200:
                                         tokens = res.json()
                                         self.current_token = tokens.get('access_token')
-                                        logger.info("AuthManager: access_token obtenido.")
+                                        self.refresh_token = tokens.get('refresh_token')
+                                        self.expiry = time.time() + tokens.get('expires_in', 3600)
+                                        logger.info("AuthManager: access_token y refresh_token obtenidos.")
 
                                         # Decodificar el JWT para extraer CharacterID/Name sin llamada extra
                                         try:

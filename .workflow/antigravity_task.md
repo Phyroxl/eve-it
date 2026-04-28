@@ -1936,4 +1936,41 @@ Se ha mejorado la jerarquía visual de la ventana de Inventario aplicando colore
 - [x] **Visual**: Verificación de que los motivos de pérdida aparecen en rojo y los de profit sólido en verde.
 - [x] **Estabilidad**: Confirmado que el coloreado no afecta al rendimiento del scroll ni al doble click.
 
-*Estado: Análisis táctico de activos con semántica visual completa.*
+### SESIÓN 24 AUTH, REFRESH & ORDENACIÓN — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operatividad de las tablas mediante ordenación inteligente y estados dinámicos.
+
+**Robustez de Autenticación (ESI):**
+1. **Refresh Token Automático**:
+   - Implementado en `AuthManager` con seguridad de hilos (`threading.Lock`).
+   - El sistema ahora detecta si el token va a expirar en menos de 60 segundos y lo renueva automáticamente antes de realizar cualquier llamada a ESI.
+   - **Retry en 401**: Si ESI devuelve un error de autorización, `ESIClient` intenta un refresh forzado y repite la petición una vez antes de fallar.
+2. **Manejo de Sesiones**: Se almacenan el `refresh_token` y el tiempo de expiración real devuelto por el SSO de EVE.
+
+**Inteligencia de Datos y Estados:**
+1. **Recálculo de Estados Real**:
+   - Al sincronizar, se fuerza el borrado de la caché de mercado local para garantizar que la comparación con la "Mejor Compra/Venta" se haga con datos del segundo actual.
+   - Corregida la lógica para que una orden propia que ya es la mejor del mercado se marque como `Liderando` o `Competitiva` en lugar de `Superada`.
+2. **Limpieza de Tablas**: Se asegura el repoblado completo de las vistas tras cada sincronización, eliminando residuos de estados anteriores.
+
+**UX & Operatividad (Tablas):**
+1. **Ordenación Numérica**: Implementada la clase `NumericTableWidgetItem`. Las columnas de `Profit`, `Margen`, `Precio` y `Cantidad` se ordenan ahora por su valor real, no de forma alfabética.
+2. **Ordenación Semántica**: Implementada la clase `SemanticTableWidgetItem`.
+   - La columna `Estado` se agrupa por prioridad: primero los éxitos (azul/verde), luego avisos (naranja) y finalmente fallos (rojo).
+   - En el Inventario, la `Recomendación` se agrupa de igual forma (`VENDER` arriba).
+3. **Persistencia de Acción**: El doble click para abrir el mercado y la selección de filas siguen funcionando correctamente incluso después de reordenar las tablas.
+
+**Archivos Modificados:**
+- `core/auth_manager.py`: Lógica de refresh y persistencia de tokens.
+- `core/esi_client.py`: Refactorización de métodos para usar `_request_auth` con retry automático.
+- `ui/market_command/my_orders_view.py`: Implementación de clases de ordenación y lógica de actualización de tablas.
+
+**Pruebas Realizadas:**
+- [x] **Refresh**: Verificación de renovación exitosa tras simular expiración.
+- [x] **Sorting**: Comprobación de que 1,000,000 va después de 900,000 al ordenar.
+- [x] **Fresh Data**: Confirmado que cambiar un precio en el juego se refleja como cambio de estado tras sincronizar en la app.
+
+*Estado: Plataforma financiera estable, automatizada y altamente navegable.*

@@ -138,119 +138,93 @@ class ESIClient:
             logger.warning(f"ESI universe_names error: {e}")
         return []
 
-    def _headers(self, token):
-        return {'Authorization': f'Bearer {token}'}
+    def _headers(self, token=None):
+        if token is None:
+            from .auth_manager import AuthManager
+            token = AuthManager.instance().get_token()
+        return {"Authorization": f"Bearer {token}", "User-Agent": "EVE-iT-Market-Command"}
+
+    def _request_auth(self, method, endpoint, token, params=None, json_data=None, retries=1):
+        """Petición autenticada con reintento automático en caso de 401."""
+        url = f"{self.BASE_URL}{endpoint}" if endpoint.startswith("/") else endpoint
+        try:
+            self._rate_limit()
+            res = self.session.request(method, url, headers=self._headers(token), params=params, json=json_data, timeout=15)
+            if res.status_code == 401 and retries > 0:
+                logger.info(f"ESI: 401 detectado en {endpoint}, forzando refresh...")
+                from .auth_manager import AuthManager
+                # get_token() intentará renovar si está caducado
+                new_token = AuthManager.instance().get_token()
+                if new_token:
+                    return self._request_auth(method, endpoint, new_token, params, json_data, retries - 1)
+            return res
+        except Exception as e:
+            logger.error(f"ESI request_auth error en {endpoint}: {e}")
+            return None
 
     def character_wallet(self, char_id, token):
-        url = f"{self.BASE_URL}/characters/{char_id}/wallet/"
-        try:
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                return res.json()
-            logger.warning(f"ESI character_wallet char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
-        except Exception as e:
-            logger.error(f"ESI character_wallet char={char_id} excepción: {e}")
+        res = self._request_auth("GET", f"/characters/{char_id}/wallet/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        logger.warning(f"ESI character_wallet char={char_id} → Falló")
         return None
 
-    def character_wallet_journal(self, char_id, token):
+    def wallet_journal(self, char_id, token):
         all_data = []
         page = 1
         while True:
-            url = f"{self.BASE_URL}/characters/{char_id}/wallet/journal/"
-            params = {'page': page}
-            try:
-                self._rate_limit()
-                res = self.session.get(url, headers=self._headers(token), params=params, timeout=15)
-                if res.status_code == 200:
-                    data = res.json()
-                    if not data: break
-                    all_data.extend(data)
-                    pages = int(res.headers.get('X-Pages', 1))
-                    if page >= pages: break
-                    page += 1
-                else:
-                    logger.warning(f"ESI wallet_journal char={char_id} page={page} → HTTP {res.status_code}")
-                    break
-            except Exception as e:
-                logger.error(f"ESI wallet_journal char={char_id} page={page} excepción: {e}")
+            res = self._request_auth("GET", f"/characters/{char_id}/wallet/journal/", token, params={'page': page})
+            if res and res.status_code == 200:
+                data = res.json()
+                if not data: break
+                all_data.extend(data)
+                pages = int(res.headers.get('X-Pages', 1))
+                if page >= pages: break
+                page += 1
+            else:
+                if res and res.status_code in (401, 403): return "missing_scope"
                 break
-        
-        logger.info(f"ESI wallet_journal char={char_id} → {len(all_data)} entradas totales en {page} páginas")
         return all_data
 
-    def character_wallet_transactions(self, char_id, token):
+    def wallet_transactions(self, char_id, token):
         all_data = []
         page = 1
-        # ESI permite hasta 2500 transacciones (50 páginas de 50)
-        while page <= 50:
-            url = f"{self.BASE_URL}/characters/{char_id}/wallet/transactions/"
-            params = {'page': page}
-            try:
-                self._rate_limit()
-                res = self.session.get(url, headers=self._headers(token), params=params, timeout=15)
-                if res.status_code == 200:
-                    data = res.json()
-                    if not data: break
-                    all_data.extend(data)
-                    # El header X-Pages no siempre está presente en este endpoint o es confuso,
-                    # paramos si recibimos menos de 50 (fin de datos)
-                    if len(data) < 50: break
-                    page += 1
-                else:
-                    logger.warning(f"ESI wallet_transactions char={char_id} page={page} → HTTP {res.status_code}")
-                    if res.status_code in (401, 403):
-                        return "missing_scope"
-                    break
-            except Exception as e:
-                logger.error(f"ESI wallet_transactions char={char_id} page={page} excepción: {e}")
+        while True:
+            res = self._request_auth("GET", f"/characters/{char_id}/wallet/transactions/", token, params={'page': page})
+            if res and res.status_code == 200:
+                data = res.json()
+                if not data: break
+                all_data.extend(data)
+                # Las transacciones no suelen tener X-Pages, se cortan cuando hay menos de 2500 o vacío
+                if len(data) < 2500: break
+                page += 1
+            else:
+                if res and res.status_code in (401, 403): return "missing_scope"
                 break
-        
-        logger.info(f"ESI wallet_transactions char={char_id} → {len(all_data)} transacciones totales en {page} páginas")
         return all_data
 
     def character_orders(self, char_id, token):
-        url = f"{self.BASE_URL}/characters/{char_id}/orders/"
-        try:
-            self._rate_limit()
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                logger.info(f"ESI character_orders char={char_id} → {len(data)} órdenes")
-                return data
-            logger.warning(f"ESI character_orders char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
-            if res.status_code in (401, 403):
-                raise Exception(f"Token expirado o sin permisos (HTTP {res.status_code}).")
-            elif res.status_code >= 500:
-                raise Exception(f"Servidor ESI caído (HTTP {res.status_code}).")
-            else:
-                raise Exception(f"Error desconocido (HTTP {res.status_code}).")
-        except Exception as e:
-            logger.error(f"ESI character_orders char={char_id} excepción: {e}")
-            raise e
+        res = self._request_auth("GET", f"/characters/{char_id}/orders/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        if res and res.status_code in (401, 403):
+            raise Exception("Token expirado o sin permisos (Reautorizar).")
+        return []
 
     def character_assets(self, char_id, token):
         all_assets = []
         page = 1
         while True:
-            url = f"{self.BASE_URL}/characters/{char_id}/assets/"
-            params = {'page': page}
-            try:
-                self._rate_limit()
-                res = self.session.get(url, headers=self._headers(token), params=params, timeout=15)
-                if res.status_code == 200:
-                    data = res.json()
-                    if not data: break
-                    all_assets.extend(data)
-                    pages = int(res.headers.get('X-Pages', 1))
-                    if page >= pages: break
-                    page += 1
-                else:
-                    logger.warning(f"ESI character_assets char={char_id} page={page} → HTTP {res.status_code}")
-                    if res.status_code in (401, 403):
-                        return "missing_scope"
-                    break
-            except Exception as e:
-                logger.error(f"ESI character_assets char={char_id} page={page} excepción: {e}")
+            res = self._request_auth("GET", f"/characters/{char_id}/assets/", token, params={'page': page})
+            if res and res.status_code == 200:
+                data = res.json()
+                if not data: break
+                all_assets.extend(data)
+                pages = int(res.headers.get('X-Pages', 1))
+                if page >= pages: break
+                page += 1
+            else:
+                if res and res.status_code in (401, 403): return "missing_scope"
                 break
         return all_assets
 
@@ -364,41 +338,26 @@ class ESIClient:
             return []
 
     def character_standings(self, char_id: int, token: str):
-        url = f"{self.BASE_URL}/characters/{char_id}/standings/"
-        try:
-            self._rate_limit()
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                return res.json()
-            if res.status_code in (401, 403):
-                return "missing_scope"
-        except Exception as e:
-            logger.error(f"ESI character_standings exception: {e}")
+        res = self._request_auth("GET", f"/characters/{char_id}/standings/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        if res and res.status_code in (401, 403):
+            return "missing_scope"
         return None
 
     def universe_stations(self, station_id: int):
         return self._get(f"/universe/stations/{station_id}/", ttl=86400)
 
     def universe_structures(self, structure_id: int, token: str):
-        url = f"{self.BASE_URL}/universe/structures/{structure_id}/"
-        try:
-            self._rate_limit()
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                return res.json()
-        except Exception as e:
-            logger.error(f"ESI universe_structures exception: {e}")
+        res = self._request_auth("GET", f"/universe/structures/{structure_id}/", token)
+        if res and res.status_code == 200:
+            return res.json()
         return None
 
     def character_location(self, char_id: int, token: str):
-        url = f"{self.BASE_URL}/characters/{char_id}/location/"
-        try:
-            self._rate_limit()
-            res = self.session.get(url, headers=self._headers(token), timeout=15)
-            if res.status_code == 200:
-                return res.json()
-            if res.status_code in (401, 403):
-                return "missing_scope"
-        except Exception as e:
-            logger.error(f"ESI character_location exception: {e}")
+        res = self._request_auth("GET", f"/characters/{char_id}/location/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        if res and res.status_code in (401, 403):
+            return "missing_scope"
         return None
