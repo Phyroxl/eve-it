@@ -1656,4 +1656,40 @@ Se ha realizado el pulido final de la pestaña `Mis Pedidos`, centrando los camb
 - [x] **Permisos**: Captura de `missing_scope` verificada.
 - [x] **Columnas**: Sincronización bidireccional estable y persistente tras reinicio.
 
-*Estado: Módulo "Mis Pedidos" finalizado y estabilizado al 100%.*
+### SESIÓN 24 MEJORAS PRO (WAC & SKILLS) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha elevado el módulo `Mis Pedidos` a un estándar profesional (Versión `1.1.4-PRO`), integrando cálculos financieros reales basados en el historial del personaje y sus habilidades técnicas.
+
+**Mejoras de Cálculo y Lógica:**
+1. **Coste Medio Ponderado (WAC)**:
+   - Se ha sustituido el promedio histórico simple por un cálculo de **Coste Medio Ponderado** en `CostBasisService`.
+   - El sistema ahora procesa las transacciones cronológicamente: las ventas reducen la cantidad de stock pero mantienen el coste medio, asegurando que el beneficio se calcule sobre el inventario que realmente queda.
+2. **Impuestos por Skills**:
+   - Implementado `TaxService` para obtener los niveles de **Accounting** y **Broker Relations** del personaje vía ESI.
+   - **Sales Tax**: Calculado dinámicamente (`8% * (1 - 0.11 * Nivel)`).
+   - **Broker Fee**: Calculado dinámicamente (`3% - 0.1% * Nivel`).
+   - Si faltan permisos de skills, se utiliza un fallback seguro y se informa al usuario.
+3. **Claridad en Beneficios**:
+   - El panel de detalle ahora diferencia entre **Profit Real** (basado en WAC de stock actual) y **Profit Potencial** (para órdenes de compra basadas en precios de venta actuales).
+
+**Mejoras de UI & Control:**
+1. **Contadores de Órdenes**: Los títulos de sección ahora muestran el volumen total de órdenes activas: `ÓRDENES DE VENTA (X)`.
+2. **Bloqueo de Edición**: Las tablas ahora son estrictamente de solo lectura (`NoEditTriggers`), eliminando cualquier riesgo de modificación accidental de datos técnicos.
+3. **Persistencia de Layout**: Se ha mantenido íntegra la sincronización de columnas y el guardado automático de anchos/orden.
+
+**Archivos Modificados:**
+- `core/esi_client.py`: Añadido endpoint de skills.
+- `core/cost_basis_service.py`: Implementada lógica WAC cronológica.
+- `core/tax_service.py`: Nuevo servicio para gestión de impuestos por skills.
+- `core/market_engine.py`: Integración de impuestos dinámicos en análisis.
+- `ui/market_command/my_orders_view.py`: Actualización de UI (contadores, bloqueo, mensajes de coste).
+
+**Pruebas Realizadas:**
+- [x] **WAC**: Simulación de compra -> venta parcial -> compra adicional calculada correctamente.
+- [x] **Skills**: Verificación de reducción de taxes con personaje nivel 5 en Accounting.
+- [x] **UI**: Tablas no editables y doble click funcional para mercado del juego.
+
+*Estado: Módulo de trading avanzado con precisión financiera total.*

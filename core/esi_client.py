@@ -254,6 +254,20 @@ class ESIClient:
                 break
         return all_assets
 
+    def character_skills(self, char_id, token):
+        url = f"{self.BASE_URL}/characters/{char_id}/skills/"
+        try:
+            self._rate_limit()
+            res = self.session.get(url, headers=self._headers(token), timeout=15)
+            if res.status_code == 200:
+                return res.json()
+            logger.warning(f"ESI character_skills char={char_id} → HTTP {res.status_code}")
+            if res.status_code in (401, 403):
+                return "missing_scope"
+        except Exception as e:
+            logger.error(f"ESI character_skills char={char_id} excepción: {e}")
+        return None
+
     def open_market_window(self, type_id: int, access_token: str):
         """
         Abre la ventana de mercado regional en el cliente de EVE Online.

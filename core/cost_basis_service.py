@@ -12,7 +12,7 @@ class CostBasis:
     type_id: int
     average_buy_price: float
     total_quantity: int
-    total_spent: float
+    total_spent: float # Representa el valor del inventario actual a precio de coste
     last_updated: datetime
     confidence: str  # 'high', 'medium', 'low'
 
@@ -35,60 +35,81 @@ class CostBasisService:
 
     def refresh_from_esi(self, char_id: int, token: str):
         """
-        Descarga las transacciones de la wallet y calcula el coste promedio.
-        Considera solo 'market_transaction' donde is_buy es True.
+        Calcula el Coste Medio Ponderado (WAC) del stock actual basado en transacciones.
+        Procesa cronológicamente para que las ventas descuenten stock correctamente.
         """
-        logger.info(f"Refrescando CostBasis para char={char_id}...")
+        logger.info(f"Refrescando WAC para char={char_id}...")
         try:
-            # esi-wallet.read_character_wallet.v1
             transactions = self.client.character_wallet_transactions(char_id, token)
             if not transactions:
                 logger.warning("No se obtuvieron transacciones de la wallet.")
                 return False
 
-            # Agrupar por type_id
-            temp_data = {} # type_id -> {total_isk, total_qty}
-            
-            for t in transactions:
-                # ESI: 'is_buy': true significa que nosotros compramos el item (gasto de ISK)
-                if t.get('is_buy'):
-                    t_id = t['type_id']
-                    qty = t['quantity']
-                    unit_price = t['unit_price']
-                    total_isk = qty * unit_price
-                    
-                    if t_id not in temp_data:
-                        temp_data[t_id] = {'isk': 0.0, 'qty': 0}
-                    
-                    temp_data[t_id]['isk'] += total_isk
-                    temp_data[t_id]['qty'] += qty
+            if transactions == "missing_scope":
+                logger.warning("Falta permiso esi-wallet.read_character_wallet.v1")
+                return False
 
-            # Calcular promedios
+            # Ordenar por fecha ASCENDENTE (de más antigua a más reciente)
+            # para procesar el flujo de stock correctamente.
+            sorted_tx = sorted(transactions, key=lambda x: x['date'])
+            
+            # Estado temporal: type_id -> {qty, cost}
+            stock_map = {}
+            
+            for t in sorted_tx:
+                t_id = t['type_id']
+                qty = t['quantity']
+                price = t['unit_price']
+                is_buy = t.get('is_buy', False)
+                
+                if t_id not in stock_map:
+                    stock_map[t_id] = {'qty': 0, 'cost': 0.0}
+                
+                curr = stock_map[t_id]
+                
+                if is_buy:
+                    # Añadir al stock y al coste total
+                    curr['qty'] += qty
+                    curr['cost'] += (qty * price)
+                else:
+                    # Venta: Reducir cantidad
+                    if curr['qty'] > 0:
+                        # El coste medio no cambia al vender, pero el coste total acumulado sí
+                        avg_unit = curr['cost'] / curr['qty']
+                        curr['qty'] -= qty
+                        if curr['qty'] <= 0:
+                            curr['qty'] = 0
+                            curr['cost'] = 0.0
+                        else:
+                            curr['cost'] = curr['qty'] * avg_unit
+                    else:
+                        # Venta sin registro de compra previa: No podemos calcular coste negativo de forma fiable
+                        pass
+
+            # Generar caché final
             new_cache = {}
             now = datetime.now()
-            for t_id, data in temp_data.items():
-                avg = data['isk'] / data['qty'] if data['qty'] > 0 else 0.0
-                new_cache[t_id] = CostBasis(
-                    type_id=t_id,
-                    average_buy_price=avg,
-                    total_quantity=data['qty'],
-                    total_spent=data['isk'],
-                    last_updated=now,
-                    confidence='medium' # Podría ser 'high' si tenemos muchas transacciones
-                )
+            for t_id, data in stock_map.items():
+                if data['qty'] > 0:
+                    avg = data['cost'] / data['qty']
+                    new_cache[t_id] = CostBasis(
+                        type_id=t_id,
+                        average_buy_price=avg,
+                        total_quantity=data['qty'],
+                        total_spent=data['cost'],
+                        last_updated=now,
+                        confidence='high' if len(sorted_tx) > 20 else 'medium'
+                    )
             
             self.cache = new_cache
             self.last_fetch_time = now
-            logger.info(f"CostBasis actualizado: {len(self.cache)} items calculados.")
+            logger.info(f"WAC actualizado: {len(self.cache)} items con stock activo.")
             return True
             
         except Exception as e:
-            logger.error(f"Error refrescando CostBasis: {e}")
+            logger.error(f"Error refrescando CostBasis (WAC): {e}")
             return False
 
     def has_wallet_scope(self) -> bool:
         auth = AuthManager.instance()
-        # Verificamos si el token tiene el scope necesario
-        # En una app real, decodificaríamos el JWT o usaríamos el verify endpoint
-        # Por ahora, confiamos en lo que configuramos en AuthManager
         return "esi-wallet.read_character_wallet.v1" in auth.scopes
