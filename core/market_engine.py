@@ -57,6 +57,39 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
         opportunities.append(opp)
     return opportunities
 
+def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) -> List[MarketOpportunity]:
+    filtered = []; risk_map = {"Low": 1, "Medium": 2, "High": 3}
+    for opp in opportunities:
+        if opp.best_buy_price == 0: continue
+        if config.exclude_plex and "plex" in opp.item_name.lower(): continue
+        if opp.best_buy_price > config.capital_max: continue
+        if opp.liquidity.volume_5d < config.vol_min_day: continue
+        if opp.margin_net_pct < config.margin_min_pct: continue
+        if opp.spread_pct > config.spread_max_pct: continue
+        current_risk = risk_map.get(opp.risk_level, 3)
+        if current_risk > config.risk_max: continue
+        if opp.liquidity.buy_orders_count < config.buy_orders_min: continue
+        if opp.liquidity.sell_orders_count < config.sell_orders_min: continue
+        if opp.liquidity.history_days < config.history_days_min: continue
+        if opp.profit_day_est < config.profit_day_min: continue
+        filtered.append(opp)
+    return filtered
+
+def score_opportunity(opp: MarketOpportunity, config: FilterConfig) -> ScoreBreakdown:
+    liq_norm = min(opp.liquidity.volume_5d / 5000.0, 1.0)
+    roi_norm = min(opp.margin_net_pct / 50.0, 1.0)
+    profit_day_norm = min(max(opp.profit_day_est, 0) / 500_000_000.0, 1.0)
+    base_score = (liq_norm * 0.50) + (roi_norm * 0.30) + (profit_day_norm * 0.20)
+    penalties = []
+    if opp.liquidity.volume_5d < 10: penalties.append(0.60)
+    if opp.spread_pct > 25.0: penalties.append(0.70)
+    if opp.liquidity.history_days < 5: penalties.append(0.50)
+    if opp.liquidity.buy_orders_count <= 2: penalties.append(0.75)
+    final_score = base_score
+    for p in penalties: final_score *= p
+    final_score *= 100
+    return ScoreBreakdown(base_score=base_score, liquidity_norm=liq_norm, roi_norm=roi_norm, profit_day_norm=profit_day_norm, penalties=penalties, final_score=final_score)
+
 def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: List[Dict[str, Any]], item_names: Dict[int, str] = None, config: FilterConfig = None, char_id: int = 0, token: str = ""):
     from .market_models import OpenOrder, OpenOrderAnalysis
     if config is None: config = FilterConfig()
@@ -99,7 +132,6 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             difference = bb - price
             competitive = difference <= 0
             if bs > 0:
-                # Profit = VentaNet - CompraBruta
                 net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
                 margin_pct = (net_profit / price) * 100 if price > 0 else 0
             state = "Competitiva" if competitive else "Superada"
@@ -109,8 +141,6 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             competitive = difference <= 0
             if avg_cost > 0:
                 base_cost = avg_cost
-                # Profit = VentaNet - CompraBrutaOriginal (WAC)
-                # Nota: El WAC ya incluye el fee de la compra original.
                 net_profit = price * (1.0 - s_tax - b_fee) - base_cost
                 margin_pct = (net_profit / base_cost) * 100 if base_cost > 0 else 0
                 gross_profit = price - base_cost
@@ -124,9 +154,8 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         net_profit_total = net_profit * vol_remain
         analysis = OpenOrderAnalysis(is_buy=is_buy, state=state, gross_profit_per_unit=gross_profit, net_profit_per_unit=net_profit, net_profit_total=net_profit_total, margin_pct=margin_pct, best_buy=bb, best_sell=bs, spread_pct=spread_pct, competitive=competitive, difference_to_best=difference)
         
-        # Guardar info de fee en el objeto si es necesario (o solo usarlo aquí)
         o = OpenOrder(order_id=eo['order_id'], type_id=t_id, item_name=item_names.get(t_id, f"Type {t_id}"), is_buy_order=is_buy, price=price, volume_total=eo.get('volume_total', 0), volume_remain=vol_remain, issued=eo.get('issued', ''), location_id=loc_id, range=eo.get('range', ''), analysis=analysis)
-        o._fee_source = b_fee_source # Atributo dinámico para el panel de detalle
+        o._fee_source = b_fee_source
         o._b_fee_pct = b_fee_val
         parsed_orders.append(o)
     return parsed_orders
@@ -162,7 +191,6 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
         bb, bs = best_prices.get(t_id, (0.0, 0.0)); qty = info['qty']
         loc_id = info['location']
         
-        # Para inventario, usamos el fee de la ubicación del asset (o fallback si no hay)
         b_fee_val, _ = tax_service.get_effective_broker_fee(char_id, loc_id, token)
         b_fee = b_fee_val / 100.0
         
