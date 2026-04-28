@@ -83,21 +83,23 @@ class TaxService:
         Función CENTRAL para obtener taxes finales aplicables.
         Retorna (sales_tax, broker_fee, source, debug_info)
         """
+        from core.config_manager import _CONFIG_DIR
+        path = _CONFIG_DIR / 'tax_overrides.json'
+        
         overrides = self._get_overrides_for_char(char_id)
         
-        # 1. Sales Tax (Global)
-        # Prioridad: Override por ubicación (si existe y tiene sales_tax_pct) > Override global > ESI
+        # 1. Sales Tax
         sales_tax = None
         source_st = "ESI/Skills"
         
-        # Primero buscar en overrides que tengan esta ubicación
+        # Prioridad 1: Override específico por ubicación
         for ov in overrides:
             if str(ov.get("location_id")) == str(location_id) and "sales_tax_pct" in ov:
                 sales_tax = ov["sales_tax_pct"]
                 source_st = "CALIBRADO MANUAL (LOC)"
                 break
         
-        # Si no, buscar override global
+        # Prioridad 2: Override global del personaje (sin location_id)
         if sales_tax is None:
             for ov in overrides:
                 if "sales_tax_pct" in ov and "location_id" not in ov:
@@ -105,19 +107,47 @@ class TaxService:
                     source_st = "CALIBRADO MANUAL (GLOBAL)"
                     break
         
+        # Prioridad 3: ESI / Skills
         if sales_tax is None:
             char_base = self.get_taxes(char_id)
             sales_tax = char_base.sales_tax_pct
             source_st = char_base.source
 
-        # 2. Broker Fee (Depende de ubicación)
-        broker_fee, source_bf = self.get_effective_broker_fee(char_id, location_id, token)
+        # 2. Broker Fee
+        broker_fee = None
+        source_bf = "ESI/Skills"
+        
+        # Prioridad 1: Override específico por ubicación
+        for ov in overrides:
+            if str(ov.get("location_id")) == str(location_id) and "broker_fee_pct" in ov:
+                broker_fee = ov["broker_fee_pct"]
+                source_bf = "CALIBRADO MANUAL (LOC)"
+                break
+        
+        # Prioridad 2: Override global del personaje (sin location_id)
+        if broker_fee is None:
+            for ov in overrides:
+                if "broker_fee_pct" in ov and "location_id" not in ov:
+                    broker_fee = ov["broker_fee_pct"]
+                    source_bf = "CALIBRADO MANUAL (GLOBAL)"
+                    break
+        
+        # Prioridad 3: ESI / Standings / NPC Formula
+        if broker_fee is None:
+            broker_fee, source_bf = self.get_effective_broker_fee(char_id, location_id, token)
         
         final_source = source_st if "CALIBRADO" in source_st else source_bf
         if "CALIBRADO" in source_st and "CALIBRADO" in source_bf:
             final_source = "CALIBRADO MANUAL"
             
         debug_info = f"ST={sales_tax}% ({source_st}), BF={broker_fee}% ({source_bf})"
+        
+        # DIAGNÓSTICO OBLIGATORIO EN CONSOLA
+        print(f"[TAX DEBUG] char_id={char_id} location_id={location_id}")
+        print(f"[TAX DEBUG] overrides_path={path.absolute()} exists={path.exists()}")
+        print(f"[TAX DEBUG] override_match={'True' if 'CALIBRADO' in final_source else 'False'} source={final_source}")
+        print(f"[TAX DEBUG] final_sales_tax={sales_tax} final_broker_fee={broker_fee}")
+        
         logger.info(f"[TAX_DIAG] char={char_id} loc={location_id} -> {debug_info} | final_source={final_source}")
         
         return sales_tax, broker_fee, final_source, debug_info

@@ -68,6 +68,7 @@ class SemanticTableWidgetItem(QTableWidgetItem):
 class SyncWorker(QThread):
     finished_data = Signal(list)
     status_update = Signal(str, int)
+    location_ready = Signal(int)
     error = Signal(str)
 
     def __init__(self, char_id, token):
@@ -86,7 +87,11 @@ class SyncWorker(QThread):
             
             # Obtener ubicación para calibrar taxes locales en el reporte
             self.status_update.emit("LOCALIZANDO PERSONAJE...", 25)
-            client.character_location(self.char_id, self.token) 
+            loc_res = client.character_location(self.char_id, self.token)
+            if loc_res and loc_res != "missing_scope":
+                loc_id = loc_res.get('station_id') or loc_res.get('structure_id') or 0
+                if loc_id:
+                    self.location_ready.emit(loc_id)
 
             self.status_update.emit("DESCARGANDO ÓRDENES...", 40)
             orders = client.character_orders(self.char_id, self.token)
@@ -214,8 +219,6 @@ class TradeProfitsWorker(QThread):
             
             tx_service = TaxService.instance()
             tx_service.refresh_from_esi(self.char_id, self.token)
-            taxes = tx_service.get_taxes(self.char_id)
-            sales_tax_pct = taxes.sales_tax_pct
             
             for t in sorted_tx:
                 tid = t['type_id']
@@ -224,25 +227,27 @@ class TradeProfitsWorker(QThread):
                 is_buy = t.get('is_buy', False)
                 loc_id = t.get('location_id', 0)
                 
+                # Obtener TAXES EFECTIVAS para esta ubicación específica
+                s_tax_pct, b_fee_pct, source, debug = tx_service.get_effective_taxes(self.char_id, loc_id, self.token)
+                _log.info(f"[TRADE_TAX] Tx={tid} Loc={loc_id} -> ST={s_tax_pct}%, BF={b_fee_pct}% ({source})")
+                
                 if tid not in stock_map:
                     stock_map[tid] = {'qty': 0, 'cost': 0.0}
                 curr = stock_map[tid]
                 
-                fee_pct, _ = tx_service.get_effective_broker_fee(self.char_id, loc_id, self.token)
-                
                 if is_buy:
-                    # Compra: Aplicar fee y añadir al stock
-                    total_buy = qty * price * (1.0 + fee_pct/100.0)
+                    # Compra: Aplicar broker fee efectivo
+                    total_buy = qty * price * (1.0 + b_fee_pct/100.0)
                     curr['qty'] += qty
                     curr['cost'] += total_buy
                 else:
-                    # Venta: Calcular beneficio contra WAC
+                    # Venta: Calcular beneficio contra WAC usando fees y taxes efectivos
                     if curr['qty'] > 0:
                         wac_unit = curr['cost'] / curr['qty']
                         cost_matched = qty * wac_unit
                         
                         gross_sell = qty * price
-                        fees_amt = gross_sell * (fee_pct/100.0 + sales_tax_pct/100.0)
+                        fees_amt = gross_sell * (b_fee_pct/100.0 + s_tax_pct/100.0)
                         net_sell = gross_sell - fees_amt
                         
                         profit = net_sell - cost_matched
@@ -549,6 +554,7 @@ class MarketMyOrdersView(QWidget):
         super().__init__(parent)
         self.worker = None
         self.all_orders = []
+        self.current_location_id = 0
         self.image_loader = AsyncImageLoader()
         self.spinner_chars = ["|", "/", "-", "\\"]
         self.spinner_idx = 0
@@ -773,9 +779,15 @@ class MarketMyOrdersView(QWidget):
         self._start_sync_ui()
         self.worker = SyncWorker(auth.char_id, t)
         self.worker.status_update.connect(lambda m, v: (self.lbl_status.setText(m), self.progress_bar.setValue(v)))
+        self.worker.location_ready.connect(self._on_location_found)
         self.worker.finished_data.connect(self.on_data)
         self.worker.error.connect(self.on_error)
         self.worker.start()
+
+    def _on_location_found(self, loc_id):
+        self.current_location_id = loc_id
+        _log.info(f"[LOCATION] Personaje localizado en {loc_id}")
+        self.update_taxes_info()
 
     def on_authenticated(self, name, tokens):
         self.btn_esi.setText(f"SALIR ({name.upper()})")
@@ -933,11 +945,13 @@ class MarketMyOrdersView(QWidget):
         token = auth.get_token()
         if not token: return
         
-        # Obtener ubicación actual (Cacheada o ESI)
-        loc_res = ESIClient().character_location(auth.char_id, token)
-        loc_id = 0
-        if loc_res and loc_res != "missing_scope":
-            loc_id = loc_res.get('station_id') or loc_res.get('structure_id') or 0
+        # Prioridad de ubicación:
+        # 1. Ubicación detectada en el Sync más reciente (current_location_id)
+        # 2. Ubicación de la primera orden si no hay detectada
+        # 3. Fallback a 0 (Overrides globales seguirán funcionando)
+        loc_id = self.current_location_id
+        if not loc_id and self.all_orders:
+            loc_id = self.all_orders[0].location_id
         
         s_tax, b_fee, source, debug = TaxService.instance().get_effective_taxes(auth.char_id, loc_id, token)
         

@@ -1977,11 +1977,11 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Hotfix Inventario**: Corregida excepción por `roi` indefinido. Ahora se calcula dinámicamente en el loop de análisis.
-- [x] **Hotfix Trade Profits**: Corregida excepción por `i_prof` indefinido. Rediseñada la tabla para 10 columnas exactas con Icono + Nombre unificados.
-- [x] **Telemetría de Taxes**: Implementado log detallado de rutas absolutas para `tax_overrides.json`. Corregida la prioridad de aplicación (Ubicación > Global > ESI).
-- [x] **Motor de Mercado (v2.1)**: Refinada la exclusión de órdenes propias mediante conteo unitario. Añadidos logs `[TAX_DIAG_ITEM]` para depuración de estados competitivos.
-- [x] **Unificación Visual**: Todas las tablas de Market Command ahora comparten el mismo sistema de celdas unificadas (Ítem = Icono + Texto).
-- [x] **Seguridad**: Saneado `.gitignore` y creado `config/tax_overrides.example.json`.
+- [x] **Hotfix Final de Taxes**: 
+  - Centralizado el uso de `get_effective_taxes` en `TradeProfitsWorker` para cálculos precisos por transacción.
+  - Implementado sistema de captura de ubicación en `SyncWorker` y almacenamiento en `MarketMyOrdersView`.
+  - Refinado `TaxService` para manejar prioridad jerárquica de overrides (Ubicación > Personaje Global > ESI).
+  - Añadido diagnóstico obligatorio en consola para auditar el origen de cada tasa aplicada.
+  - Verificado `.gitignore` y creado `tax_overrides.example.json`.
 
-*Estado: Hotfix completo. Market Command estable y calibrado.*
+*Estado: Market Command 100% calibrado y verificado.*
