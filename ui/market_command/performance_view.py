@@ -665,8 +665,8 @@ class MarketPerformanceView(QWidget):
             import traceback
             tb = traceback.format_exc()
             _log.error(f"[REFRESH] EXCEPCIÓN:\n{tb}")
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Error en refresh_view", f"{exc}\n\n{tb[:1000]}")
+            self._diag_label.setText(f"▸ ERROR CRÍTICO: {exc}")
+            self._diag_label.setStyleSheet("color: #ef4444; font-size: 9px; font-weight: 700; padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;")
 
     def _do_refresh(self):
         self.detail_frame.setVisible(False)
@@ -813,6 +813,40 @@ class MarketPerformanceView(QWidget):
             self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
             self.top_items_table.setCellWidget(i, 0, icon_lbl)
 
+            item_cell = QTableWidgetItem(item.item_name)
+            item_cell.setData(Qt.UserRole, item.item_id)
+            self.top_items_table.setItem(i, 1, item_cell)
+            
+            self.top_items_table.setItem(i, 2, QTableWidgetItem(f"{item.total_bought_units:,}"))
+            self.top_items_table.setItem(i, 3, QTableWidgetItem(f"{item.total_sold_units:,}"))
+            
+            stock_item = QTableWidgetItem(f"{item.net_units:,}")
+            if item.net_units > 0:
+                stock_item.setForeground(QColor("#60a5fa"))
+            self.top_items_table.setItem(i, 4, stock_item)
+            
+            # Profit (Col 5)
+            profit_item = QTableWidgetItem(format_isk(item.realized_profit_est, short=True))
+            if item.realized_profit_est > 0: profit_item.setForeground(QColor("#10b981"))
+            self.top_items_table.setItem(i, 5, profit_item)
+
+            item_cell = QTableWidgetItem(item.item_name)
+            item_cell.setData(Qt.UserRole, item.item_id)
+            self.top_items_table.setItem(i, 1, item_cell)
+            
+            self.top_items_table.setItem(i, 2, QTableWidgetItem(f"{item.total_bought_units:,}"))
+            self.top_items_table.setItem(i, 3, QTableWidgetItem(f"{item.total_sold_units:,}"))
+            
+            stock_item = QTableWidgetItem(f"{item.net_units:,}")
+            if item.net_units > 0: stock_item.setForeground(QColor("#60a5fa"))
+            self.top_items_table.setItem(i, 4, stock_item)
+            
+            profit_item = QTableWidgetItem(format_isk(item.realized_profit_est, short=True))
+            if item.realized_profit_est > 0: profit_item.setForeground(QColor("#10b981"))
+            self.top_items_table.setItem(i, 5, profit_item)
+
+            status_item = QTableWidgetItem(item.status_text)
+            status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 6, status_item)
             
             for col in range(1, 7):
