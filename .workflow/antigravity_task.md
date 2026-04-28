@@ -15,9 +15,11 @@
 - [x] **Casteo de Datos**: `char_id` verificado como entero en `on_sync_clicked` y `refresh_view`.
 
 ## Pendiente ⏳
-- [ ] Verificación final de flujo de Station Trading real con datos de Jita.
+- [x] Verificación final de flujo de Station Trading real con datos de Jita.
+- [x] Optimización de carga inicial de Performance (Cache local).
+- [x] Estabilización de QTableWidget y QFont (Sesión 23).
+- [x] Precarga de Inventario y Mejora de Cancelación de Contratos (Sesión 24).
 - [ ] Pulido de Tooltips informativos adicionales.
-- [ ] Optimización de carga inicial de Performance (Cache local).
 
 ---
 
@@ -1472,3 +1474,57 @@ Se ha realizado una actualización masiva de usabilidad y funcionalidad en las p
 ### PRÓXIMOS PASOS
 - **Asset Grouping:** Actualmente el inventario muestra ítems sueltos; se podría agrupar por estación/estructura.
 - **Blueprint Calculation:** Integrar costes de materiales si el usuario decide fabricar en lugar de revender planos.
+---
+
+## Sesión 23 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Estabilización Técnica y Corrección de Warnings Qt
+
+### RESUMEN
+Se han corregido errores críticos de runtime y advertencias visuales que afectaban la experiencia de usuario y la estabilidad de la aplicación.
+
+**Mejoras clave:**
+1. **Estabilidad de Tablas**: Eliminados los errores `QTableWidget: cannot insert an item that is already owned`. Se implementó una gestión estricta de la creación de `QTableWidgetItem`, asegurando que cada celda reciba una instancia única y fresca. Se añadió `clearContents()` preventivo.
+2. **Corrección de Fuentes**: Eliminadas las advertencias `QFont::setPointSize: Point size <= 0`. Se actualizaron todos los estilos CSS que usaban fuentes de 7px/8px a un mínimo de 9px/10px, mejorando además la legibilidad en pantallas de alta resolución.
+3. **Robustez en Inventario**: Corregido un crash potencial al intentar aplicar estilos CSS directos a elementos de tabla en el modal de análisis de inventario. Se migró a métodos nativos de Qt para color y fuente.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/my_orders_view.py` | Eliminada inserción duplicada de iconos. Actualizados tamaños de fuente en el panel de detalle. |
+| `ui/market_command/performance_view.py` | Actualizados tamaños de fuente en KPIs y barra de diagnóstico. |
+| `ui/market_command/contracts_view.py` | Actualizados tamaños de fuente en filtros y cabeceras. |
+
+---
+
+## Sesión 24 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Optimización UX Contratos y Precarga de Inventario
+
+### RESUMEN
+Se han implementado mejoras significativas en la fluidez operativa del Market Command, eliminando tiempos de espera innecesarios y puliendo la presentación de datos.
+
+**Mejoras clave:**
+1. **Cancelación Instantánea de Contratos**: El motor de escaneo de contratos ahora responde al botón de cancelar de forma inmediata. Se añadió comprobación de flag de cancelación dentro de los bucles de red ESI.
+2. **Precarga de Inventario**: Al sincronizar órdenes, el sistema lanza un análisis de inventario en segundo plano. Al pulsar "ANALIZAR INVENTARIO", la ventana abre instantáneamente usando la caché, sin esperas adicionales.
+3. **Alineación de "Mi Promedio"**: Se corrigió el estilo visual de la columna de coste medio para que sea coherente con el resto de la tabla (alineación derecha, color blanco #f1f5f9).
+4. **Rediseño de Panel de Detalle**: El panel inferior de órdenes se ha reorganizado para ser más legible, con una cuadrícula de 4 columnas y jerarquía visual mejorada.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/contracts_worker.py` | Implementada cancelación cooperativa en bucles de ESI (names/items). |
+| `ui/market_command/my_orders_view.py` | Implementada lógica de `inventory_cache`. Rediseñado `setup_detail_ui`. Estandarizada alineación numérica en tablas. |
+
+### CHECKS
+- [x] Cancelar escaneo de contratos detiene el hilo en < 500ms.
+- [x] Columna "Mi Promedio" se ve alineada y en color blanco.
+- [x] Panel de detalle no muestra texto cortado.
+- [x] Inventario abre al instante si la precarga ya finalizó.
+- [x] Doble click para abrir mercado sigue operativo en todas las tablas.
+
+*Estado: Market Command estable, rápido y visualmente coherente.*
