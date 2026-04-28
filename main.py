@@ -262,6 +262,13 @@ def _auto_start(controller, tray, suite_win, ctrl_win, log):
     # 3. Iniciar Tracker SIEMPRE (con log_dir o sin él, en modo auto-scan)
     # skip=False → lee eventos del log actual (sesión en curso) para que los personajes aparezcan activos
     skip = s.value("skip_logs", "false") == "true"
+    # 4. Restaurar sesión ESI si existe
+    try:
+        from core.auth_manager import AuthManager
+        AuthManager.instance().try_restore_session()
+    except Exception as e:
+        log.warning(f"Auto-start: Error restaurando sesión ESI: {e}")
+
     log.info(f"Auto-start: Iniciando tracker (log_dir='{controller.log_directory}', skip={skip})")
     controller.start_tracker(skip_existing=skip)
 

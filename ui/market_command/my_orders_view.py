@@ -545,7 +545,8 @@ class MarketMyOrdersView(QWidget):
         
         self.setup_ui()
         self.load_layouts()
-        AuthManager.instance().authenticated.connect(self.do_sync)
+        AuthManager.instance().authenticated.connect(self.on_authenticated)
+        QTimer.singleShot(100, self.try_auto_login)
 
     def setup_ui(self):
         self.main_layout = QVBoxLayout(self)
@@ -579,21 +580,26 @@ class MarketMyOrdersView(QWidget):
         title_v.addWidget(self.progress_bar)
         
         self.btn_repopulate = QPushButton("ACTUALIZAR")
+        self.btn_esi = QPushButton("VINCULAR ESI")
         self.btn_inventory = QPushButton("INVENTARIO")
         self.btn_trades = QPushButton("TRADE PROFITS")
         
-        for b in [self.btn_repopulate, self.btn_inventory, self.btn_trades]:
+        for b in [self.btn_repopulate, self.btn_inventory, self.btn_trades, self.btn_esi]:
             b.setCursor(Qt.PointingHandCursor)
             b.setFixedHeight(35)
             b.setStyleSheet("QPushButton { background-color: #1e293b; color: white; font-size: 10px; font-weight: 900; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; } QPushButton:hover { background-color: #334155; }")
         
+        self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#1e293b", "#3b82f6"))
         self.btn_inventory.setStyleSheet(self.btn_inventory.styleSheet().replace("#1e293b", "#10b981"))
+        
         self.btn_repopulate.clicked.connect(self.do_sync)
         self.btn_inventory.clicked.connect(self.do_inventory)
         self.btn_trades.clicked.connect(self.open_trades)
+        self.btn_esi.clicked.connect(self.toggle_esi)
         
         header.addLayout(title_v)
         header.addStretch()
+        header.addWidget(self.btn_esi)
         header.addWidget(self.btn_inventory)
         header.addWidget(self.btn_trades)
         header.addWidget(self.btn_repopulate)
@@ -744,13 +750,56 @@ class MarketMyOrdersView(QWidget):
     def do_sync(self):
         auth = AuthManager.instance()
         t = auth.get_token()
-        if not t: return
+        if not t:
+            self.lbl_status.setText("ERROR: NO AUTENTICADO")
+            self.lbl_status.setStyleSheet("color: #ef4444;")
+            # Si no hay token, intentar login automático o pedirlo
+            auth.login()
+            return
         self._start_sync_ui()
         self.worker = SyncWorker(auth.char_id, t)
         self.worker.status_update.connect(lambda m, v: (self.lbl_status.setText(m), self.progress_bar.setValue(v)))
         self.worker.finished_data.connect(self.on_data)
         self.worker.error.connect(self.on_error)
         self.worker.start()
+
+    def on_authenticated(self, name, tokens):
+        self.btn_esi.setText(f"SALIR ({name.upper()})")
+        self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#3b82f6", "#1e293b"))
+        self.do_sync()
+
+    def try_auto_login(self):
+        auth = AuthManager.instance()
+        res = auth.try_restore_session()
+        if res == "ok":
+            self.lbl_status.setText(f"SESIÓN RESTAURADA: {auth.char_name.upper()}")
+            self.lbl_status.setStyleSheet("color: #10b981;")
+        elif res == "new_scopes_required":
+            self.lbl_status.setText("FALTAN PERMISOS NUEVOS DE ESI. REAUTORIZA EL PERSONAJE.")
+            self.lbl_status.setStyleSheet("color: #f59e0b;")
+            QMessageBox.warning(self, "ESI - Nuevos Permisos", "Se requieren permisos adicionales de ESI para las nuevas funciones.\n\nPor favor, vuelve a vincular tu personaje.")
+        elif res == "expired":
+            self.lbl_status.setText("SESIÓN EXPIRADA. REAUTORIZACIÓN REQUERIDA.")
+            self.lbl_status.setStyleSheet("color: #ef4444;")
+        else:
+            self.lbl_status.setText("SIN SESIÓN ESI ACTIVA")
+
+    def toggle_esi(self):
+        auth = AuthManager.instance()
+        if auth.current_token:
+            # Logout
+            auth.logout()
+            self.btn_esi.setText("VINCULAR ESI")
+            self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#1e293b", "#3b82f6"))
+            self.lbl_status.setText("SESIÓN CERRADA")
+            self.lbl_status.setStyleSheet("color: #94a3b8;")
+            self.all_orders = []
+            self.table_sell.setRowCount(0)
+            self.table_buy.setRowCount(0)
+        else:
+            # Login
+            self.lbl_status.setText("INICIANDO SSO EN NAVEGADOR...")
+            auth.login()
 
     def on_data(self, data):
         self.all_orders = data

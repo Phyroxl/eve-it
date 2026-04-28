@@ -1977,10 +1977,12 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Hotfix QIcon**: Corregido error `NameError: QIcon is not defined` en `PerformanceView` añadiendo el import de `QtGui`.
-- [x] **Armonización LIDERANDO**: El estado `LIDERANDO` ahora se muestra siempre en verde esmeralda, tanto para compras como para ventas, mejorando la coherencia visual.
-- [x] **Unificación ÍTEM**: Icono y nombre ahora comparten la misma celda en todas las tablas de Market Command.
-- [x] **Corrección Sales Tax**: Prioridad absoluta a `tax_overrides.json` con logs de verificación.
-- [x] **Estados Inteligentes**: Refactorizada la lógica para excluir órdenes propias en la comparación de competitividad.
+- [x] **Persistencia ESI**: Implementado `AuthManager.save_session()` para guardar tokens en `config/esi_session.json`.
+- [x] **Auto-Login**: La app restaura automáticamente el último personaje al abrirse, refrescando el token de forma transparente.
+- [x] **Validación de Scopes**: Sistema de detección de cambios en permisos requeridos. Si el desarrollador añade nuevos scopes, la app solicita reautorización manual con un mensaje claro.
+- [x] **Seguridad**: Archivo de sesión añadido a `.gitignore` para evitar fugas de tokens en el repositorio.
+- [x] **UI de Sesión**: Añadido botón dinámico de `VINCULAR ESI / SALIR (<Character>)` en Market Command para facilitar el cambio de personaje.
+- [x] **Hotfix QIcon**: Corregido error de importación en `PerformanceView`.
+- [x] **Armonización LIDERANDO**: Estado verde unificado para compras y ventas.
 
-*Estado: Plataforma visualmente impecable, sin errores de importación y con telemetría de alta fidelidad.*
+*Estado: Plataforma profesional con persistencia de identidad y telemetría de alta fidelidad.*

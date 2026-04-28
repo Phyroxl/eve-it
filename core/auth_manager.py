@@ -12,6 +12,7 @@ from urllib.parse import urlparse, parse_qs
 logger = logging.getLogger('eve.auth')
 
 _CONFIG_FILE = Path(__file__).resolve().parent.parent / 'config' / 'eve_client.json'
+_SESSION_FILE = Path(__file__).resolve().parent.parent / 'config' / 'esi_session.json'
 
 
 def _load_client_id() -> str:
@@ -100,6 +101,7 @@ class AuthManager(QObject):
                 self.refresh_token = data.get('refresh_token', self.refresh_token)
                 self.expiry = time.time() + data.get('expires_in', 3600)
                 logger.info("AuthManager: Token refrescado exitosamente.")
+                self.save_session() # Persistir sesión actualizada
                 return True
             else:
                 logger.error(f"AuthManager: Fallo al refrescar token: HTTP {res.status_code} — {res.text[:200]}")
@@ -236,6 +238,7 @@ class AuthManager(QObject):
                                                 logger.error(f"AuthManager: /oauth/verify → {verify_res.status_code}")
 
                                         logger.info(f"AuthManager: Autenticado como {self.char_name} ({self.char_id})")
+                                        self.save_session()
                                         self.authenticated.emit(self.char_name, tokens)
                                     else:
                                         self.auth_error = f"Token exchange falló: HTTP {res.status_code} — {res.text[:300]}"
@@ -262,3 +265,75 @@ class AuthManager(QObject):
                     logger.error(f"AuthManager: {self.auth_error}", exc_info=True)
 
         threading.Thread(target=run_server, daemon=True).start()
+
+    def save_session(self):
+        """Guarda la sesión actual en config/esi_session.json."""
+        if not self.refresh_token:
+            return
+        
+        session_data = {
+            "char_id": self.char_id,
+            "char_name": self.char_name,
+            "refresh_token": self.refresh_token,
+            "scopes": self.scopes,
+            "last_update": time.time()
+        }
+        try:
+            _SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _SESSION_FILE.write_text(json.dumps(session_data, indent=4), encoding='utf-8')
+            logger.info(f"AuthManager: Sesión guardada para {self.char_name}")
+        except Exception as e:
+            logger.error(f"AuthManager: No se pudo guardar la sesión: {e}")
+
+    def try_restore_session(self) -> str:
+        """
+        Intenta restaurar la sesión desde el archivo.
+        Retorna un mensaje de estado: 'ok', 'no_session', 'expired', 'new_scopes_required'
+        """
+        if not _SESSION_FILE.exists():
+            return "no_session"
+        
+        try:
+            data = json.loads(_SESSION_FILE.read_text(encoding='utf-8'))
+            saved_scopes = data.get('scopes', '')
+            
+            # 1. Verificar Scopes
+            required = set(self.scopes.split())
+            saved = set(saved_scopes.split())
+            if not required.issubset(saved):
+                logger.warning("AuthManager: Scopes guardados insuficientes.")
+                return "new_scopes_required"
+            
+            # 2. Cargar datos
+            self.char_id = data.get('char_id')
+            self.char_name = data.get('char_name')
+            self.refresh_token = data.get('refresh_token')
+            
+            if not self.refresh_token:
+                return "no_session"
+            
+            # 3. Refrescar token inmediatamente para obtener un access_token válido
+            logger.info(f"AuthManager: Intentando restaurar sesión de {self.char_name}...")
+            with self._lock:
+                if self._do_refresh():
+                    logger.info(f"AuthManager: Sesión de {self.char_name} restaurada con éxito.")
+                    self.authenticated.emit(self.char_name, {"access_token": self.current_token, "refresh_token": self.refresh_token})
+                    return "ok"
+                else:
+                    return "expired"
+        except Exception as e:
+            logger.error(f"AuthManager: Error al restaurar sesión: {e}")
+            return "no_session"
+
+    def logout(self):
+        """Borra la sesión local y limpia variables."""
+        if _SESSION_FILE.exists():
+            try:
+                _SESSION_FILE.unlink()
+            except:
+                pass
+        self.current_token = None
+        self.refresh_token = None
+        self.char_id = None
+        self.char_name = None
+        logger.info("AuthManager: Sesión cerrada.")

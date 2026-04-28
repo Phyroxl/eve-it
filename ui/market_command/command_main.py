@@ -10,6 +10,8 @@ class MarketCommandMain(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self.try_auto_restore)
         
     def setup_ui(self):
         self.layout = QVBoxLayout(self)
@@ -170,3 +172,14 @@ class MarketCommandMain(QWidget):
             self.lbl_mode.setText("POSICIONES ABIERTAS")
         else:
             self.lbl_mode.setText("ARBITRAJE DE CONTRATOS")
+
+    def try_auto_restore(self):
+        from core.auth_manager import AuthManager
+        auth = AuthManager.instance()
+        if auth.current_token:
+            self.on_auth_success(auth.char_name, {})
+        else:
+            # Intentar restaurar si no hay token activo pero hay archivo
+            res = auth.try_restore_session()
+            if res == "ok":
+                self.on_auth_success(auth.char_name, {})
