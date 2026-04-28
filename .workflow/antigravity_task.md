@@ -1974,10 +1974,9 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Fresh Data**: Confirmado que cambiar un precio en el juego se refleja como cambio de estado tras sincronizar en la app.
 - [x] **Hotfix Formato**: Corregido error que mostraba números en notación científica y raw floats en lugar de ISK formateado al activar la ordenación.
 - [x] **Fix WAC (Mi Promedio)**: Corregido error de mapeo de nombres de métodos (`wallet_transactions`) que impedía cargar el historial de la wallet y calcular el coste medio (WAC).
-- [x] **Lógica Inventario**: Ajustada la lógica para priorizar el Profit sobre el Spread.
-- [x] **Trade Profits**: Nueva ventana que calcula beneficios realizados usando WAC sobre el historial de transacciones (últimos 2500 registros).
-- [x] **Sincronización de Columnas**: Las tablas de compra y venta ahora sincronizan anchos y posiciones en tiempo real.
-- [x] **Persistencia UI**: Layouts guardados localmente en `config/ui_*.json` (excluidos de Git).
-- [x] **Ordenación ROI**: La columna `MOTIVO` del Inventario ahora ordena por rentabilidad real (Profit/Coste).
+- [x] **Restauración Completa**: Recuperada la ventana `Mis Pedidos` con todas sus columnas (12), panel de detalles inferior, barra de taxes y estética premium.
+- [x] **Estabilidad de Sintaxis**: Corregidos todos los errores de compactación que impedían la ejecución. El código ahora sigue estándares estrictos de Python.
+- [x] **Trade Profits**: Integrado como ventana independiente, funcional y sin afectar el rendimiento de la carga principal.
+- [x] **Sincronización y Persistencia**: Restaurada la lógica de sincronización de columnas entre tablas y el guardado de layouts localmente.
 
-*Estado: Suite de telemetría completa, persistente y profesional.*
+*Estado: Plataforma financiera 100% operativa, estable y con todas las funcionalidades recuperadas.*
