@@ -51,11 +51,27 @@ class TaxService:
 
     def _get_overrides_for_char(self, char_id: int) -> list[dict]:
         """Retorna una lista de dicts de overrides para el personaje, normalizando el formato."""
+        import os
+        from core.config_manager import _CONFIG_DIR
+        path = _CONFIG_DIR / 'tax_overrides.json'
+        
         char_key = str(char_id)
         if char_key not in self.overrides:
-            return []
+            # Reintentar con int si la clave fuera int (aunque JSON siempre tiene strings)
+            # o buscar si alguna clave string coincide tras convertir
+            found_val = None
+            for k, v in self.overrides.items():
+                if str(k) == char_key:
+                    found_val = v
+                    break
+            if not found_val:
+                return []
+            val = found_val
+        else:
+            val = self.overrides[char_key]
         
-        val = self.overrides[char_key]
+        logger.info(f"[TAX] Overrides encontrados para char={char_id} (path={path})")
+        
         if isinstance(val, list):
             return val
         if isinstance(val, dict):
@@ -67,17 +83,27 @@ class TaxService:
         Función CENTRAL para obtener taxes finales aplicables.
         Retorna (sales_tax, broker_fee, source, debug_info)
         """
-        char_key = str(char_id)
         overrides = self._get_overrides_for_char(char_id)
         
         # 1. Sales Tax (Global)
+        # Prioridad: Override por ubicación (si existe y tiene sales_tax_pct) > Override global > ESI
         sales_tax = None
-        source_st = "ESTIMADO"
+        source_st = "ESI/Skills"
+        
+        # Primero buscar en overrides que tengan esta ubicación
         for ov in overrides:
-            if "sales_tax_pct" in ov:
+            if str(ov.get("location_id")) == str(location_id) and "sales_tax_pct" in ov:
                 sales_tax = ov["sales_tax_pct"]
-                source_st = "CALIBRADO MANUAL"
+                source_st = "CALIBRADO MANUAL (LOC)"
                 break
+        
+        # Si no, buscar override global
+        if sales_tax is None:
+            for ov in overrides:
+                if "sales_tax_pct" in ov and "location_id" not in ov:
+                    sales_tax = ov["sales_tax_pct"]
+                    source_st = "CALIBRADO MANUAL (GLOBAL)"
+                    break
         
         if sales_tax is None:
             char_base = self.get_taxes(char_id)
@@ -87,17 +113,22 @@ class TaxService:
         # 2. Broker Fee (Depende de ubicación)
         broker_fee, source_bf = self.get_effective_broker_fee(char_id, location_id, token)
         
-        final_source = source_st if source_st == "CALIBRADO MANUAL" else source_bf
-        if source_st == "CALIBRADO MANUAL" and source_bf == "CALIBRADO MANUAL":
+        final_source = source_st if "CALIBRADO" in source_st else source_bf
+        if "CALIBRADO" in source_st and "CALIBRADO" in source_bf:
             final_source = "CALIBRADO MANUAL"
             
         debug_info = f"ST={sales_tax}% ({source_st}), BF={broker_fee}% ({source_bf})"
-        logger.info(f"[TAX] Effective for char={char_id} loc={location_id}: {debug_info}")
+        logger.info(f"[TAX_DIAG] char={char_id} loc={location_id} -> {debug_info} | final_source={final_source}")
         
         return sales_tax, broker_fee, final_source, debug_info
 
     def refresh_from_esi(self, char_id: int, token: str):
-        logger.info(f"Refrescando Skills/Standings para char={char_id}...")
+        from core.config_manager import _CONFIG_DIR
+        path = _CONFIG_DIR / 'tax_overrides.json'
+        logger.info(f"[TAX_RELOAD] Iniciando refresco para char={char_id}...")
+        logger.info(f"[TAX_RELOAD] Buscando overrides en: {path.absolute()}")
+        logger.info(f"[TAX_RELOAD] Archivo existe: {path.exists()}")
+        
         self.overrides = load_tax_overrides() # Recargar al refrescar
         try:
             # 1. REFRESH SKILLS

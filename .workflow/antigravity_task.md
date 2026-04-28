@@ -1977,11 +1977,11 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Motor de Competitividad**: Implementado sistema de conteo de órdenes propias para exclusión precisa de competidores. Añadido `EPSILON` de 0.01 ISK para comparaciones estables.
-- [x] **Estados de Orden**: Corregida lógica de `LIDERANDO` en compras. Ahora `Ares` y `Augmented Hornet` muestran estados reales basados en el mejor competidor directo.
-- [x] **TaxService Centralizado**: Nueva función `get_effective_taxes` que consolida Sales Tax y Broker Fee.
-- [x] **Overrides de Taxes**: El sistema ahora soporta formatos de lista/dict en `tax_overrides.json` y tiene prioridad absoluta sobre ESI. Verificado para Jita IV-4 (Sales 3.37%, Broker 1.43%).
-- [x] **Performance Hotfix**: Corregido `AttributeError` al usar `net_profit`. Tabla ensanchada (Columna Item: 180px) para mostrar Icono + Nombre en la misma celda.
-- [x] **Limpieza de UI**: El botón `ACTUALIZAR` ahora limpia las tablas antes de repoblar, evitando datos fantasma de sesiones anteriores.
+- [x] **Hotfix Inventario**: Corregida excepción por `roi` indefinido. Ahora se calcula dinámicamente en el loop de análisis.
+- [x] **Hotfix Trade Profits**: Corregida excepción por `i_prof` indefinido. Rediseñada la tabla para 10 columnas exactas con Icono + Nombre unificados.
+- [x] **Telemetría de Taxes**: Implementado log detallado de rutas absolutas para `tax_overrides.json`. Corregida la prioridad de aplicación (Ubicación > Global > ESI).
+- [x] **Motor de Mercado (v2.1)**: Refinada la exclusión de órdenes propias mediante conteo unitario. Añadidos logs `[TAX_DIAG_ITEM]` para depuración de estados competitivos.
+- [x] **Unificación Visual**: Todas las tablas de Market Command ahora comparten el mismo sistema de celdas unificadas (Ítem = Icono + Texto).
+- [x] **Seguridad**: Saneado `.gitignore` y creado `config/tax_overrides.example.json`.
 
-*Estado: Market Command estabilizado, taxes calibradas y telemetría de rendimiento operativa.*
+*Estado: Hotfix completo. Market Command estable y calibrado.*

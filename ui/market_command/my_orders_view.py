@@ -326,6 +326,10 @@ class InventoryAnalysisDialog(QDialog):
             avg = getattr(item, "_avg_buy", 0.0)
             profit_t = getattr(item, "_net_profit_total", 0.0)
             
+            # Calcular ROI real para ordenación y visualización
+            cost_total = avg * item.quantity
+            roi = (profit_t / cost_total * 100) if cost_total > 0 else -1e18
+            
             i_name = QTableWidgetItem(item.item_name)
             i_name.setData(Qt.UserRole, item.type_id)
             self.image_loader.load(ItemMetadataHelper.get_icon_url(item.type_id), lambda px, it=i_name: it.setIcon(QIcon(px)))
@@ -473,32 +477,37 @@ class TradeProfitsDialog(QDialog):
         
         for r, t in enumerate(page_items):
             dt = t['date'].replace('T', ' ').replace('Z', '')
-            self.table.setItem(r, 0, QTableWidgetItem(dt))
+            i_date = QTableWidgetItem(dt)
             
-            i_ico = QTableWidgetItem()
-            i_ico.setData(Qt.UserRole, t['type_id'])
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(t['type_id']), lambda px, it=i_ico: it.setIcon(QIcon(px)))
-            self.table.setItem(r, 1, i_ico)
-            self.table.setItem(r, 2, QTableWidgetItem(t['name']))
-            self.table.setItem(r, 3, NumericTableWidgetItem(f"{t['qty']:,}", t['qty']))
-            self.table.setItem(r, 4, NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit']))
-            self.table.setItem(r, 5, NumericTableWidgetItem(format_isk(t['sell_unit']), t['sell_unit']))
-            self.table.setItem(r, 6, NumericTableWidgetItem(format_isk(t['buy_total']), t['buy_total']))
-            self.table.setItem(r, 7, NumericTableWidgetItem(format_isk(t['sell_total']), t['sell_total']))
-            self.table.setItem(r, 8, NumericTableWidgetItem(format_isk(t['fees']), t['fees']))
+            # Columna ÍTEM (Icono + Nombre)
+            i_item = QTableWidgetItem(t['name'])
+            i_item.setData(Qt.UserRole, t['type_id'])
+            self.image_loader.load(ItemMetadataHelper.get_icon_url(t['type_id']), lambda px, it=i_item: it.setIcon(QIcon(px)))
             
+            i_qty = NumericTableWidgetItem(f"{t['qty']:,}", t['qty'])
+            i_buy_u = NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit'])
+            i_sell_u = NumericTableWidgetItem(format_isk(t['sell_unit']), t['sell_unit'])
+            i_buy_t = NumericTableWidgetItem(format_isk(t['buy_total']), t['buy_total'])
+            i_sell_t = NumericTableWidgetItem(format_isk(t['sell_total']), t['sell_total'])
+            i_fees = NumericTableWidgetItem(format_isk(t['fees']), t['fees'])
+            
+            # Margen
             m_col = QColor("#10b981" if t['margin'] > 15 else ("#f59e0b" if t['margin'] >= 0 else "#ef4444"))
             i_mar = NumericTableWidgetItem(f"{t['margin']:.1f}%", t['margin'])
             i_mar.setForeground(m_col)
-            self.table.setItem(r, 9, i_mar)
             
-            i_name = QTableWidgetItem(t['name'])
-            i_name.setData(Qt.UserRole, t['type_id'])
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(t['type_id']), lambda px, it=i_name: it.setIcon(QIcon(px)))
+            # Profit Neto
+            prof_val = t['profit']
+            i_prof = NumericTableWidgetItem(format_isk(prof_val), prof_val)
+            if prof_val > 0: i_prof.setForeground(QColor("#10b981"))
+            elif prof_val < 0: i_prof.setForeground(QColor("#ef4444"))
+            else: i_prof.setForeground(QColor("#94a3b8"))
             
-            for i, it in enumerate([QTableWidgetItem(dt), i_name, NumericTableWidgetItem(f"{t['qty']:,}", t['qty']), NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit']), NumericTableWidgetItem(format_isk(t['sell_unit']), t['sell_unit']), NumericTableWidgetItem(format_isk(t['buy_total']), t['buy_total']), NumericTableWidgetItem(format_isk(t['sell_total']), t['sell_total']), NumericTableWidgetItem(format_isk(t['fees']), t['fees']), i_mar, i_prof]):
+            # Montar fila (10 columnas exactas)
+            cells = [i_date, i_item, i_qty, i_buy_u, i_sell_u, i_buy_t, i_sell_t, i_fees, i_mar, i_prof]
+            for col, it in enumerate(cells):
                 it.setTextAlignment(Qt.AlignCenter)
-                self.table.setItem(r, i, it)
+                self.table.setItem(r, col, it)
             
         self.table.setSortingEnabled(True)
         tot = (len(self.filtered_trades) + self.page_size - 1) // self.page_size
@@ -518,7 +527,8 @@ class TradeProfitsDialog(QDialog):
         idx = self.table.indexAt(pos)
         if not idx.isValid():
             return
-        item = self.table.item(idx.row(), 2)
+        item = self.table.item(idx.row(), 1) # Columna ÍTEM
+        if not item: return
         menu = QMenu(self)
         copy_act = QAction("Copiar nombre", self)
         copy_act.triggered.connect(lambda: QGuiApplication.clipboard().setText(item.text()))
@@ -526,8 +536,10 @@ class TradeProfitsDialog(QDialog):
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def on_double_click(self, item):
-        tid = self.table.item(item.row(), 1).data(Qt.UserRole)
-        name = self.table.item(item.row(), 1).text()
+        # Usar siempre la columna 1 (ÍTEM) para obtener los datos
+        row = item.row()
+        tid = self.table.item(row, 1).data(Qt.UserRole)
+        name = self.table.item(row, 1).text()
         ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: None)
 
 # --- Main View ---
@@ -833,16 +845,16 @@ class MarketMyOrdersView(QWidget):
             i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)
             
-            # MEJOR: Mostrar el mejor competidor directo
-            ref_v = a.competitor_price
+            # MEJOR: Mostrar el mejor precio absoluto del mercado
+            ref_v = a.best_buy if o.is_buy_order else a.best_sell
             i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 and ref_v < 999999999999 else "---", ref_v)
-            if not competitive and ref_v > 0:
+            if not a.competitive and ref_v > 0:
                 # Si estamos superados, resaltar el precio mejor
                 i_ref.setForeground(QColor("#f59e0b"))
-            elif competitive:
+            elif a.competitive:
                 i_ref.setForeground(QColor("#10b981"))
             
-            # TOTAL: Volumen total de la orden
+            # TOTAL y RESTO
             i_tot = NumericTableWidgetItem(f"{o.volume_total:,}", o.volume_total)
             i_rem = NumericTableWidgetItem(f"{o.volume_remain:,}", o.volume_remain)
             i_spr = NumericTableWidgetItem(f"{a.spread_pct:.1f}%", a.spread_pct)
@@ -932,7 +944,7 @@ class MarketMyOrdersView(QWidget):
         self.lbl_sales_tax.setText(f"SALES TAX: {s_tax:.2f}%")
         self.lbl_broker_fee.setText(f"BROKER FEE: {b_fee:.2f}%")
         self.lbl_tax_source.setText(f"FUENTE: {source}")
-        _log.info(f"[TAX_UI] {debug}")
+        _log.info(f"[TAX_UI_DIAG] char={auth.char_id} loc={loc_id} -> {debug}")
 
     def do_inventory(self):
         auth = AuthManager.instance()

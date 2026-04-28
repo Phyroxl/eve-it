@@ -183,15 +183,19 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             difference = comp_buy - price
             competitive = price >= (comp_buy - EPSILON)
             if bs > 0:
+                # Compro a 'price', vendo a 'bs'
+                # Coste real = price * (1 + b_fee)
+                # Ingreso neto = bs * (1 - s_tax - b_fee)
                 net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
-                margin_pct = (net_profit / price) * 100 if price > 0 else 0
+                margin_pct = (net_profit / (price * (1.0 + b_fee))) * 100 if price > 0 else 0
+                gross_profit = bs - price
             
             if competitive:
                 state = "Liderando" if price >= (comp_buy + EPSILON) else "Liderando (Empate)"
             else:
                 state = "Superada"
             
-            if margin_pct <= 0: state = "No Rentable"
+            if margin_pct <= 0 and bs > 0: state = "No Rentable"
         else:
             # En VENTA, soy competitivo si mi precio <= mejor competidor + EPSILON
             difference = price - comp_sell
@@ -203,22 +207,15 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
                 gross_profit = price - base_cost
                 
                 if competitive:
-                    state = "Liderando" if net_profit > 0 else "Liderando (Pérdida)"
+                    state = "Liderando" if price <= (comp_sell - EPSILON) else "Liderando (Empate)"
                 else:
                     state = "Superada con beneficio" if net_profit > 0 else "Superada en pérdida"
             else:
                 state = "Sin coste real"
-                if competitive: state = "Liderando"
-            
-            if not competitive and price > bs * 1.05: state = "Fuera de Mercado"
-
-        # LOG DEBUG para items problemáticos
-        if "Ares" in item_name or "Augmented Hornet" in item_name:
-            import logging
-            db_log = logging.getLogger('eve.market.debug')
-            db_log.info(f"[DEBUG] {item_name} ({'BUY' if is_buy else 'SELL'}): "
-                         f"Price={price}, BestComp={'BUY '+str(comp_buy) if is_buy else 'SELL '+str(comp_sell)}, "
-                         f"Comp={competitive}, State={state}, Diff={difference}, Taxes={tax_debug}")
+                
+        # Diagnóstico para items críticos
+        if any(x in item_name for x in ["Ares", "Hornet"]):
+            logger.info(f"[TAX_DIAG_ITEM] {item_name} ({'BUY' if is_buy else 'SELL'}): Price={price}, Comp={comp_buy if is_buy else comp_sell}, BestAbs={bb if is_buy else bs}, Comp={competitive}, State={state}")
 
         vol_remain = eo.get('volume_remain', 0)
         net_profit_total = net_profit * vol_remain
