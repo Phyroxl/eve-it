@@ -264,13 +264,17 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             difference = price - bs
             competitive = difference <= 0
             
-            # Usar coste real si existe, si no, usar mejor compra (o 0 si no hay)
-            base_cost = avg_cost if avg_cost > 0 else (bb if bb > 0 else 0.0)
-            
-            if base_cost > 0:
+            # Lógica de Rentabilidad: SOLO si hay coste real (Mi Promedio)
+            if avg_cost > 0:
+                base_cost = avg_cost
                 gross_profit = price - base_cost
                 net_profit = price * (1.0 - s_tax - b_fee) - base_cost * (1.0 + b_fee)
                 margin_pct = (net_profit / base_cost) * 100 if base_cost > 0 else 0
+            else:
+                # Sin Mi Promedio, no hay rentabilidad real calculable
+                gross_profit = 0.0
+                net_profit = 0.0
+                margin_pct = 0.0
             
             # Lógica de estados mejorada
             if not cost_basis:

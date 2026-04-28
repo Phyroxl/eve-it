@@ -466,6 +466,7 @@ class MarketMyOrdersView(QWidget):
                 
                 i_icon = QTableWidgetItem()
                 i_icon.setData(Qt.UserRole, o.type_id)
+                i_icon.setData(Qt.UserRole + 1, o.order_id)
                 table.setItem(row, 0, i_icon)
                 url = ItemMetadataHelper.get_icon_url(o.type_id)
                 self.image_loader.load(url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
@@ -486,13 +487,25 @@ class MarketMyOrdersView(QWidget):
                 
                 i_spread = QTableWidgetItem(f"{a.spread_pct:.1f}%")
                 
-                i_margin = QTableWidgetItem(f"{a.margin_pct:.1f}%")
-                if a.margin_pct > 15: i_margin.setForeground(QColor("#10b981"))
-                elif a.margin_pct < 0: i_margin.setForeground(QColor("#ef4444"))
+                cost_basis = CostBasisService.instance().get_cost_basis(o.type_id)
+                has_avg = cost_basis is not None
                 
-                i_profit = QTableWidgetItem(format_isk(a.net_profit_total))
-                if a.net_profit_total > 0: i_profit.setForeground(QColor("#10b981"))
-                elif a.net_profit_total < 0: i_profit.setForeground(QColor("#ef4444"))
+                # Para ventas, solo mostramos profit/margen si hay Mi Promedio real
+                show_profit = o.is_buy_order or has_avg
+                
+                if show_profit:
+                    i_margin = QTableWidgetItem(f"{a.margin_pct:.1f}%")
+                    if a.margin_pct > 15: i_margin.setForeground(QColor("#10b981"))
+                    elif a.margin_pct < 0: i_margin.setForeground(QColor("#ef4444"))
+                    
+                    i_profit = QTableWidgetItem(format_isk(a.net_profit_total))
+                    if a.net_profit_total > 0: i_profit.setForeground(QColor("#10b981"))
+                    elif a.net_profit_total < 0: i_profit.setForeground(QColor("#ef4444"))
+                else:
+                    i_margin = QTableWidgetItem("---")
+                    i_margin.setForeground(QColor("#475569"))
+                    i_profit = QTableWidgetItem("---")
+                    i_profit.setForeground(QColor("#475569"))
                 
                 i_state = QTableWidgetItem(a.state)
                 if "Sana" in a.state or "Competitiva" in a.state or "Rotación Sana" in a.state:
@@ -547,12 +560,10 @@ class MarketMyOrdersView(QWidget):
     def _handle_selection(self, table, row):
         item_0 = table.item(row, 0)
         if not item_0: return
-        t_id = item_0.data(Qt.UserRole)
+        o_id = item_0.data(Qt.UserRole + 1)
         
-        # Buscar la orden correspondiente en self.all_orders
-        # Usamos el precio exacto guardado en UserRole para evitar errores de redondeo o formato
-        price_val = table.item(row, 3).data(Qt.UserRole)
-        o = next((ord for ord in self.all_orders if ord.type_id == t_id and abs(ord.price - price_val) < 0.01), None)
+        # Buscar la orden correspondiente por su order_id único
+        o = next((ord for ord in self.all_orders if ord.order_id == o_id), None)
         if o:
             self.update_detail(o)
 
@@ -588,18 +599,20 @@ class MarketMyOrdersView(QWidget):
         self.lbl_det_profit_u.setText(format_isk(a.net_profit_per_unit, True))
         self.lbl_det_profit_total.setText(format_isk(a.net_profit_total, True))
 
-        # Razón / Explicación
-        reason = ""
         if o.is_buy_order:
             if not cost_basis:
-                reason = "Orden de compra abierta. La rentabilidad es potencial hasta que el item se compre y pueda compararse con el precio de venta."
+                reason = "ANÁLISIS POTENCIAL: Esta es una orden de compra activa. La rentabilidad se estima comparando tu precio de compra contra el precio actual de venta en Jita (Spread)."
             else:
-                reason = f"Ya tienes stock comprado a {format_isk(avg_val)}. Esta nueva compra promediará tu coste."
+                reason = f"ESTRATEGIA DE RECOMPRA: Ya tienes stock a {format_isk(avg_val)}. Esta nueva compra reducirá tu coste promedio si se completa por debajo de ese precio."
         else:
             if cost_basis:
-                reason = f"Comprado de media a {format_isk(avg_val)}. Vendiendo a {format_isk(o.price)}. Beneficio neto estimado: {format_isk(a.net_profit_per_unit)} por unidad."
+                reason = f"RENTABILIDAD REAL: Ítem adquirido a un promedio de {format_isk(avg_val)}. Beneficio neto basado en tu historial de transacciones."
             else:
-                reason = "ANÁLISIS ESTIMADO: No hay registros de compra (Mi Promedio) para este ítem. El margen y beneficio se calculan usando el 'Best Buy' actual de Jita como coste de referencia."
+                # Sin Mi Promedio para venta
+                self.lbl_det_margin.setText("N/A")
+                self.lbl_det_profit_u.setText("---")
+                self.lbl_det_profit_total.setText("---")
+                reason = "CONTROL DE RIESGO: No se ha detectado un precio de compra (Mi Promedio) para este ítem en tu historial reciente. No se muestra rentabilidad para evitar datos falsos."
         
         self.lbl_det_reason.setText(reason)
 
@@ -670,7 +683,7 @@ class MarketMyOrdersView(QWidget):
         
         if not items:
             from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Inventario Vacío", "No se encontraron activos para analizar o falta el permiso esi-assets.read_assets.v1.")
+            QMessageBox.information(self, "Inventario Vacío", "No se encontraron activos valorables en tu inventario actual.")
             return
 
         dialog = InventoryAnalysisDialog(items, self.image_loader, self)
@@ -685,16 +698,16 @@ class MarketMyOrdersView(QWidget):
         if msg == "missing_scope":
             self.lbl_status.setText("● ERROR: FALTA PERMISO DE ACTIVOS")
             self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
-            QMessageBox.warning(self, "Permiso Faltante", "Falta el permiso esi-assets.read_assets.v1.\nReautoriza el personaje para poder analizar el inventario.")
+            QMessageBox.warning(self, "Permiso Faltante", "No tienes el permiso 'esi-assets.read_assets.v1' activo.\nPor favor, vuelve a iniciar sesión con tu personaje para otorgar este permiso.")
         elif msg == "pricing_error":
-            self.lbl_status.setText("● ERROR: SIN PRECIOS")
+            self.lbl_status.setText("● ERROR: FALLO DE PRECIOS")
             self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
-            QMessageBox.warning(self, "Error de Valoración", "Se encontraron activos, pero no se pudieron valorar por falta de precios (servidor ESI ocupado o caído).")
+            QMessageBox.critical(self, "Error de Precios", "No se han podido obtener los precios de mercado necesarios para valorar tu inventario.")
         elif "401" in msg or "expired" in msg.lower():
-            self.lbl_status.setText("● ERROR: SESIÓN EXPIRADA")
+            self.lbl_status.setText("● ERROR: SESIÓN CADUCADA")
             self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
-            QMessageBox.warning(self, "Sesión Expirada", "Sesión expirada. Reautoriza el personaje para analizar el inventario.")
+            QMessageBox.warning(self, "Sesión Caducada", "Tu sesión ha caducado. Por favor, pulsa 'Sincronizar Órdenes' para renovar el acceso.")
         else:
-            self.lbl_status.setText(f"● ERROR INVENTARIO: {msg.upper()}")
+            self.lbl_status.setText(f"● ERROR: {msg.upper()}")
             self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
-            QMessageBox.critical(self, "Error de Inventario", f"Ocurrió un fallo al analizar el inventario: {msg}")
+            QMessageBox.critical(self, "Error de Análisis", f"Ocurrió un error inesperado al analizar el inventario:\n{msg}")
