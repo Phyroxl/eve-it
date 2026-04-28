@@ -1629,4 +1629,31 @@ Se han implementado mejoras significativas en la fluidez y la experiencia de usu
 - [x] **Persistencia**: Cierre y apertura de app mantiene anchos de columna.
 - [x] **Colores**: Verificación de estados y métricas con colores premium.
 
-*Estado: Interfaz de trading profesional y fluida.*
+### SESIÓN 24 PULIDO FINAL (ESTABILIDAD) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE CORRECCIONES FINALES
+Se ha realizado el pulido final de la pestaña `Mis Pedidos`, centrando los cambios en la prevención de errores de usuario y la robustez de la sincronización visual.
+
+**Correcciones de Estabilidad:**
+1. **Refuerzo del Botón INVENTARIO**:
+   - Ahora el sistema verifica si el inventario está vacío **antes** de abrir cualquier ventana. Si no hay activos valorables, muestra un mensaje informativo claro.
+   - Se han añadido validaciones para fallos en la obtención de precios de Jita (`pricing_error`), informando al usuario en lugar de mostrar datos en blanco.
+   - La carga forzada (cuando no hay precarga lista) ahora fluye correctamente hacia la apertura del diálogo.
+2. **Refinamiento de Sincronización de Columnas**:
+   - Se ha ajustado la lógica de `moveSection` para asegurar que el orden visual se replique exactamente entre la tabla de Compras y Ventas sin desplazamientos inesperados.
+   - La restauración del layout al inicio de la app ahora es más robusta, aplicando anchos y órdenes secuencialmente para evitar colisiones de índices lógicos/visuales.
+3. **Mantenimiento de Funciones Core**:
+   - Verificado que la selección de filas y el panel de detalle mantienen el coloreado táctico y los cálculos de Mi Promedio sin degradación de performance.
+   - El doble click para abrir el mercado del ítem seleccionado sigue operativo.
+
+**Archivos Modificados:**
+- `ui/market_command/my_orders_view.py`: Refinamiento de lógica de inventario, sincronización y diálogos de error.
+
+**Pruebas Realizadas:**
+- [x] **Inventario Vacío**: Mensaje "No se encontraron activos" mostrado correctamente.
+- [x] **Permisos**: Captura de `missing_scope` verificada.
+- [x] **Columnas**: Sincronización bidireccional estable y persistente tras reinicio.
+
+*Estado: Módulo "Mis Pedidos" finalizado y estabilizado al 100%.*
