@@ -53,6 +53,11 @@ class MarketMyOrdersView(QWidget):
         self.setup_ui()
         self.worker = None
         self.all_orders = []
+        
+        AuthManager.instance().authenticated.connect(self._on_authenticated)
+
+    def _on_authenticated(self, char_name, tokens):
+        self.do_sync(is_update=False)
 
     def setup_ui(self):
         self.main_layout = QVBoxLayout(self)
@@ -83,7 +88,7 @@ class MarketMyOrdersView(QWidget):
             "QPushButton:hover { background-color: #2563eb; } "
             "QPushButton:disabled { background-color: #1e293b; color: #64748b; }"
         )
-        self.btn_refresh.clicked.connect(self.on_refresh_clicked)
+        self.btn_refresh.clicked.connect(lambda: self.do_sync(is_update=False))
 
         self.btn_repopulate = QPushButton("ACTUALIZAR")
         self.btn_repopulate.setCursor(Qt.PointingHandCursor)
@@ -94,7 +99,7 @@ class MarketMyOrdersView(QWidget):
             "border-radius: 4px; letter-spacing: 1px; padding: 0 15px; } "
             "QPushButton:hover { background-color: #334155; }"
         )
-        self.btn_repopulate.clicked.connect(lambda: self.populate_tables(self.all_orders))
+        self.btn_repopulate.clicked.connect(lambda: self.do_sync(is_update=True))
 
         header.addLayout(title_v)
         header.addStretch()
@@ -197,17 +202,29 @@ class MarketMyOrdersView(QWidget):
         st_v.addStretch()
         dl.addLayout(st_v, 1)
 
-    def on_refresh_clicked(self):
+    def do_sync(self, is_update=False):
+        if self.worker and self.worker.isRunning():
+            return
+
         auth = AuthManager.instance()
         if not auth.current_token or not auth.char_id:
-            self.lbl_status.setText("● REQUIERE LOGIN")
-            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+            self.lbl_status.setText("● INICIANDO LOGIN ESI...")
+            self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800;")
+            auth.login()
             return
 
         self.btn_refresh.setEnabled(False)
-        self.btn_refresh.setText("SINCRONIZANDO...")
-        self.lbl_status.setText("● ANALIZANDO MERCADO...")
+        self.btn_repopulate.setEnabled(False)
+        
+        if is_update:
+            self.btn_repopulate.setText("ACTUALIZANDO...")
+            self.lbl_status.setText("● ACTUALIZANDO ANÁLISIS DE MERCADO...")
+        else:
+            self.btn_refresh.setText("SINCRONIZANDO...")
+            self.lbl_status.setText("● DESCARGANDO ÓRDENES Y MERCADO...")
+            
         self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800;")
+        self.is_update_mode = is_update
 
         self.worker = SyncWorker(auth.char_id, auth.current_token)
         self.worker.finished_data.connect(self.on_data_ready)
@@ -218,15 +235,41 @@ class MarketMyOrdersView(QWidget):
         self.all_orders = orders
         self.populate_tables(orders)
         self.btn_refresh.setEnabled(True)
+        self.btn_repopulate.setEnabled(True)
         self.btn_refresh.setText("SINCRONIZAR ÓRDENES")
-        self.lbl_status.setText(f"● SISTEMA LISTO: {len(orders)} ÓRDENES ABIERTAS")
+        self.btn_repopulate.setText("ACTUALIZAR")
+        
+        if getattr(self, 'is_update_mode', False):
+            self.lbl_status.setText(f"● ÓRDENES ACTUALIZADAS: {len(orders)} ACTIVAS")
+        else:
+            self.lbl_status.setText(f"● SISTEMA LISTO: {len(orders)} ÓRDENES ABIERTAS")
+            
         self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800;")
+        
+        if not orders:
+            self.lbl_det_item.setText("SELECCIONA UNA ORDEN")
+            self.lbl_det_type.setText("---")
+            self.lbl_det_my_price.setText("---")
+            self.lbl_det_best_buy.setText("---")
+            self.lbl_det_best_sell.setText("---")
+            self.lbl_det_margin.setText("---")
+            self.lbl_det_profit_unit.setText("---")
+            self.lbl_det_profit_total.setText("---")
+            self.lbl_det_status.setText("---")
+            self.lbl_det_diff.setText("---")
 
     def on_error(self, msg):
         self.btn_refresh.setEnabled(True)
+        self.btn_repopulate.setEnabled(True)
         self.btn_refresh.setText("SINCRONIZAR ÓRDENES")
+        self.btn_repopulate.setText("ACTUALIZAR")
         self.lbl_status.setText(f"● ERROR: {msg.upper()}")
         self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+        
+        if "token" in msg.lower() or "401" in msg or "403" in msg:
+            auth = AuthManager.instance()
+            auth.current_token = None
+            self.lbl_status.setText("● SESIÓN EXPIRADA. VUELVE A PULSAR SINCRONIZAR.")
 
     def populate_tables(self, orders):
         sell_orders = [o for o in orders if not o.is_buy_order]

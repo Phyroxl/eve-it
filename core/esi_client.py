@@ -216,9 +216,15 @@ class ESIClient:
                 logger.info(f"ESI character_orders char={char_id} → {len(data)} órdenes")
                 return data
             logger.warning(f"ESI character_orders char={char_id} → HTTP {res.status_code}: {res.text[:200]}")
+            if res.status_code in (401, 403):
+                raise Exception(f"Token expirado o sin permisos (HTTP {res.status_code}).")
+            elif res.status_code >= 500:
+                raise Exception(f"Servidor ESI caído (HTTP {res.status_code}).")
+            else:
+                raise Exception(f"Error desconocido (HTTP {res.status_code}).")
         except Exception as e:
             logger.error(f"ESI character_orders char={char_id} excepción: {e}")
-        return []
+            raise e
 
     def open_market_window(self, type_id: int, access_token: str):
         """
@@ -237,3 +243,61 @@ class ESIClient:
         except Exception as e:
             logger.error(f"Error opening market window (type_id={type_id}): {e}")
             return False
+
+    def public_contracts(self, region_id: int) -> list:
+        """
+        GET /contracts/public/{region_id}/?page=1
+        Obtiene primera página (hasta 1000 contratos).
+        Filtra en local: solo type='item_exchange' y status='outstanding'.
+        Cache TTL: 300s
+        """
+        cache_key = f"public_contracts_{region_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        self._rate_limit()
+        url = f"{self.BASE_URL}/contracts/public/{region_id}/?datasource=tranquility&page=1"
+        try:
+            response = self.session.get(url, timeout=15)
+            if response.status_code == 200:
+                all_contracts = response.json()
+                filtered = [
+                    c for c in all_contracts
+                    if c.get('type') == 'item_exchange'
+                    and c.get('status', 'outstanding') == 'outstanding'
+                ]
+                self.cache.set(cache_key, filtered, 300)
+                return filtered
+            return []
+        except Exception:
+            return []
+
+    def contract_items(self, contract_id: int) -> list:
+        """
+        GET /contracts/public/items/{contract_id}/
+        Cache TTL: 3600s
+        Retorna [] en 403/404 (contrato ya expirado o privado).
+        """
+        cache_key = f"contract_items_{contract_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        self._rate_limit()
+        url = f"{self.BASE_URL}/contracts/public/items/{contract_id}/?datasource=tranquility"
+        try:
+            response = self.session.get(url, timeout=15)
+            if response.status_code == 200:
+                items = response.json()
+                self.cache.set(cache_key, items, 3600)
+                return items
+            elif response.status_code in (403, 404):
+                self.cache.set(cache_key, [], 3600)
+                return []
+            elif response.status_code == 429:
+                import time
+                retry_after = float(response.headers.get('Retry-After', 5))
+                time.sleep(retry_after)
+                return self.contract_items(contract_id)
+            return []
+        except Exception:
+            return []

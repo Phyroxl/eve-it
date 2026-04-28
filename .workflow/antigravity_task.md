@@ -617,3 +617,721 @@ Se ha realizado un refactor profundo del motor de analítica para pasar de una "
 
 ### NOTES
 - La aproximación de utilizar dos `QTableWidget` independientes pero mutuamente excluyentes en su selección garantiza la mejor experiencia de usuario posible al imitar a la perfección el comportamiento y la apariencia de las interfaces in-game.
+
+---
+
+## Sesión 21 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Refinamiento Funcional del Botón "ACTUALIZAR"
+
+### RESUMEN
+1. **Problema**: El botón "ACTUALIZAR" implementado en la Sesión 20 se limitaba a repoblar visualmente las tablas con el estado de memoria `self.all_orders`. Esto no aportaba utilidad operativa real si el mercado había cambiado o si las órdenes del usuario habían sido modificadas/completadas.
+2. **Refactorización a Refresh Real**: Se ha convertido el botón en un disparador de sincronización real que vuelve a consumir ESI para traer las órdenes activas y comparar con los precios más recientes del mercado central.
+3. **Lógica Centralizada**: Para evitar redundancia y código espagueti, se ha eliminado `on_refresh_clicked` y se ha creado una nueva función central `do_sync(self, is_update=False)`. Ambos botones ("SINCRONIZAR ÓRDENES" y "ACTUALIZAR") llaman a esta función con su respectivo flag.
+4. **Protección Concurrente**: Se implementó una guardia de estado `if self.worker and self.worker.isRunning(): return` y se deshabilitan explícitamente **ambos** botones durante cualquier proceso de sincronización, previniendo carreras de ejecución y consumo doble de ESI.
+5. **Feedback Diferenciado**: Aunque comparten motor, el botón y la barra de diagnóstico reaccionan visualmente según el contexto (ej: `ACTUALIZANDO ANÁLISIS DE MERCADO...` frente a `DESCARGANDO ÓRDENES Y MERCADO...`).
+
+### FILES_CHANGED
+- `ui/market_command/my_orders_view.py`: Refactorización de botones hacia la nueva función `do_sync`, gestión de estados e hilos, y lógica de feedback visual.
+
+### CHECKS
+- [x] `ACTUALIZAR` ahora reinicia el `SyncWorker` y consume ESI para calcular nuevos beneficios/estados.
+- [x] Ambos botones se deshabilitan mientras corre el proceso para evitar duplicidades.
+- [x] La lógica es DRY (Don't Repeat Yourself), uniendo ambos flujos bajo el mismo paraguas operativo.
+- [x] Feedback visual claro para el usuario durante y después de la carga.
+
+### NOTES
+- La pestaña ahora permite al trader re-evaluar si ha sido "superado por" otro competidor con solo darle a "ACTUALIZAR", sabiendo que los datos devueltos están 100% actualizados contra los servidores ESI.
+
+---
+
+---
+
+## PRÓXIMA TAREA — Sesión 22: Nueva pestaña CONTRATOS (Arbitraje)
+
+### INSTRUCCIONES PARA ANTIGRAVITY
+
+Lee este bloque completo y ejecuta la implementación de la **Fase 1 (MVP)**.
+No implementes nada de Fase 2 ni Fase 3.
+Marca cada checkbox conforme termines.
+
+---
+
+### OBJETIVO
+
+Añadir una nueva pestaña **"CONTRATOS"** a Market Command, situada a la derecha de "Mis Pedidos".
+
+La pestaña escanea contratos públicos de tipo `item_exchange` en una región (The Forge por defecto), valora los items de cada contrato contra precios de Jita, y muestra un ranking de oportunidades de arbitraje ordenadas por score.
+
+**Flujo central:**
+```
+Contrato público → precio pedido X
+  └─ items del contrato → valorados en Jita sell
+       └─ valor total Y
+            └─ profit neto = Y - X - fees (broker 3% + tax 8%)
+                 └─ ranking ordenado por score (ROI + profit + simplicidad)
+```
+
+---
+
+### ARCHIVOS A ESTUDIAR ANTES DE EMPEZAR
+
+| Archivo | Por qué leerlo |
+|---|---|
+| `ui/market_command/command_main.py` | Para entender cómo añadir el nuevo tab |
+| `ui/market_command/my_orders_view.py` | Patrón de vista + worker a replicar |
+| `ui/market_command/simple_view.py` | Patrón de tabla + filtros + detail panel |
+| `ui/market_command/refresh_worker.py` | Patrón de QThread con progress/status/finished |
+| `core/esi_client.py` | Para añadir los 2 nuevos métodos ESI |
+| `core/market_models.py` | Patrón de dataclasses a replicar |
+| `core/config_manager.py` | Para añadir load/save de la nueva config |
+
+---
+
+### ARCHIVOS A CREAR (nuevos)
+
+```
+core/contracts_models.py
+core/contracts_engine.py
+ui/market_command/contracts_worker.py
+ui/market_command/contracts_view.py
+config/contracts_filters.json        ← auto-crear con defaults en primer uso
+```
+
+### ARCHIVOS A MODIFICAR (solo estos tres)
+
+```
+core/esi_client.py         ← añadir public_contracts() y contract_items()
+core/config_manager.py     ← añadir load/save_contracts_filters()
+ui/market_command/command_main.py  ← añadir Tab: CONTRATOS
+```
+
+---
+
+### IMPLEMENTACIÓN DETALLADA
+
+#### 1. `core/contracts_models.py` — CREAR
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class ContractItem:
+    type_id: int
+    item_name: str
+    quantity: int
+    is_included: bool           # True = forma parte del contrato. False = comprador debe entregarlo
+    jita_sell_price: float
+    jita_buy_price: float
+    line_sell_value: float      # quantity * jita_sell_price
+    line_buy_value: float       # quantity * jita_buy_price
+    pct_of_total: float         # line_sell_value / jita_sell_value * 100
+
+
+@dataclass
+class ScoreBreakdown:
+    roi_component: float
+    profit_component: float
+    simplicity_component: float
+    penalties_applied: List[str]
+    final_score: float
+
+
+@dataclass
+class ContractArbitrageResult:
+    contract_id: int
+    region_id: int
+    issuer_id: int
+    contract_cost: float
+    date_expired: str
+    location_id: int
+    item_type_count: int
+    total_units: int
+    items: List[ContractItem]
+    jita_sell_value: float
+    jita_buy_value: float
+    gross_profit: float          # jita_sell_value - contract_cost
+    net_profit: float            # gross_profit - fees
+    roi_pct: float               # (net_profit / contract_cost) * 100
+    value_concentration: float   # max(line_sell_value) / jita_sell_value
+    has_unresolved_items: bool
+    unresolved_count: int
+    score: float = 0.0
+    score_breakdown: Optional[ScoreBreakdown] = None
+
+
+@dataclass
+class ContractsFilterConfig:
+    region_id: int = 10000002
+    capital_max_isk: float = 1_000_000_000.0
+    capital_min_isk: float = 1_000_000.0
+    profit_min_isk: float = 10_000_000.0
+    roi_min_pct: float = 5.0
+    item_types_max: int = 50
+    broker_fee_pct: float = 3.0
+    sales_tax_pct: float = 8.0
+    max_contracts_to_scan: int = 200
+    price_reference: str = "sell"
+    exclude_no_price: bool = True
+```
+
+---
+
+#### 2. `core/contracts_engine.py` — CREAR
+
+```python
+from __future__ import annotations
+from typing import Dict, List
+from core.contracts_models import (
+    ContractItem, ContractArbitrageResult, ScoreBreakdown, ContractsFilterConfig
+)
+
+
+def build_price_index(market_orders: List[dict]) -> Dict[int, dict]:
+    """
+    Retorna {type_id: {'best_sell': float, 'best_buy': float}}.
+    best_sell = min price de sell orders (is_buy_order=False)
+    best_buy  = max price de buy orders  (is_buy_order=True)
+    """
+    index: Dict[int, dict] = {}
+    for order in market_orders:
+        tid = order.get('type_id')
+        price = order.get('price', 0.0)
+        is_buy = order.get('is_buy_order', False)
+        if tid not in index:
+            index[tid] = {'best_sell': None, 'best_buy': None}
+        if is_buy:
+            if index[tid]['best_buy'] is None or price > index[tid]['best_buy']:
+                index[tid]['best_buy'] = price
+        else:
+            if index[tid]['best_sell'] is None or price < index[tid]['best_sell']:
+                index[tid]['best_sell'] = price
+    for tid in index:
+        if index[tid]['best_sell'] is None:
+            index[tid]['best_sell'] = 0.0
+        if index[tid]['best_buy'] is None:
+            index[tid]['best_buy'] = 0.0
+    return index
+
+
+def analyze_contract_items(
+    items_raw: List[dict],
+    price_index: Dict[int, dict],
+    name_map: Dict[int, str],
+    config: ContractsFilterConfig
+) -> List[ContractItem]:
+    """
+    Convierte items ESI en ContractItem.
+    Items sin precio en Jita → jita_sell_price=0.0.
+    pct_of_total se calcula después en calculate_contract_metrics().
+    """
+    items = []
+    for raw in items_raw:
+        type_id = raw.get('type_id', 0)
+        quantity = raw.get('quantity', 1)
+        is_included = raw.get('is_included', True)
+        prices = price_index.get(type_id, {'best_sell': 0.0, 'best_buy': 0.0})
+        sell_price = prices['best_sell']
+        buy_price = prices['best_buy']
+        items.append(ContractItem(
+            type_id=type_id,
+            item_name=name_map.get(type_id, f"Unknown [{type_id}]"),
+            quantity=quantity,
+            is_included=is_included,
+            jita_sell_price=sell_price,
+            jita_buy_price=buy_price,
+            line_sell_value=quantity * sell_price,
+            line_buy_value=quantity * buy_price,
+            pct_of_total=0.0,
+        ))
+    return items
+
+
+def calculate_contract_metrics(
+    contract_raw: dict,
+    items: List[ContractItem],
+    config: ContractsFilterConfig
+) -> ContractArbitrageResult:
+    """
+    Construye ContractArbitrageResult.
+    Solo items con is_included=True cuentan para el valor.
+    Fees se aplican sobre la reventa:
+        fees = jita_sell_value * (broker_fee_pct + sales_tax_pct) / 100
+        net_profit = jita_sell_value - fees - contract_cost
+    """
+    included = [i for i in items if i.is_included]
+    jita_sell_value = sum(i.line_sell_value for i in included)
+    jita_buy_value = sum(i.line_buy_value for i in included)
+
+    if jita_sell_value > 0:
+        for item in included:
+            item.pct_of_total = (item.line_sell_value / jita_sell_value) * 100.0
+
+    value_concentration = 0.0
+    if included and jita_sell_value > 0:
+        value_concentration = max(i.line_sell_value for i in included) / jita_sell_value
+
+    contract_cost = contract_raw.get('price', 0.0)
+    gross_profit = jita_sell_value - contract_cost
+    fees = jita_sell_value * (config.broker_fee_pct + config.sales_tax_pct) / 100.0
+    net_profit = jita_sell_value - fees - contract_cost
+    roi_pct = (net_profit / contract_cost * 100.0) if contract_cost > 0 else 0.0
+
+    unresolved = [i for i in included if i.jita_sell_price == 0.0]
+    type_ids = list({i.type_id for i in included})
+    total_units = sum(i.quantity for i in included)
+
+    return ContractArbitrageResult(
+        contract_id=contract_raw.get('contract_id', 0),
+        region_id=contract_raw.get('region_id', config.region_id),
+        issuer_id=contract_raw.get('issuer_id', 0),
+        contract_cost=contract_cost,
+        date_expired=contract_raw.get('date_expired', ''),
+        location_id=contract_raw.get('start_location_id', 0),
+        item_type_count=len(type_ids),
+        total_units=total_units,
+        items=items,
+        jita_sell_value=jita_sell_value,
+        jita_buy_value=jita_buy_value,
+        gross_profit=gross_profit,
+        net_profit=net_profit,
+        roi_pct=roi_pct,
+        value_concentration=value_concentration,
+        has_unresolved_items=len(unresolved) > 0,
+        unresolved_count=len(unresolved),
+    )
+
+
+def score_contract(c: ContractArbitrageResult) -> float:
+    """
+    Score 0-100:
+        base = 0.45*roi_norm + 0.35*profit_norm + 0.20*simplicity
+    Penalizaciones multiplicativas:
+        net_profit <= 0            → 0.0
+        roi_pct < 10%              → x0.70
+        value_concentration > 0.80 → x0.75
+        item_type_count > 30       → x0.80
+        has_unresolved_items       → x0.85
+    """
+    if c.net_profit <= 0:
+        return 0.0
+
+    roi_norm = min(c.roi_pct / 100.0, 1.0)
+    profit_norm = min(c.net_profit / 500_000_000.0, 1.0)
+    simplicity = max(0.0, 1.0 - c.item_type_count / 20.0)
+    base = 0.45 * roi_norm + 0.35 * profit_norm + 0.20 * simplicity
+
+    penalties = []
+    penalty = 1.0
+    if c.roi_pct < 10.0:
+        penalty *= 0.70
+        penalties.append("ROI < 10%")
+    if c.value_concentration > 0.80:
+        penalty *= 0.75
+        penalties.append("Concentración > 80%")
+    if c.item_type_count > 30:
+        penalty *= 0.80
+        penalties.append("Complejidad alta")
+    if c.has_unresolved_items:
+        penalty *= 0.85
+        penalties.append(f"{c.unresolved_count} items sin precio")
+
+    final = round(base * penalty * 100.0, 1)
+    c.score_breakdown = ScoreBreakdown(
+        roi_component=round(roi_norm * 0.45 * 100, 2),
+        profit_component=round(profit_norm * 0.35 * 100, 2),
+        simplicity_component=round(simplicity * 0.20 * 100, 2),
+        penalties_applied=penalties,
+        final_score=final,
+    )
+    return final
+
+
+def apply_contracts_filters(
+    contracts: List[ContractArbitrageResult],
+    config: ContractsFilterConfig
+) -> List[ContractArbitrageResult]:
+    """Filtra y devuelve top 100 ordenados por score DESC."""
+    result = [
+        c for c in contracts
+        if c.net_profit >= config.profit_min_isk
+        and c.roi_pct >= config.roi_min_pct
+        and c.item_type_count <= config.item_types_max
+        and not (config.exclude_no_price and c.has_unresolved_items)
+    ]
+    result.sort(key=lambda x: x.score, reverse=True)
+    return result[:100]
+```
+
+---
+
+#### 3. `core/esi_client.py` — AÑADIR estos dos métodos a la clase ESIClient
+
+```python
+def public_contracts(self, region_id: int) -> List[dict]:
+    """
+    GET /contracts/public/{region_id}/?page=1
+    Obtiene primera página (hasta 1000 contratos).
+    Filtra en local: solo type='item_exchange' y status='outstanding'.
+    Cache TTL: 300s
+    """
+    cache_key = f"public_contracts_{region_id}"
+    cached = self.cache.get(cache_key)
+    if cached is not None:
+        return cached
+    self._rate_limit()
+    url = f"{self.BASE_URL}/contracts/public/{region_id}/?datasource=tranquility&page=1"
+    try:
+        response = self.session.get(url, timeout=15)
+        if response.status_code == 200:
+            all_contracts = response.json()
+            filtered = [
+                c for c in all_contracts
+                if c.get('type') == 'item_exchange'
+                and c.get('status', 'outstanding') == 'outstanding'
+            ]
+            self.cache.set(cache_key, filtered, 300)
+            return filtered
+        return []
+    except Exception:
+        return []
+
+
+def contract_items(self, contract_id: int) -> List[dict]:
+    """
+    GET /contracts/public/items/{contract_id}/
+    Cache TTL: 3600s
+    Retorna [] en 403/404 (contrato ya expirado o privado).
+    """
+    cache_key = f"contract_items_{contract_id}"
+    cached = self.cache.get(cache_key)
+    if cached is not None:
+        return cached
+    self._rate_limit()
+    url = f"{self.BASE_URL}/contracts/public/items/{contract_id}/?datasource=tranquility"
+    try:
+        response = self.session.get(url, timeout=15)
+        if response.status_code == 200:
+            items = response.json()
+            self.cache.set(cache_key, items, 3600)
+            return items
+        elif response.status_code in (403, 404):
+            self.cache.set(cache_key, [], 3600)
+            return []
+        elif response.status_code == 429:
+            import time
+            retry_after = float(response.headers.get('Retry-After', 5))
+            time.sleep(retry_after)
+            return self.contract_items(contract_id)
+        return []
+    except Exception:
+        return []
+```
+
+---
+
+#### 4. `core/config_manager.py` — AÑADIR estas dos funciones
+
+```python
+def load_contracts_filters():
+    from core.contracts_models import ContractsFilterConfig
+    import json, os, dataclasses
+    path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'config', 'contracts_filters.json'))
+    if not os.path.exists(path):
+        cfg = ContractsFilterConfig()
+        save_contracts_filters(cfg)
+        return cfg
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        fields = {f.name for f in dataclasses.fields(ContractsFilterConfig)}
+        return ContractsFilterConfig(**{k: v for k, v in data.items() if k in fields})
+    except Exception:
+        return ContractsFilterConfig()
+
+
+def save_contracts_filters(config) -> None:
+    import json, os, dataclasses
+    path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'config', 'contracts_filters.json'))
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(dataclasses.asdict(config), f, indent=2)
+```
+
+---
+
+#### 5. `ui/market_command/contracts_worker.py` — CREAR
+
+```python
+from __future__ import annotations
+from datetime import datetime, timezone
+from typing import List
+
+from PySide6.QtCore import QThread, Signal
+
+from core.contracts_models import ContractArbitrageResult, ContractsFilterConfig
+from core.contracts_engine import (
+    build_price_index, analyze_contract_items,
+    calculate_contract_metrics, score_contract, apply_contracts_filters
+)
+from core.esi_client import ESIClient
+
+
+class ContractsScanWorker(QThread):
+    progress = Signal(int)
+    status = Signal(str)
+    batch_ready = Signal(object)   # emite un ContractArbitrageResult en tiempo real
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, config: ContractsFilterConfig):
+        super().__init__()
+        self.config = config
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            client = ESIClient()
+            all_results: List[ContractArbitrageResult] = []
+
+            self.status.emit("Obteniendo contratos públicos...")
+            self.progress.emit(5)
+            contracts_raw = client.public_contracts(self.config.region_id)
+            if not contracts_raw:
+                self.status.emit("No se obtuvieron contratos.")
+                self.finished.emit([])
+                return
+
+            self.progress.emit(10)
+            candidates = self._prefilter(contracts_raw)
+            self.status.emit(f"{len(contracts_raw)} contratos — {len(candidates)} candidatos.")
+            if not candidates:
+                self.finished.emit([])
+                return
+
+            self.progress.emit(15)
+            self.status.emit("Cargando precios de mercado Jita...")
+            market_orders = client.market_orders(self.config.region_id)
+            price_index = build_price_index(market_orders)
+            self.progress.emit(20)
+
+            name_map: dict = {}
+            for i, contract in enumerate(candidates):
+                if self._cancelled:
+                    break
+                pct = 20 + int((i / len(candidates)) * 75)
+                self.progress.emit(pct)
+                self.status.emit(
+                    f"Analizando contrato {i + 1}/{len(candidates)} — "
+                    f"{len(all_results)} oportunidades encontradas"
+                )
+                items_raw = client.contract_items(contract['contract_id'])
+                if not items_raw:
+                    continue
+                new_ids = [r['type_id'] for r in items_raw if r.get('type_id') not in name_map]
+                if new_ids:
+                    try:
+                        for n in client.universe_names(new_ids[:500]):
+                            name_map[n['id']] = n['name']
+                    except Exception:
+                        pass
+                items = analyze_contract_items(items_raw, price_index, name_map, self.config)
+                result = calculate_contract_metrics(contract, items, self.config)
+                result.score = score_contract(result)
+                if result.net_profit > 0:
+                    all_results.append(result)
+                    self.batch_ready.emit(result)
+
+            self.progress.emit(95)
+            self.status.emit("Ordenando resultados...")
+            final = apply_contracts_filters(all_results, self.config)
+            self.progress.emit(100)
+            self.finished.emit(final)
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _prefilter(self, contracts_raw: list) -> list:
+        now = datetime.now(timezone.utc)
+        result = []
+        for c in contracts_raw:
+            price = c.get('price', 0.0)
+            if price < self.config.capital_min_isk or price > self.config.capital_max_isk:
+                continue
+            try:
+                exp = datetime.fromisoformat(c['date_expired'].replace('Z', '+00:00'))
+                if (exp - now).total_seconds() < 3600:
+                    continue
+            except Exception:
+                continue
+            result.append(c)
+        result.sort(key=lambda x: x.get('price', 0.0), reverse=True)
+        return result[:self.config.max_contracts_to_scan]
+```
+
+---
+
+#### 6. `ui/market_command/contracts_view.py` — CREAR
+
+Implementar `MarketContractsView(QWidget)`. Seguir los patrones exactos de `simple_view.py` y `my_orders_view.py`.
+
+**Layout:**
+```
+QHBoxLayout
+├── Panel izquierdo (230px fijo): filtros
+│   ├── QLabel "FILTROS"
+│   ├── capital_max_spin  (QDoubleSpinBox, rango 1-100000, step 100, suffix " M ISK")
+│   ├── capital_min_spin  (QDoubleSpinBox, rango 0-100000, step 1,   suffix " M ISK")
+│   ├── profit_min_spin   (QDoubleSpinBox, rango 0-10000,  step 10,  suffix " M ISK")
+│   ├── roi_min_spin      (QDoubleSpinBox, rango 0-500,    step 1,   suffix " %")
+│   ├── items_max_spin    (QSpinBox, rango 1-500)
+│   ├── exclude_no_price_check (QCheckBox "Excluir items sin precio")
+│   ├── [APLICAR FILTROS] → apply_filters_locally()
+│   └── [RESET]           → reset_filters()
+└── Panel derecho (stretch)
+    ├── Barra superior: QLabel "CONTRATOS" + [ESCANEAR] + [CANCELAR oculto] + [LIMPIAR]
+    ├── insights_widget: 4 cajas (Escaneados | Con Profit | Mejor ROI | Top Profit)
+    ├── progress_widget (oculto por defecto): status_label + QProgressBar
+    ├── results_table (QTableWidget, 9 columnas)
+    └── detail_frame (QFrame, oculto por defecto)
+        ├── Cabecera: contract_id, coste, val sell, val buy, profit, ROI%
+        ├── items_table (5 columnas: Item | Cant | Precio Jita | Valor | % Total)
+        └── [ABRIR IN-GAME]  [COPIAR CONTRACT ID]
+```
+
+**Columnas de results_table:**
+
+| Idx | Header | Ancho | Alineación |
+|-----|--------|-------|-----------|
+| 0 | `#` | 40 | Centro |
+| 1 | `Items` | 90 | Centro |
+| 2 | `Coste` | 130 | Derecha |
+| 3 | `Val. Jita Sell` | 130 | Derecha |
+| 4 | `Val. Jita Buy` | 130 | Derecha |
+| 5 | `Profit Neto` | 130 | Derecha |
+| 6 | `ROI %` | 80 | Centro |
+| 7 | `Expira` | 90 | Centro |
+| 8 | `Score` | 70 | Centro |
+
+**Color coding:**
+- `ROI %` > 20% → `#10b981`, 10-20% → `#f59e0b`, < 10% → `#f1f5f9`
+- `Profit Neto` → siempre `#10b981`
+- `Expira` < 24h → `#ef4444`
+- `Items` con `has_unresolved_items=True` → añadir ` ⚠` al texto
+- Fila con score > 70 → background `#0d2418`
+- Fila con score < 40 → background `#1a1505`
+
+**Métodos principales:**
+```python
+def _load_config(self):    # cargar ContractsFilterConfig y aplicar a spinboxes
+def _save_config(self):    # leer spinboxes y guardar ContractsFilterConfig
+def on_scan_clicked(self): # _save_config, limpiar tabla, iniciar worker, mostrar progress
+def on_cancel_clicked(self): # worker.cancel()
+def add_contract_row(self, result):  # añadir fila en tiempo real (slot de batch_ready)
+def on_scan_finished(self, results): # ocultar progress, mostrar insights, actualizar métricas
+def on_scan_error(self, msg):        # mostrar error, restaurar botones
+def apply_filters_locally(self):     # re-filtrar self._all_results sin re-escanear
+def reset_filters(self):             # restaurar valores default de ContractsFilterConfig
+def on_row_selected(self, row, col): # → populate_detail_panel()
+def populate_detail_panel(self, result): # cabecera + items_table + botones
+def open_in_game(self, contract_id): # ESI UI endpoint (reusar patrón existente)
+def copy_contract_id(self, contract_id): # QApplication.clipboard().setText(str(id))
+```
+
+**Helpers en el mismo archivo:**
+```python
+def _format_isk(value: float) -> str:
+    if value >= 1_000_000_000: return f"{value/1_000_000_000:.2f}B ISK"
+    if value >= 1_000_000:     return f"{value/1_000_000:.1f}M ISK"
+    if value >= 1_000:         return f"{value/1_000:.1f}K ISK"
+    return f"{value:.0f} ISK"
+
+def _format_expiry(date_expired: str) -> str:
+    # Retorna '2d 14h', '45m', 'Expirado', etc.
+```
+
+**Colores (copiar exactos de simple_view.py):**
+- Background: `#0f172a` / `#000000`
+- Borders: `1px solid #1e293b`
+- Text: `#f1f5f9` / secundario `#94a3b8`
+- Accent: `#3b82f6`
+- Success: `#10b981` | Warning: `#f59e0b` | Error: `#ef4444`
+- Botón primario: `background: #3b82f6; hover: #2563eb`
+- Tabla alternating: `#0f172a` / `#1e293b`
+
+---
+
+#### 7. `ui/market_command/command_main.py` — MODIFICAR
+
+Estudiar el archivo antes de tocar. Añadir el tab "CONTRATOS" a la derecha de "Mis Pedidos" siguiendo exactamente el mismo patrón de los tabs existentes.
+
+```python
+from ui.market_command.contracts_view import MarketContractsView
+# En el método que inicializa los tabs:
+self.contracts_view = MarketContractsView(self)
+# Añadir al stacked widget y al tab bar con texto "CONTRATOS"
+# Debe quedar a la derecha de "Mis Pedidos"
+```
+
+---
+
+### VALIDACIONES REQUERIDAS
+
+- [x] Tab "CONTRATOS" aparece a la derecha de "Mis Pedidos"
+- [x] Cambiar a la pestaña no causa crash
+- [x] Filtros se cargan desde `config/contracts_filters.json` al abrir
+- [x] ESCANEAR inicia el worker y muestra barra de progreso
+- [x] CANCELAR detiene el worker limpiamente
+- [x] La tabla se rellena en tiempo real (batch_ready)
+- [x] Click en fila muestra el panel de detalle correcto
+- [x] Suma de `line_sell_value` de items incluidos == `jita_sell_value`
+- [x] `net_profit = jita_sell_value - fees - contract_cost` (verificar fórmula)
+- [x] `roi_pct = (net_profit / contract_cost) * 100`
+- [x] Contratos con `net_profit <= 0` NO aparecen
+- [x] APLICAR FILTROS re-filtra sin re-escanear
+- [x] RESET restaura valores default
+- [x] ABRIR IN-GAME llama ESI UI endpoint (reusar patrón existente)
+- [x] COPIAR CONTRACT ID copia al portapapeles
+- [x] Filtros se guardan al hacer ESCANEAR
+- [x] Ninguna llamada ESI en el hilo principal
+- [x] ESI 403/404 en `contract_items()` → retorna [], no crash
+- [x] ESI 429 → espera Retry-After, reintenta
+- [x] Items con `is_included=False` → NO cuentan en valor, marcados "REQUERIDO" en detalle
+- [x] `has_unresolved_items=True` → icono ⚠ en columna Items
+- [x] Pestañas existentes (Simple, Avanzado, Performance, Mis Pedidos) siguen funcionando
+
+---
+
+### RESTRICCIONES
+
+1. No tocar ningún archivo existente salvo: `esi_client.py`, `config_manager.py`, `command_main.py`
+2. No romper las pestañas existentes
+3. No añadir auto-refresh (escaneo bajo demanda únicamente)
+4. No instalar paquetes nuevos
+5. Copiar estilo CSS exactamente de `simple_view.py`
+6. Todo el I/O de red exclusivamente en `ContractsScanWorker` (QThread)
+7. `batch_ready` emite cada contrato individualmente en cuanto se analiza
+8. Items con `is_included=False` excluidos del cálculo de valor
+9. Rate limiting 100ms respetado — reusar `_rate_limit()` de ESIClient
+10. `contracts_filters.json` auto-creado con defaults si no existe
+
+---
+
+### PROGRESO
+
+- [x] `core/contracts_models.py`
+- [x] `core/contracts_engine.py`
+- [x] `core/esi_client.py` — public_contracts() y contract_items()
+- [x] `core/config_manager.py` — load/save_contracts_filters()
+- [x] `ui/market_command/contracts_worker.py`
+- [x] `ui/market_command/contracts_view.py`
+- [x] `ui/market_command/command_main.py` — tab añadido
+- [x] Todas las validaciones pasadas
+- [x] App arranca sin errores con la nueva pestaña

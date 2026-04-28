@@ -78,3 +78,26 @@ def load_performance_config() -> PerformanceConfig:
     except Exception as e:
         print(f"Error cargando performance config: {e}")
         return PerformanceConfig()
+
+def load_contracts_filters():
+    from core.contracts_models import ContractsFilterConfig
+    import json, os, dataclasses
+    path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'config', 'contracts_filters.json'))
+    if not os.path.exists(path):
+        cfg = ContractsFilterConfig()
+        save_contracts_filters(cfg)
+        return cfg
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        fields = {f.name for f in dataclasses.fields(ContractsFilterConfig)}
+        return ContractsFilterConfig(**{k: v for k, v in data.items() if k in fields})
+    except Exception:
+        return ContractsFilterConfig()
+
+
+def save_contracts_filters(config) -> None:
+    import json, os, dataclasses
+    path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'config', 'contracts_filters.json'))
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(dataclasses.asdict(config), f, indent=2)

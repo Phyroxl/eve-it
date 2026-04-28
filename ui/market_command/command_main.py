@@ -4,6 +4,7 @@ from ui.market_command.simple_view import MarketSimpleView
 from ui.market_command.advanced_view import MarketAdvancedView
 from ui.market_command.performance_view import MarketPerformanceView
 from ui.market_command.my_orders_view import MarketMyOrdersView
+from ui.market_command.contracts_view import MarketContractsView
 
 class MarketCommandMain(QWidget):
     def __init__(self, parent=None):
@@ -33,16 +34,19 @@ class MarketCommandMain(QWidget):
         self.btn_advanced = self.create_tab_button("MODO AVANZADO")
         self.btn_performance = self.create_tab_button("PERFORMANCE")
         self.btn_my_orders = self.create_tab_button("MIS PEDIDOS")
+        self.btn_contracts = self.create_tab_button("CONTRATOS")
         
         self.btn_simple.clicked.connect(lambda: self.switch_view(0))
         self.btn_advanced.clicked.connect(lambda: self.switch_view(1))
         self.btn_performance.clicked.connect(lambda: self.switch_view(2))
         self.btn_my_orders.clicked.connect(lambda: self.switch_view(3))
+        self.btn_contracts.clicked.connect(lambda: self.switch_view(4))
         
         nav_layout.addWidget(self.btn_simple)
         nav_layout.addWidget(self.btn_advanced)
         nav_layout.addWidget(self.btn_performance)
         nav_layout.addWidget(self.btn_my_orders)
+        nav_layout.addWidget(self.btn_contracts)
         nav_layout.addStretch()
         
         # SSO Section
@@ -82,11 +86,13 @@ class MarketCommandMain(QWidget):
         self.view_advanced = MarketAdvancedView()
         self.view_performance = MarketPerformanceView()
         self.view_my_orders = MarketMyOrdersView()
+        self.view_contracts = MarketContractsView()
         
         self.stack.addWidget(self.view_simple)
         self.stack.addWidget(self.view_advanced)
         self.stack.addWidget(self.view_performance)
         self.stack.addWidget(self.view_my_orders)
+        self.stack.addWidget(self.view_contracts)
         
         self.layout.addWidget(self.stack)
 
@@ -147,10 +153,12 @@ class MarketCommandMain(QWidget):
         self.btn_advanced.setChecked(index == 1)
         self.btn_performance.setChecked(index == 2)
         self.btn_my_orders.setChecked(index == 3)
+        self.btn_contracts.setChecked(index == 4)
         self.update_btn_style(self.btn_simple, index == 0)
         self.update_btn_style(self.btn_advanced, index == 1)
         self.update_btn_style(self.btn_performance, index == 2)
         self.update_btn_style(self.btn_my_orders, index == 3)
+        self.update_btn_style(self.btn_contracts, index == 4)
         
         if index == 0:
             self.lbl_mode.setText("ANÁLISIS OPERATIVO")
@@ -158,5 +166,7 @@ class MarketCommandMain(QWidget):
             self.lbl_mode.setText("INVESTIGACIÓN ESTRATÉGICA")
         elif index == 2:
             self.lbl_mode.setText("RENDIMIENTO REAL")
-        else:
+        elif index == 3:
             self.lbl_mode.setText("POSICIONES ABIERTAS")
+        else:
+            self.lbl_mode.setText("ARBITRAJE DE CONTRATOS")
