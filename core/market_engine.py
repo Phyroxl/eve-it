@@ -1,3 +1,4 @@
+from typing import List, Dict, Any
 from .market_models import MarketOpportunity, LiquidityMetrics, ScoreBreakdown, FilterConfig, InventoryItem, InventoryAnalysis
 from .cost_basis_service import CostBasisService
 
@@ -367,26 +368,26 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
         est_total_value = est_net_sell * qty
         
         # Lógica de recomendación
-        recommendation = "Review"
+        recommendation = "Revisar"
         reason = "Datos insuficientes"
         
         if bs == 0:
-            recommendation = "Hold"
+            recommendation = "Mantener"
             reason = "Sin precio de venta en Jita"
         elif spread_pct > 30:
-            recommendation = "Hold"
+            recommendation = "Mantener"
             reason = "Spread demasiado alto (>30%)"
         elif spread_pct < 0:
-            recommendation = "Review"
+            recommendation = "Revisar"
             reason = "Mercado invertido / Anomalía"
         elif est_net_sell > bb * 1.05:
-            recommendation = "Sell"
+            recommendation = "Vender"
             reason = "Precio de venta sólido"
         elif est_net_sell > bb:
-            recommendation = "Sell"
+            recommendation = "Vender"
             reason = "Margen positivo"
         else:
-            recommendation = "Hold"
+            recommendation = "Mantener"
             reason = "Venta no rentable vs Buy orders"
 
         analysis = InventoryAnalysis(

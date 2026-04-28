@@ -68,6 +68,11 @@ class InventoryWorker(QThread):
         try:
             client = ESIClient()
             assets = client.character_assets(self.char_id, self.token)
+            
+            if assets == "missing_scope":
+                self.error.emit("missing_scope")
+                return
+                
             if not assets:
                 self.finished_data.emit([])
                 return
@@ -279,7 +284,7 @@ class MarketMyOrdersView(QWidget):
         def create_table():
             t = QTableWidget(0, 12)
             t.setHorizontalHeaderLabels([
-                "", "Item", "Type", "My Price", "Mi Promedio", "Best Competitor", "Total", "Remain", "Spread", "Margin", "Total Profit", "Status"
+                "", "Ítem", "Tipo", "Mi Precio", "Mi Promedio", "Mejor Competidor", "Total", "Restante", "Spread", "Margen", "Beneficio Total", "Estado"
             ])
             t.setColumnWidth(0, 32)
             t.setColumnWidth(4, 100) # Mi Promedio
@@ -372,11 +377,11 @@ class MarketMyOrdersView(QWidget):
         self._create_det_row = _create_det_row
         self.lbl_det_my_price = self._create_det_row(m_g, "MI PRECIO")
         self.lbl_det_my_avg = self._create_det_row(m_g, "MI PROMEDIO")
-        self.lbl_det_best_buy = self._create_det_row(m_g, "BEST BUY")
-        self.lbl_det_best_sell = self._create_det_row(m_g, "BEST SELL")
+        self.lbl_det_best_buy = self._create_det_row(m_g, "MEJOR COMPRA")
+        self.lbl_det_best_sell = self._create_det_row(m_g, "MEJOR VENTA")
         self.lbl_det_margin = self._create_det_row(m_g, "MARGEN NETO")
-        self.lbl_det_profit_u = self._create_det_row(m_g, "PROFIT NETO / U")
-        self.lbl_det_profit_total = self._create_det_row(m_g, "PROFIT TOTAL EST.")
+        self.lbl_det_profit_u = self._create_det_row(m_g, "BENEFICIO NETO / U")
+        self.lbl_det_profit_total = self._create_det_row(m_g, "BENEFICIO TOTAL EST.")
         self.lbl_det_state = self._create_det_row(m_g, "ESTADO OPERATIVO")
         
         self.lbl_det_reason = QLabel()
@@ -458,12 +463,12 @@ class MarketMyOrdersView(QWidget):
                 a = o.analysis
                 
                 i_icon = QTableWidgetItem()
+                i_icon.setData(Qt.UserRole, o.type_id)
                 table.setItem(row, 0, i_icon)
                 url = ItemMetadataHelper.get_icon_url(o.type_id)
                 self.image_loader.load(url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
 
                 i_name = QTableWidgetItem(o.item_name)
-                i_name.setData(Qt.UserRole, o.type_id)
                 
                 i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
                 i_type.setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
@@ -537,8 +542,14 @@ class MarketMyOrdersView(QWidget):
         self._handle_selection(self.table_buy, sel[0].row())
 
     def _handle_selection(self, table, row):
-        t_id = table.item(row, 0).data(Qt.UserRole)
-        o = next((ord for ord in self.all_orders if ord.type_id == t_id and format_isk(ord.price) == table.item(row, 3).text()), None)
+        item_0 = table.item(row, 0)
+        if not item_0: return
+        t_id = item_0.data(Qt.UserRole)
+        
+        # Buscar la orden correspondiente en self.all_orders
+        # Usamos el precio formateado para distinguir entre múltiples órdenes del mismo tipo si las hubiera
+        price_str = table.item(row, 3).text()
+        o = next((ord for ord in self.all_orders if ord.type_id == t_id and format_isk(ord.price) == price_str), None)
         if o:
             self.update_detail(o)
 
@@ -588,8 +599,10 @@ class MarketMyOrdersView(QWidget):
 
     def on_double_click(self, item, table):
         row = item.row()
-        t_id = table.item(row, 0).data(Qt.UserRole)
-        item_name = table.item(row, 0).text()
+        item_0 = table.item(row, 0)
+        if not item_0: return
+        t_id = item_0.data(Qt.UserRole)
+        item_name = table.item(row, 1).text()
         
         auth = AuthManager.instance()
         def feedback(msg, color):
@@ -606,7 +619,7 @@ class MarketMyOrdersView(QWidget):
         if not item: return
             
         row = item.row()
-        item_name = table.item(row, 0).text()
+        item_name = table.item(row, 1).text()
         
         menu = QMenu(self)
         menu.setStyleSheet(
