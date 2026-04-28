@@ -430,14 +430,17 @@ class MarketMyOrdersView(QWidget):
         self.lbl_broker_fee.setText(f"BROKER FEE: {taxes.broker_fee_pct:.2f}%")
         
         if taxes.status == "ready":
-            self.lbl_tax_source.setText(f"FUENTE: SKILLS REALES (Accounting Lvl {taxes.accounting_lvl})")
+            self.lbl_tax_source.setText(f"FUENTE: SKILLS REALES (Broker Fee Estimado*)")
             self.lbl_tax_source.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800;")
+            self.lbl_tax_source.setToolTip("El Broker Fee es estimado (3% base - skills). No incluye variaciones por Standings o Estructuras.")
         elif taxes.status == "missing_scope":
             self.lbl_tax_source.setText("FALTA PERMISO DE SKILLS — REAUTORIZA PARA TAXES REALES")
             self.lbl_tax_source.setStyleSheet("color: #ef4444; font-size: 9px; font-weight: 800;")
+            self.lbl_tax_source.setToolTip("Haz login de nuevo para conceder permiso de lectura de skills.")
         else:
             self.lbl_tax_source.setText("FUENTE: VALORES ESTIMADOS (FALLBACK)")
             self.lbl_tax_source.setStyleSheet("color: #f59e0b; font-size: 9px; font-weight: 800;")
+            self.lbl_tax_source.setToolTip("Usando configuración por defecto (8% Tax / 3% Fee).")
 
     def _start_inventory_preload(self):
         auth = AuthManager.instance()

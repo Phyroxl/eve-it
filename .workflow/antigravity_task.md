@@ -1775,4 +1775,31 @@ Se ha eliminado la dependencia de valores estimados para los impuestos, garantiz
 - [x] **Alertas**: Confirmación de que el mensaje rojo aparece si el token no tiene el permiso de skills.
 - [x] **Cálculos**: Verificación de que el profit cambia instantáneamente al detectar niveles reales de skills.
 
-*Estado: Precisión financiera absoluta basada en el ADN técnico del personaje.*
+### SESIÓN 24 LIMPIEZA & NOTAS (STABILITY) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE LIMPIEZA
+Se han realizado los ajustes finales de configuración y transparencia informativa para asegurar un repositorio limpio y cálculos honestos.
+
+**Gestión del Repositorio:**
+1. **Limpieza de Config Local**:
+   - Se ha dejado de trackear `config/ui_my_orders.json` en Git para evitar que las configuraciones locales de visualización (anchos de columna, etc.) se suban al repositorio.
+   - Actualizado `.gitignore` para excluir permanentemente archivos de configuración local (`config/ui_*.json`, `config/eve_client.json`).
+   - El archivo local del usuario se mantiene intacto, pero Git lo ignora.
+
+**Mejoras de Transparencia:**
+1. **Disclaimer de Broker Fee**:
+   - Se ha añadido una nota aclaratoria en la barra de taxes indicando que el **Broker Fee es estimado**.
+   - **Nota Técnica**: El cálculo actual contempla la reducción por skills (Broker Relations), pero no incluye variaciones por Standings (facción/corp), ubicación de la estación o tasas de estructuras de jugadores (Upwell structures).
+   - Se han añadido **Tooltips** en la barra de taxes para explicar detalladamente el origen de cada tasa al pasar el ratón.
+
+**Archivos Modificados:**
+- `.gitignore`: Inclusión de reglas para configs locales.
+- `ui/market_command/my_orders_view.py`: Añadidos tooltips y disclaimer sobre broker fee.
+
+**Pruebas Realizadas:**
+- [x] **Git**: Confirmado que `ui_my_orders.json` ya no aparece como modificado para el repo tras el cambio.
+- [x] **UI**: Verificación de tooltips en la barra de taxes.
+
+*Estado: Código limpio, transparente y listo para producción.*

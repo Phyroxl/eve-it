@@ -42,6 +42,8 @@ logs/
 cache/
 data/
 *.local.json
+config/ui_*.json
+config/eve_client.json
 
 # User Scratch & Tools
 tools/
