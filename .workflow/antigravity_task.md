@@ -1720,4 +1720,30 @@ Se ha corregido la visibilidad de las métricas financieras en las órdenes de c
 **Archivos Modificados:**
 - `ui/market_command/my_orders_view.py`: Actualización de lógica de población de tablas.
 
-*Estado: Visualización financiera completa para todo tipo de órdenes.*
+### SESIÓN 24 TAXES & ESTADOS (REFERENCIA) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha refinado la inteligencia visual de `Mis Pedidos` añadiendo transparencia sobre los impuestos aplicados y mejorando la comparativa en órdenes de compra.
+
+**Mejoras de Análisis:**
+1. **Columna de Referencia Inteligente**:
+   - En las **Órdenes de Compra**, la columna `Mejor Compra` ha sido sustituida por `Mejor Venta`.
+   - Esto permite comparar instantáneamente tu precio de compra con el precio al que podrías revender el ítem en Jita, facilitando la toma de decisiones sobre profit potencial.
+2. **Bloque Informativo de Taxes**:
+   - Se ha añadido una barra premium entre las secciones de compra y venta que muestra el **Sales Tax** y **Broker Fee** actuales.
+   - El sistema indica claramente si la fuente son las **Skills del Personaje** (precisión total) o **Valores Estimados** (fallback).
+
+**Refinamiento Estético:**
+1. **Paleta de Colores Táctica**:
+   - **Verde**: Estados óptimos (competitivo, sano, rentable en ventas).
+   - **Azul**: Estados potenciales o informativos (rentable en compras, esperando compra).
+   - **Amarillo**: Estados que requieren atención (superada, margen ajustado, revisar).
+   - **Rojo**: Alertas críticas (pérdida, fuera de mercado, no rentable).
+2. **Consistencia Visual**: Los nuevos colores se aplican tanto en la tabla principal como en el panel de detalle inferior.
+
+**Archivos Modificados:**
+- `ui/market_command/my_orders_view.py`: Implementación de la barra de taxes, lógica de columna de referencia y refinamiento de estados.
+
+*Estado: Interfaz de trading avanzada con feedback dinámico de impuestos.*

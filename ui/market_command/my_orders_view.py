@@ -1,4 +1,4 @@
-import logging # VERSION: 1.1.5-FIX (Syntax & Stability)
+import logging # VERSION: 1.1.7-TAXINFO (Taxes UI, Refined States, Referencia column)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout, QDialog, QMessageBox
@@ -235,48 +235,80 @@ class MarketMyOrdersView(QWidget):
         header_layout.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header_layout)
 
-        def create_t():
-            t = QTableWidget(0, 12)
-            t.setHorizontalHeaderLabels(["", "ÍTEM", "TIPO", "MI PRECIO", "MI PROMEDIO", "MEJOR COMPRA", "TOTAL", "RESTO", "SPREAD", "MARGEN", "PROFIT", "ESTADO"])
-            t.verticalHeader().setVisible(False)
-            t.setSelectionBehavior(QAbstractItemView.SelectRows)
-            t.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            t.setStyleSheet("QTableWidget { background: #000000; color: #f1f5f9; border: 1px solid #1e293b; font-size: 10px; } "
-                            "QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; padding: 4px; }")
-            t.horizontalHeader().setStretchLastSection(True)
-            t.setIconSize(QSize(24, 24))
-            t.setColumnWidth(0, 32)
-            t.setColumnWidth(1, 180)
-            return t
-
-        self.table_sell = create_t()
-        self.table_buy = create_t()
-        
-        self.table_sell.horizontalHeader().sectionResized.connect(lambda i, o, n: self._on_header_resized(self.table_sell, i, n))
-        self.table_buy.horizontalHeader().sectionResized.connect(lambda i, o, n: self._on_header_resized(self.table_buy, i, n))
-        self.table_sell.horizontalHeader().sectionMoved.connect(lambda i, o, n: self._on_header_moved(self.table_sell, i, o, n))
-        self.table_buy.horizontalHeader().sectionMoved.connect(lambda i, o, n: self._on_header_moved(self.table_buy, i, o, n))
-
-        self.table_sell.itemSelectionChanged.connect(self.on_sell_selection_changed)
-        self.table_buy.itemSelectionChanged.connect(self.on_buy_selection_changed)
-        self.table_sell.itemDoubleClicked.connect(lambda i: self.on_double_click(i, self.table_sell))
-        self.table_buy.itemDoubleClicked.connect(lambda i: self.on_double_click(i, self.table_buy))
-
+        # SECCIÓN ÓRDENES DE VENTA
         self.lbl_sell_count = QLabel("ÓRDENES DE VENTA (0)")
         self.lbl_sell_count.setStyleSheet("color:#ef4444; font-weight:900; font-size:10px;")
+        self.main_layout.addWidget(self.lbl_sell_count)
+        
+        self.table_sell = self.create_table(is_buy=False)
+        self.main_layout.addWidget(self.table_sell, 1)
+
+        # BLOQUE DE INFORMACIÓN DE TAXES (Premium info block)
+        self.setup_taxes_bar()
+
+        # SECCIÓN ÓRDENES DE COMPRA
         self.lbl_buy_count = QLabel("ÓRDENES DE COMPRA (0)")
         self.lbl_buy_count.setStyleSheet("color:#3b82f6; font-weight:900; font-size:10px;")
-        
-        self.main_layout.addWidget(self.lbl_sell_count)
-        self.main_layout.addWidget(self.table_sell, 1)
         self.main_layout.addWidget(self.lbl_buy_count)
+        
+        self.table_buy = self.create_table(is_buy=True)
         self.main_layout.addWidget(self.table_buy, 1)
 
+        # PANEL DE DETALLE
         self.detail_panel = QFrame()
         self.detail_panel.setFixedHeight(130)
         self.detail_panel.setStyleSheet("background-color: #000000; border: 1px solid #1e293b; border-radius: 4px;")
         self.setup_detail_layout()
         self.main_layout.addWidget(self.detail_panel)
+
+        # Sincronización de cabeceras
+        self.table_sell.horizontalHeader().sectionResized.connect(lambda i, o, n: self._on_header_resized(self.table_sell, i, n))
+        self.table_buy.horizontalHeader().sectionResized.connect(lambda i, o, n: self._on_header_resized(self.table_buy, i, n))
+        self.table_sell.horizontalHeader().sectionMoved.connect(lambda i, o, n: self._on_header_moved(self.table_sell, i, o, n))
+        self.table_buy.horizontalHeader().sectionMoved.connect(lambda i, o, n: self._on_header_moved(self.table_buy, i, o, n))
+
+    def setup_taxes_bar(self):
+        self.taxes_bar = QFrame()
+        self.taxes_bar.setFixedHeight(30)
+        self.taxes_bar.setStyleSheet("background-color: #0f172a; border-radius: 15px; border: 1px solid #1e293b;")
+        layout = QHBoxLayout(self.taxes_bar)
+        layout.setContentsMargins(15, 0, 15, 0)
+        
+        self.lbl_sales_tax = QLabel("SALES TAX: ---")
+        self.lbl_broker_fee = QLabel("BROKER FEE: ---")
+        self.lbl_tax_source = QLabel("FUENTE: ---")
+        
+        for lbl in [self.lbl_sales_tax, self.lbl_broker_fee, self.lbl_tax_source]:
+            lbl.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; letter-spacing: 0.5px;")
+        
+        self.lbl_tax_source.setStyleSheet(self.lbl_tax_source.styleSheet() + " color: #3b82f6;")
+        
+        layout.addWidget(self.lbl_sales_tax)
+        layout.addSpacing(20)
+        layout.addWidget(self.lbl_broker_fee)
+        layout.addStretch()
+        layout.addWidget(self.lbl_tax_source)
+        
+        self.main_layout.addWidget(self.taxes_bar)
+
+    def create_table(self, is_buy=False):
+        # Columnas: "", ÍTEM, TIPO, MI PRECIO, MI PROMEDIO, [MEJOR COMPRA / MEJOR VENTA], TOTAL, RESTO, SPREAD, MARGEN, PROFIT, ESTADO
+        ref_col = "MEJOR VENTA" if is_buy else "MEJOR COMPRA"
+        t = QTableWidget(0, 12)
+        t.setHorizontalHeaderLabels(["", "ÍTEM", "TIPO", "MI PRECIO", "MI PROMEDIO", ref_col, "TOTAL", "RESTO", "SPREAD", "MARGEN", "PROFIT", "ESTADO"])
+        t.verticalHeader().setVisible(False)
+        t.setSelectionBehavior(QAbstractItemView.SelectRows)
+        t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        t.setStyleSheet("QTableWidget { background: #000000; color: #f1f5f9; border: 1px solid #1e293b; font-size: 10px; } "
+                        "QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; padding: 4px; }")
+        t.horizontalHeader().setStretchLastSection(True)
+        t.setIconSize(QSize(24, 24))
+        t.setColumnWidth(0, 32)
+        t.setColumnWidth(1, 180)
+        
+        t.itemSelectionChanged.connect(self.on_selection_changed)
+        t.itemDoubleClicked.connect(lambda i: self.on_double_click(i, t))
+        return t
 
     def setup_detail_layout(self):
         dl = QHBoxLayout(self.detail_panel)
@@ -383,12 +415,25 @@ class MarketMyOrdersView(QWidget):
 
     def on_data_ready(self, orders):
         self.all_orders = orders
+        self.update_taxes_info()
         self.populate_all(orders)
         self.btn_refresh.setEnabled(True)
         self.btn_repopulate.setEnabled(True)
         self.lbl_status.setText(f"● LISTO: {len(orders)} ÓRDENES")
         self.lbl_status.setStyleSheet("color:#10b981;")
         self._start_inventory_preload()
+
+    def update_taxes_info(self):
+        auth = AuthManager.instance()
+        taxes = TaxService.instance().get_taxes(auth.char_id)
+        self.lbl_sales_tax.setText(f"SALES TAX: {taxes.sales_tax_pct:.2f}%")
+        self.lbl_broker_fee.setText(f"BROKER FEE: {taxes.broker_fee_pct:.2f}%")
+        if taxes.is_estimated:
+            self.lbl_tax_source.setText("FUENTE: VALORES ESTIMADOS (FALLBACK)")
+            self.lbl_tax_source.setStyleSheet("color: #f59e0b; font-size: 9px; font-weight: 800;")
+        else:
+            self.lbl_tax_source.setText(f"FUENTE: SKILLS DEL PERSONAJE (Acc Lvl {taxes.accounting_lvl})")
+            self.lbl_tax_source.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 800;")
 
     def _start_inventory_preload(self):
         auth = AuthManager.instance()
@@ -414,70 +459,86 @@ class MarketMyOrdersView(QWidget):
         self.lbl_sell_count.setText(f"ÓRDENES DE VENTA ({len(sells)})")
         self.lbl_buy_count.setText(f"ÓRDENES DE COMPRA ({len(buys)})")
 
-        def fill(t, data):
-            t.setRowCount(0)
-            t.setRowCount(len(data))
-            for r, o in enumerate(data):
-                a = o.analysis
-                cost = CostBasisService.instance().get_cost_basis(o.type_id)
-                
-                i_ico = QTableWidgetItem()
-                i_ico.setData(Qt.UserRole, o.type_id)
-                i_ico.setData(Qt.UserRole + 1, o.order_id)
-                self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_ico: it.setIcon(QIcon(px)))
+        self.fill_table(self.table_sell, sells)
+        self.fill_table(self.table_buy, buys)
 
-                i_avg = QTableWidgetItem(format_isk(cost.average_buy_price) if cost else "Sin registros")
-                i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                i_avg.setForeground(QColor("#f1f5f9") if cost else QColor("#475569"))
-                
-                i_state = QTableWidgetItem(a.state)
-                s_txt = a.state.lower()
-                if any(x in s_txt for x in ["sana", "liderando", "competitiva"]): i_state.setForeground(QColor("#10b981")) 
-                elif any(x in s_txt for x in ["superado", "ajustado", "rentable"]): i_state.setForeground(QColor("#f59e0b")) 
-                elif any(x in s_txt for x in ["perdida", "error", "no rentable"]): i_state.setForeground(QColor("#ef4444")) 
-                else: i_state.setForeground(QColor("#94a3b8")) 
+    def fill_table(self, t, data):
+        t.setRowCount(0)
+        t.setRowCount(len(data))
+        for r, o in enumerate(data):
+            a = o.analysis
+            cost = CostBasisService.instance().get_cost_basis(o.type_id)
+            
+            i_ico = QTableWidgetItem()
+            i_ico.setData(Qt.UserRole, o.type_id)
+            i_ico.setData(Qt.UserRole + 1, o.order_id)
+            self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_ico: it.setIcon(QIcon(px)))
 
-                items = [
-                    i_ico, QTableWidgetItem(o.item_name), 
-                    QTableWidgetItem("BUY" if o.is_buy_order else "SELL"),
-                    QTableWidgetItem(format_isk(o.price)),
-                    i_avg,
-                    QTableWidgetItem(format_isk(a.best_buy if o.is_buy_order else a.best_sell)),
-                    QTableWidgetItem(str(o.volume_total)), QTableWidgetItem(str(o.volume_remain)),
-                    QTableWidgetItem(f"{a.spread_pct:.1f}%"), 
-                    QTableWidgetItem(f"{a.margin_pct:.1f}%" if a.margin_pct != 0 else "---"),
-                    QTableWidgetItem(format_isk(a.net_profit_total) if a.net_profit_total != 0 else "---"),
-                    i_state
-                ]
-                for i in [3,4,5,10]: items[i].setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                for i in [2,6,7,8,9,11]: items[i].setTextAlignment(Qt.AlignCenter)
-                
-                items[2].setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
-                
-                # Colorear Margen y Profit (tanto real como potencial)
-                if a.margin_pct > 15: items[9].setForeground(QColor("#10b981"))
-                elif a.margin_pct < 0: items[9].setForeground(QColor("#ef4444"))
-                
-                if a.net_profit_total > 0: items[10].setForeground(QColor("#10b981"))
-                elif a.net_profit_total < 0: items[10].setForeground(QColor("#ef4444"))
+            i_avg = QTableWidgetItem(format_isk(cost.average_buy_price) if cost else "Sin registros")
+            i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            i_avg.setForeground(QColor("#f1f5f9") if cost else QColor("#475569"))
+            
+            # Referencia dinámica (Mejor Compra en Sell, Mejor Venta en Buy)
+            ref_val = a.best_sell if o.is_buy_order else a.best_buy
+            ref_txt = format_isk(ref_val) if ref_val > 0 else "Sin datos"
+            i_ref = QTableWidgetItem(ref_txt)
+            i_ref.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            
+            # Colores de Estado Refinados
+            # Verde: sana, liderando, competitiva, rentable
+            # Rojo: perdida, no rentable, error
+            # Amarillo: superada, ajustada, revisar
+            # Azul: potencial, esperando compra, datos estimados, rentable (en compras)
+            i_state = QTableWidgetItem(a.state.upper())
+            s_txt = a.state.lower()
+            
+            # Lógica de colores unificada
+            if any(x in s_txt for x in ["sana", "liderando", "competitiva", "rentable"]):
+                if o.is_buy_order: i_state.setForeground(QColor("#3b82f6")) # Azul para compras rentables/potenciales
+                else: i_state.setForeground(QColor("#10b981")) # Verde para ventas sanas
+            elif any(x in s_txt for x in ["superada", "ajustado", "revisar", "beneficio"]):
+                i_state.setForeground(QColor("#f59e0b")) # Amarillo
+            elif any(x in s_txt for x in ["pérdida", "no rentable", "error", "fuera"]):
+                i_state.setForeground(QColor("#ef4444")) # Rojo
+            else:
+                i_state.setForeground(QColor("#3b82f6")) # Azul (Fallback / Potencial)
 
-                for c, item in enumerate(items): t.setItem(r, c, item)
+            items = [
+                i_ico, QTableWidgetItem(o.item_name), 
+                QTableWidgetItem("BUY" if o.is_buy_order else "SELL"),
+                QTableWidgetItem(format_isk(o.price)),
+                i_avg,
+                i_ref,
+                QTableWidgetItem(str(o.volume_total)), QTableWidgetItem(str(o.volume_remain)),
+                QTableWidgetItem(f"{a.spread_pct:.1f}%"), 
+                QTableWidgetItem(f"{a.margin_pct:.1f}%" if a.margin_pct != 0 else "---"),
+                QTableWidgetItem(format_isk(a.net_profit_total) if a.net_profit_total != 0 else "---"),
+                i_state
+            ]
+            for i in [3,4,5,10]: items[i].setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            for i in [2,6,7,8,9,11]: items[i].setTextAlignment(Qt.AlignCenter)
+            
+            items[2].setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
+            
+            # Colorear Margen y Profit
+            if a.margin_pct > 15: items[9].setForeground(QColor("#10b981"))
+            elif a.margin_pct < 0: items[9].setForeground(QColor("#ef4444"))
+            elif a.margin_pct > 0: items[9].setForeground(QColor("#f59e0b")) # Amarillo para márgenes bajos
+            
+            if a.net_profit_total > 0: items[10].setForeground(QColor("#10b981"))
+            elif a.net_profit_total < 0: items[10].setForeground(QColor("#ef4444"))
 
-        fill(self.table_sell, sells)
-        fill(self.table_buy, buys)
+            for c, item in enumerate(items): t.setItem(r, c, item)
 
-    def on_sell_selection_changed(self):
-        self.table_buy.clearSelection()
-        self._handle_sel(self.table_sell)
-
-    def on_buy_selection_changed(self):
-        self.table_sell.clearSelection()
-        self._handle_sel(self.table_buy)
-
-    def _handle_sel(self, t):
-        si = t.selectedItems()
+    def on_selection_changed(self):
+        # Deseleccionar de la otra tabla si existe selección
+        sender = self.sender()
+        if sender == self.table_sell: self.table_buy.clearSelection()
+        else: self.table_sell.clearSelection()
+        
+        si = sender.selectedItems()
         if not si: return
-        oid = t.item(si[0].row(), 0).data(Qt.UserRole + 1)
+        oid = sender.item(si[0].row(), 0).data(Qt.UserRole + 1)
         o = next((ord for ord in self.all_orders if ord.order_id == oid), None)
         if o: self.update_det(o)
 
@@ -499,34 +560,31 @@ class MarketMyOrdersView(QWidget):
             self.lbl_det_cost_msg.setText("Sin registros de coste real para calcular beneficio")
         
         self.det_price.setText(format_isk(o.price))
-        self.det_price.setStyleSheet("color:#f1f5f9; font-weight:900;")
         self.det_avg.setText(format_isk(avg) if avg > 0 else "SIN REGISTROS")
-        self.det_avg.setStyleSheet("color:#f1f5f9;" if avg > 0 else "color:#475569;")
         self.det_best_buy.setText(format_isk(a.best_buy))
-        self.det_best_buy.setStyleSheet("color:#3b82f6; font-weight:900;")
         self.det_best_sell.setText(format_isk(a.best_sell))
-        self.det_best_sell.setStyleSheet("color:#ef4444; font-weight:900;")
         
-        s_txt = a.state.lower()
         self.det_state.setText(a.state.upper())
-        if any(x in s_txt for x in ["sana", "liderando"]): self.det_state.setStyleSheet("color:#10b981; font-weight:900;")
-        elif "superado" in s_txt: self.det_state.setStyleSheet("color:#f59e0b; font-weight:900;")
-        else: self.det_state.setStyleSheet("color:#ef4444; font-weight:900;")
+        s_txt = a.state.lower()
+        if any(x in s_txt for x in ["sana", "liderando", "competitiva", "rentable"]):
+            color = "#3b82f6" if o.is_buy_order else "#10b981"
+            self.det_state.setStyleSheet(f"color:{color}; font-weight:900;")
+        elif any(x in s_txt for x in ["superada", "ajustado", "revisar", "beneficio"]):
+            self.det_state.setStyleSheet("color:#f59e0b; font-weight:900;")
+        else:
+            self.det_state.setStyleSheet("color:#ef4444; font-weight:900;")
         
-        if (not o.is_buy_order and avg > 0) or o.is_buy_order:
+        if (not o.is_buy_order and avg > 0) or (o.is_buy_order and a.best_sell > 0):
             self.det_margin.setText(f"{a.margin_pct:.1f}%")
-            self.det_margin.setStyleSheet("color:#10b981;" if a.margin_pct > 0 else "color:#ef4444;")
+            self.det_margin.setStyleSheet("color:#10b981;" if a.margin_pct > 15 else ("color:#f59e0b;" if a.margin_pct > 0 else "color:#ef4444;"))
             self.det_profit_u.setText(format_isk(a.net_profit_per_unit))
             self.det_profit_u.setStyleSheet("color:#10b981;" if a.net_profit_per_unit > 0 else "color:#ef4444;")
             self.det_profit_t.setText(format_isk(a.net_profit_total))
             self.det_profit_t.setStyleSheet("color:#10b981;" if a.net_profit_total > 0 else "color:#ef4444;")
         else:
-            self.det_margin.setText("---")
-            self.det_margin.setStyleSheet("color:#475569;")
-            self.det_profit_u.setText("---")
-            self.det_profit_u.setStyleSheet("color:#475569;")
-            self.det_profit_t.setText("---")
-            self.det_profit_t.setStyleSheet("color:#475569;")
+            for l in [self.det_margin, self.det_profit_u, self.det_profit_t]:
+                l.setText("---")
+                l.setStyleSheet("color:#475569;")
 
     def on_double_click(self, item, t):
         tid = t.item(item.row(), 0).data(Qt.UserRole)
