@@ -802,7 +802,7 @@ class MarketMyOrdersView(QWidget):
             i_state = SemanticTableWidgetItem(a.state.upper())
             s_low = a.state.lower()
             if any(x in s_low for x in ["liderando", "competitiva", "sana", "rentable"]):
-                i_state.setForeground(QColor("#3b82f6" if o.is_buy_order else "#10b981"))
+                i_state.setForeground(QColor("#10b981"))
             elif "superada" in s_low or "ajustado" in s_low:
                 i_state.setForeground(QColor("#f59e0b"))
             elif any(x in s_low for x in ["pérdida", "no rentable", "fuera"]):

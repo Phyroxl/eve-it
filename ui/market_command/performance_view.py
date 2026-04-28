@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView
 )
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPixmap, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer, QUrl
 import sqlite3
 import logging
@@ -822,8 +822,12 @@ class MarketPerformanceView(QWidget):
             if item.realized_profit_est > 0: profit_item.setForeground(QColor("#10b981"))
             self.top_items_table.setItem(i, 4, profit_item)
 
+            s_low = item.status_text.lower()
             status_item = QTableWidgetItem(item.status_text)
-            status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
+            if any(x in s_low for x in ["liderando", "competitiva", "sana", "rentable"]):
+                status_item.setForeground(QColor("#10b981"))
+            else:
+                status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
             self.top_items_table.setItem(i, 5, status_item)
             
             for col in range(6):

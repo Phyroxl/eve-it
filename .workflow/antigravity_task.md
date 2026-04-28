@@ -1977,12 +1977,10 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Unificación ÍTEM**: Icono y nombre ahora comparten la misma celda en todas las tablas de Market Command (Simple, Avanzado, Mis Pedidos, Inventario, Contratos, Performance).
-- [x] **Corrección Sales Tax**: Prioridad absoluta a `tax_overrides.json`. Logs detallados añadidos para verificar la fuente del tax.
-- [x] **Estados Inteligentes**: Refactorizada la lógica de competitividad para excluir las órdenes propias. Ahora las órdenes líderes muestran correctamente `LIDERANDO`.
-- [x] **Fix Columnas Mis Pedidos**: 
-  - `MEJOR` ahora muestra el competidor correcto (Sell para ventas, Buy para compras).
-  - `TOTAL` ahora muestra el volumen total de la orden.
-- [x] **Alignment Fix**: Mantenida la alineación centrada en todas las nuevas configuraciones de columnas.
+- [x] **Hotfix QIcon**: Corregido error `NameError: QIcon is not defined` en `PerformanceView` añadiendo el import de `QtGui`.
+- [x] **Armonización LIDERANDO**: El estado `LIDERANDO` ahora se muestra siempre en verde esmeralda, tanto para compras como para ventas, mejorando la coherencia visual.
+- [x] **Unificación ÍTEM**: Icono y nombre ahora comparten la misma celda en todas las tablas de Market Command.
+- [x] **Corrección Sales Tax**: Prioridad absoluta a `tax_overrides.json` con logs de verificación.
+- [x] **Estados Inteligentes**: Refactorizada la lógica para excluir órdenes propias en la comparación de competitividad.
 
-*Estado: Plataforma visualmente unificada, con datos precisos y estados de mercado realistas.*
+*Estado: Plataforma visualmente impecable, sin errores de importación y con telemetría de alta fidelidad.*
