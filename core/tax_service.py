@@ -33,18 +33,22 @@ class TaxService:
         return cls._instance
 
     def get_taxes(self, char_id: int) -> CharacterTaxes:
-        # 1. Verificar Overrides Globales (Si existen)
         char_key = str(char_id)
+        base = self.char_taxes.get(char_id, CharacterTaxes(8.0, 3.0, 0, 0, "idle", {}, "idle"))
+        
+        # 1. Aplicar Overrides Globales de Personaje
         if char_key in self.overrides:
             ov = self.overrides[char_key]
-            # Si el override es para el character general (sin loc_id específico)
             if "sales_tax_pct" in ov and "location_id" not in ov:
-                base = self.char_taxes.get(char_id, CharacterTaxes(8.0, 3.0, 0, 0, "idle", {}, "idle"))
                 base.sales_tax_pct = ov["sales_tax_pct"]
                 base.source = "CALIBRADO MANUAL"
-                return base
-
-        return self.char_taxes.get(char_id, CharacterTaxes(8.0, 3.0, 0, 0, "idle", {}, "idle"))
+                logger.info(f"[TAX] Aplicando override SALES TAX: {base.sales_tax_pct}% para char={char_id}")
+            if "broker_fee_pct" in ov and "location_id" not in ov:
+                base.broker_fee_pct = ov["broker_fee_pct"]
+                base.source = "CALIBRADO MANUAL"
+                logger.info(f"[TAX] Aplicando override BROKER FEE BASE: {base.broker_fee_pct}% para char={char_id}")
+        
+        return base
 
     def refresh_from_esi(self, char_id: int, token: str):
         logger.info(f"Refrescando Skills/Standings para char={char_id}...")
@@ -86,13 +90,14 @@ class TaxService:
             source = "REAL ESI"
             if skill_status == "missing_scope": source = "FALTAN PERMISOS"
             
-            # Aplicar Overrides de Character si existen
+            # Aplicar Overrides de Character (Prioridad Absoluta)
             char_key = str(char_id)
             if char_key in self.overrides:
                 ov = self.overrides[char_key]
                 if "sales_tax_pct" in ov:
                     sales_tax = ov["sales_tax_pct"]
                     source = "CALIBRADO MANUAL"
+                    logger.info(f"[TAX] Override SALES TAX detectado: {sales_tax}%")
 
             self.char_taxes[char_id] = CharacterTaxes(
                 sales_tax_pct=max(0.0, sales_tax),
@@ -104,6 +109,7 @@ class TaxService:
                 standings_status=standings_status,
                 source=source
             )
+            logger.info(f"[TAX] Resultado Final char={char_id}: SalesTax={sales_tax}%, BrokerBase={base_broker_fee}%, Source={source}")
             return True
         except Exception as e:
             logger.error(f"Error refreshing TaxService: {e}")
@@ -117,8 +123,14 @@ class TaxService:
         char_key = str(char_id)
         if char_key in self.overrides:
             ov = self.overrides[char_key]
-            # Si el override coincide con la ubicación
+            # Si el override coincide con la ubicación o es general para el personaje
             if ov.get("location_id") == location_id and "broker_fee_pct" in ov:
+                logger.info(f"[TAX] Aplicando override BROKER FEE LOC={location_id}: {ov['broker_fee_pct']}%")
+                return ov["broker_fee_pct"], "CALIBRADO MANUAL"
+            elif "broker_fee_pct" in ov and "location_id" not in ov:
+                # Si hay un override general de broker fee para el personaje, lo usamos como base si no hay uno por loc
+                # Pero seguimos calculando standings si es NPC? El usuario dice prioridad absoluta.
+                logger.info(f"[TAX] Usando override BROKER FEE BASE como efectivo: {ov['broker_fee_pct']}%")
                 return ov["broker_fee_pct"], "CALIBRADO MANUAL"
 
         taxes = self.get_taxes(char_id)

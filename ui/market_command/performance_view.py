@@ -392,8 +392,8 @@ class MarketPerformanceView(QWidget):
         
         # Top Items Table
         from PySide6.QtWidgets import QAbstractItemView
-        self.top_items_table = QTableWidget(0, 7)
-        self.top_items_table.setHorizontalHeaderLabels(["", "Item", "In (Qty)", "Out (Qty)", "Net Stock", "Realized Profit", "Estado"])
+        self.top_items_table = QTableWidget(0, 6)
+        self.top_items_table.setHorizontalHeaderLabels(["Item", "In (Qty)", "Out (Qty)", "Net Stock", "Realized Profit", "Estado"])
         self.top_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.top_items_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.top_items_table.setColumnWidth(0, 32)
@@ -453,11 +453,10 @@ class MarketPerformanceView(QWidget):
         self.main_layout.addWidget(self.detail_frame)
         
         # 4. Bottom Row: Recent Transactions
-        self.trans_table = QTableWidget(0, 7)
-        self.trans_table.setHorizontalHeaderLabels(["", "Fecha", "Item", "Tipo", "Cantidad", "Total", "Fee Est."])
+        self.trans_table = QTableWidget(0, 6)
+        self.trans_table.setHorizontalHeaderLabels(["Fecha", "Item", "Tipo", "Cantidad", "Total", "Fee Est."])
         self.trans_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.trans_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.trans_table.setColumnWidth(0, 32)
+        self.trans_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.trans_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.trans_table.itemDoubleClicked.connect(self._on_table_double_click)
         self.trans_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -805,51 +804,29 @@ class MarketPerformanceView(QWidget):
             "Exposición Alta": "#ef4444"
         }
         for i, item in enumerate(items[:15]):
-            # Icono
-            icon_lbl = QLabel()
-            icon_lbl.setFixedSize(24, 24)
-            icon_lbl.setScaledContents(True)
+            item_cell = QTableWidgetItem(item.item_name)
+            item_cell.setData(Qt.UserRole, item.item_id)
+            
             icon_url = f"https://images.evetech.net/types/{item.item_id}/icon?size=32"
-            self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
-            self.top_items_table.setCellWidget(i, 0, icon_lbl)
-
-            item_cell = QTableWidgetItem(item.item_name)
-            item_cell.setData(Qt.UserRole, item.item_id)
-            self.top_items_table.setItem(i, 1, item_cell)
+            self.image_loader.load(icon_url, lambda pix, it=item_cell: it.setIcon(QIcon(pix)))
             
-            self.top_items_table.setItem(i, 2, QTableWidgetItem(f"{item.total_bought_units:,}"))
-            self.top_items_table.setItem(i, 3, QTableWidgetItem(f"{item.total_sold_units:,}"))
-            
-            stock_item = QTableWidgetItem(f"{item.net_units:,}")
-            if item.net_units > 0:
-                stock_item.setForeground(QColor("#60a5fa"))
-            self.top_items_table.setItem(i, 4, stock_item)
-            
-            # Profit (Col 5)
-            profit_item = QTableWidgetItem(format_isk(item.realized_profit_est, short=True))
-            if item.realized_profit_est > 0: profit_item.setForeground(QColor("#10b981"))
-            self.top_items_table.setItem(i, 5, profit_item)
-
-            item_cell = QTableWidgetItem(item.item_name)
-            item_cell.setData(Qt.UserRole, item.item_id)
-            self.top_items_table.setItem(i, 1, item_cell)
-            
-            self.top_items_table.setItem(i, 2, QTableWidgetItem(f"{item.total_bought_units:,}"))
-            self.top_items_table.setItem(i, 3, QTableWidgetItem(f"{item.total_sold_units:,}"))
+            self.top_items_table.setItem(i, 0, item_cell)
+            self.top_items_table.setItem(i, 1, QTableWidgetItem(f"{item.total_bought_units:,}"))
+            self.top_items_table.setItem(i, 2, QTableWidgetItem(f"{item.total_sold_units:,}"))
             
             stock_item = QTableWidgetItem(f"{item.net_units:,}")
             if item.net_units > 0: stock_item.setForeground(QColor("#60a5fa"))
-            self.top_items_table.setItem(i, 4, stock_item)
+            self.top_items_table.setItem(i, 3, stock_item)
             
             profit_item = QTableWidgetItem(format_isk(item.realized_profit_est, short=True))
             if item.realized_profit_est > 0: profit_item.setForeground(QColor("#10b981"))
-            self.top_items_table.setItem(i, 5, profit_item)
+            self.top_items_table.setItem(i, 4, profit_item)
 
             status_item = QTableWidgetItem(item.status_text)
             status_item.setForeground(QColor(status_colors.get(item.status_text, "#94a3b8")))
-            self.top_items_table.setItem(i, 6, status_item)
+            self.top_items_table.setItem(i, 5, status_item)
             
-            for col in range(1, 7):
+            for col in range(6):
                 it = self.top_items_table.item(i, col)
                 if it: it.setTextAlignment(Qt.AlignCenter)
 
@@ -870,15 +847,27 @@ class MarketPerformanceView(QWidget):
 
         self.trans_table.setRowCount(len(rows))
         for i, r in enumerate(rows):
-            # Icono
-            icon_lbl = QLabel(); icon_lbl.setFixedSize(24, 24); icon_lbl.setScaledContents(True)
-            icon_url = f"https://images.evetech.net/types/{r[5]}/icon?size=32"
-            self.image_loader.load(icon_url, lambda pix, lbl=icon_lbl: lbl.setPixmap(pix))
-            self.trans_table.setCellWidget(i, 0, icon_lbl)
-
-            self.trans_table.setItem(i, 6, QTableWidgetItem("~3.0%"))
+            date_short = r[0].split("T")[0]
+            tipo  = "COMPRA" if r[2] == 1 else "VENTA"
+            color = "#f87171" if r[2] == 1 else "#34d399"
             
-            for col in range(1, 7):
+            self.trans_table.setItem(i, 0, QTableWidgetItem(date_short))
+            
+            name_cell = QTableWidgetItem(r[1] or "Unknown")
+            name_cell.setData(Qt.UserRole, r[5])
+            icon_url = f"https://images.evetech.net/types/{r[5]}/icon?size=32"
+            self.image_loader.load(icon_url, lambda pix, it=name_cell: it.setIcon(QIcon(pix)))
+            self.trans_table.setItem(i, 1, name_cell)
+            
+            type_item = QTableWidgetItem(tipo)
+            type_item.setForeground(QColor(color))
+            self.trans_table.setItem(i, 2, type_item)
+            
+            self.trans_table.setItem(i, 3, QTableWidgetItem(f"{r[3]:,}"))
+            self.trans_table.setItem(i, 4, QTableWidgetItem(format_isk(r[3] * r[4], short=True)))
+            self.trans_table.setItem(i, 5, QTableWidgetItem("~3.0%"))
+            
+            for col in range(6):
                 it = self.trans_table.item(i, col)
                 if it: it.setTextAlignment(Qt.AlignCenter)
 
@@ -933,7 +922,7 @@ class MarketPerformanceView(QWidget):
         row = item.row()
         
         # Dinamismo táctico: la columna del item varía según la tabla
-        col_name = 1 if table == self.top_items_table else 2
+        col_name = 0 if table == self.top_items_table else 1
         name_item = table.item(row, col_name)
         
         if not name_item: return

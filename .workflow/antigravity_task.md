@@ -1977,9 +1977,12 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Hotfix PerformanceView**: Corregido error `status_item is not defined`. Restauradas todas las columnas y lógica de la tabla `Top Items`.
-- [x] **Reducción de Ruido**: Eliminados popups de error duplicados en Performance; ahora los errores críticos se muestran en la etiqueta de diagnóstico.
-- [x] **Sales Tax Override**: Confirmada la prioridad absoluta del archivo `config/tax_overrides.json` para character-id y global sales tax.
-- [x] **Sincronización Telemetría**: Verificado que `ACTUALIZAR` refresca tanto órdenes como taxes calibrados.
+- [x] **Unificación ÍTEM**: Icono y nombre ahora comparten la misma celda en todas las tablas de Market Command (Simple, Avanzado, Mis Pedidos, Inventario, Contratos, Performance).
+- [x] **Corrección Sales Tax**: Prioridad absoluta a `tax_overrides.json`. Logs detallados añadidos para verificar la fuente del tax.
+- [x] **Estados Inteligentes**: Refactorizada la lógica de competitividad para excluir las órdenes propias. Ahora las órdenes líderes muestran correctamente `LIDERANDO`.
+- [x] **Fix Columnas Mis Pedidos**: 
+  - `MEJOR` ahora muestra el competidor correcto (Sell para ventas, Buy para compras).
+  - `TOTAL` ahora muestra el volumen total de la orden.
+- [x] **Alignment Fix**: Mantenida la alineación centrada en todas las nuevas configuraciones de columnas.
 
-*Estado: Plataforma 100% operativa, sin errores de ejecución y con telemetría precisa.*
+*Estado: Plataforma visualmente unificada, con datos precisos y estados de mercado realistas.*

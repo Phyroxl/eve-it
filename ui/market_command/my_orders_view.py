@@ -314,12 +314,8 @@ class InventoryAnalysisDialog(QDialog):
         layout.addWidget(header)
 
         # Tabla
-        self.table = QTableWidget(len(self.items), 9)
-        self.table.setHorizontalHeaderLabels(["", "ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "PROFIT DE VENTA", "VALOR %", "RECOMENDACIÓN", "MOTIVO"])
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setShowGrid(False)
-        self.table.setAttribute(Qt.WA_DeleteOnClose)
-        self.table.setStyleSheet("QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 11px; } QHeaderView::section { background: #000000; color: #64748b; font-weight: 900; border: none; border-bottom: 1px solid #1e293b; padding: 10px; } QTableWidget::item { border-bottom: 1px solid #0f172a; padding: 8px; }")
+        self.table = QTableWidget(len(self.items), 8)
+        self.table.setHorizontalHeaderLabels(["ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "PROFIT DE VENTA", "VALOR %", "RECOMENDACIÓN", "MOTIVO"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setIconSize(QSize(32, 32))
@@ -329,13 +325,11 @@ class InventoryAnalysisDialog(QDialog):
             a = item.analysis
             avg = getattr(item, "_avg_buy", 0.0)
             profit_t = getattr(item, "_net_profit_total", 0.0)
-            roi = (profit_t / (avg * item.quantity)) if (avg > 0 and item.quantity > 0) else -1e18
-            
-            i_icon = QTableWidgetItem()
-            i_icon.setData(Qt.UserRole, item.type_id)
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(item.type_id), lambda px, it=i_icon: it.setIcon(QIcon(px)))
             
             i_name = QTableWidgetItem(item.item_name)
+            i_name.setData(Qt.UserRole, item.type_id)
+            self.image_loader.load(ItemMetadataHelper.get_icon_url(item.type_id), lambda px, it=i_name: it.setIcon(QIcon(px)))
+            
             i_qty = NumericTableWidgetItem(f"{item.quantity:,}", item.quantity)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "Sin registros", avg)
             i_price = NumericTableWidgetItem(format_isk(a.est_net_sell_unit), a.est_net_sell_unit)
@@ -359,7 +353,7 @@ class InventoryAnalysisDialog(QDialog):
             else:
                 i_reason.setForeground(QColor("#64748b"))
             
-            for i, it in enumerate([i_icon, i_name, i_qty, i_avg, i_price, i_profit, i_pct, i_rec, i_reason]):
+            for i, it in enumerate([i_name, i_qty, i_avg, i_price, i_profit, i_pct, i_rec, i_reason]):
                 it.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(row, i, it)
             
@@ -371,7 +365,7 @@ class InventoryAnalysisDialog(QDialog):
 
     def on_double_click(self, item):
         tid = self.table.item(item.row(), 0).data(Qt.UserRole)
-        name = self.table.item(item.row(), 1).text()
+        name = self.table.item(item.row(), 0).text()
         ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: None)
 
     def save_layout(self):
@@ -426,8 +420,8 @@ class TradeProfitsDialog(QDialog):
         fl.addStretch()
         layout.addWidget(f_frame)
         
-        self.table = QTableWidget(0, 11)
-        self.table.setHorizontalHeaderLabels(["FECHA", "", "ÍTEM", "UNIDADES", "P. COMPRA", "P. VENTA", "TOTAL COMPRA", "TOTAL VENTA", "FEES + TAX", "MARGEN %", "PROFIT NETO"])
+        self.table = QTableWidget(0, 10)
+        self.table.setHorizontalHeaderLabels(["FECHA", "ÍTEM", "UNIDADES", "P. COMPRA", "P. VENTA", "TOTAL COMPRA", "TOTAL VENTA", "FEES + TAX", "MARGEN %", "PROFIT NETO"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
         self.table.setStyleSheet("QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 11px; } QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; padding: 10px; }")
@@ -498,11 +492,11 @@ class TradeProfitsDialog(QDialog):
             i_mar.setForeground(m_col)
             self.table.setItem(r, 9, i_mar)
             
-            p_col = QColor("#10b981" if t['profit'] > 0 else "#ef4444")
-            i_prof = NumericTableWidgetItem(format_isk(t['profit']), t['profit'])
-            i_prof.setForeground(p_col)
+            i_name = QTableWidgetItem(t['name'])
+            i_name.setData(Qt.UserRole, t['type_id'])
+            self.image_loader.load(ItemMetadataHelper.get_icon_url(t['type_id']), lambda px, it=i_name: it.setIcon(QIcon(px)))
             
-            for i, it in enumerate([QTableWidgetItem(dt), i_ico, QTableWidgetItem(t['name']), NumericTableWidgetItem(f"{t['qty']:,}", t['qty']), NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit']), NumericTableWidgetItem(format_isk(t['sell_unit']), t['sell_unit']), NumericTableWidgetItem(format_isk(t['buy_total']), t['buy_total']), NumericTableWidgetItem(format_isk(t['sell_total']), t['sell_total']), NumericTableWidgetItem(format_isk(t['fees']), t['fees']), i_mar, i_prof]):
+            for i, it in enumerate([QTableWidgetItem(dt), i_name, NumericTableWidgetItem(f"{t['qty']:,}", t['qty']), NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit']), NumericTableWidgetItem(format_isk(t['sell_unit']), t['sell_unit']), NumericTableWidgetItem(format_isk(t['buy_total']), t['buy_total']), NumericTableWidgetItem(format_isk(t['sell_total']), t['sell_total']), NumericTableWidgetItem(format_isk(t['fees']), t['fees']), i_mar, i_prof]):
                 it.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(r, i, it)
             
@@ -533,7 +527,7 @@ class TradeProfitsDialog(QDialog):
 
     def on_double_click(self, item):
         tid = self.table.item(item.row(), 1).data(Qt.UserRole)
-        name = self.table.item(item.row(), 2).text()
+        name = self.table.item(item.row(), 1).text()
         ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: None)
 
 # --- Main View ---
@@ -655,8 +649,8 @@ class MarketMyOrdersView(QWidget):
         self.main_layout.addWidget(self.taxes_bar)
 
     def create_table(self, is_buy):
-        t = QTableWidget(0, 12)
-        t.setHorizontalHeaderLabels(["", "ÍTEM", "TIPO", "PRECIO", "PROMEDIO", "MEJOR", "TOTAL", "RESTO", "SPREAD", "MARGEN", "PROFIT", "ESTADO"])
+        t = QTableWidget(0, 11)
+        t.setHorizontalHeaderLabels(["ÍTEM", "TIPO", "PRECIO", "PROMEDIO", "MEJOR", "TOTAL", "RESTO", "SPREAD", "MARGEN", "PROFIT", "ESTADO"])
         t.verticalHeader().setVisible(False)
         t.setSelectionBehavior(QAbstractItemView.SelectRows)
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -777,23 +771,24 @@ class MarketMyOrdersView(QWidget):
             cost = CostBasisService.instance().get_cost_basis(o.type_id)
             avg = cost.average_buy_price if cost else 0.0
             
-            i_ico = QTableWidgetItem()
-            i_ico.setData(Qt.UserRole, o.type_id)
-            i_ico.setData(Qt.UserRole + 1, o.order_id)
-            self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_ico: it.setIcon(QIcon(px)))
-            
             i_name = QTableWidgetItem(o.item_name)
+            i_name.setData(Qt.UserRole, o.type_id)
+            i_name.setData(Qt.UserRole + 1, o.order_id)
+            self.image_loader.load(ItemMetadataHelper.get_icon_url(o.type_id), lambda px, it=i_name: it.setIcon(QIcon(px)))
+            
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
             i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
             
             i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)
             
-            ref_v = a.best_sell if o.is_buy_order else a.best_buy
-            i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 else "---", ref_v)
+            # MEJOR: Para Sell Order es el mejor Sell Competidor. Para Buy Order es el mejor Buy Competidor.
+            ref_v = a.best_sell if not o.is_buy_order else a.best_buy
+            i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 and ref_v < 999999999999 else "---", ref_v)
             
-            i_tot = NumericTableWidgetItem(str(o.volume_total), o.volume_total)
-            i_rem = NumericTableWidgetItem(str(o.volume_remain), o.volume_remain)
+            # TOTAL: Volumen total de la orden
+            i_tot = NumericTableWidgetItem(f"{o.volume_total:,}", o.volume_total)
+            i_rem = NumericTableWidgetItem(f"{o.volume_remain:,}", o.volume_remain)
             i_spr = NumericTableWidgetItem(f"{a.spread_pct:.1f}%", a.spread_pct)
             
             i_mar = NumericTableWidgetItem(f"{a.margin_pct:.1f}%", a.margin_pct)
@@ -813,7 +808,7 @@ class MarketMyOrdersView(QWidget):
             elif any(x in s_low for x in ["pérdida", "no rentable", "fuera"]):
                 i_state.setForeground(QColor("#ef4444"))
             
-            items = [i_ico, i_name, i_type, i_price, i_avg, i_ref, i_tot, i_rem, i_spr, i_mar, i_prof, i_state]
+            items = [i_name, i_type, i_price, i_avg, i_ref, i_tot, i_rem, i_spr, i_mar, i_prof, i_state]
             for i, it in enumerate(items):
                 it.setTextAlignment(Qt.AlignCenter)
                 t.setItem(r, i, it)
@@ -862,7 +857,7 @@ class MarketMyOrdersView(QWidget):
 
     def on_double_click_item(self, item, t):
         tid = t.item(item.row(), 0).data(Qt.UserRole)
-        name = t.item(item.row(), 1).text()
+        name = t.item(item.row(), 0).text()
         ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: self.lbl_status.setText(m))
 
     def update_taxes_info(self):

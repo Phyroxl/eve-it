@@ -357,11 +357,10 @@ class MarketContractsView(QWidget):
             self.det_metrics_layout.addWidget(l)
         self.det_metrics_layout.addStretch()
 
-        self.items_table = QTableWidget(0, 6)
-        self.items_table.setHorizontalHeaderLabels(["", "Item", "Cant", "Precio Jita", "Valor", "% Total"])
+        self.items_table = QTableWidget(0, 5)
+        self.items_table.setHorizontalHeaderLabels(["Item", "Cant", "Precio Jita", "Valor", "% Total"])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.items_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.items_table.setColumnWidth(0, 32)
+        self.items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.items_table.setColumnWidth(2, 60)
         self.items_table.setColumnWidth(3, 100)
         self.items_table.setColumnWidth(4, 100)
@@ -648,30 +647,26 @@ class MarketContractsView(QWidget):
                 for it in [i_name, i_qty, i_price, i_val, i_pct]:
                     it.setForeground(QColor("#f59e0b"))
 
-            # Icono asíncrono inteligente
-            i_icon = QTableWidgetItem()
-            self.items_table.setItem(r, 0, i_icon)
-            
             icon_url = ItemMetadataHelper.get_icon_url(
                 item.type_id, 
                 is_blueprint=item.is_blueprint, 
                 is_copy=item.is_copy
             )
-            self.image_loader.load(icon_url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
+            self.image_loader.load(icon_url, lambda px, it=i_name: it.setIcon(QIcon(px)))
 
-            self.items_table.setItem(r, 1, i_name)
+            self.items_table.setItem(r, 0, i_name)
             i_name.setData(Qt.UserRole, item.type_id)
-            self.items_table.setItem(r, 2, i_qty)
-            self.items_table.setItem(r, 3, i_price)
-            self.items_table.setItem(r, 4, i_val)
-            self.items_table.setItem(r, 5, i_pct)
+            self.items_table.setItem(r, 1, i_qty)
+            self.items_table.setItem(r, 2, i_price)
+            self.items_table.setItem(r, 3, i_val)
+            self.items_table.setItem(r, 4, i_pct)
             
-            for col in range(6):
+            for col in range(5):
                 it = self.items_table.item(r, col)
                 if it: it.setTextAlignment(Qt.AlignCenter)
 
     def on_item_double_clicked(self, row, col):
-        item_obj = self.items_table.item(row, 1)
+        item_obj = self.items_table.item(row, 0)
         if not item_obj: return
         type_id = item_obj.data(Qt.UserRole)
         item_name = item_obj.text()

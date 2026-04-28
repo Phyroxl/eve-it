@@ -108,10 +108,25 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         else: grouped_market[t_id]['sell'].append(o)
             
     best_prices = {}
+    best_competitor_buy = {} 
+    best_competitor_sell = {} 
+
+    my_sell_prices = {o['type_id']: set() for o in esi_orders if not o.get('is_buy_order')}
+    my_buy_prices = {o['type_id']: set() for o in esi_orders if o.get('is_buy_order')}
+    for o in esi_orders:
+        if o.get('is_buy_order'): my_buy_prices[o['type_id']].add(o['price'])
+        else: my_sell_prices[o['type_id']].add(o['price'])
+
     for t_id, data in grouped_market.items():
-        best_buy = max([o['price'] for o in data['buy']]) if data['buy'] else 0.0
-        best_sell = min([o['price'] for o in data['sell']]) if data['sell'] else 0.0
-        best_prices[t_id] = (best_buy, best_sell)
+        comp_buys = [o['price'] for o in data['buy'] if o['price'] not in my_buy_prices.get(t_id, set())]
+        comp_sells = [o['price'] for o in data['sell'] if o['price'] not in my_sell_prices.get(t_id, set())]
+        
+        abs_best_buy = max([o['price'] for o in data['buy']]) if data['buy'] else 0.0
+        abs_best_sell = min([o['price'] for o in data['sell']]) if data['sell'] else 0.0
+        best_prices[t_id] = (abs_best_buy, abs_best_sell)
+        
+        best_competitor_buy[t_id] = max(comp_buys) if comp_buys else 0.0
+        best_competitor_sell[t_id] = min(comp_sells) if comp_sells else 999999999999.0
 
     parsed_orders = []
     for eo in esi_orders:
@@ -123,6 +138,9 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         b_fee = b_fee_val / 100.0
         
         bb, bs = best_prices.get(t_id, (0.0, 0.0))
+        comp_buy = best_competitor_buy.get(t_id, 0.0)
+        comp_sell = best_competitor_sell.get(t_id, 999999999999.0)
+        
         cost_basis = CostBasisService.instance().get_cost_basis(t_id)
         avg_cost = cost_basis.average_buy_price if cost_basis else 0.0
         spread_pct = ((bs - bb) / bb) * 100 if bb > 0 and bs > 0 else 0.0
@@ -130,25 +148,32 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         gross_profit = 0.0; net_profit = 0.0; margin_pct = 0.0
         
         if is_buy:
-            difference = bb - price
-            competitive = difference <= 0
+            # En COMPRA, soy competitivo si mi precio >= mejor competidor
+            difference = comp_buy - price
+            competitive = price >= comp_buy
             if bs > 0:
                 net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
                 margin_pct = (net_profit / price) * 100 if price > 0 else 0
-            state = "Competitiva" if competitive else "Superada"
+            state = "Liderando" if competitive else "Superada"
             if margin_pct <= 0: state = "No Rentable"
         else:
-            difference = price - bs
-            competitive = difference <= 0
+            # En VENTA, soy competitivo si mi precio <= mejor competidor
+            difference = price - comp_sell
+            competitive = price <= comp_sell
             if avg_cost > 0:
                 base_cost = avg_cost
                 net_profit = price * (1.0 - s_tax - b_fee) - base_cost
                 margin_pct = (net_profit / base_cost) * 100 if base_cost > 0 else 0
                 gross_profit = price - base_cost
                 state = "Rentable" if net_profit > 0 else "Pérdida"
-                if not competitive: state = "Superada con beneficio" if net_profit > 0 else "Superada en pérdida"
+                if not competitive: 
+                    state = "Superada con beneficio" if net_profit > 0 else "Superada en pérdida"
+                elif net_profit > 0:
+                    state = "Liderando"
             else:
                 state = "Sin coste real"
+                if competitive: state = "Liderando"
+            
             if not competitive and price > bs * 1.05: state = "Fuera de Mercado"
 
         vol_remain = eo.get('volume_remain', 0)
