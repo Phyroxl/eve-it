@@ -91,7 +91,12 @@ class MarketAdvancedView(QWidget):
             widget.setStyleSheet("background: #000000; color: #f1f5f9; border: 1px solid #1e293b; padding: 3px; border-radius: 2px;")
             widget.setFixedHeight(26); v.addWidget(lbl); v.addWidget(widget); layout.addWidget(w)
 
-        # ─── BLOQUE 1: CAPITAL Y MARGEN ───
+        from core.item_categories import get_all_categories
+        self.combo_category = QComboBox()
+        self.combo_category.addItems(get_all_categories())
+        self.combo_category.setCurrentText(self.current_config.selected_category)
+        add_adv_input(scroll_layout, "Categoría", self.combo_category)
+
         self.spin_capital = QDoubleSpinBox()
         self.spin_capital.setRange(0, 1e12); self.spin_capital.setDecimals(0); self.spin_capital.setSuffix(" ISK")
         add_adv_input(scroll_layout, "Cap. Máximo", self.spin_capital)
@@ -290,6 +295,7 @@ class MarketAdvancedView(QWidget):
         self.current_config.margin_min_pct = self.spin_margin.value()
         self.current_config.spread_max_pct = self.spin_spread.value()
         self.current_config.exclude_plex = self.check_plex.isChecked()
+        self.current_config.selected_category = self.combo_category.currentText()
         self.current_config.broker_fee_pct = self.spin_broker.value()
         self.current_config.sales_tax_pct = self.spin_tax.value()
         self.current_config.score_min = self.spin_score.value()
@@ -304,6 +310,7 @@ class MarketAdvancedView(QWidget):
         self.spin_margin.setValue(self.current_config.margin_min_pct)
         self.spin_spread.setValue(self.current_config.spread_max_pct)
         self.check_plex.setChecked(self.current_config.exclude_plex)
+        self.combo_category.setCurrentText(self.current_config.selected_category)
         self.spin_broker.setValue(self.current_config.broker_fee_pct)
         self.spin_tax.setValue(self.current_config.sales_tax_pct)
         self.spin_score.setValue(self.current_config.score_min)

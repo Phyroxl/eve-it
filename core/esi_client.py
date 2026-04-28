@@ -350,3 +350,7 @@ class ESIClient:
         if res and res.status_code in (401, 403):
             return "missing_scope"
         return None
+
+    def universe_type(self, type_id: int):
+        """Obtiene información del tipo (incluye group_id). Cache 24h."""
+        return self._get(f"/universe/types/{type_id}/", ttl=86400)

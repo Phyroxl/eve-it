@@ -51,6 +51,7 @@ class FilterConfig:
     sell_orders_min: int = 0
     history_days_min: int = 0
     profit_day_min: float = 0.0
+    selected_category: str = "Todos"
 
 @dataclass
 class PerformanceConfig:

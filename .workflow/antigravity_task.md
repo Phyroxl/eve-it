@@ -2118,3 +2118,100 @@ Se ha corregido un error de inicialización (AttributeError) que impedía abrir Ma
 - [x] Doble click y menús contextuales verificados.
 
 *Estado: Market Command restaurado y estabilizado.*
+
+## Sesión 24 — 2026-04-29
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Implementación de Filtros de Categoría en Modo Simple y Avanzado
+
+### RESUMEN
+Se ha implementado un sistema robusto de filtrado por categorías de mercado (Naves, Drones, Módulos, etc.), integrando metadatos de ESI con un sistema de caché persistente.
+
+**Mejoras clave:**
+1. **Categorías Inteligentes**: Mapeo de categorías humanas a ESI Category/Group IDs en core/item_categories.py.
+2. **Persistencia de Filtros**: Añadido selected_category a la configuración global de mercado.
+3. **Caché de Metadatos**: Implementado ItemResolver con caché JSON local (item_metadata_cache.json) para evitar latencia de red al clasificar miles de ítems.
+4. **Filtrado Centralizado**: La lógica de filtrado se aplica directamente en el MarketEngine, garantizando consistencia en todos los modos.
+5. **Interfaz Integrada**: Añadidos selectores QComboBox en los paneles laterales de Modo Simple y Avanzado.
+
+**Archivos Modificados:**
+- core/market_models.py (Nueva config)
+- core/config_manager.py (Persistencia)
+- core/item_categories.py (Mapeo de IDs)
+- core/item_resolver.py (Caché persistente)
+- core/esi_client.py (Nuevos endpoints)
+- core/market_engine.py (Lógica de filtrado)
+- ui/market_command/simple_view.py (UI)
+- ui/market_command/advanced_view.py (UI)
+
+### CHECKS
+- [x] Filtro de categoría funcional en Modo Simple.
+- [x] Filtro de categoría funcional en Modo Avanzado.
+- [x] Persistencia de selección tras reinicio.
+- [x] Rendimiento optimizado mediante caché local.
+- [x] Compilación exitosa de todos los módulos (py_compile).
+
+*Estado: Market Command ahora permite búsquedas especializadas por tipo de ítem.*
+
+## Sesión 25 — 2026-04-29 (Estabilización Filtros Categoría)
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Estabilización de Filtros de Categoría y Fallbacks de Metadata
+
+### RESUMEN
+Se ha corregido un error crítico donde el filtro de categorías devolvía cero resultados debido a la falta de metadatos síncronos.
+
+**Causa exacta**: El filtro dependía exclusivamente de los IDs de ESI que no estaban cacheados, y las llamadas a ESI en el bucle de filtrado estaban bloqueadas o fallaban, excluyendo todos los ítems.
+
+**Mejoras realizadas:**
+1. **Fallback por Nombre**: Se ha añadido un sistema de heurística por palabras clave en core/item_categories.py para identificar ítems aunque no se tengan sus IDs de ESI.
+2. **Modo No Bloqueante**: ItemResolver ahora opera en modo no bloqueante durante el filtrado. Si un ítem no está en caché, no se detiene a consultar ESI y usa el fallback por nombre.
+3. **Permisividad de Metadata**: Si no se dispone de metadatos (IDs) y el fallback por nombre tampoco coincide, el sistema ahora permite que el ítem pase el filtro para evitar una tabla vacía por errores técnicos.
+4. **Diagnóstico y Logs**: Añadido un sistema de contadores en MarketEngine.apply_filters para reportar cuántos ítems son excluidos por cada filtro, facilitando la depuración futura.
+
+**Archivos Modificados:**
+- core/item_categories.py (Añadidos fallbacks por nombre y lógica robusta)
+- core/item_resolver.py (Añadido modo locking=False)
+- core/market_engine.py (Añadido diagnóstico de filtros y logs detallados)
+
+### CHECKS
+- [x] Filtro " Naves\ ahora muestra resultados correctamente.
+- [x] Filtro \Todos\ sigue devolviendo la lista completa.
+- [x] No hay latencia adicional en el filtrado (uso de caché + fallback).
+- [x] Logs de diagnóstico visibles en consola.
+- [x] Compilación exitosa (py_compile).
+
+*Estado: Filtros de categoría operativos y estables bajo cualquier condición de red.*
+
+## Sesión 26 — 2026-04-29 (Filtro Estricto)
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Reconstrucción Estricta del Filtrado por Categorías
+
+### RESUMEN
+Se ha eliminado la lógica de filtrado por palabras clave que causaba falsos positivos (como SKINs en Naves o Skills en Drones). El sistema ahora es 100% estricto basado en metadatos reales de EVE.
+
+**Causa de errores anteriores**: El fallback por nombre era demasiado permisivo, aceptando cualquier ítem con palabras como " Drone\ o \Ship\ en el nombre, independientemente de su categoría real.
+
+**Mejoras realizadas:**
+1. **Filtro Estricto por ID**: is_type_in_category ahora solo acepta coincidencias exactas de category_id y group_id. Si no hay metadatos fiables, el ítem se excluye de las categorías específicas.
+2. **Metadatos Detallados**: ItemResolver ahora obtiene y cachea también el nombre del grupo y la categoría desde ESI, permitiendo auditorías precisas.
+3. **Logging de Diagnóstico**: Añadido log detallado que muestra los primeros 20 ítems procesados con sus IDs reales y la razón del match/reject.
+4. **Unificación de Motor**: Modo Simple y Avanzado comparten ahora la misma lógica de filtrado centralizada en MarketEngine.
+
+**Archivos Modificados:**
+- core/item_categories.py (Lógica estricta y mapeo de IDs)
+- core/item_resolver.py (Caché de nombres de grupo/categoría)
+- core/market_engine.py (Diagnóstico detallado y logs)
+
+### CHECKS
+- [x] Filtro \Naves\ excluye SKINs y Ropa.
+- [x] Filtro \Drones\ excluye Skills y Mutaplasmids.
+- [x] Filtro \Ore / Menas\ excluye Mining Lasers.
+- [x] Logs visibles con [CATEGORY ITEM] para verificación.
+- [x] Compilación exitosa de todos los módulos.
+
+*Estado: Sistema de clasificación profesional y estricto implementado.*

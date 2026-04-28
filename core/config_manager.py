@@ -24,7 +24,8 @@ def save_market_filters(config: FilterConfig):
             "buy_orders_min": config.buy_orders_min,
             "sell_orders_min": config.sell_orders_min,
             "history_days_min": config.history_days_min,
-            "profit_day_min": config.profit_day_min
+            "profit_day_min": config.profit_day_min,
+            "selected_category": config.selected_category
         }
         _MARKET_FILTERS_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
     except Exception as e:
@@ -50,7 +51,8 @@ def load_market_filters() -> FilterConfig:
             buy_orders_min=data.get("buy_orders_min", 0),
             sell_orders_min=data.get("sell_orders_min", 0),
             history_days_min=data.get("history_days_min", 0),
-            profit_day_min=data.get("profit_day_min", 0.0)
+            profit_day_min=data.get("profit_day_min", 0.0),
+            selected_category=data.get("selected_category", "Todos")
         )
     except Exception as e:
         print(f"Error cargando filtros: {e}")

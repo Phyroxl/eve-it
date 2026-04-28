@@ -1,7 +1,9 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame, QGridLayout, QScrollArea
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame, QGridLayout, QScrollArea,
+    QComboBox
 )
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt
 from ui.market_command.widgets import MarketTableWidget
 from ui.market_command.refresh_worker import MarketRefreshWorker
@@ -106,6 +108,12 @@ class MarketSimpleView(QWidget):
             v.addWidget(lbl)
             v.addWidget(widget)
             layout.addWidget(w)
+
+        from core.item_categories import get_all_categories
+        self.combo_category = QComboBox()
+        self.combo_category.addItems(get_all_categories())
+        self.combo_category.setCurrentText(self.current_config.selected_category)
+        add_compact_input(scroll_layout, "Categoría", self.combo_category)
 
         self.spin_capital = QDoubleSpinBox()
         self.spin_capital.setRange(0, 1e12); self.spin_capital.setDecimals(0); self.spin_capital.setSuffix(" ISK")
@@ -304,9 +312,10 @@ class MarketSimpleView(QWidget):
         self.current_config.vol_min_day = self.spin_vol.value()
         self.current_config.margin_min_pct = self.spin_margin.value()
         self.current_config.spread_max_pct = self.spin_spread.value()
-        self.current_config.exclude_plex = self.chk_plex.isChecked()
         self.current_config.broker_fee_pct = self.spin_broker.value()
         self.current_config.sales_tax_pct = self.spin_tax.value()
+        self.current_config.exclude_plex = self.chk_plex.isChecked()
+        self.current_config.selected_category = self.combo_category.currentText()
 
     def on_apply_filters(self):
         self.update_config_from_ui()
@@ -327,6 +336,7 @@ class MarketSimpleView(QWidget):
         self.chk_plex.setChecked(self.current_config.exclude_plex)
         self.spin_broker.setValue(self.current_config.broker_fee_pct)
         self.spin_tax.setValue(self.current_config.sales_tax_pct)
+        self.combo_category.setCurrentText(self.current_config.selected_category)
 
     def apply_and_display(self):
         filtered = apply_filters(self.all_opportunities, self.current_config)
