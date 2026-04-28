@@ -287,10 +287,12 @@ class MarketMyOrdersView(QWidget):
                 "", "Ítem", "Tipo", "Mi Precio", "Mi Promedio", "Mejor Competidor", "Total", "Restante", "Spread", "Margen", "Beneficio Total", "Estado"
             ])
             t.setColumnWidth(0, 32)
+            t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+            t.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            t.setIconSize(QSize(24, 24))
             t.setColumnWidth(4, 100) # Mi Promedio
             t.setContextMenuPolicy(Qt.CustomContextMenu)
             t.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-            t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
             t.setEditTriggers(QAbstractItemView.NoEditTriggers)
             t.setSelectionBehavior(QTableWidget.SelectRows)
             t.setSelectionMode(QTableWidget.SingleSelection)
@@ -340,7 +342,7 @@ class MarketMyOrdersView(QWidget):
 
         self.lbl_det_icon = QLabel()
         self.lbl_det_icon.setFixedSize(64, 64)
-        self.lbl_det_icon.setScaledContents(True)
+        self.lbl_det_icon.setAlignment(Qt.AlignCenter)
         self.lbl_det_icon.setStyleSheet("background: #1e293b; border-radius: 4px; border: 1px solid #334155;")
         dl.addWidget(self.lbl_det_icon)
 
@@ -474,6 +476,7 @@ class MarketMyOrdersView(QWidget):
                 i_type.setForeground(QColor("#3b82f6") if o.is_buy_order else QColor("#ef4444"))
                 
                 i_myprice = QTableWidgetItem(format_isk(o.price))
+                i_myprice.setData(Qt.UserRole, float(o.price))
                 
                 best_comp = a.best_buy if o.is_buy_order else a.best_sell
                 i_best = QTableWidgetItem(format_isk(best_comp))
@@ -547,9 +550,9 @@ class MarketMyOrdersView(QWidget):
         t_id = item_0.data(Qt.UserRole)
         
         # Buscar la orden correspondiente en self.all_orders
-        # Usamos el precio formateado para distinguir entre múltiples órdenes del mismo tipo si las hubiera
-        price_str = table.item(row, 3).text()
-        o = next((ord for ord in self.all_orders if ord.type_id == t_id and format_isk(ord.price) == price_str), None)
+        # Usamos el precio exacto guardado en UserRole para evitar errores de redondeo o formato
+        price_val = table.item(row, 3).data(Qt.UserRole)
+        o = next((ord for ord in self.all_orders if ord.type_id == t_id and abs(ord.price - price_val) < 0.01), None)
         if o:
             self.update_detail(o)
 
@@ -560,7 +563,10 @@ class MarketMyOrdersView(QWidget):
         # Icono detalle
         from PySide6.QtGui import QPixmap, QIcon
         url = ItemMetadataHelper.get_icon_url(o.type_id)
-        self.image_loader.load(url, lambda px: self.lbl_det_icon.setPixmap(px.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+        # Cargamos el icono y lo escalamos preservando el aspecto para evitar deformación
+        self.image_loader.load(url, lambda px: self.lbl_det_icon.setPixmap(
+            px.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        ))
 
         a = o.analysis
         cost_basis = CostBasisService.instance().get_cost_basis(o.type_id)
@@ -593,7 +599,7 @@ class MarketMyOrdersView(QWidget):
             if cost_basis:
                 reason = f"Comprado de media a {format_isk(avg_val)}. Vendiendo a {format_isk(o.price)}. Beneficio neto estimado: {format_isk(a.net_profit_per_unit)} por unidad."
             else:
-                reason = "No hay registros de compra suficientes para calcular rentabilidad real. Se usa el mejor precio de compra actual como referencia."
+                reason = "ANÁLISIS ESTIMADO: No hay registros de compra (Mi Promedio) para este ítem. El margen y beneficio se calculan usando el 'Best Buy' actual de Jita como coste de referencia."
         
         self.lbl_det_reason.setText(reason)
 
