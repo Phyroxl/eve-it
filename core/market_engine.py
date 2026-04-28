@@ -1,8 +1,11 @@
+import logging
 from typing import List, Dict, Any
 from .market_models import MarketOpportunity, LiquidityMetrics, ScoreBreakdown, FilterConfig, InventoryItem, InventoryAnalysis
 from .cost_basis_service import CostBasisService
 from .tax_service import TaxService
 from utils.formatters import format_isk
+
+logger = logging.getLogger('eve.market_engine')
 
 def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Dict[str, Any]]], item_names: Dict[int, str] = None, config: FilterConfig = None) -> List[MarketOpportunity]:
     if config is None: config = FilterConfig()
