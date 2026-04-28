@@ -1974,9 +1974,9 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Fresh Data**: Confirmado que cambiar un precio en el juego se refleja como cambio de estado tras sincronizar en la app.
 - [x] **Hotfix Formato**: Corregido error que mostraba números en notación científica y raw floats en lugar de ISK formateado al activar la ordenación.
 - [x] **Fix WAC (Mi Promedio)**: Corregido error de mapeo de nombres de métodos (`wallet_transactions`) que impedía cargar el historial de la wallet y calcular el coste medio (WAC).
-- [x] **Restauración Completa**: Recuperada la ventana `Mis Pedidos` con todas sus columnas (12), panel de detalles inferior, barra de taxes y estética premium.
-- [x] **Estabilidad de Sintaxis**: Corregidos todos los errores de compactación que impedían la ejecución. El código ahora sigue estándares estrictos de Python.
-- [x] **Trade Profits**: Integrado como ventana independiente, funcional y sin afectar el rendimiento de la carga principal.
-- [x] **Sincronización y Persistencia**: Restaurada la lógica de sincronización de columnas entre tablas y el guardado de layouts localmente.
+- [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
+- [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
+- [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
+- [x] **Barra de Taxes Dinámica**: La barra inferior ahora muestra los valores efectivos (incluyendo standings y ubicación actual) y la fuente del dato.
 
-*Estado: Plataforma financiera 100% operativa, estable y con todas las funcionalidades recuperadas.*
+*Estado: Telemetría financiera calibrada y lista para operaciones de alta precisión.*

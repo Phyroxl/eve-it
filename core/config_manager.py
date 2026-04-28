@@ -121,3 +121,21 @@ def load_ui_config(view_id: str) -> dict:
     except Exception as e:
         print(f"Error cargando ui config {view_id}: {e}")
         return {}
+
+def save_tax_overrides(overrides: dict):
+    _CONFIG_DIR.mkdir(exist_ok=True)
+    file = _CONFIG_DIR / 'tax_overrides.json'
+    try:
+        file.write_text(json.dumps(overrides, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"Error guardando tax overrides: {e}")
+
+def load_tax_overrides() -> dict:
+    file = _CONFIG_DIR / 'tax_overrides.json'
+    if not file.exists():
+        return {}
+    try:
+        return json.loads(file.read_text(encoding='utf-8'))
+    except Exception as e:
+        print(f"Error cargando tax overrides: {e}")
+        return {}

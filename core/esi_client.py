@@ -340,6 +340,9 @@ class ESIClient:
             return res.json()
         return None
 
+    def corporation_info(self, corp_id: int):
+        return self._get(f"/corporations/{corp_id}/", ttl=86400)
+
     def character_location(self, char_id: int, token: str):
         res = self._request_auth("GET", f"/characters/{char_id}/location/", token)
         if res and res.status_code == 200:

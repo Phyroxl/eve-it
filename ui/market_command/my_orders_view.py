@@ -84,6 +84,10 @@ class SyncWorker(QThread):
             self.status_update.emit("SINCRONIZANDO TAXES...", 20)
             TaxService.instance().refresh_from_esi(self.char_id, self.token)
             
+            # Obtener ubicación para calibrar taxes locales en el reporte
+            self.status_update.emit("LOCALIZANDO PERSONAJE...", 25)
+            self.client.character_location(self.char_id, self.token) 
+
             self.status_update.emit("DESCARGANDO ÓRDENES...", 40)
             orders = client.character_orders(self.char_id, self.token)
             if not orders:
@@ -855,10 +859,24 @@ class MarketMyOrdersView(QWidget):
 
     def update_taxes_info(self):
         auth = AuthManager.instance()
+        token = auth.get_token()
         tx = TaxService.instance().get_taxes(auth.char_id)
+        
+        # Intentar obtener ubicación actual para mostrar taxes locales
+        client = ESIClient()
+        loc_res = client.character_location(auth.char_id, token)
+        loc_id = None
+        if loc_res and loc_res != "missing_scope":
+            loc_id = loc_res.get('station_id') or loc_res.get('structure_id')
+        
+        if loc_id:
+            fee, source = TaxService.instance().get_effective_broker_fee(auth.char_id, loc_id, token)
+            self.lbl_broker_fee.setText(f"BROKER FEE: {fee:.2f}% ({source})")
+        else:
+            self.lbl_broker_fee.setText(f"BROKER FEE: {tx.broker_fee_pct:.2f}% (BASE SKILLS)")
+            
         self.lbl_sales_tax.setText(f"SALES TAX: {tx.sales_tax_pct:.2f}%")
-        self.lbl_broker_fee.setText(f"BROKER FEE: {tx.broker_fee_pct:.2f}% (BASE)")
-        self.lbl_tax_source.setText(f"FUENTE: {'REAL' if tx.status=='ready' else 'FALLBACK'}")
+        self.lbl_tax_source.setText(f"FUENTE: {tx.source}")
 
     def do_inventory(self):
         auth = AuthManager.instance()
