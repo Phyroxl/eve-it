@@ -1692,4 +1692,18 @@ Se ha elevado el módulo `Mis Pedidos` a un estándar profesional (Versión `1.1
 - [x] **Skills**: Verificación de reducción de taxes con personaje nivel 5 en Accounting.
 - [x] **UI**: Tablas no editables y doble click funcional para mercado del juego.
 
-*Estado: Módulo de trading avanzado con precisión financiera total.*
+### SESIÓN 24 HOTFIX (SYNTAX) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE CORRECCIÓN
+Se ha resuelto un error crítico de sintaxis introducido en la última actualización que impedía abrir el módulo `Market Command`.
+
+**Corrección Aplicada:**
+- **Eliminación de Semicolons Prohibidos**: Se han corregido las líneas donde se utilizaba `; if` o `; for` en una sola línea, lo cual es inválido en la sintaxis de Python para sentencias compuestas.
+- **Formateo Estándar**: Se ha re-estructurado el archivo `ui/market_command/my_orders_view.py` siguiendo las convenciones de Python para asegurar la legibilidad y evitar fallos de carga en tiempo de ejecución.
+
+**Archivos Modificados:**
+- `ui/market_command/my_orders_view.py`: Corrección de sintaxis y limpieza de código.
+
+*Estado: Módulo operativo y estable.*
