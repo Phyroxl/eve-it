@@ -261,7 +261,15 @@ class InventoryAnalysisDialog(QDialog):
             else: i_rec.setForeground(QColor("#3b82f6"))
             
             i_reason = QTableWidgetItem(a.reason)
-            i_reason.setForeground(QColor("#64748b"))
+            r_txt = a.reason.lower()
+            if any(x in r_txt for x in ["spread excesivo", "profit sólido", "margen positivo"]):
+                i_reason.setForeground(QColor("#10b981"))
+            elif "bajo" in r_txt:
+                i_reason.setForeground(QColor("#f59e0b"))
+            elif "pérdida" in r_txt or "bajo el coste" in r_txt:
+                i_reason.setForeground(QColor("#ef4444"))
+            else:
+                i_reason.setForeground(QColor("#64748b"))
             
             self.table.setItem(row, 0, i_icon)
             self.table.setItem(row, 1, i_name)

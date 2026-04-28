@@ -1914,4 +1914,26 @@ Se ha refinado el análisis de inventario para centrarse en el beneficio neto re
 - [x] **Sync UI**: Comprobación de que la barra y el spinner funcionan fluidamente durante la descarga de órdenes.
 - [x] **Bloqueo de Botones**: Confirmado que no se pueden lanzar dos sincronizaciones simultáneas.
 
-*Estado: Interfaz de alta gama con inteligencia de negocio integrada.*
+### SESIÓN 24 COLORES EN MOTIVO (INVENTARIO) — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### RESUMEN DE MEJORAS
+Se ha mejorado la jerarquía visual de la ventana de Inventario aplicando colores tácticos a la columna de motivos de recomendación.
+
+**Mejoras de Visualización:**
+1. **Coloreado de la Columna MOTIVO**:
+   - Se ha implementado un sistema de detección de palabras clave para aplicar colores que refuercen la recomendación.
+   - **Verde (`#10b981`)**: Para motivos positivos como `Profit sólido`, `Margen positivo` o avisos de `Spread excesivo` (que sugieren oportunidad de arbitraje).
+   - **Naranja (`#f59e0b`)**: Para advertencias de `Margen bajo`.
+   - **Rojo (`#ef4444`)**: Para situaciones críticas como `Venta con pérdida` o precios `bajo el coste`.
+2. **Legibilidad**: Se mantiene el color gris tenue para motivos informativos genéricos, asegurando un contraste premium sobre el fondo negro.
+
+**Archivo Modificado:**
+- `ui/market_command/my_orders_view.py`: Actualizada la lógica de renderizado de celdas en `InventoryAnalysisDialog`.
+
+**Pruebas Realizadas:**
+- [x] **Visual**: Verificación de que los motivos de pérdida aparecen en rojo y los de profit sólido en verde.
+- [x] **Estabilidad**: Confirmado que el coloreado no afecta al rendimiento del scroll ni al doble click.
+
+*Estado: Análisis táctico de activos con semántica visual completa.*
