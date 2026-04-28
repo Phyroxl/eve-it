@@ -264,11 +264,13 @@ class MarketAdvancedView(QWidget):
 
     def on_scan_finished(self, opportunities):
         self.all_opportunities = opportunities
-        self.table.populate(opportunities)
+        from core.market_engine import apply_filters
+        filtered = apply_filters(opportunities, self.current_config)
+        self.table.populate(filtered)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
         if self.lbl_status:
-            self.lbl_status.setText(f"● ESCANEO COMPLETADO: {len(opportunities)} ITEMS")
+            self.lbl_status.setText(f"● ESCANEO COMPLETADO: {len(filtered)}/{len(opportunities)} ITEMS")
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_error(self, err_msg):
@@ -280,8 +282,13 @@ class MarketAdvancedView(QWidget):
 
     def on_apply_filters(self):
         self.update_config_from_ui()
+        import logging
+        logging.getLogger('eve.market.advanced').info(f"[CATEGORY UI] mode=Advanced selected_category={self.current_config.selected_category}")
         save_market_filters(self.current_config)
-        self.table.populate(self.all_opportunities)
+        
+        from core.market_engine import apply_filters
+        filtered = apply_filters(self.all_opportunities, self.current_config)
+        self.table.populate(filtered)
 
     def on_reset_filters(self):
         self.current_config = FilterConfig()

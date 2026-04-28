@@ -319,6 +319,8 @@ class MarketSimpleView(QWidget):
 
     def on_apply_filters(self):
         self.update_config_from_ui()
+        import logging
+        logging.getLogger('eve.market.simple').info(f"[CATEGORY UI] mode=Simple selected_category={self.current_config.selected_category}")
         save_market_filters(self.current_config)
         self.apply_and_display()
 

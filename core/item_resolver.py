@@ -63,6 +63,33 @@ class ItemResolver:
             return clean_info
         return None
 
+    def prefetch_type_metadata(self, type_ids: list[int], max_workers=8):
+        """Precarga metadata para una lista de items de forma concurrente."""
+        from concurrent.futures import ThreadPoolExecutor
+        
+        missing = [tid for tid in type_ids if tid not in self.cache]
+        if not missing:
+            return {"total": len(type_ids), "cached": len(type_ids), "fetched": 0, "failed": 0}
+            
+        logger.info(f"[METADATA] Prefetching {len(missing)} items...")
+        fetched = 0
+        failed = 0
+        
+        def fetch_one(tid):
+            return tid, self.get_type_info(tid, blocking=True)
+            
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(fetch_one, missing))
+            
+        for tid, info in results:
+            if info:
+                fetched += 1
+            else:
+                failed += 1
+                
+        self._save_cache()
+        return {"total": len(type_ids), "cached": len(type_ids) - len(missing), "fetched": fetched, "failed": failed}
+
     def _get_detailed_info(self, group_id: int) -> Tuple[Optional[int], str, str]:
         if not group_id: return None, "Unknown Group", "Unknown Category"
         

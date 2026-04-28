@@ -2215,3 +2215,34 @@ Se ha eliminado la lógica de filtrado por palabras clave que causaba falsos posi
 - [x] Compilación exitosa de todos los módulos.
 
 *Estado: Sistema de clasificación profesional y estricto implementado.*
+
+## Sesión 27 — 2026-04-29 (Metadata Prefetch)
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Estabilización Real del Filtro con Precarga de Metadata
+
+### RESUMEN
+Se ha resuelto la causa raíz de que las categorías se mostraran vacías: el motor intentaba filtrar sin tener los datos en caché y sin esperar a ESI. Ahora se realiza una precarga concurrente de todos los ítems antes de filtrar.
+
+**Mejoras realizadas:**
+1. **Precarga Concurrente**: Implementado ItemResolver.prefetch_type_metadata usando ThreadPoolExecutor (8 workers) para descargar masivamente metadatos faltantes antes de aplicar el filtro.
+2. **Arquitectura de Filtrado**: MarketEngine ahora separa los filtros base (rápidos) de los filtros de categoría. Solo se descarga metadata para los ítems que pasan los filtros de capital/volumen/margen, optimizando las llamadas a la API.
+3. **Logs de Diagnóstico Pro**: Añadido resumen detallado ([CATEGORY DEBUG]) con estadísticas de caché y fallos, y logs individuales ([CATEGORY ITEM]) para auditoría de los primeros 30 ítems.
+4. **Warnings de Integridad**: El motor emite alertas si detecta ítems que no deberían pasar filtros estrictos (ej: no-Ships en Naves).
+5. **Sincronización UI**: Corregido un bug en Modo Avanzado que no aplicaba filtros al terminar el escaneo.
+
+**Archivos Modificados:**
+- core/item_resolver.py (Prefetch masivo)
+- core/market_engine.py (Integración de prefetch y logs)
+- ui/market_command/simple_view.py (Logs de UI)
+- ui/market_command/advanced_view.py (Corrección de filtrado y logs)
+
+### CHECKS
+- [x] Filtro " Naves\ funciona correctamente con precarga.
+- [x] Filtro \Drones\ excluye skills y mutaplasmas.
+- [x] Modo Avanzado ahora filtra resultados correctamente.
+- [x] Logs visibles para auditoría técnica.
+- [x] Compilación exitosa.
+
+*Estado: Filtro de categorías profesional, estricto y de alto rendimiento.*

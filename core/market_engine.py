@@ -66,14 +66,12 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
 def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) -> List[MarketOpportunity]:
     filtered = []; risk_map = {"Low": 1, "Medium": 2, "High": 3}
     
-    # Diagnóstico detallado
+    # 1. Filtros base (rápidos)
+    pass_base = []
     stats = {"total": len(opportunities), "capital": 0, "volume": 0, "margin": 0, "spread": 0, "risk": 0, "category": 0, "meta_miss": 0}
-    debug_items = []
     
     for opp in opportunities:
         if opp.best_buy_price == 0: continue
-        
-        # Filtros base
         if config.exclude_plex and "plex" in opp.item_name.lower(): continue
         if opp.best_buy_price > config.capital_max: stats["capital"] += 1; continue
         if opp.liquidity.volume_5d < config.vol_min_day: stats["volume"] += 1; continue
@@ -83,22 +81,29 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
         current_risk = risk_map.get(opp.risk_level, 3)
         if current_risk > config.risk_max: stats["risk"] += 1; continue
         
-        # Filtros secundarios
         if opp.liquidity.buy_orders_count < config.buy_orders_min: continue
         if opp.liquidity.sell_orders_count < config.sell_orders_min: continue
         if opp.liquidity.history_days < config.history_days_min: continue
         if opp.profit_day_est < config.profit_day_min: continue
         
-        # ─── FILTRO DE CATEGORÍA ESTRICTO ───
+        pass_base.append(opp)
+
+    # 2. Precarga de Metadata (Solo si se necesita filtro de categoría)
+    if config.selected_category != "Todos" and pass_base:
+        type_ids = [o.type_id for o in pass_base]
+        p_stats = ItemResolver.instance().prefetch_type_metadata(type_ids)
+        stats["meta_miss"] = p_stats["failed"]
+        logger.info(f"[CATEGORY DEBUG] selected={config.selected_category} total_before={stats['total']} after_base={len(pass_base)} metadata_cached={p_stats['cached']} metadata_fetched={p_stats['fetched']} metadata_failed={p_stats['failed']}")
+
+    # 3. Filtro de Categoría (Estricto)
+    debug_items = []
+    for opp in pass_base:
         if config.selected_category != "Todos":
             cat_id, grp_id, grp_name, cat_name = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
             
-            if cat_id is None: stats["meta_miss"] += 1
-            
             match, reason = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
             
-            # Recolectar debug para los primeros items
-            if len(debug_items) < 20:
+            if len(debug_items) < 30:
                 debug_items.append({
                     "name": opp.item_name, "type_id": opp.type_id, 
                     "cat": f"{cat_name} ({cat_id})", "grp": f"{grp_name} ({grp_id})",
@@ -107,21 +112,24 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
             
             if not match:
                 stats["category"] += 1
-                # Warning si entra basura en naves o drones (detección por nombre solo para log)
-                if config.selected_category == "Naves" and ("SKIN" in opp.item_name.upper() or "Blueprint" in opp.item_name):
-                    # No hacemos nada, ya está excluido por match=False
-                    pass
                 continue
-                
+            
+            # Warnings de integridad (Opcional, para debug en logs)
+            if config.selected_category == "Naves" and cat_id != 6 and cat_id != 32:
+                logger.warning(f"[CATEGORY WARNING] Non-ship item passed Naves filter: {opp.item_name} (Cat: {cat_name})")
+            if config.selected_category == "Drones" and cat_id != 18:
+                logger.warning(f"[CATEGORY WARNING] Non-drone item passed Drones filter: {opp.item_name} (Cat: {cat_name})")
+            if config.selected_category == "Ore / Menas" and cat_id != 25:
+                logger.warning(f"[CATEGORY WARNING] Non-ore item passed Ore/Menas filter: {opp.item_name} (Cat: {cat_name})")
+
         filtered.append(opp)
     
-    # Reporte de Depuración
+    # 4. Logs de Auditoría
     if config.selected_category != "Todos":
-        logger.info(f"[CATEGORY DEBUG] selected={config.selected_category} total_before={stats['total']} total_after={len(filtered)} meta_hits={stats['total']-stats['meta_miss']} meta_miss={stats['meta_miss']} excluded={stats['category']}")
-        
         for d in debug_items:
             logger.debug(f"[CATEGORY ITEM] selected={config.selected_category} type_id={d['type_id']} name={d['name']} cat={d['cat']} grp={d['grp']} match={d['match']} reason={d['reason']}")
             
+        logger.info(f"[CATEGORY SUMMARY] Final Results: {len(filtered)}")
         if len(filtered) == 0 and stats["category"] > 0:
             logger.warning(f"[CATEGORY WARNING] Category filter '{config.selected_category}' excluded ALL ({stats['category']}) items.")
 
