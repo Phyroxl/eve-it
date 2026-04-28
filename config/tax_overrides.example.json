@@ -1,0 +1,17 @@
+{
+  "123456789": {
+    "sales_tax_pct": 3.37,
+    "broker_fee_pct": 1.43,
+    "location_id": 60003760,
+    "comment": "Ejemplo: Jita IV-4 para un personaje específico"
+  },
+  "987654321": [
+    {
+      "location_id": 60003760,
+      "broker_fee_pct": 1.43
+    },
+    {
+      "sales_tax_pct": 3.37
+    }
+  ]
+}

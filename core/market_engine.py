@@ -97,8 +97,6 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
     if item_names is None: item_names = {}
     
     tax_service = TaxService.instance()
-    tax_info = tax_service.get_taxes(char_id)
-    s_tax = tax_info.sales_tax_pct / 100.0
         
     grouped_market = {}
     for o in market_orders:
@@ -111,30 +109,62 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
     best_competitor_buy = {} 
     best_competitor_sell = {} 
 
-    my_sell_prices = {o['type_id']: set() for o in esi_orders if not o.get('is_buy_order')}
-    my_buy_prices = {o['type_id']: set() for o in esi_orders if o.get('is_buy_order')}
+    # Diccionario de {type_id: {price: count}} para nuestras órdenes
+    my_order_counts = {}
     for o in esi_orders:
-        if o.get('is_buy_order'): my_buy_prices[o['type_id']].add(o['price'])
-        else: my_sell_prices[o['type_id']].add(o['price'])
+        t_id = o['type_id']
+        is_buy = o.get('is_buy_order', False)
+        price = o['price']
+        key = (t_id, is_buy)
+        if key not in my_order_counts: my_order_counts[key] = {}
+        my_order_counts[key][price] = my_order_counts[key].get(price, 0) + 1
 
     for t_id, data in grouped_market.items():
-        comp_buys = [o['price'] for o in data['buy'] if o['price'] not in my_buy_prices.get(t_id, set())]
-        comp_sells = [o['price'] for o in data['sell'] if o['price'] not in my_sell_prices.get(t_id, set())]
+        # Para encontrar el mejor competidor:
+        # 1. Tomamos todas las órdenes del mercado
+        # 2. Si hay órdenes con mi mismo precio, restamos la cantidad de órdenes que yo tengo a ese precio.
+        # 3. Lo que queda son los competidores.
         
-        abs_best_buy = max([o['price'] for o in data['buy']]) if data['buy'] else 0.0
-        abs_best_sell = min([o['price'] for o in data['sell']]) if data['sell'] else 0.0
+        # BUY
+        all_buys = sorted([o['price'] for o in data['buy']], reverse=True)
+        my_buys = my_order_counts.get((t_id, True), {})
+        comp_buys = []
+        temp_my_buys = my_buys.copy()
+        for p in all_buys:
+            if p in temp_my_buys and temp_my_buys[p] > 0:
+                temp_my_buys[p] -= 1
+            else:
+                comp_buys.append(p)
+        
+        # SELL
+        all_sells = sorted([o['price'] for o in data['sell']])
+        my_sells = my_order_counts.get((t_id, False), {})
+        comp_sells = []
+        temp_my_sells = my_sells.copy()
+        for p in all_sells:
+            if p in temp_my_sells and temp_my_sells[p] > 0:
+                temp_my_sells[p] -= 1
+            else:
+                comp_sells.append(p)
+        
+        abs_best_buy = all_buys[0] if all_buys else 0.0
+        abs_best_sell = all_sells[0] if all_sells else 0.0
         best_prices[t_id] = (abs_best_buy, abs_best_sell)
         
-        best_competitor_buy[t_id] = max(comp_buys) if comp_buys else 0.0
-        best_competitor_sell[t_id] = min(comp_sells) if comp_sells else 999999999999.0
+        best_competitor_buy[t_id] = comp_buys[0] if comp_buys else 0.0
+        best_competitor_sell[t_id] = comp_sells[0] if comp_sells else 999999999999.0
 
     parsed_orders = []
+    EPSILON = 0.01
+
     for eo in esi_orders:
         t_id = eo['type_id']; price = eo['price']; is_buy = eo.get('is_buy_order', False)
         loc_id = eo.get('location_id', 0)
+        item_name = item_names.get(t_id, f"Type {t_id}")
         
-        # Obtener Broker Fee específico para esta ubicación
-        b_fee_val, b_fee_source = tax_service.get_effective_broker_fee(char_id, loc_id, token)
+        # OBTENER TAXES REALES (Función Central)
+        s_tax_val, b_fee_val, tax_source, tax_debug = tax_service.get_effective_taxes(char_id, loc_id, token)
+        s_tax = s_tax_val / 100.0
         b_fee = b_fee_val / 100.0
         
         bb, bs = best_prices.get(t_id, (0.0, 0.0))
@@ -144,45 +174,76 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         cost_basis = CostBasisService.instance().get_cost_basis(t_id)
         avg_cost = cost_basis.average_buy_price if cost_basis else 0.0
         spread_pct = ((bs - bb) / bb) * 100 if bb > 0 and bs > 0 else 0.0
+        
         competitive = False; difference = 0.0; state = "Desconocido"
         gross_profit = 0.0; net_profit = 0.0; margin_pct = 0.0
         
         if is_buy:
-            # En COMPRA, soy competitivo si mi precio >= mejor competidor
+            # En COMPRA, soy competitivo si mi precio >= mejor competidor - EPSILON
             difference = comp_buy - price
-            competitive = price >= comp_buy
+            competitive = price >= (comp_buy - EPSILON)
             if bs > 0:
                 net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
                 margin_pct = (net_profit / price) * 100 if price > 0 else 0
-            state = "Liderando" if competitive else "Superada"
+            
+            if competitive:
+                state = "Liderando" if price >= (comp_buy + EPSILON) else "Liderando (Empate)"
+            else:
+                state = "Superada"
+            
             if margin_pct <= 0: state = "No Rentable"
         else:
-            # En VENTA, soy competitivo si mi precio <= mejor competidor
+            # En VENTA, soy competitivo si mi precio <= mejor competidor + EPSILON
             difference = price - comp_sell
-            competitive = price <= comp_sell
+            competitive = price <= (comp_sell + EPSILON)
             if avg_cost > 0:
                 base_cost = avg_cost
                 net_profit = price * (1.0 - s_tax - b_fee) - base_cost
                 margin_pct = (net_profit / base_cost) * 100 if base_cost > 0 else 0
                 gross_profit = price - base_cost
-                state = "Rentable" if net_profit > 0 else "Pérdida"
-                if not competitive: 
+                
+                if competitive:
+                    state = "Liderando" if net_profit > 0 else "Liderando (Pérdida)"
+                else:
                     state = "Superada con beneficio" if net_profit > 0 else "Superada en pérdida"
-                elif net_profit > 0:
-                    state = "Liderando"
             else:
                 state = "Sin coste real"
                 if competitive: state = "Liderando"
             
             if not competitive and price > bs * 1.05: state = "Fuera de Mercado"
 
+        # LOG DEBUG para items problemáticos
+        if "Ares" in item_name or "Augmented Hornet" in item_name:
+            import logging
+            db_log = logging.getLogger('eve.market.debug')
+            db_log.info(f"[DEBUG] {item_name} ({'BUY' if is_buy else 'SELL'}): "
+                         f"Price={price}, BestComp={'BUY '+str(comp_buy) if is_buy else 'SELL '+str(comp_sell)}, "
+                         f"Comp={competitive}, State={state}, Diff={difference}, Taxes={tax_debug}")
+
         vol_remain = eo.get('volume_remain', 0)
         net_profit_total = net_profit * vol_remain
-        analysis = OpenOrderAnalysis(is_buy=is_buy, state=state, gross_profit_per_unit=gross_profit, net_profit_per_unit=net_profit, net_profit_total=net_profit_total, margin_pct=margin_pct, best_buy=bb, best_sell=bs, spread_pct=spread_pct, competitive=competitive, difference_to_best=difference)
         
-        o = OpenOrder(order_id=eo['order_id'], type_id=t_id, item_name=item_names.get(t_id, f"Type {t_id}"), is_buy_order=is_buy, price=price, volume_total=eo.get('volume_total', 0), volume_remain=vol_remain, issued=eo.get('issued', ''), location_id=loc_id, range=eo.get('range', ''), analysis=analysis)
-        o._fee_source = b_fee_source
+        comp_price = comp_buy if is_buy else comp_sell
+        
+        analysis = OpenOrderAnalysis(
+            is_buy=is_buy, 
+            state=state, 
+            gross_profit_per_unit=gross_profit, 
+            net_profit_per_unit=net_profit, 
+            net_profit_total=net_profit_total, 
+            margin_pct=margin_pct, 
+            best_buy=bb, 
+            best_sell=bs, 
+            spread_pct=spread_pct, 
+            competitive=competitive, 
+            difference_to_best=difference,
+            competitor_price=comp_price
+        )
+        
+        o = OpenOrder(order_id=eo['order_id'], type_id=t_id, item_name=item_name, is_buy_order=is_buy, price=price, volume_total=eo.get('volume_total', 0), volume_remain=vol_remain, issued=eo.get('issued', ''), location_id=loc_id, range=eo.get('range', ''), analysis=analysis)
+        o._tax_source = tax_source
         o._b_fee_pct = b_fee_val
+        o._s_tax_pct = s_tax_val
         parsed_orders.append(o)
     return parsed_orders
 
@@ -190,8 +251,6 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
     if config is None: config = FilterConfig()
     if item_names is None: item_names = {}
     tax_service = TaxService.instance()
-    tax_info = tax_service.get_taxes(char_id)
-    s_tax = tax_info.sales_tax_pct / 100.0
     
     grouped_market = {}
     for o in market_orders:
@@ -217,8 +276,9 @@ def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str
         bb, bs = best_prices.get(t_id, (0.0, 0.0)); qty = info['qty']
         loc_id = info['location']
         
-        # Para inventario, usamos el fee de la ubicación del asset (o fallback si no hay)
-        b_fee_val, _ = tax_service.get_effective_broker_fee(char_id, loc_id, token)
+        # OBTENER TAXES REALES (Función Central)
+        s_tax_val, b_fee_val, _, _ = tax_service.get_effective_taxes(char_id, loc_id, token)
+        s_tax = s_tax_val / 100.0
         b_fee = b_fee_val / 100.0
         
         cost_basis = CostBasisService.instance().get_cost_basis(t_id)

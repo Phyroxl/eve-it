@@ -70,6 +70,7 @@ class OpenOrderAnalysis:
     spread_pct: float
     competitive: bool
     difference_to_best: float
+    competitor_price: float = 0.0
 
 @dataclass
 class OpenOrder:

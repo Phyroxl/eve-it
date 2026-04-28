@@ -756,6 +756,8 @@ class MarketMyOrdersView(QWidget):
             # Si no hay token, intentar login automático o pedirlo
             auth.login()
             return
+        self.table_sell.setRowCount(0)
+        self.table_buy.setRowCount(0)
         self._start_sync_ui()
         self.worker = SyncWorker(auth.char_id, t)
         self.worker.status_update.connect(lambda m, v: (self.lbl_status.setText(m), self.progress_bar.setValue(v)))
@@ -831,9 +833,14 @@ class MarketMyOrdersView(QWidget):
             i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)
             
-            # MEJOR: Para Sell Order es el mejor Sell Competidor. Para Buy Order es el mejor Buy Competidor.
-            ref_v = a.best_sell if not o.is_buy_order else a.best_buy
+            # MEJOR: Mostrar el mejor competidor directo
+            ref_v = a.competitor_price
             i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 and ref_v < 999999999999 else "---", ref_v)
+            if not competitive and ref_v > 0:
+                # Si estamos superados, resaltar el precio mejor
+                i_ref.setForeground(QColor("#f59e0b"))
+            elif competitive:
+                i_ref.setForeground(QColor("#10b981"))
             
             # TOTAL: Volumen total de la orden
             i_tot = NumericTableWidgetItem(f"{o.volume_total:,}", o.volume_total)
@@ -912,23 +919,20 @@ class MarketMyOrdersView(QWidget):
     def update_taxes_info(self):
         auth = AuthManager.instance()
         token = auth.get_token()
-        tx = TaxService.instance().get_taxes(auth.char_id)
+        if not token: return
         
-        # Intentar obtener ubicación actual para mostrar taxes locales
-        client = ESIClient()
-        loc_res = client.character_location(auth.char_id, token)
-        loc_id = None
+        # Obtener ubicación actual (Cacheada o ESI)
+        loc_res = ESIClient().character_location(auth.char_id, token)
+        loc_id = 0
         if loc_res and loc_res != "missing_scope":
-            loc_id = loc_res.get('station_id') or loc_res.get('structure_id')
+            loc_id = loc_res.get('station_id') or loc_res.get('structure_id') or 0
         
-        if loc_id:
-            fee, source = TaxService.instance().get_effective_broker_fee(auth.char_id, loc_id, token)
-            self.lbl_broker_fee.setText(f"BROKER FEE: {fee:.2f}% ({source})")
-        else:
-            self.lbl_broker_fee.setText(f"BROKER FEE: {tx.broker_fee_pct:.2f}% (BASE SKILLS)")
-            
-        self.lbl_sales_tax.setText(f"SALES TAX: {tx.sales_tax_pct:.2f}%")
-        self.lbl_tax_source.setText(f"FUENTE: {tx.source}")
+        s_tax, b_fee, source, debug = TaxService.instance().get_effective_taxes(auth.char_id, loc_id, token)
+        
+        self.lbl_sales_tax.setText(f"SALES TAX: {s_tax:.2f}%")
+        self.lbl_broker_fee.setText(f"BROKER FEE: {b_fee:.2f}%")
+        self.lbl_tax_source.setText(f"FUENTE: {source}")
+        _log.info(f"[TAX_UI] {debug}")
 
     def do_inventory(self):
         auth = AuthManager.instance()

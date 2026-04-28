@@ -1977,12 +1977,11 @@ Se ha blindado la autenticación con ESI y se ha mejorado radicalmente la operat
 - [x] **Cálculo de Taxes**: Corregida la fórmula de Broker Fee NPC (ahora usa reducción de 0.3% por nivel de Broker Relations).
 - [x] **Detección de Standings**: El sistema ahora detecta automáticamente la facción de la corporación propietaria de la estación para aplicar reducciones por standings de facción.
 - [x] **Calibración Manual**: Implementado sistema de overrides en `config/tax_overrides.json` para ajustar Sales Tax y Broker Fee con precisión quirúrgica por personaje y ubicación.
-- [x] **Persistencia ESI**: Implementado `AuthManager.save_session()` para guardar tokens en `config/esi_session.json`.
-- [x] **Auto-Login**: La app restaura automáticamente el último personaje al abrirse, refrescando el token de forma transparente.
-- [x] **Validación de Scopes**: Sistema de detección de cambios en permisos requeridos. Si el desarrollador añade nuevos scopes, la app solicita reautorización manual con un mensaje claro.
-- [x] **Seguridad**: Archivo de sesión añadido a `.gitignore` para evitar fugas de tokens en el repositorio.
-- [x] **UI de Sesión**: Añadido botón dinámico de `VINCULAR ESI / SALIR (<Character>)` en Market Command para facilitar el cambio de personaje.
-- [x] **Hotfix QIcon**: Corregido error de importación en `PerformanceView`.
-- [x] **Armonización LIDERANDO**: Estado verde unificado para compras y ventas.
+- [x] **Motor de Competitividad**: Implementado sistema de conteo de órdenes propias para exclusión precisa de competidores. Añadido `EPSILON` de 0.01 ISK para comparaciones estables.
+- [x] **Estados de Orden**: Corregida lógica de `LIDERANDO` en compras. Ahora `Ares` y `Augmented Hornet` muestran estados reales basados en el mejor competidor directo.
+- [x] **TaxService Centralizado**: Nueva función `get_effective_taxes` que consolida Sales Tax y Broker Fee.
+- [x] **Overrides de Taxes**: El sistema ahora soporta formatos de lista/dict en `tax_overrides.json` y tiene prioridad absoluta sobre ESI. Verificado para Jita IV-4 (Sales 3.37%, Broker 1.43%).
+- [x] **Performance Hotfix**: Corregido `AttributeError` al usar `net_profit`. Tabla ensanchada (Columna Item: 180px) para mostrar Icono + Nombre en la misma celda.
+- [x] **Limpieza de UI**: El botón `ACTUALIZAR` ahora limpia las tablas antes de repoblar, evitando datos fantasma de sesiones anteriores.
 
-*Estado: Plataforma profesional con persistencia de identidad y telemetría de alta fidelidad.*
+*Estado: Market Command estabilizado, taxes calibradas y telemetría de rendimiento operativa.*

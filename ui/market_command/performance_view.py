@@ -395,8 +395,8 @@ class MarketPerformanceView(QWidget):
         self.top_items_table = QTableWidget(0, 6)
         self.top_items_table.setHorizontalHeaderLabels(["Item", "In (Qty)", "Out (Qty)", "Net Stock", "Realized Profit", "Estado"])
         self.top_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.top_items_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.top_items_table.setColumnWidth(0, 32)
+        self.top_items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.top_items_table.setColumnWidth(0, 180)
         self.top_items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.top_items_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.top_items_table.customContextMenuRequested.connect(self.on_table_context_menu)
@@ -818,8 +818,9 @@ class MarketPerformanceView(QWidget):
             if item.net_units > 0: stock_item.setForeground(QColor("#60a5fa"))
             self.top_items_table.setItem(i, 3, stock_item)
             
-            profit_item = QTableWidgetItem(format_isk(item.realized_profit_est, short=True))
-            if item.realized_profit_est > 0: profit_item.setForeground(QColor("#10b981"))
+            profit_item = QTableWidgetItem(format_isk(item.net_profit, short=True))
+            if item.net_profit > 0: profit_item.setForeground(QColor("#10b981"))
+            elif item.net_profit < 0: profit_item.setForeground(QColor("#f87171"))
             self.top_items_table.setItem(i, 4, profit_item)
 
             s_low = item.status_text.lower()
