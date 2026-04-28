@@ -23,6 +23,7 @@ class ContractsScanWorker(QThread):
         super().__init__()
         self.config = config
         self._cancelled = False
+        self._scanned_count = 0
 
     def cancel(self):
         self._cancelled = True
@@ -66,19 +67,26 @@ class ContractsScanWorker(QThread):
                 items_raw = client.contract_items(contract['contract_id'])
                 if not items_raw:
                     continue
-                new_ids = [r['type_id'] for r in items_raw if r.get('type_id') not in name_map]
+                new_ids = list(set(r['type_id'] for r in items_raw if r.get('type_id') not in name_map))
                 if new_ids:
-                    try:
-                        for n in client.universe_names(new_ids[:500]):
-                            name_map[n['id']] = n['name']
-                    except Exception:
-                        pass
+                    for chunk_idx in range(0, len(new_ids), 500):
+                        chunk = new_ids[chunk_idx:chunk_idx+500]
+                        try:
+                            for n in client.universe_names(chunk):
+                                name_map[n['id']] = n['name']
+                        except Exception:
+                            pass
                 items = analyze_contract_items(items_raw, price_index, name_map, self.config)
                 result = calculate_contract_metrics(contract, items, self.config)
                 result.score = score_contract(result)
-                if result.net_profit > 0:
-                    all_results.append(result)
-                    self.batch_ready.emit(result)
+                self._scanned_count = i + 1
+                
+                # Filtrar antes de emitir o añadir
+                temp_list = apply_contracts_filters([result], self.config)
+                if temp_list:
+                    res_filtered = temp_list[0]
+                    all_results.append(res_filtered)
+                    self.batch_ready.emit(res_filtered)
 
             self.progress.emit(95)
             self.status.emit("Ordenando resultados...")
@@ -103,5 +111,6 @@ class ContractsScanWorker(QThread):
             except Exception:
                 continue
             result.append(c)
-        result.sort(key=lambda x: x.get('price', 0.0), reverse=True)
+        # Sort by date_issued DESC (most recent first)
+        result.sort(key=lambda x: x.get('date_issued', ''), reverse=True)
         return result[:self.config.max_contracts_to_scan]

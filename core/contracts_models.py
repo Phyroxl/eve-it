@@ -14,6 +14,8 @@ class ContractItem:
     line_sell_value: float      # quantity * jita_sell_price
     line_buy_value: float       # quantity * jita_buy_price
     pct_of_total: float         # line_sell_value / jita_sell_value * 100
+    is_blueprint: bool = False
+    is_copy: bool = False
 
 
 @dataclass
@@ -44,6 +46,7 @@ class ContractArbitrageResult:
     value_concentration: float   # max(line_sell_value) / jita_sell_value
     has_unresolved_items: bool
     unresolved_count: int
+    has_blueprints: bool = False
     score: float = 0.0
     score_breakdown: Optional[ScoreBreakdown] = None
 
@@ -58,6 +61,8 @@ class ContractsFilterConfig:
     item_types_max: int = 50
     broker_fee_pct: float = 3.0
     sales_tax_pct: float = 8.0
-    max_contracts_to_scan: int = 200
+    max_contracts_to_scan: int = 1000
     price_reference: str = "sell"
     exclude_no_price: bool = True
+    exclude_blueprints: bool = True
+    category_filter: str = "all"  # ships, modules, etc.

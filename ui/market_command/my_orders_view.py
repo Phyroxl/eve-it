@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QGridLayout
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QColor
 
 from core.esi_client import ESIClient
@@ -11,6 +11,9 @@ from core.auth_manager import AuthManager
 from core.market_engine import analyze_character_orders
 from core.config_manager import load_market_filters
 from ui.market_command.widgets import ItemInteractionHelper
+from core.item_metadata import ItemMetadataHelper
+from ui.market_command.performance_view import AsyncImageLoader
+from core.cost_basis_service import CostBasisService
 from utils.formatters import format_isk
 
 _log = logging.getLogger('eve.market.my_orders')
@@ -41,18 +44,172 @@ class SyncWorker(QThread):
             
             config = load_market_filters()
             
+            # Refrescar CostBasis (si hay scope)
+            cost_service = CostBasisService.instance()
+            if cost_service.has_wallet_scope():
+                cost_service.refresh_from_esi(self.char_id, self.token)
+            
             analyzed = analyze_character_orders(orders, relevant_market_orders, item_names, config)
             self.finished_data.emit(analyzed)
             
         except Exception as e:
             self.error.emit(str(e))
 
+class InventoryWorker(QThread):
+    finished_data = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, char_id, token):
+        super().__init__()
+        self.char_id = char_id
+        self.token = token
+
+    def run(self):
+        try:
+            client = ESIClient()
+            assets = client.character_assets(self.char_id, self.token)
+            if not assets:
+                self.finished_data.emit([])
+                return
+            
+            # Solo items en hangares o naves (excluir contenedores anidados para simplicidad en MVP)
+            # location_flag: 'Hangar', 'Cargo', etc.
+            filtered_assets = [a for a in assets if 'slot' not in a.get('location_flag', '').lower()]
+            
+            if not filtered_assets:
+                self.finished_data.emit([])
+                return
+
+            type_ids = list(set(a['type_id'] for a in filtered_assets))
+            
+            # Para inventario, necesitamos precios de Jita
+            all_market_orders = client.market_orders(10000002)
+            if not all_market_orders:
+                self.error.emit("pricing_error")
+                return
+            
+            names_data = client.universe_names(type_ids)
+            item_names = {n['id']: n['name'] for n in names_data}
+            
+            from core.market_engine import analyze_inventory
+            config = load_market_filters()
+            
+            analyzed = analyze_inventory(filtered_assets, all_market_orders, item_names, config)
+            # Ordenar por valor total descendente
+            analyzed.sort(key=lambda x: x.analysis.est_total_value, reverse=True)
+            self.finished_data.emit(analyzed)
+            
+        except Exception as e:
+            if "403" in str(e) or "missing_scope" in str(e):
+                self.error.emit("missing_scope")
+            else:
+                import traceback
+                traceback.print_exc()
+                self.error.emit(str(e))
+
+from PySide6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QHeaderView, QAbstractItemView
+from PySide6.QtGui import QColor, QIcon
+
+class InventoryAnalysisDialog(QDialog):
+    def __init__(self, items, image_loader, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ANÁLISIS DE INVENTARIO - EVE iT")
+        self.resize(1000, 700)
+        self.setStyleSheet("background-color: #0f172a; color: #f1f5f9;")
+        self.items = items
+        self.image_loader = image_loader
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        title = QLabel("INVENTARIO ANALIZADO")
+        title.setStyleSheet("font-size: 18px; font-weight: 900; color: #3b82f6;")
+        layout.addWidget(title)
+
+        summary_h = QHBoxLayout()
+        total_val = sum(i.analysis.est_total_value for i in self.items)
+        lbl_total = QLabel(f"VALOR ESTIMADO TOTAL (NETO): {format_isk(total_val)}")
+        lbl_total.setStyleSheet("font-size: 12px; font-weight: 800; color: #10b981;")
+        summary_h.addWidget(lbl_total)
+        summary_h.addStretch()
+        layout.addLayout(summary_h)
+
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels([
+            "", "Item", "Cantidad", "Jita Sell", "Jita Buy", "Spread", "Valor Total Est.", "Recomendación", "Motivo"
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+        self.table.setColumnWidth(0, 32)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setStyleSheet(
+            "QTableWidget { background: #000000; border: 1px solid #1e293b; font-size: 11px; } "
+            "QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; padding: 5px; } "
+        )
+        layout.addWidget(self.table)
+
+        self.populate_table()
+
+        btn_h = QHBoxLayout()
+        btn_h.addStretch()
+        close_btn = QPushButton("CERRAR")
+        close_btn.setFixedSize(100, 30)
+        close_btn.setStyleSheet("background: #334155; color: white; font-weight: 800; border-radius: 4px;")
+        close_btn.clicked.connect(self.accept)
+        btn_h.addWidget(close_btn)
+        layout.addLayout(btn_h)
+
+    def populate_table(self):
+        self.table.setRowCount(len(self.items))
+        for r, item in enumerate(self.items):
+            a = item.analysis
+            
+            i_icon = QTableWidgetItem()
+            self.table.setItem(r, 0, i_icon)
+            url = ItemMetadataHelper.get_icon_url(item.type_id)
+            self.image_loader.load(url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
+
+            i_name = QTableWidgetItem(item.item_name)
+            i_qty = QTableWidgetItem(f"{item.quantity:,}")
+            i_qty.setTextAlignment(Qt.AlignCenter)
+            
+            i_sell = QTableWidgetItem(format_isk(a.best_sell))
+            i_buy = QTableWidgetItem(format_isk(a.best_buy))
+            i_spread = QTableWidgetItem(f"{a.spread_pct:.1f}%")
+            i_total = QTableWidgetItem(format_isk(a.est_total_value))
+            i_total.setForeground(QColor("#10b981"))
+            
+            i_rec = QTableWidgetItem(a.recommendation.upper())
+            if a.recommendation == "Sell": i_rec.setForeground(QColor("#10b981"))
+            elif a.recommendation == "Hold": i_rec.setForeground(QColor("#f59e0b"))
+            else: i_rec.setForeground(QColor("#ef4444"))
+            
+            i_reason = QTableWidgetItem(a.reason)
+            i_reason.setStyleSheet("color: #64748b; font-size: 9px;")
+
+            self.table.setItem(r, 1, i_name)
+            self.table.setItem(r, 2, i_qty)
+            self.table.setItem(r, 3, i_sell)
+            self.table.setItem(r, 4, i_buy)
+            self.table.setItem(r, 5, i_spread)
+            self.table.setItem(r, 6, i_total)
+            self.table.setItem(r, 7, i_rec)
+            self.table.setItem(r, 8, i_reason)
+
+
 class MarketMyOrdersView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setup_ui()
         self.worker = None
+        self.inv_worker = None
         self.all_orders = []
+        self.image_loader = AsyncImageLoader()
+        self.setup_ui()
         
         AuthManager.instance().authenticated.connect(self._on_authenticated)
 
@@ -101,17 +258,31 @@ class MarketMyOrdersView(QWidget):
         )
         self.btn_repopulate.clicked.connect(lambda: self.do_sync(is_update=True))
 
+        self.btn_inventory = QPushButton("ANALIZAR INVENTARIO")
+        self.btn_inventory.setCursor(Qt.PointingHandCursor)
+        self.btn_inventory.setMinimumWidth(150)
+        self.btn_inventory.setFixedHeight(35)
+        self.btn_inventory.setStyleSheet(
+            "QPushButton { background-color: #059669; color: white; font-size: 10px; font-weight: 900; "
+            "border-radius: 4px; letter-spacing: 1px; padding: 0 15px; } "
+            "QPushButton:hover { background-color: #047857; }"
+        )
+        self.btn_inventory.clicked.connect(self.do_inventory_analysis)
+
         header.addLayout(title_v)
         header.addStretch()
+        header.addWidget(self.btn_inventory)
         header.addWidget(self.btn_repopulate)
         header.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header)
 
         def create_table():
-            t = QTableWidget(0, 10)
+            t = QTableWidget(0, 12)
             t.setHorizontalHeaderLabels([
-                "Item", "Type", "My Price", "Best Competitor", "Total", "Remain", "Spread", "Margin", "Total Profit", "Status"
+                "", "Item", "Type", "My Price", "Mi Promedio", "Best Competitor", "Total", "Remain", "Spread", "Margin", "Total Profit", "Status"
             ])
+            t.setColumnWidth(0, 32)
+            t.setColumnWidth(4, 100) # Mi Promedio
             t.setContextMenuPolicy(Qt.CustomContextMenu)
             t.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
             t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -125,6 +296,7 @@ class MarketMyOrdersView(QWidget):
                 "QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; font-size: 9px; border: none; padding: 4px; } "
                 "QTableWidget::item:selected { background: #1e293b; }"
             )
+            t.setIconSize(QSize(24, 24))
             return t
 
         self.table_sell = create_table()
@@ -161,6 +333,12 @@ class MarketMyOrdersView(QWidget):
         dl.setContentsMargins(15, 15, 15, 15)
         dl.setSpacing(20)
 
+        self.lbl_det_icon = QLabel()
+        self.lbl_det_icon.setFixedSize(64, 64)
+        self.lbl_det_icon.setScaledContents(True)
+        self.lbl_det_icon.setStyleSheet("background: #1e293b; border-radius: 4px; border: 1px solid #334155;")
+        dl.addWidget(self.lbl_det_icon)
+
         info_v = QVBoxLayout()
         self.lbl_det_item = QLabel("SELECCIONA UNA ORDEN")
         self.lbl_det_item.setStyleSheet("color: #f1f5f9; font-size: 15px; font-weight: 900;")
@@ -176,31 +354,37 @@ class MarketMyOrdersView(QWidget):
         
         def add_metric(layout, row, col, label, color="#e2e8f0"):
             layout.addWidget(QLabel(label, styleSheet="color: #475569; font-size: 8px; font-weight: 800;"), row*2, col)
+        def _create_det_row(layout, label):
+            count = layout.count()
+            row = count // 3
+            col = count % 3
+            w = QWidget()
+            v = QVBoxLayout(w)
+            v.setContentsMargins(0,0,0,0)
+            lbl = QLabel(label, styleSheet="color: #475569; font-size: 8px; font-weight: 800;")
             val = QLabel("---")
-            val.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 800;")
-            layout.addWidget(val, row*2+1, col)
+            val.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 800;")
+            v.addWidget(lbl)
+            v.addWidget(val)
+            layout.addWidget(w, row, col)
             return val
 
-        self.lbl_det_my_price = add_metric(m_g, 0, 0, "MI PRECIO", "#3b82f6")
-        self.lbl_det_best_buy = add_metric(m_g, 0, 1, "BEST BUY")
-        self.lbl_det_best_sell = add_metric(m_g, 0, 2, "BEST SELL")
+        self._create_det_row = _create_det_row
+        self.lbl_det_my_price = self._create_det_row(m_g, "MI PRECIO")
+        self.lbl_det_my_avg = self._create_det_row(m_g, "MI PROMEDIO")
+        self.lbl_det_best_buy = self._create_det_row(m_g, "BEST BUY")
+        self.lbl_det_best_sell = self._create_det_row(m_g, "BEST SELL")
+        self.lbl_det_margin = self._create_det_row(m_g, "MARGEN NETO")
+        self.lbl_det_profit_u = self._create_det_row(m_g, "PROFIT NETO / U")
+        self.lbl_det_profit_total = self._create_det_row(m_g, "PROFIT TOTAL EST.")
+        self.lbl_det_state = self._create_det_row(m_g, "ESTADO OPERATIVO")
         
-        self.lbl_det_margin = add_metric(m_g, 1, 0, "MARGEN NETO", "#10b981")
-        self.lbl_det_profit_unit = add_metric(m_g, 1, 1, "PROFIT NETO / U", "#10b981")
-        self.lbl_det_profit_total = add_metric(m_g, 1, 2, "PROFIT TOTAL EST.", "#10b981")
+        self.lbl_det_reason = QLabel()
+        self.lbl_det_reason.setWordWrap(True)
+        self.lbl_det_reason.setStyleSheet("color: #94a3b8; font-size: 10px; font-style: italic; margin-top: 5px;")
+        m_g.addWidget(self.lbl_det_reason, 3, 0, 1, 3)
         
         dl.addLayout(m_g, 2)
-
-        st_v = QVBoxLayout()
-        st_v.addWidget(QLabel("ESTADO OPERATIVO", styleSheet="color: #475569; font-size: 8px; font-weight: 800;"))
-        self.lbl_det_status = QLabel("---")
-        self.lbl_det_status.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: 900;")
-        self.lbl_det_diff = QLabel("---")
-        self.lbl_det_diff.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 600;")
-        st_v.addWidget(self.lbl_det_status)
-        st_v.addWidget(self.lbl_det_diff)
-        st_v.addStretch()
-        dl.addLayout(st_v, 1)
 
     def do_sync(self, is_update=False):
         if self.worker and self.worker.isRunning():
@@ -249,14 +433,6 @@ class MarketMyOrdersView(QWidget):
         if not orders:
             self.lbl_det_item.setText("SELECCIONA UNA ORDEN")
             self.lbl_det_type.setText("---")
-            self.lbl_det_my_price.setText("---")
-            self.lbl_det_best_buy.setText("---")
-            self.lbl_det_best_sell.setText("---")
-            self.lbl_det_margin.setText("---")
-            self.lbl_det_profit_unit.setText("---")
-            self.lbl_det_profit_total.setText("---")
-            self.lbl_det_status.setText("---")
-            self.lbl_det_diff.setText("---")
 
     def on_error(self, msg):
         self.btn_refresh.setEnabled(True)
@@ -281,6 +457,11 @@ class MarketMyOrdersView(QWidget):
             for row, o in enumerate(data):
                 a = o.analysis
                 
+                i_icon = QTableWidgetItem()
+                table.setItem(row, 0, i_icon)
+                url = ItemMetadataHelper.get_icon_url(o.type_id)
+                self.image_loader.load(url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
+
                 i_name = QTableWidgetItem(o.item_name)
                 i_name.setData(Qt.UserRole, o.type_id)
                 
@@ -313,16 +494,28 @@ class MarketMyOrdersView(QWidget):
                 else:
                     i_state.setForeground(QColor("#ef4444"))
                     
-                table.setItem(row, 0, i_name)
-                table.setItem(row, 1, i_type)
-                table.setItem(row, 2, i_myprice)
-                table.setItem(row, 3, i_best)
-                table.setItem(row, 4, i_total)
-                table.setItem(row, 5, i_remain)
-                table.setItem(row, 6, i_spread)
-                table.setItem(row, 7, i_margin)
-                table.setItem(row, 8, i_profit)
-                table.setItem(row, 9, i_state)
+                # Obtener CostBasis
+                cost_basis = CostBasisService.instance().get_cost_basis(o.type_id)
+                if cost_basis:
+                    i_avg = QTableWidgetItem(format_isk(cost_basis.average_buy_price))
+                    i_avg.setForeground(QColor("#94a3b8"))
+                else:
+                    i_avg = QTableWidgetItem("Sin registros")
+                    i_avg.setForeground(QColor("#475569"))
+                i_avg.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                table.setItem(row, 0, i_icon)
+                table.setItem(row, 1, i_name)
+                table.setItem(row, 2, i_type)
+                table.setItem(row, 3, i_myprice)
+                table.setItem(row, 4, i_avg)
+                table.setItem(row, 5, i_best)
+                table.setItem(row, 6, i_total)
+                table.setItem(row, 7, i_remain)
+                table.setItem(row, 8, i_spread)
+                table.setItem(row, 9, i_margin)
+                table.setItem(row, 10, i_profit)
+                table.setItem(row, 11, i_state)
 
         fill_table(self.table_sell, sell_orders)
         fill_table(self.table_buy, buy_orders)
@@ -345,8 +538,7 @@ class MarketMyOrdersView(QWidget):
 
     def _handle_selection(self, table, row):
         t_id = table.item(row, 0).data(Qt.UserRole)
-        myprice = table.item(row, 2).text().replace(',', '').replace(' ISK', '')
-        o = next((ord for ord in self.all_orders if ord.type_id == t_id and format_isk(ord.price) == table.item(row, 2).text()), None)
+        o = next((ord for ord in self.all_orders if ord.type_id == t_id and format_isk(ord.price) == table.item(row, 3).text()), None)
         if o:
             self.update_detail(o)
 
@@ -354,28 +546,45 @@ class MarketMyOrdersView(QWidget):
         self.lbl_det_item.setText(o.item_name.upper())
         self.lbl_det_type.setText(f"ORDEN DE {'COMPRA' if o.is_buy_order else 'VENTA'} | ID: {o.order_id}")
         
+        # Icono detalle
+        from PySide6.QtGui import QPixmap, QIcon
+        url = ItemMetadataHelper.get_icon_url(o.type_id)
+        self.image_loader.load(url, lambda px: self.lbl_det_icon.setPixmap(px.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+
         a = o.analysis
+        cost_basis = CostBasisService.instance().get_cost_basis(o.type_id)
+        avg_val = cost_basis.average_buy_price if cost_basis else 0.0
+
         self.lbl_det_my_price.setText(format_isk(o.price, True))
+        self.lbl_det_my_avg.setText(format_isk(avg_val, True) if avg_val > 0 else "Sin registros")
         self.lbl_det_best_buy.setText(format_isk(a.best_buy, True))
         self.lbl_det_best_sell.setText(format_isk(a.best_sell, True))
+        self.lbl_det_state.setText(a.state.upper())
         
-        self.lbl_det_margin.setText(f"{a.margin_pct:.1f}%")
-        self.lbl_det_profit_unit.setText(format_isk(a.net_profit_per_unit, True))
+        if a.margin_pct > 0:
+            self.lbl_det_margin.setText(f"{a.margin_pct:.1f}%")
+            self.lbl_det_margin.setStyleSheet("color: #10b981; font-weight: 800; font-size: 12px;")
+        else:
+            self.lbl_det_margin.setText(f"{a.margin_pct:.1f}%")
+            self.lbl_det_margin.setStyleSheet("color: #ef4444; font-weight: 800; font-size: 12px;")
+
+        self.lbl_det_profit_u.setText(format_isk(a.net_profit_per_unit, True))
         self.lbl_det_profit_total.setText(format_isk(a.net_profit_total, True))
+
+        # Razón / Explicación
+        reason = ""
+        if o.is_buy_order:
+            if not cost_basis:
+                reason = "Orden de compra abierta. La rentabilidad es potencial hasta que el item se compre y pueda compararse con el precio de venta."
+            else:
+                reason = f"Ya tienes stock comprado a {format_isk(avg_val)}. Esta nueva compra promediará tu coste."
+        else:
+            if cost_basis:
+                reason = f"Comprado de media a {format_isk(avg_val)}. Vendiendo a {format_isk(o.price)}. Beneficio neto estimado: {format_isk(a.net_profit_per_unit)} por unidad."
+            else:
+                reason = "No hay registros de compra suficientes para calcular rentabilidad real. Se usa el mejor precio de compra actual como referencia."
         
-        self.lbl_det_status.setText(a.state.upper())
-        if "Sana" in a.state or "Competitiva" in a.state or "Rotación Sana" in a.state:
-            self.lbl_det_status.setStyleSheet("color: #10b981; font-size: 14px; font-weight: 900;")
-        elif "Ajustado" in a.state or "Aún Rentable" in a.state:
-            self.lbl_det_status.setStyleSheet("color: #f59e0b; font-size: 14px; font-weight: 900;")
-        else:
-            self.lbl_det_status.setStyleSheet("color: #ef4444; font-size: 14px; font-weight: 900;")
-            
-        diff_str = format_isk(abs(a.difference_to_best), True)
-        if a.competitive:
-            self.lbl_det_diff.setText(f"Liderando por {diff_str}")
-        else:
-            self.lbl_det_diff.setText(f"Superado por {diff_str}")
+        self.lbl_det_reason.setText(reason)
 
     def on_double_click(self, item, table):
         row = item.row()
@@ -413,3 +622,60 @@ class MarketMyOrdersView(QWidget):
             QGuiApplication.clipboard().setText(item_name)
             self.lbl_status.setText(f"● {item_name.upper()} COPIADO AL PORTAPAPELES")
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800;")
+
+    def do_inventory_analysis(self):
+        auth = AuthManager.instance()
+        if not auth.current_token:
+            self.lbl_status.setText("● ERROR: DEBES ESTAR AUTENTICADO")
+            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+            return
+
+        if self.inv_worker and self.inv_worker.isRunning():
+            return
+
+        self.btn_inventory.setEnabled(False)
+        self.btn_inventory.setText("ANALIZANDO...")
+        self.lbl_status.setText("● CARGANDO ACTIVOS Y PRECIOS...")
+        self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800;")
+
+        self.inv_worker = InventoryWorker(auth.char_id, auth.current_token)
+        self.inv_worker.finished_data.connect(self.on_inventory_ready)
+        self.inv_worker.error.connect(self.on_inventory_error)
+        self.inv_worker.start()
+
+    def on_inventory_ready(self, items):
+        self.btn_inventory.setEnabled(True)
+        self.btn_inventory.setText("ANALIZAR INVENTARIO")
+        self.lbl_status.setText(f"● ANÁLISIS DE INVENTARIO COMPLETADO: {len(items)} TIPOS")
+        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800;")
+        
+        if not items:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Inventario Vacío", "No se encontraron activos para analizar o falta el permiso esi-assets.read_assets.v1.")
+            return
+
+        dialog = InventoryAnalysisDialog(items, self.image_loader, self)
+        dialog.exec()
+
+    def on_inventory_error(self, msg):
+        self.btn_inventory.setEnabled(True)
+        self.btn_inventory.setText("ANALIZAR INVENTARIO")
+        
+        from PySide6.QtWidgets import QMessageBox
+        
+        if msg == "missing_scope":
+            self.lbl_status.setText("● ERROR: FALTA PERMISO DE ACTIVOS")
+            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+            QMessageBox.warning(self, "Permiso Faltante", "Falta el permiso esi-assets.read_assets.v1.\nReautoriza el personaje para poder analizar el inventario.")
+        elif msg == "pricing_error":
+            self.lbl_status.setText("● ERROR: SIN PRECIOS")
+            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+            QMessageBox.warning(self, "Error de Valoración", "Se encontraron activos, pero no se pudieron valorar por falta de precios (servidor ESI ocupado o caído).")
+        elif "401" in msg or "expired" in msg.lower():
+            self.lbl_status.setText("● ERROR: SESIÓN EXPIRADA")
+            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+            QMessageBox.warning(self, "Sesión Expirada", "Sesión expirada. Reautoriza el personaje para analizar el inventario.")
+        else:
+            self.lbl_status.setText(f"● ERROR INVENTARIO: {msg.upper()}")
+            self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+            QMessageBox.critical(self, "Error de Inventario", f"Ocurrió un fallo al analizar el inventario: {msg}")

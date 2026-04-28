@@ -2,16 +2,20 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
-    QGridLayout
+    QGridLayout, QComboBox, QSplitter
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtGui import QColor, QGuiApplication, QIcon
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 from core.contracts_models import ContractsFilterConfig
 from core.config_manager import load_contracts_filters, save_contracts_filters
 from ui.market_command.contracts_worker import ContractsScanWorker
+from ui.market_command.performance_view import AsyncImageLoader
 from core.esi_client import ESIClient
 from core.auth_manager import AuthManager
+from core.item_metadata import ItemMetadataHelper, MARKET_CATEGORIES
+from ui.market_command.widgets import ItemInteractionHelper
 
 
 def _format_isk(value: float) -> str:
@@ -46,6 +50,7 @@ class MarketContractsView(QWidget):
         self.worker = None
         self._all_results = []
         self.config = load_contracts_filters()
+        self.image_loader = AsyncImageLoader()
         self.setup_ui()
         self._load_config()
 
@@ -100,15 +105,48 @@ class MarketContractsView(QWidget):
             fl.addLayout(v_l)
             return spin
 
+        v_reg = QVBoxLayout()
+        v_reg.setSpacing(2)
+        lbl_reg = QLabel("REGIÓN")
+        lbl_reg.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
+        self.combo_region = QComboBox()
+        self.combo_region.setStyleSheet("QComboBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }")
+        self.combo_region.addItem("The Forge (Jita)", 10000002)
+        self.combo_region.addItem("Domain (Amarr)", 10000043)
+        self.combo_region.addItem("Sinq Laison (Dodixie)", 10000032)
+        self.combo_region.addItem("Heimatar (Rens)", 10000030)
+        self.combo_region.addItem("Metropolis (Hek)", 10000042)
+        v_reg.addWidget(lbl_reg)
+        v_reg.addWidget(self.combo_region)
+        fl.addLayout(v_reg)
+
+        v_cat = QVBoxLayout()
+        v_cat.setSpacing(2)
+        lbl_cat = QLabel("CATEGORÍA")
+        lbl_cat.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
+        self.combo_category = QComboBox()
+        self.combo_category.setStyleSheet("QComboBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }")
+        self.combo_category.addItem("Todas las categorías", "all")
+        for cat in MARKET_CATEGORIES:
+            self.combo_category.addItem(cat.name, cat.id)
+        v_cat.addWidget(lbl_cat)
+        v_cat.addWidget(self.combo_category)
+        fl.addLayout(v_cat)
+
         self.capital_max_spin = create_dspin("CAPITAL MAX", 1, 100000, 100, " M ISK")
         self.capital_min_spin = create_dspin("CAPITAL MIN", 0, 100000, 1, " M ISK")
         self.profit_min_spin = create_dspin("PROFIT MINIMO", 0, 10000, 10, " M ISK")
         self.roi_min_spin = create_dspin("ROI MINIMO", 0, 500, 1, " %")
         self.items_max_spin = create_spin("MAX TIPOS ITEM", 1, 500, 1)
+        self.scan_max_spin = create_spin("MAX CONTRATOS A ESCANEAR", 10, 5000, 10)
 
         self.exclude_no_price_check = QCheckBox("Excluir items sin precio")
         self.exclude_no_price_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
         fl.addWidget(self.exclude_no_price_check)
+
+        self.exclude_blueprints_check = QCheckBox("Excluir Blueprints / BPCs")
+        self.exclude_blueprints_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
+        fl.addWidget(self.exclude_blueprints_check)
 
         fl.addStretch()
 
@@ -251,16 +289,32 @@ class MarketContractsView(QWidget):
             "QTableWidget::item:selected { background: #1e293b; }"
         )
         self.results_table.cellClicked.connect(self.on_row_selected)
-        cl.addWidget(self.results_table, 1)
-
+        self.results_table.cellDoubleClicked.connect(self.on_row_double_clicked)
+        
+        # Splitter para resizabilidad
+        self.splitter = QSplitter(Qt.Vertical)
+        
+        # Contenedor superior para la tabla
+        self.table_container = QWidget()
+        tc_l = QVBoxLayout(self.table_container)
+        tc_l.setContentsMargins(0,0,0,0)
+        tc_l.addWidget(self.results_table)
+        
+        self.splitter.addWidget(self.table_container)
+        
         # Detail Frame
         self.detail_frame = QFrame()
         self.detail_frame.setVisible(False)
-        self.detail_frame.setFixedHeight(200)
         self.detail_frame.setStyleSheet("background: #0f172a; border: 1px solid #1e293b; border-radius: 4px;")
         dl = QVBoxLayout(self.detail_frame)
         dl.setContentsMargins(10, 10, 10, 10)
         dl.setSpacing(10)
+        
+        self.splitter.addWidget(self.detail_frame)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 1)
+        
+        cl.addWidget(self.splitter, 1)
 
         dl_h1 = QHBoxLayout()
         self.lbl_det_title = QLabel("CONTRATO")
@@ -283,47 +337,76 @@ class MarketContractsView(QWidget):
             "QPushButton { background: #3b82f6; color: white; font-weight: 800; font-size: 9px; border-radius: 2px; padding: 2px 8px; } "
             "QPushButton:hover { background: #2563eb; }"
         )
-        self.btn_open_game.clicked.connect(lambda: self.open_in_game(getattr(self, '_current_contract_id', 0)))
+        self.btn_open_game.clicked.connect(self.on_open_in_game_clicked)
         dl_h1.addWidget(self.btn_open_game)
 
         dl.addLayout(dl_h1)
 
-        self.items_table = QTableWidget(0, 5)
-        self.items_table.setHorizontalHeaderLabels(["Item", "Cant", "Precio Jita", "Valor", "% Total"])
+        # Panel de resumen (Métricas extendidas)
+        self.det_metrics_layout = QHBoxLayout()
+        dl.addLayout(self.det_metrics_layout)
+        
+        self.lbl_det_cost = QLabel()
+        self.lbl_det_sell = QLabel()
+        self.lbl_det_profit = QLabel()
+        self.lbl_det_roi = QLabel()
+        self.lbl_det_risk = QLabel()
+        
+        for l in [self.lbl_det_cost, self.lbl_det_sell, self.lbl_det_profit, self.lbl_det_roi, self.lbl_det_risk]:
+            l.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 700; border: none;")
+            self.det_metrics_layout.addWidget(l)
+        self.det_metrics_layout.addStretch()
+
+        self.items_table = QTableWidget(0, 6)
+        self.items_table.setHorizontalHeaderLabels(["", "Item", "Cant", "Precio Jita", "Valor", "% Total"])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.items_table.setColumnWidth(1, 60)
-        self.items_table.setColumnWidth(2, 100)
+        self.items_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.items_table.setColumnWidth(0, 32)
+        self.items_table.setColumnWidth(2, 60)
         self.items_table.setColumnWidth(3, 100)
-        self.items_table.setColumnWidth(4, 60)
+        self.items_table.setColumnWidth(4, 100)
+        self.items_table.setColumnWidth(5, 60)
         self.items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.items_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.items_table.setShowGrid(False)
         self.items_table.verticalHeader().setVisible(False)
+        self.items_table.cellDoubleClicked.connect(self.on_item_double_clicked)
         self.items_table.setStyleSheet(
-            "QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 9px; } "
-            "QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; font-size: 8px; border: none; padding: 2px; }"
+            "QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 10px; } "
+            "QHeaderView::section { background: #1e293b; color: #64748b; font-weight: 800; font-size: 8px; border: none; padding: 2px; } "
+            "QTableWidget::item { border: none; }"
         )
-        dl.addWidget(self.items_table)
+        dl.addWidget(self.items_table, 1)
 
-        cl.addWidget(self.detail_frame)
         self.main_layout.addWidget(content_panel, 1)
 
     def _load_config(self):
+        index = self.combo_region.findData(self.config.region_id)
+        if index >= 0:
+            self.combo_region.setCurrentIndex(index)
         self.capital_max_spin.setValue(self.config.capital_max_isk / 1_000_000)
         self.capital_min_spin.setValue(self.config.capital_min_isk / 1_000_000)
         self.profit_min_spin.setValue(self.config.profit_min_isk / 1_000_000)
         self.roi_min_spin.setValue(self.config.roi_min_pct)
         self.items_max_spin.setValue(self.config.item_types_max)
+        self.scan_max_spin.setValue(self.config.max_contracts_to_scan)
         self.exclude_no_price_check.setChecked(self.config.exclude_no_price)
+        self.exclude_blueprints_check.setChecked(self.config.exclude_blueprints)
+        
+        idx = self.combo_category.findData(self.config.category_filter)
+        if idx >= 0: self.combo_category.setCurrentIndex(idx)
 
     def _save_config(self):
+        self.config.region_id = self.combo_region.currentData()
         self.config.capital_max_isk = self.capital_max_spin.value() * 1_000_000
         self.config.capital_min_isk = self.capital_min_spin.value() * 1_000_000
         self.config.profit_min_isk = self.profit_min_spin.value() * 1_000_000
         self.config.roi_min_pct = self.roi_min_spin.value()
         self.config.item_types_max = self.items_max_spin.value()
+        self.config.max_contracts_to_scan = self.scan_max_spin.value()
         self.config.exclude_no_price = self.exclude_no_price_check.isChecked()
+        self.config.exclude_blueprints = self.exclude_blueprints_check.isChecked()
+        self.config.category_filter = self.combo_category.currentData() or "all"
         save_contracts_filters(self.config)
 
     def _clear_table(self):
@@ -491,19 +574,51 @@ class MarketContractsView(QWidget):
         if c:
             self.populate_detail_panel(c)
 
+    def on_row_double_clicked(self, row, col):
+        item = self.results_table.item(row, 0)
+        if not item: return
+        c = item.data(Qt.UserRole)
+        if c:
+            self._current_contract_id = c.contract_id
+            self.on_open_in_game_clicked()
+
     def populate_detail_panel(self, c):
         self._current_contract_id = c.contract_id
+        
+        # Guardar top item para poder abrir su mercado
+        items = sorted(c.items, key=lambda x: x.line_sell_value, reverse=True)
+        self._current_main_item_id = items[0].type_id if items else 0
+        
         self.lbl_det_title.setText(f"CONTRATO {c.contract_id} — SCORE: {c.score:.1f}")
+        
+        # Llenar métricas
+        self.lbl_det_cost.setText(f"<b>COSTE:</b> <span style='color:#f1f5f9;'>{_format_isk(c.contract_cost)}</span>")
+        self.lbl_det_sell.setText(f"<b>JITA SELL:</b> <span style='color:#f1f5f9;'>{_format_isk(c.jita_sell_value)}</span>")
+        
+        color_p = "#10b981" if c.net_profit > 0 else "#ef4444"
+        self.lbl_det_profit.setText(f"<b>NET PROFIT:</b> <span style='color:{color_p};'>{_format_isk(c.net_profit)}</span>")
+        
+        color_r = "#10b981" if c.roi_pct >= 20 else ("#f59e0b" if c.roi_pct >= 10 else "#f1f5f9")
+        self.lbl_det_roi.setText(f"<b>ROI:</b> <span style='color:{color_r};'>{c.roi_pct:.1f}%</span>")
+        
+        risk_msgs = []
+        if c.has_unresolved_items:
+            risk_msgs.append(f"{c.unresolved_count} item(s) sin precio")
+        if c.value_concentration > 0.80:
+            risk_msgs.append(f"Alta concentración ({c.value_concentration*100:.0f}%)")
+            
+        if risk_msgs:
+            self.lbl_det_risk.setText(f"<b>RIESGO:</b> <span style='color:#f59e0b;'>{' | '.join(risk_msgs)}</span>")
+        else:
+            self.lbl_det_risk.setText(f"<b>RIESGO:</b> <span style='color:#10b981;'>Bajo</span>")
+            
         self.detail_frame.setVisible(True)
         
         self.items_table.setRowCount(0)
-        # Ordenar items por valor sell descendente
-        items = sorted(c.items, key=lambda x: x.line_sell_value, reverse=True)
-        
         self.items_table.setRowCount(len(items))
         for r, item in enumerate(items):
             i_name = QTableWidgetItem(item.item_name)
-            i_qty = QTableWidgetItem(str(item.quantity))
+            i_qty = QTableWidgetItem(f"{item.quantity:,}")
             i_qty.setTextAlignment(Qt.AlignCenter)
             
             if not item.is_included:
@@ -528,26 +643,57 @@ class MarketContractsView(QWidget):
             if item.jita_sell_price == 0.0 and item.is_included:
                 for it in [i_name, i_qty, i_price, i_val, i_pct]:
                     it.setForeground(QColor("#f59e0b"))
-                    
-            self.items_table.setItem(r, 0, i_name)
-            self.items_table.setItem(r, 1, i_qty)
-            self.items_table.setItem(r, 2, i_price)
-            self.items_table.setItem(r, 3, i_val)
-            self.items_table.setItem(r, 4, i_pct)
 
-    def open_in_game(self, contract_id):
+            # Icono asíncrono inteligente
+            i_icon = QTableWidgetItem()
+            self.items_table.setItem(r, 0, i_icon)
+            
+            icon_url = ItemMetadataHelper.get_icon_url(
+                item.type_id, 
+                is_blueprint=item.is_blueprint, 
+                is_copy=item.is_copy
+            )
+            self.image_loader.load(icon_url, lambda px, item_item=i_icon: item_item.setIcon(QIcon(px)))
+
+            self.items_table.setItem(r, 1, i_name)
+            i_name.setData(Qt.UserRole, item.type_id)
+            self.items_table.setItem(r, 2, i_qty)
+            self.items_table.setItem(r, 3, i_price)
+            self.items_table.setItem(r, 4, i_val)
+            self.items_table.setItem(r, 5, i_pct)
+
+    def on_item_double_clicked(self, row, col):
+        item_obj = self.items_table.item(row, 1)
+        if not item_obj: return
+        type_id = item_obj.data(Qt.UserRole)
+        item_name = item_obj.text()
+        
+        auth = AuthManager.instance()
+        def feedback(msg, color):
+            self.status_label.setText(f"● {msg.upper()}")
+            self.status_label.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800;")
+            
+        ItemInteractionHelper.open_market_with_fallback(ESIClient(), auth.char_id, type_id, item_name, feedback)
+
+    def on_open_in_game_clicked(self):
+        contract_id = getattr(self, '_current_contract_id', 0)
+        if not contract_id: return
+        
+        def feedback(msg, color):
+            self.status_label.setText(f"● {msg.upper()}")
+            self.status_label.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800;")
+
+        ItemInteractionHelper.open_contract_in_game(ESIClient(), contract_id, feedback)
+
+    def open_main_item_market(self):
         auth = AuthManager.instance()
         if not auth.current_token:
             return
-        # Para abrir un contrato en el juego no existe un endpoint ESI UI específico para contratos.
-        # Pero podemos intentar copiar al portapapeles y avisar.
-        self.copy_contract_id(contract_id)
-        from ui.market_command.widgets import ItemInteractionHelper
-        def feedback(msg, color):
-            pass # No tenemos lbl_status para esto en el detail panel
-        
-        # Como fallback avisamos por clipboard
-        QGuiApplication.clipboard().setText(str(contract_id))
+        main_item_id = getattr(self, '_current_main_item_id', 0)
+        if main_item_id > 0:
+            from ui.market_command.widgets import ItemInteractionHelper
+            # Necesitamos pasar un callback de feedback, podemos usar lambda vacío ya que la barra está en parent
+            ItemInteractionHelper.open_market_window(main_item_id, auth, lambda x, y: None)
 
     def copy_contract_id(self, contract_id):
         QGuiApplication.clipboard().setText(str(contract_id))

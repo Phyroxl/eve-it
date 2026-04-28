@@ -65,6 +65,40 @@ class ItemInteractionHelper:
         
         return success
 
+    @staticmethod
+    def open_contract_in_game(esi_client, contract_id, feedback_callback=None):
+        import logging
+        log = logging.getLogger('eve.interaction')
+        
+        from core.auth_manager import AuthManager
+        auth = AuthManager.instance()
+        token = auth.current_token
+        
+        if not token:
+            msg = "ESI no autenticado"
+            if feedback_callback: feedback_callback(msg, "#f87171")
+            return False
+
+        res = esi_client.open_contract_window(contract_id, token)
+        
+        if res == "missing_scope":
+            msg = "Permiso faltante: esi-ui.open_window.v1. Re-vincula tu personaje."
+            if feedback_callback: feedback_callback(msg, "#f59e0b")
+            # Fallback: Copy ID
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(str(contract_id))
+            return False
+        elif res is True:
+            msg = f"Contrato {contract_id} abierto in-game"
+            if feedback_callback: feedback_callback(msg, "#34d399")
+            return True
+        else:
+            msg = "Error al abrir contrato (¿Estás logueado en el juego?). ID copiado."
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(str(contract_id))
+            if feedback_callback: feedback_callback(msg, "#f87171")
+            return False
+
 class MarketTableWidget(QTableWidget):
     item_action_triggered = Signal(str, str, int) # action_type, item_name, type_id
 

@@ -1335,3 +1335,140 @@ self.contracts_view = MarketContractsView(self)
 - [x] `ui/market_command/command_main.py` — tab añadido
 - [x] Todas las validaciones pasadas
 - [x] App arranca sin errores con la nueva pestaña
+
+---
+
+## Sesión 23 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Refinamiento de la pestaña CONTRATOS y UX operativa
+
+### RESUMEN
+1. El MVP de "Contratos" carecía de un filtro de región visible, limitaba el alcance del análisis a solo 200 contratos (frente a los ~1000 que puede obtener Jita) y utilizaba un botón "ABRIR IN-GAME" que no podía cumplir su promesa porque EVE ESI no tiene endpoint para contratos públicos.
+2. **Filtro de región:** Añadido un `QComboBox` interactivo en la vista de contratos con las principales hubs (The Forge, Domain, Heimatar, Sinq Laison, Metropolis) guardado de forma persistente.
+3. **Ampliación de escaneo:** Se aumentó `max_contracts_to_scan` de 200 a 1000 por defecto y el límite del ranking final a 1000. Se incluyó un spinner interactivo (`MAX CONTRATOS A ESCANEAR`) en la UI para que el trader decida su propio límite en caliente (hasta 5000).
+4. **UX Honesta:** El botón engañoso fue reemplazado por "MERCADO ITEM PRINCIPAL", que utiliza `ItemInteractionHelper.open_market_window` de forma limpia para abrir el ítem más valioso del contrato en el mercado del juego real, manteniendo a su izquierda el botón de "COPIAR CONTRACT ID".
+5. **Panel de detalle:** Se amplió la cabecera del panel de contratos inferior para exponer de un vistazo métricas contables clave: Coste, Jita Sell, Profit Neto, ROI, y un indicador cualitativo de Riesgo (concentración y falta de precios).
+
+Con estos cambios, la pestaña está perfectamente alineada con la operativa seria de arbitraje: es transparente, escalable y honesta en sus integraciones.
+
+### FILES_CHANGED
+- `core/contracts_models.py`
+- `core/contracts_engine.py`
+- `ui/market_command/contracts_view.py`
+
+### CHECKS
+- [x] Filtro de Región en el UI (Jita, Amarr, Rens, Dodixie, Hek).
+- [x] Configuración persistente del filtro de región.
+- [x] Contratos a escanear/mostrar ampliados hasta 1000+.
+- [x] Botón falso in-game reemplazado por `MERCADO ITEM PRINCIPAL`.
+- [x] Detail Panel enriquecido con métricas clave para decisiones rápidas.
+
+### NOTES
+- ESI devuelve hasta 1000 contratos por página en `public_contracts`. El scan está ahora parametrizado en UI para que sea el propio usuario quien defina cuánto quiere sobrecargar su red y los servidores ESI.
+
+---
+
+## Sesión 24 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Correcciones críticas de la pestaña CONTRATOS (Límites, Nombres, Iconos y ESI UI)
+
+### RESUMEN
+1. **Límite de 5 contratos:** Se identificó que el problema no era un slice hardcodeado en la UI, sino una confusión en la métrica "Escaneados", que mostraba solo los contratos rentables encontrados. Se ha añadido `self._scanned_count` al worker para mostrar el progreso real del escaneo. Además, se ha verificado que tanto el engine como la vista permiten ahora hasta 1000 resultados.
+2. **Resolución de Nombres:** Se ha corregido la lógica de resolución de nombres en `ContractsScanWorker`. Ahora procesa los `type_id` desconocidos en bloques de 500 mediante el endpoint `universe/names` de ESI, eliminando los molestos "Unknown [type_id]" y cacheando los resultados.
+3. **Iconos de Items:** Se ha integrado `AsyncImageLoader` en el panel de detalles. Ahora cada línea del desglose de items muestra su icono oficial de EVE (32x32), cargado de forma asíncrona para mantener la fluidez de la UI.
+4. **Abrir In-Game (ESI UI):**
+    - Se ha implementado `ESIClient.open_contract_window` (POST `/ui/openwindow/contract/`).
+    - El doble click en cualquier fila de la tabla de contratos ahora intenta abrir el contrato directamente en el cliente de EVE.
+    - Se ha añadido detección de "missing_scope": si el token del usuario no tiene `esi-ui.open_window.v1`, la aplicación informa claramente de que es necesario volver a vincular el personaje con este permiso.
+    - Como fallback de seguridad, si la apertura falla, se copia el Contract ID al portapapeles.
+5. **Mejoras de Fiabilidad:** El panel de detalles ahora es más robusto, ordena los items por valor descendente y expone de forma clara los riesgos de iliquidez o concentración.
+
+### FILES_CHANGED
+- `core/esi_client.py`
+- `ui/market_command/contracts_worker.py`
+- `ui/market_command/contracts_view.py`
+
+### CHECKS
+- [x] La tabla muestra más de 5 contratos (probado hasta 1000).
+- [x] Los nombres de los items se resuelven correctamente (Adiós "Unknown").
+- [x] Iconos visibles en el panel de detalle.
+- [x] Doble click abre el contrato in-game (o avisa de falta de scope).
+- [x] Botón "ABRIR IN-GAME" funcional con lógica ESI.
+
+### NOTES
+- Se recomienda al usuario que si no ve contratos, revise sus filtros de "PROFIT MINIMO" y "ROI MINIMO", ya que el sistema ahora escanea el volumen real pero solo muestra lo que es genuinamente rentable según su configuración.
+- El permiso `esi-ui.open_window.v1` es opcional; el sistema funciona por portapapeles si el usuario decide no dar acceso a su interfaz in-game.
+
+---
+
+## Sesión 25 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Filtro de exclusión de Blueprints (BPOs y BPCs)
+
+### RESUMEN
+1. **Detección de Blueprints:** Se ha actualizado el motor de análisis para detectar si un contrato contiene planos originales (BPO) o copias (BPC). Esto se hace mediante una combinación de la bandera `is_blueprint_copy` de ESI y la detección de la palabra "Blueprint" en el nombre del item.
+2. **Filtro de Exclusión:** Se ha añadido una nueva opción en el panel de filtros: **"Excluir Blueprints / BPCs"**.
+3. **Persistencia:** La opción se guarda automáticamente en `config/contracts_filters.json` para que el trader no tenga que marcarla en cada sesión.
+4. **Seguridad en Arbitraje:** Dado que los Blueprints suelen tener precios de mercado volátiles o inexistentes (se operan por contratos), excluirlos por defecto limpia la lista de posibles falsos positivos o estafas comunes de Jita.
+
+### FILES_CHANGED
+- `core/contracts_models.py`
+- `core/contracts_engine.py`
+- `ui/market_command/contracts_view.py`
+
+### CHECKS
+- [x] Checkbox visible en la UI.
+- [x] Filtro aplicado correctamente (los Nyx Blueprints desaparecen si está marcado).
+- [x] Estado persistente entre reinicios.
+
+---
+
+## Sesión 26 — 2026-04-28
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Mejoras de Inventario, Categorías y Usabilidad en Market Command
+
+### RESUMEN
+Se ha realizado una actualización masiva de usabilidad y funcionalidad en las pestañas **CONTRATOS** y **MIS PEDIDOS**, alineando la herramienta con estándares profesionales de trading.
+
+1. **Contratos (Correcciones y Mejoras):**
+   - **Resizable UI:** Implementado `QSplitter` para permitir al usuario ajustar el tamaño del panel de detalles.
+   - **Filtros de Categoría:** Añadido filtrado por tipo de ítem (Naves, Módulos, Drones, etc.) basado en el ítem de mayor valor del contrato.
+   - **Imágenes de Blueprints:** Corregido el servidor de imágenes para usar `/bp` en planos, permitiendo visualizar iconos de BPO/BPC correctamente.
+   - **Apertura In-Game:** Refactorizado el sistema de apertura de contratos para usar el endpoint ESI real, con diagnóstico de permisos (`esi-ui.open_window.v1`) y fallback inteligente a portapapeles.
+   - **Interacción Detalle:** Doble clic en cualquier ítem del detalle del contrato abre su mercado in-game.
+
+2. **Mis Pedidos e Inventario:**
+   - **Iconos:** Integrado `AsyncImageLoader` en las tablas de órdenes de compra/venta y en el panel de detalle.
+   - **Análisis de Inventario:** Implementado nuevo módulo de análisis de activos (`InventoryWorker`).
+   - **Lógica de Recomendación:** El sistema analiza el spread y valor neto en Jita para sugerir "Vender" o "Mantener" los ítems del inventario.
+   - **Seguridad:** Manejo honesto de permisos de activos (`esi-assets.read_assets.v1`).
+
+### FILES_CHANGED
+- `core/esi_client.py`
+- `core/item_metadata.py`
+- `core/market_engine.py`
+- `core/contracts_engine.py`
+- `core/contracts_models.py`
+- `ui/market_command/contracts_view.py`
+- `ui/market_command/my_orders_view.py`
+- `ui/market_command/widgets.py`
+- `ui/market_command/contracts_worker.py`
+
+### TESTING
+- [x] Verificado que el splitter permite redimensionar el panel inferior.
+- [x] Verificado que los blueprints ahora muestran sus iconos (BPO/BPC).
+- [x] Verificado el filtro de categorías (ej: filtrar solo por "Naves" funciona).
+- [x] Verificado el flujo de error de "Open In-Game" con mensajes claros.
+- [x] Verificado que el análisis de inventario muestra valores netos y recomendaciones.
+
+### PRÓXIMOS PASOS
+- **Asset Grouping:** Actualmente el inventario muestra ítems sueltos; se podría agrupar por estación/estructura.
+- **Blueprint Calculation:** Integrar costes de materiales si el usuario decide fabricar en lugar de revender planos.

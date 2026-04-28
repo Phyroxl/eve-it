@@ -61,6 +61,8 @@ def analyze_contract_items(
             line_sell_value=quantity * sell_price,
             line_buy_value=quantity * buy_price,
             pct_of_total=0.0,
+            is_blueprint="Blueprint" in name_map.get(type_id, ""),
+            is_copy=raw.get('is_blueprint_copy', False)
         ))
     return items
 
@@ -117,6 +119,7 @@ def calculate_contract_metrics(
         value_concentration=value_concentration,
         has_unresolved_items=len(unresolved) > 0,
         unresolved_count=len(unresolved),
+        has_blueprints=any(i.is_blueprint or i.is_copy for i in items),
     )
 
 
@@ -169,13 +172,34 @@ def apply_contracts_filters(
     contracts: List[ContractArbitrageResult],
     config: ContractsFilterConfig
 ) -> List[ContractArbitrageResult]:
-    """Filtra y devuelve top 100 ordenados por score DESC."""
+    """Filtra y devuelve top 1000 ordenados por score DESC."""
     result = [
         c for c in contracts
         if c.net_profit >= config.profit_min_isk
         and c.roi_pct >= config.roi_min_pct
         and c.item_type_count <= config.item_types_max
         and not (config.exclude_no_price and c.has_unresolved_items)
+        and not (config.exclude_blueprints and c.has_blueprints)
     ]
+    
+    # Filtro por categoría (basado en el item de mayor valor)
+    if config.category_filter != "all":
+        from core.item_metadata import ItemMetadataHelper
+        final_filtered = []
+        for c in result:
+            # Encontrar el item principal (mayor valor sell)
+            main_item = None
+            max_val = -1
+            for it in c.items:
+                if it.line_sell_value > max_val:
+                    max_val = it.line_sell_value
+                    main_item = it
+            
+            if main_item:
+                item_cat = ItemMetadataHelper.resolve_category(main_item.item_name)
+                if item_cat == config.category_filter:
+                    final_filtered.append(c)
+        result = final_filtered
+
     result.sort(key=lambda x: x.score, reverse=True)
-    return result[:100]
+    return result[:1000]

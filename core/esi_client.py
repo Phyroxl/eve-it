@@ -198,6 +198,8 @@ class ESIClient:
                     page += 1
                 else:
                     logger.warning(f"ESI wallet_transactions char={char_id} page={page} → HTTP {res.status_code}")
+                    if res.status_code in (401, 403):
+                        return "missing_scope"
                     break
             except Exception as e:
                 logger.error(f"ESI wallet_transactions char={char_id} page={page} excepción: {e}")
@@ -226,6 +228,32 @@ class ESIClient:
             logger.error(f"ESI character_orders char={char_id} excepción: {e}")
             raise e
 
+    def character_assets(self, char_id, token):
+        all_assets = []
+        page = 1
+        while True:
+            url = f"{self.BASE_URL}/characters/{char_id}/assets/"
+            params = {'page': page}
+            try:
+                self._rate_limit()
+                res = self.session.get(url, headers=self._headers(token), params=params, timeout=15)
+                if res.status_code == 200:
+                    data = res.json()
+                    if not data: break
+                    all_assets.extend(data)
+                    pages = int(res.headers.get('X-Pages', 1))
+                    if page >= pages: break
+                    page += 1
+                else:
+                    logger.warning(f"ESI character_assets char={char_id} page={page} → HTTP {res.status_code}")
+                    if res.status_code in (401, 403):
+                        return "missing_scope"
+                    break
+            except Exception as e:
+                logger.error(f"ESI character_assets char={char_id} page={page} excepción: {e}")
+                break
+        return all_assets
+
     def open_market_window(self, type_id: int, access_token: str):
         """
         Abre la ventana de mercado regional en el cliente de EVE Online.
@@ -242,6 +270,25 @@ class ESIClient:
             return response.status_code == 204 # 204 No Content is success for this endpoint
         except Exception as e:
             logger.error(f"Error opening market window (type_id={type_id}): {e}")
+            return False
+
+    def open_contract_window(self, contract_id: int, access_token: str):
+        """
+        Abre el contrato en el cliente de EVE Online.
+        Requiere scope: esi-ui.open_window.v1
+        """
+        endpoint = f"/ui/openwindow/contract/"
+        params = {'contract_id': contract_id}
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        self._rate_limit()
+        try:
+            response = self.session.post(f"{self.BASE_URL}{endpoint}", params=params, headers=headers, timeout=10)
+            if response.status_code == 403:
+                return "missing_scope"
+            return response.status_code == 204
+        except Exception as e:
+            logger.error(f"Error opening contract window (contract_id={contract_id}): {e}")
             return False
 
     def public_contracts(self, region_id: int) -> list:

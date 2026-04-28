@@ -1,13 +1,15 @@
 {
   "region_id": 10000002,
   "capital_max_isk": 100000000000.0,
-  "capital_min_isk": 1000000.0,
-  "profit_min_isk": 10000000.0,
-  "roi_min_pct": 5.0,
-  "item_types_max": 50,
+  "capital_min_isk": 0.0,
+  "profit_min_isk": 5000000.0,
+  "roi_min_pct": 0.0,
+  "item_types_max": 500,
   "broker_fee_pct": 3.0,
   "sales_tax_pct": 8.0,
-  "max_contracts_to_scan": 200,
+  "max_contracts_to_scan": 1000,
   "price_reference": "sell",
-  "exclude_no_price": true
+  "exclude_no_price": true,
+  "exclude_blueprints": true,
+  "category_filter": "all"
 }

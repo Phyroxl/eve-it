@@ -1,5 +1,5 @@
-from typing import List, Dict, Any
-from .market_models import MarketOpportunity, LiquidityMetrics, ScoreBreakdown, FilterConfig
+from .market_models import MarketOpportunity, LiquidityMetrics, ScoreBreakdown, FilterConfig, InventoryItem, InventoryAnalysis
+from .cost_basis_service import CostBasisService
 
 def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Dict[str, Any]]], item_names: Dict[int, str] = None, config: FilterConfig = None) -> List[MarketOpportunity]:
     if config is None:
@@ -223,6 +223,10 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         
         bb, bs = best_prices.get(t_id, (0.0, 0.0))
         
+        # Obtener coste promedio real
+        cost_basis = CostBasisService.instance().get_cost_basis(t_id)
+        avg_cost = cost_basis.average_buy_price if cost_basis else 0.0
+
         spread_pct = 0.0
         if bb > 0 and bs > 0:
             spread_pct = ((bs - bb) / bb) * 100
@@ -239,48 +243,52 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             difference = bb - price
             competitive = difference <= 0
             
+            # Para compras, el profit es "potencial" basado en Jita Sell
             gross_profit = bs - price if bs > 0 else 0
             if bs > 0:
                 net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
                 margin_pct = (net_profit / price) * 100 if price > 0 else 0
             
             if competitive:
-                if margin_pct > 15:
-                    state = "Sana (Buen Margen)"
-                elif margin_pct > 5:
-                    state = "Competitiva"
-                elif margin_pct > 0:
-                    state = "Margen Ajustado"
-                else:
-                    state = "No Rentable"
+                state = "Competitiva"
             else:
-                if margin_pct > 5:
-                    state = "Superada (Aún Rentable)"
-                else:
-                    state = "Fuera de Mercado"
+                state = "Superada"
+            
+            if margin_pct <= 0:
+                state = "No Rentable"
+            elif not cost_basis:
+                state = "Esperando compra"
                 
         else:
             difference = price - bs
             competitive = difference <= 0
             
-            cost_est = bb if bb > 0 else price * 0.5
-            gross_profit = price - cost_est
-            net_profit = price * (1.0 - s_tax - b_fee) - cost_est * (1.0 + b_fee)
-            margin_pct = (net_profit / cost_est) * 100 if cost_est > 0 else 0
+            # Usar coste real si existe, si no, usar mejor compra (o 0 si no hay)
+            base_cost = avg_cost if avg_cost > 0 else (bb if bb > 0 else 0.0)
             
-            if competitive:
-                if margin_pct > 10:
-                    state = "Rotación Sana"
-                elif margin_pct > 0:
-                    state = "Margen Ajustado"
+            if base_cost > 0:
+                gross_profit = price - base_cost
+                net_profit = price * (1.0 - s_tax - b_fee) - base_cost * (1.0 + b_fee)
+                margin_pct = (net_profit / base_cost) * 100 if base_cost > 0 else 0
+            
+            # Lógica de estados mejorada
+            if not cost_basis:
+                state = "Sin coste"
+            elif net_profit > 0:
+                if competitive:
+                    state = "Rentable" if margin_pct > 10 else "Margen Ajustado"
                 else:
-                    state = "Pérdida Estimada"
+                    state = "Superada con beneficio"
             else:
-                if margin_pct > 5:
-                    state = "Superada"
+                state = "Superada en pérdida" if not competitive else "Pérdida"
+
+            # Casos especiales de mercado
+            if not competitive and state not in ("Pérdida", "Superada en pérdida"):
+                if price > bs * 1.05:
+                    state = "Fuera de Mercado"
                 else:
-                    state = "Fuera de Mercado / Rota"
-                    
+                    state = "Superada"
+
         vol_remain = eo.get('volume_remain', 0)
         net_profit_total = net_profit * vol_remain
         
@@ -314,3 +322,89 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         parsed_orders.append(o)
         
     return parsed_orders
+
+def analyze_inventory(assets: List[Dict[str, Any]], market_orders: List[Dict[str, Any]], item_names: Dict[int, str] = None, config: FilterConfig = None):
+    if config is None: config = FilterConfig()
+    if item_names is None: item_names = {}
+
+    grouped_market = {}
+    for o in market_orders:
+        t_id = o['type_id']
+        if t_id not in grouped_market:
+            grouped_market[t_id] = {'buy': [], 'sell': []}
+        if o.get('is_buy_order', False):
+            grouped_market[t_id]['buy'].append(o)
+        else:
+            grouped_market[t_id]['sell'].append(o)
+
+    best_prices = {}
+    for t_id, data in grouped_market.items():
+        best_buy = max([o['price'] for o in data['buy']]) if data['buy'] else 0.0
+        best_sell = min([o['price'] for o in data['sell']]) if data['sell'] else 0.0
+        best_prices[t_id] = (best_buy, best_sell)
+
+    results = []
+    b_fee = config.broker_fee_pct / 100.0
+    s_tax = config.sales_tax_pct / 100.0
+
+    # Agrupar assets por type_id
+    grouped_assets = {}
+    for a in assets:
+        t_id = a['type_id']
+        if t_id not in grouped_assets:
+            grouped_assets[t_id] = {'qty': 0, 'location': a.get('location_id', 0)}
+        grouped_assets[t_id]['qty'] += a['quantity']
+
+    for t_id, info in grouped_assets.items():
+        bb, bs = best_prices.get(t_id, (0.0, 0.0))
+        qty = info['qty']
+        
+        spread_pct = 0.0
+        if bb > 0 and bs > 0:
+            spread_pct = ((bs - bb) / bb) * 100
+            
+        est_net_sell = bs * (1.0 - s_tax - b_fee) if bs > 0 else 0.0
+        est_total_value = est_net_sell * qty
+        
+        # Lógica de recomendación
+        recommendation = "Review"
+        reason = "Datos insuficientes"
+        
+        if bs == 0:
+            recommendation = "Hold"
+            reason = "Sin precio de venta en Jita"
+        elif spread_pct > 30:
+            recommendation = "Hold"
+            reason = "Spread demasiado alto (>30%)"
+        elif spread_pct < 0:
+            recommendation = "Review"
+            reason = "Mercado invertido / Anomalía"
+        elif est_net_sell > bb * 1.05:
+            recommendation = "Sell"
+            reason = "Precio de venta sólido"
+        elif est_net_sell > bb:
+            recommendation = "Sell"
+            reason = "Margen positivo"
+        else:
+            recommendation = "Hold"
+            reason = "Venta no rentable vs Buy orders"
+
+        analysis = InventoryAnalysis(
+            best_buy=bb,
+            best_sell=bs,
+            spread_pct=spread_pct,
+            est_net_sell_unit=est_net_sell,
+            est_total_value=est_total_value,
+            recommendation=recommendation,
+            reason=reason
+        )
+        
+        results.append(InventoryItem(
+            type_id=t_id,
+            item_name=item_names.get(t_id, f"Type {t_id}"),
+            quantity=qty,
+            location_id=info['location'],
+            analysis=analysis
+        ))
+        
+    return results

@@ -84,3 +84,21 @@ class OpenOrder:
     location_id: int
     range: str
     analysis: Optional[OpenOrderAnalysis] = None
+
+@dataclass
+class InventoryAnalysis:
+    best_buy: float
+    best_sell: float
+    spread_pct: float
+    est_net_sell_unit: float
+    est_total_value: float
+    recommendation: str  # Sell, Hold, Review
+    reason: str
+
+@dataclass
+class InventoryItem:
+    type_id: int
+    item_name: str
+    quantity: int
+    location_id: int
+    analysis: Optional[InventoryAnalysis] = None
