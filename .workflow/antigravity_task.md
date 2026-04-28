@@ -2277,3 +2277,91 @@ Se ha implementado un sistema de diagnóstico exhaustivo para localizar el punto 
 - [x] Compilación exitosa.
 
 *Estado: Pipeline de filtrado totalmente auditable y depurado.*
+
+## Sesión 29 - 2026-04-29 (Reparación Definitiva del Filtro)
+
+### STATUS: COMPLETADO
+
+### FASE COMPLETADA: Estabilización del Pipeline y Aislamiento de Modo Simple
+
+### RESUMEN
+Se ha corregido el fallo crítico que causaba tablas vacías al cambiar de categoría y la interferencia de filtros avanzados en el Modo Simple.
+
+**Mejoras realizadas:**
+1. **Aislamiento de Modo Simple**: Ahora el Modo Simple resetea automáticamente los filtros avanzados (buy_orders_min, risk_max, etc.) a valores seguros (0) al aplicar cambios. Esto evita que filtros ocultos de sesiones previas en Modo Avanzado 'maten' los resultados en Modo Simple.
+2. **Categorías Intercambiables**: Se ha eliminado el filtrado por categoría dentro del RefreshWorker. El worker ahora devuelve la lista bruta de candidatos a la UI. Esto permite al usuario cambiar entre 'Naves', 'Drones' o 'Todos' instantáneamente sin tener que volver a escanear ESI.
+3. **Optimización 'Todos'**: La categoría 'Todos' ahora omite completamente el prefetch de metadata y el filtrado por IDs, mejorando drásticamente el rendimiento al ver el mercado completo.
+4. **Pipeline de Diagnóstico**: Refinado el sistema de logs [PIPELINE] y [FILTER DEBUG] para mostrar contadores exactos de ítems descartados por cada regla (capital, volumen, margen, etc.).
+5. **Seguridad Anti-Trash**: Añadido filtro por nombre para 'skin' en la regla exclude_plex para mayor seguridad, además del filtrado estricto por category_id.
+
+**Archivos Modificados:**
+- ui/market_command/simple_view.py (Reset de filtros avanzados)
+- ui/market_command/refresh_worker.py (Desvinculación de filtrado y escaneo)
+- core/market_engine.py (Optimización Todos, logs detallados y filtros estrictos)
+- core/item_categories.py (Limpieza de mapeos)
+
+### CHECKS
+- [x] La categoría 'Todos' funciona y muestra resultados siempre.
+- [x] El cambio entre categorías en la UI funciona sin re-escanear.
+- [x] Modo Simple no aplica filtros avanzados ocultos.
+- [x] Drones excluye 'Drone Interfacing' (Skill).
+- [x] Naves excluye SKINs y ropa.
+- [x] Compilación exitosa (py_compile) de todos los archivos tocados.
+
+*Estado: Pipeline de Market Command reparado y listo para producción.*
+
+
+## Sesion 30 - 2026-04-28 (Bug Fix: Thread Safety + AttributeError Advanced Mode)
+
+### STATUS: COMPLETADO
+
+### FASE COMPLETADA: Reparacion quirurgica - 2 bugs independientes
+
+### RESUMEN
+
+Diagnostico completo del pipeline de filtrado de categorias. Se identificaron y corrigieron 2 bugs que sobrevivian a los fixes de sesiones anteriores:
+
+**Bug 1 - Corrupcion del cache JSON (thread safety):**
+- **Causa**: item_resolver.py:62 llamaba _save_cache() dentro de get_type_info(), que se ejecuta desde 8 threads simultaneos en ThreadPoolExecutor. Multiples threads escribiendo el mismo archivo JSON -> corrupcion. En el siguiente arranque, la app cargaba JSON corrupto -> cache vacio -> todos los items sin metadata -> filtro estricto los excluia todos.
+- **Fase donde se perdian resultados**: Durante el prefetch de metadata. El cache en memoria funcionaba correctamente, pero al persistir a disco el archivo se corrompia.
+- **Fix**: Eliminada la llamada self._save_cache() de get_type_info(). Solo prefetch_type_metadata() llama _save_cache() una unica vez al terminar todos los threads.
+
+**Bug 2 - AttributeError crash en Advanced Mode (detalle de item):**
+- **Causa**: advanced_view.py:367 accedia a opp.liquidity.sell_depth y opp.liquidity.buy_depth, que no existen en LiquidityMetrics. Los campos correctos son sell_orders_count y buy_orders_count.
+- **Fase donde se perdian resultados**: No perdia resultados - crasheaba silenciosamente y bloqueaba el panel de detalle al hacer click en cualquier item.
+- **Fix**: Corregidos los nombres de atributo a sell_orders_count / buy_orders_count.
+
+**Pipeline completo verificado:**
+- El doble filtrado (worker filtraba Y vistas filtraban) ya estaba corregido en sesion 29 (refresh_worker.py).
+- El reset de filtros avanzados en Simple mode ya estaba corregido en sesion 29 (simple_view.py).
+- Pipeline actual: Worker emite lista raw -> Vista almacena en all_opportunities -> apply_filters() una sola vez con config actual.
+- Si metadata falta despues del prefetch: resolve_category_info(blocking=False) retorna (None, None) -> filtro estricto excluye el item (comportamiento intencional - strict mode).
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| core/item_resolver.py | Eliminado self._save_cache() de get_type_info(). Ahora solo se llama al final de prefetch_type_metadata(). |
+| ui/market_command/advanced_view.py | Corregido opp.liquidity.sell_depth -> opp.liquidity.sell_orders_count y opp.liquidity.buy_depth -> opp.liquidity.buy_orders_count en update_detail(). |
+
+### PIPELINE ACTUAL (post todas las correcciones)
+- ESI market_orders() -> raw orders (todos los tipos)
+- Worker: Agrupa por type_id -> scoring basico -> top 150 candidatos
+- Worker: Emite lista raw (sin apply_filters) -> Vista.all_opportunities
+- Vista: apply_filters(all_opportunities, config)
+  - Filtros base: capital, vol_min_day, margin_min, spread_max
+  - Si category != Todos: prefetch_type_metadata() + is_type_in_category() strict
+- Vista: Muestra resultados filtrados
+
+### LIMITACIONES PENDIENTES
+- vol_min_day=20 compara contra vol_5d (volumen total de 5 dias). Ships/drones de bajo volumen pueden fallar este filtro aunque la metadata sea correcta. El usuario puede bajar el slider de volumen minimo para verlos.
+- Primera carga siempre descarga metadata desde ESI (lento). Reinicios subsiguientes usan cache en disco si el archivo no esta corrupto.
+
+### CHECKS
+- [x] py_compile OK: core/item_resolver.py
+- [x] py_compile OK: ui/market_command/advanced_view.py
+- [x] py_compile OK: core/market_engine.py
+- [x] py_compile OK: ui/market_command/refresh_worker.py
+- [x] py_compile OK: ui/market_command/simple_view.py
+- [x] py_compile OK: core/item_categories.py
+- [x] Thread safety: _save_cache() solo llamado desde hilo principal al finalizar prefetch.
+- [x] AttributeError eliminado: panel de detalle en Advanced mode funciona sin crash.

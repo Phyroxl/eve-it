@@ -59,7 +59,10 @@ class ItemResolver:
                 'category_name': cat_name
             }
             self.cache[type_id] = clean_info
-            self._save_cache()
+            # No llamar _save_cache() aquí: este método puede ejecutarse desde
+            # múltiples hilos (ThreadPoolExecutor en prefetch_type_metadata).
+            # Escribir el archivo desde hilos simultáneos corrompe el JSON.
+            # prefetch_type_metadata ya llama _save_cache() una sola vez al final.
             return clean_info
         return None
 

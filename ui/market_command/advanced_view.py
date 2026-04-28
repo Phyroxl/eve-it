@@ -364,4 +364,4 @@ class MarketAdvancedView(QWidget):
         self.lbl_det_margin.setText(f"{opp.margin_net_pct:.1f}%")
         self.lbl_det_profit.setText(format_isk(opp.profit_per_unit, True))
         self.lbl_det_vol.setText(f"Vol (5D): {opp.liquidity.volume_5d}")
-        self.lbl_det_depth.setText(f"Deep: {opp.liquidity.sell_depth} sell / {opp.liquidity.buy_depth} buy")
+        self.lbl_det_depth.setText(f"Deep: {opp.liquidity.sell_orders_count} sell / {opp.liquidity.buy_orders_count} buy")

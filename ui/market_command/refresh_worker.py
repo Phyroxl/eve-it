@@ -107,10 +107,11 @@ class MarketRefreshWorker(QThread):
             opps = parse_opportunities(orders, history_dict, names_dict, self.config)
             
             # FILTRAR: Solo quedarnos con los que realmente procesamos (candidatos)
-            # y que pasan los filtros finales del motor.
             final_opps = [o for o in opps if o.type_id in candidates]
-            from core.market_engine import apply_filters
-            final_opps = apply_filters(final_opps, self.config)
+            
+            # Note: We NO LONGER call apply_filters here. 
+            # The UI View will call apply_filters on the results returned by this worker.
+            # This allows the user to change category/filters in the UI without a new scan.
             
             self.emit_progress(95, "Scoring...")
             for opp in final_opps:

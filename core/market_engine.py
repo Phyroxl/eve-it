@@ -66,37 +66,26 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
 def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) -> List[MarketOpportunity]:
     filtered = []; risk_map = {"Low": 1, "Medium": 2, "High": 3}
     
-    # [PIPELINE] Diagnóstico inicial
+    # [PIPELINE] Initial diagnostic
     total_raw = len(opportunities)
+    logger.info(f"[PIPELINE] before_apply_filters={total_raw}")
     
-    # A) Filtros base (rápidos)
+    # A) Base filters (fast)
     pass_base = []
     stats = {
-        "no_buy_price": 0,
-        "capital": 0,
-        "volume": 0,
-        "margin": 0,
-        "spread": 0,
-        "risk": 0,
-        "buy_orders": 0,
-        "sell_orders": 0,
-        "history_days": 0,
-        "profit_day": 0,
-        "plex": 0
+        "no_buy_price": 0, "capital": 0, "volume": 0, "margin": 0,
+        "spread": 0, "risk": 0, "buy_orders": 0, "sell_orders": 0,
+        "history_days": 0, "profit_day": 0, "plex": 0
     }
     
     for opp in opportunities:
-        # Filtros de integridad
         if opp.best_buy_price <= 0: stats["no_buy_price"] += 1; continue
-        if config.exclude_plex and "plex" in opp.item_name.lower(): stats["plex"] += 1; continue
-        
-        # Filtros económicos
+        if config.exclude_plex and ("plex" in opp.item_name.lower() or "skin" in opp.item_name.lower()): stats["plex"] += 1; continue
         if opp.best_buy_price > config.capital_max: stats["capital"] += 1; continue
         if opp.liquidity.volume_5d < config.vol_min_day: stats["volume"] += 1; continue
         if opp.margin_net_pct < config.margin_min_pct: stats["margin"] += 1; continue
         if opp.spread_pct > config.spread_max_pct: stats["spread"] += 1; continue
         
-        # Filtros de riesgo y liquidez
         current_risk = risk_map.get(opp.risk_level, 3)
         if current_risk > config.risk_max: stats["risk"] += 1; continue
         
@@ -107,61 +96,41 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
         
         pass_base.append(opp)
 
-    logger.info(f"[FILTER DEBUG] total={total_raw} | no_price={stats['no_buy_price']} plex={stats['plex']} cap={stats['capital']} vol={stats['volume']} margin={stats['margin']} spread={stats['spread']} risk={stats['risk']} buy_ord={stats['buy_orders']} sell_ord={stats['sell_orders']} hist={stats['history_days']} profit={stats['profit_day']} | pass_base={len(pass_base)}")
+    logger.info(f"[FILTER DEBUG] total={total_raw} | removed_no_buy_price={stats['no_buy_price']} removed_plex={stats['plex']} removed_capital={stats['capital']} removed_volume={stats['volume']} removed_margin={stats['margin']} removed_spread={stats['spread']} removed_risk={stats['risk']} removed_buy_orders={stats['buy_orders']} removed_sell_orders={stats['sell_orders']} removed_history_days={stats['history_days']} removed_profit_day={stats['profit_day']} | after_base={len(pass_base)}")
 
-    # B) Precarga de Metadata (Solo si se necesita filtro de categoría)
-    if config.selected_category != "Todos" and pass_base:
-        type_ids = [o.type_id for o in pass_base]
-        p_stats = ItemResolver.instance().prefetch_type_metadata(type_ids)
-        logger.info(f"[PIPELINE] category={config.selected_category} prefetch_total={p_stats['total']} cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}")
-        
-        # Verificación de metadata (Sample)
-        if pass_base:
-            test_opp = pass_base[0]
-            c_id, g_id, g_n, c_n = ItemResolver.instance().resolve_category_info(test_opp.type_id, blocking=False)
-            logger.info(f"[METADATA VERIFY] Sample: {test_opp.item_name} -> Cat: {c_n}({c_id}) Grp: {g_n}({g_id})")
+    # B) Shortcut for "Todos"
+    if config.selected_category == "Todos":
+        logger.info(f"[PIPELINE] selected_category=Todos | bypassing category filter | final_results={len(pass_base)}")
+        return pass_base
 
-    # C) Filtro de Categoría (Estricto)
+    # C) Metadata Prefetch (Only if category filter needed)
+    type_ids = [o.type_id for o in pass_base]
+    p_stats = ItemResolver.instance().prefetch_type_metadata(type_ids)
+    logger.info(f"[METADATA] total_unique={p_stats['total']} cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}")
+
+    # D) Category Filter (Strict)
     cat_pass = 0
     cat_fail = 0
-    debug_items = []
     
     for opp in pass_base:
-        if config.selected_category != "Todos":
-            cat_id, grp_id, grp_name, cat_name = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
-            
-            match, reason = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
-            
-            if len(debug_items) < 30:
-                debug_items.append({
-                    "name": opp.item_name, "type_id": opp.type_id, 
-                    "cat": f"{cat_name} ({cat_id})", "grp": f"{grp_name} ({grp_id})",
-                    "match": match, "reason": reason
-                })
-            
-            if not match:
-                cat_fail += 1
-                continue
-            
-            # Warnings de integridad
-            if config.selected_category == "Naves" and cat_id != 6 and cat_id != 32:
-                logger.warning(f"[CATEGORY WARNING] Non-ship item passed Naves filter: {opp.item_name} (Cat: {cat_name})")
-            if config.selected_category == "Drones" and cat_id != 18:
-                logger.warning(f"[CATEGORY WARNING] Non-drone item passed Drones filter: {opp.item_name} (Cat: {cat_name})")
-            if config.selected_category == "Ore / Menas" and cat_id != 25:
-                logger.warning(f"[CATEGORY WARNING] Non-ore item passed Ore/Menas filter: {opp.item_name} (Cat: {cat_name})")
+        cat_id, grp_id, grp_name, cat_name = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
+        
+        # If metadata is missing after prefetch, it might be a temporary ESI failure. 
+        # In strict mode, we exclude it to avoid trash in categories.
+        match, reason = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
+        
+        if match:
+            cat_pass += 1
+            filtered.append(opp)
+            logger.debug(f"[CATEGORY DEBUG] selected={config.selected_category} name={opp.item_name} cat={cat_name}({cat_id}) grp={grp_name}({grp_id}) match=True")
+        else:
+            cat_fail += 1
+            logger.debug(f"[CATEGORY DEBUG] selected={config.selected_category} name={opp.item_name} cat={cat_name}({cat_id}) grp={grp_name}({grp_id}) match=False reason={reason}")
 
-        cat_pass += 1
-        filtered.append(opp)
+    logger.info(f"[PIPELINE] selected_category={config.selected_category} before_cat={len(pass_base)} after_cat={len(filtered)} | category_pass={cat_pass} category_fail={cat_fail}")
     
-    # D) Reporte final
-    if config.selected_category != "Todos":
-        for d in debug_items:
-            logger.debug(f"[CLASSIFY ITEM] selected={config.selected_category} type_id={d['type_id']} name={d['name']} cat={d['cat']} grp={d['grp']} match={d['match']} reason={d['reason']}")
-            
-        logger.info(f"[PIPELINE] final_results={len(filtered)} | category_pass={cat_pass} category_fail={cat_fail}")
-        if len(filtered) == 0 and cat_fail > 0:
-            logger.warning(f"[CATEGORY WARNING] Category filter '{config.selected_category}' excluded ALL ({cat_fail}) items that passed base filters.")
+    if len(filtered) == 0 and cat_fail > 0:
+        logger.warning(f"[CATEGORY WARNING] Category filter '{config.selected_category}' excluded ALL ({cat_fail}) items that passed base filters.")
 
     return filtered
 

@@ -321,6 +321,14 @@ class MarketSimpleView(QWidget):
         self.current_config.sales_tax_pct = self.spin_tax.value()
         self.current_config.exclude_plex = self.chk_plex.isChecked()
         self.current_config.selected_category = self.combo_category.currentText()
+        
+        # Reset advanced filters to safe defaults in Simple Mode
+        self.current_config.buy_orders_min = 0
+        self.current_config.sell_orders_min = 0
+        self.current_config.history_days_min = 0
+        self.current_config.profit_day_min = 0
+        self.current_config.risk_max = 3 # Any risk
+        self.current_config.score_min = 0
 
     def on_apply_filters(self):
         self.update_config_from_ui()

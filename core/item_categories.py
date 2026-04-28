@@ -22,16 +22,16 @@ from typing import List, Dict, Set, Tuple
 # 1982 = Abyssal Filaments
 
 CATEGORY_MAPPING = {
-    "Naves": {"categories": {6}}, 
-    "Drones": {"categories": {18}},
+    "Naves": {"categories": {6}}, # Ships (Strategic Cruisers category 32 excluded as requested)
+    "Drones": {"categories": {18}}, # Drones & Fighters
     "Módulos": {
-        "categories": {7, 42}, 
+        "categories": {7, 42}, # Modules & Structure Modules
         "exclude_groups": {773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 1137, 1159, 1308, 1136, 1158, 1206, 1226}
     },
     "Munición": {"categories": {8}},
     "Munición avanzada": {"categories": {8}, "keywords": ["Advanced", "Navy", "Faction", "T2", "Void", "Quake", "Javelin"]},
     "Minerales": {"groups": {18}},
-    "Ore / Menas": {"categories": {25}},
+    "Ore / Menas": {"categories": {25}}, # Asteroids (Ore/Ice)
     "Salvage": {"groups": {1546}},
     "Implants": {"categories": {20}},
     "Rigs": {"groups": {773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 1137, 1159, 1308, 1136, 1158, 1206, 1226}},
