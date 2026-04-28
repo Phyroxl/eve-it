@@ -463,9 +463,14 @@ class MarketMyOrdersView(QWidget):
         if not t: auth.login(); return
         self._start_sync_ui("CARGANDO INVENTARIO..."); self.inventory_status = "loading"
         self.inv_worker = InventoryWorker(auth.char_id, t); self.inv_worker.status_update.connect(self._on_sync_update)
-        def on_done(data): self.inventory_cache = data; self.inventory_status = "ready"; self._stop_sync_ui("INVENTARIO CARGADO")
-            if data: InventoryAnalysisDialog(data, self.inventory_loc_name, self.image_loader, self).exec()
-            else: QMessageBox.information(self, "Vacio", "No hay items en esta ubicacion.")
+        def on_done(data):
+            self.inventory_cache = data
+            self.inventory_status = "ready"
+            self._stop_sync_ui("INVENTARIO CARGADO")
+            if data:
+                InventoryAnalysisDialog(data, self.inventory_loc_name, self.image_loader, self).exec()
+            else:
+                QMessageBox.information(self, "Vacio", "No hay items en esta ubicacion.")
         self.inv_worker.finished_data.connect(on_done); self.inv_worker.location_info.connect(lambda n: setattr(self, "inventory_loc_name", n)); self.inv_worker.start()
 
     def update_taxes_info(self):
