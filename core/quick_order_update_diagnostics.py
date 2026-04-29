@@ -130,4 +130,66 @@ def format_quick_update_report(data: dict) -> str:
     else:
         lines.append("  (none)")
 
+    # ------------------------------------------------------------------ automation
+    automation = data.get("automation") or {}
+    if automation:
+        lines.append("")
+        lines += _format_automation_section(automation)
+
     return "\n".join(lines)
+
+
+def format_automation_section(automation: dict) -> str:
+    """Return just the [AUTOMATION] section as a string (for appending to existing report)."""
+    return "\n".join(_format_automation_section(automation))
+
+
+def _format_automation_section(automation: dict) -> list:
+    def _b(val) -> str:
+        if val is None:
+            return "N/A"
+        return str(val)
+
+    lines = []
+    lines.append("[AUTOMATION]")
+    lines.append(f"  Enabled              : {_b(automation.get('enabled'))}")
+    lines.append(f"  Dry Run              : {_b(automation.get('dry_run'))}")
+    lines.append(f"  Status               : {_b(automation.get('status'))}")
+    lines.append(f"  Window Found         : {_b(automation.get('window_found'))}")
+    lines.append(f"  Window Title         : {_b(automation.get('window_title'))}")
+    lines.append(f"  Focused              : {_b(automation.get('focused'))}")
+    lines.append(f"  Clipboard Set        : {_b(automation.get('clipboard_set'))}")
+    lines.append(f"  Recommended Price    : {_b(automation.get('recommended_price_text'))}")
+
+    steps_exec = automation.get("steps_executed") or []
+    lines.append("  Steps Executed:")
+    for s in steps_exec:
+        lines.append(f"    + {s}")
+    if not steps_exec:
+        lines.append("    (none)")
+
+    steps_skip = automation.get("steps_skipped") or []
+    lines.append("  Steps Skipped:")
+    for s in steps_skip:
+        lines.append(f"    - {s}")
+    if not steps_skip:
+        lines.append("    (none)")
+
+    a_errors = automation.get("errors") or []
+    lines.append("  Errors:")
+    for e in a_errors:
+        lines.append(f"    ! {e}")
+    if not a_errors:
+        lines.append("    (none)")
+
+    delays = automation.get("delays") or {}
+    lines.append("  Delays (ms):")
+    if delays:
+        for k, v in delays.items():
+            lines.append(f"    {k}: {v}")
+    else:
+        lines.append("    (none)")
+
+    lines.append(f"  Final Confirm Action : NOT_EXECUTED_BY_DESIGN")
+
+    return lines

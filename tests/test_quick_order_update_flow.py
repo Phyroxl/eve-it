@@ -485,5 +485,101 @@ class TestDialogOpenMarketButton(unittest.TestCase):
         self.assertNotEqual(cb, "")  # clipboard was set
 
 
+# ---------------------------------------------------------------------------
+# 9. Phase 2 automation button
+# ---------------------------------------------------------------------------
+class TestAutomationButton(unittest.TestCase):
+    """Automation button behaviour for disabled / dry-run / enabled configs."""
+
+    def _make_dialog(self, automation_cfg=None):
+        order = _FakeOrder()
+        order.analysis = _FakeAnalysis()
+        rec = build_order_update_recommendation(order, order.analysis)
+        dlg = QuickOrderUpdateDialog(order=order, recommendation=rec)
+        if automation_cfg is not None:
+            dlg._automation_cfg = automation_cfg
+            # Rebuild button label to match new config
+            enabled = automation_cfg.get("enabled", False)
+            dry_run = automation_cfg.get("dry_run", True)
+            if enabled and dry_run:
+                dlg.btn_phase2.setText("AUTOMATIZAR (DRY-RUN)")
+            elif enabled:
+                dlg.btn_phase2.setText("AUTOMATIZAR (FASE 2)")
+            else:
+                dlg.btn_phase2.setText("AUTOMATIZAR (DESACTIVADO)")
+        return dlg
+
+    def tearDown(self):
+        # Clean up any dialog that was created
+        pass
+
+    def test_automation_button_exists(self):
+        dlg = self._make_dialog()
+        self.assertTrue(hasattr(dlg, "btn_phase2"), "btn_phase2 must exist")
+        dlg.close()
+
+    def test_automation_button_is_enabled_widget(self):
+        dlg = self._make_dialog()
+        self.assertTrue(dlg.btn_phase2.isEnabled(),
+                        "btn_phase2 widget must always be clickable")
+        dlg.close()
+
+    def test_disabled_config_shows_message_not_automation(self):
+        """With enabled=False, click sets status message without running automation."""
+        from PySide6.QtWidgets import QApplication
+        dlg = self._make_dialog(automation_cfg={"enabled": False, "dry_run": True})
+        with patch("core.window_automation.EVEWindowAutomation") as mock_auto:
+            dlg.btn_phase2.click()
+            # Should NOT have created EVEWindowAutomation
+            mock_auto.assert_not_called()
+        status_text = dlg._status_lbl.text()
+        self.assertGreater(len(status_text), 0, "status label must be set")
+        self.assertIn("desactivad", status_text.lower(),
+                      "status must mention automation is disabled")
+        dlg.close()
+
+    def test_dry_run_config_executes_automation(self):
+        """With enabled=True dry_run=True, click runs automation and updates report."""
+        dlg = self._make_dialog(automation_cfg={
+            "enabled": True, "dry_run": True, "confirm_required": True,
+            "open_market_delay_ms": 0, "focus_client_delay_ms": 0,
+            "paste_price_delay_ms": 0, "post_action_delay_ms": 0,
+            "client_window_title_contains": "EVE",
+            "use_pywinauto": False, "use_pyautogui_fallback": False,
+            "max_attempts": 1, "restore_clipboard_after": False,
+        })
+        dlg.btn_phase2.click()
+
+        status_text = dlg._status_lbl.text()
+        self.assertGreater(len(status_text), 0)
+        # Should mention dry-run
+        self.assertIn("dry", status_text.lower())
+        # Report edit should contain automation section
+        self.assertIn("[AUTOMATION]", dlg._report_edit.toPlainText())
+        dlg.close()
+
+    def test_copy_button_still_works_after_automation_button_added(self):
+        """Existing copy button must not be broken by Phase 2 changes."""
+        from PySide6.QtGui import QGuiApplication
+        dlg = self._make_dialog()
+        QGuiApplication.clipboard().setText("")
+        dlg.btn_copy.click()
+        cb = QGuiApplication.clipboard().text()
+        self.assertNotEqual(cb, "", "copy button must still set clipboard")
+        dlg.close()
+
+    def test_market_button_still_works_after_automation_button_added(self):
+        """Existing market button must not be broken by Phase 2 changes."""
+        callback = MagicMock()
+        order = _FakeOrder()
+        order.analysis = _FakeAnalysis()
+        rec = build_order_update_recommendation(order, order.analysis)
+        dlg = QuickOrderUpdateDialog(order=order, recommendation=rec,
+                                     open_market_callback=callback)
+        dlg.btn_market.click()
+        callback.assert_called_once_with(order)
+        dlg.close()
+
+
 if __name__ == "__main__":
     unittest.main()

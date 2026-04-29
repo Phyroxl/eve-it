@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "dry_run": true,
+  "confirm_required": true,
+  "open_market_delay_ms": 1000,
+  "focus_client_delay_ms": 700,
+  "paste_price_delay_ms": 300,
+  "post_action_delay_ms": 300,
+  "restore_clipboard_after": false,
+  "client_window_title_contains": "EVE",
+  "use_pywinauto": true,
+  "use_pyautogui_fallback": false,
+  "max_attempts": 1
+}

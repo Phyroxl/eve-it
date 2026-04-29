@@ -2,8 +2,21 @@
 
 **Proyecto:** EVE iT / Market Command / Mis Pedidos  
 **Feature:** Quick Order Update Assistant  
-**Estado:** Fase 1 implementada — commit `FEAT: Add Quick Order Update popup for My Orders`  
-**Fecha diseño:** 2026-04-29 | **Fecha implementación Fase 1:** 2026-04-29  
+**Estado:** Fase 2 experimental implementada — commit `FEAT: Add experimental Quick Order Update automation shell`  
+**Fecha diseño:** 2026-04-29 | **Fecha implementación Fase 1:** 2026-04-29 | **Fase 2:** 2026-04-29
+
+### Checklist Fase 2 completada
+
+- [x] `config/quick_order_update.json` — enabled=false, dry_run=true por defecto
+- [x] `core/quick_order_update_config.py` — load/save/validate, JSON corrupto tolerado, delays clamp [0, 30000]
+- [x] `core/window_automation.py` — `EVEWindowAutomation`, disabled/dry_run/real, pywinauto/pyautogui condicional
+- [x] Botón "AUTOMATIZAR" en `QuickOrderUpdateDialog` — siempre clicable, comportamiento según config
+- [x] Sección `[AUTOMATION]` en diagnósticos
+- [x] `Final Confirm Action: NOT_EXECUTED_BY_DESIGN` — invariante de seguridad explícita
+- [x] `tests/test_quick_order_update_config.py` — 10 tests
+- [x] `tests/test_window_automation.py` — 15 tests
+- [x] Tests de botón Phase 2 en `test_quick_order_update_flow.py`
+- [x] No se tocaron: filtros, cache, iconos, auth, candidate selector, freshness, pricing
 
 ### Checklist Fase 1 completada
 
@@ -441,14 +454,16 @@ def format_quick_update_report(data: dict) -> str:
 - Abrir mercado funciona
 - El popup no bloquea la UI
 
-### Fase 2 — Automatización experimental (opt-in)
+### Fase 2 — Automatización experimental (opt-in) ✓ IMPLEMENTADA
 
 **Entregables:**
-- `core/window_automation.py`
-- `config/quick_order_update.json`
-- Botón "Iniciar asistente" en el popup (activado solo si `enabled=True` en config)
-- `dry_run=True` por defecto — nunca ejecuta sin flag explícito
-- Logs detallados de cada step
+- `core/window_automation.py` ✓
+- `core/quick_order_update_config.py` ✓
+- `config/quick_order_update.json` (enabled=false, dry_run=true) ✓
+- Botón "AUTOMATIZAR" en el popup — siempre clicable, comportamiento según config ✓
+- `dry_run=True` por defecto — nunca ejecuta sin flag explícito ✓
+- Logs detallados de cada step ✓
+- Sección [AUTOMATION] en diagnósticos ✓
 
 **Requisitos de seguridad Fase 2:**
 - `enabled=False` por defecto (opt-in manual en JSON)

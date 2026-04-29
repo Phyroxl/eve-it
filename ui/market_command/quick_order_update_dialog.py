@@ -1,7 +1,7 @@
 """
-Non-modal Quick Order Update dialog (Fase 1).
+Non-modal Quick Order Update dialog (Fase 1 + Fase 2 experimental).
 Shows order data, pricing recommendation, and action buttons.
-No automation (Fase 2).
+Automation button connects to EVEWindowAutomation when enabled in config.
 """
 import logging
 
@@ -59,6 +59,13 @@ class QuickOrderUpdateDialog(QDialog):
         self.open_market_callback = open_market_callback
         self._diag_report = diag_report
         self._report_visible = False
+
+        # Load automation config once at init
+        try:
+            from core.quick_order_update_config import load_quick_order_update_config
+            self._automation_cfg = load_quick_order_update_config()
+        except Exception:
+            self._automation_cfg = {"enabled": False, "dry_run": True}
 
         self.setWindowTitle(f"Quick Order Update — {order.item_name}")
         self.setMinimumSize(540, 560)
@@ -246,8 +253,18 @@ class QuickOrderUpdateDialog(QDialog):
         self.btn_both   = QPushButton("COPIAR + ABRIR")
         self.btn_report = QPushButton("VER REPORTE")
         self.btn_close  = QPushButton("CERRAR")
-        self.btn_phase2 = QPushButton("AUTOMATIZAR (FASE 2)")
-        self.btn_phase2.setEnabled(False)
+
+        # Phase 2: label reflects enabled state
+        automation_enabled = self._automation_cfg.get("enabled", False)
+        dry_run            = self._automation_cfg.get("dry_run", True)
+        if automation_enabled and dry_run:
+            phase2_label = "AUTOMATIZAR (DRY-RUN)"
+        elif automation_enabled:
+            phase2_label = "AUTOMATIZAR (FASE 2)"
+        else:
+            phase2_label = "AUTOMATIZAR (DESACTIVADO)"
+        self.btn_phase2 = QPushButton(phase2_label)
+        self.btn_phase2.setEnabled(True)   # always clickable — handler explains if disabled
 
         for btn in [self.btn_copy, self.btn_market, self.btn_report,
                     self.btn_close, self.btn_phase2]:
@@ -256,15 +273,18 @@ class QuickOrderUpdateDialog(QDialog):
         self.btn_both.setStyleSheet(
             self._BTN.replace("background:#1e293b", "background:#1d4ed8")
         )
-        self.btn_close.setStyleSheet(
-            self._BTN.replace("background:#1e293b", "background:#1e293b")
-        )
+
+        if automation_enabled:
+            self.btn_phase2.setStyleSheet(
+                self._BTN.replace("background:#1e293b", "background:#065f46")
+            )
 
         self.btn_copy.clicked.connect(self._on_copy_price)
         self.btn_market.clicked.connect(self._on_open_market)
         self.btn_both.clicked.connect(self._on_copy_and_open)
         self.btn_report.clicked.connect(self._toggle_report)
         self.btn_close.clicked.connect(self.close)
+        self.btn_phase2.clicked.connect(self._on_automate)
 
         btn_row.addWidget(self.btn_copy)
         btn_row.addWidget(self.btn_market)
@@ -304,3 +324,88 @@ class QuickOrderUpdateDialog(QDialog):
             self._report_edit.hide()
             self.btn_report.setText("VER REPORTE")
         self.adjustSize()
+
+    # ------------------------------------------------------------------
+    # Phase 2: automation
+    # ------------------------------------------------------------------
+    def _on_automate(self):
+        cfg = self._automation_cfg
+        if not cfg.get("enabled", False):
+            msg = (
+                "Automatización experimental desactivada. "
+                "Activa enabled=true en config/quick_order_update.json para usar esta función."
+            )
+            self._status_lbl.setText(msg)
+            self._status_lbl.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:800;")
+            _log.info("[QUICK UPDATE] automation button clicked but enabled=false")
+            return
+
+        price_text = format_price_for_clipboard(
+            self.recommendation.get("recommended_price", 0)
+        )
+        order_data = {
+            "order_id":   self.order.order_id,
+            "type_id":    self.order.type_id,
+            "item_name":  self.order.item_name,
+            "price":      self.order.price,
+        }
+
+        self._status_lbl.setText("Ejecutando automatización experimental...")
+        self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
+
+        try:
+            from core.window_automation import EVEWindowAutomation
+            from core.quick_order_update_diagnostics import format_automation_section
+            auto = EVEWindowAutomation(cfg)
+            result = auto.execute_quick_order_update(order_data, price_text)
+        except Exception as exc:
+            _log.error(f"[QUICK UPDATE] automation error: {exc}")
+            self._status_lbl.setText(f"Error en automatización: {exc}")
+            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+            return
+
+        # Update the report panel with automation results
+        try:
+            from core.quick_order_update_diagnostics import format_automation_section
+            auto_section = format_automation_section(result)
+            updated_report = self._diag_report + "\n\n" + auto_section
+            self._diag_report = updated_report
+            self._report_edit.setPlainText(updated_report)
+        except Exception as exc:
+            _log.warning(f"[QUICK UPDATE] could not update diag report: {exc}")
+
+        status = result.get("status", "unknown")
+        dry_run = result.get("dry_run", True)
+        errors  = result.get("errors", [])
+
+        if status == "dry_run":
+            msg = "Dry-run completado — no se tocó ninguna ventana. Ver reporte para detalles."
+            color = "#10b981"
+        elif status == "success":
+            msg = "Automatización completada. Precio copiado y ventana enfocada."
+            color = "#10b981"
+        elif status == "partial":
+            err_summary = errors[0] if errors else "error desconocido"
+            msg = f"Automatización parcial: {err_summary}"
+            color = "#f59e0b"
+        elif status == "error":
+            err_summary = errors[0] if errors else "error desconocido"
+            msg = f"Error en automatización: {err_summary}"
+            color = "#ef4444"
+        else:
+            msg = f"Estado: {status}"
+            color = "#94a3b8"
+
+        self._status_lbl.setText(msg)
+        self._status_lbl.setStyleSheet(
+            f"color:{color}; font-size:9px; font-weight:800;"
+        )
+
+        # Auto-show report so user can see what happened
+        if not self._report_visible:
+            self._toggle_report()
+
+        _log.info(
+            f"[QUICK UPDATE] automation status={status} dry_run={dry_run} "
+            f"errors={len(errors)}"
+        )
