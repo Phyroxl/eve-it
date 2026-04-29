@@ -139,7 +139,11 @@ class MarketRefreshWorker(QThread):
             
             t_candidates = time.time() - t0
             self.diagnostics.candidate_selection_elapsed = t_candidates
-            logger.info(f"[WORKER DIAG] economic_cands={len(all_cands)} viable={len(viable_cands)} elapsed={t_candidates:.2f}s")
+            
+            # Ordenar pool final por score una sola vez
+            final_pool_cands = sorted(final_pool_cands, key=lambda x: x.score, reverse=True)
+            
+            logger.info(f"[WORKER DIAG] economic_cands={len(all_cands)} viable={len(viable_cands)} sorted_pool={len(final_pool_cands)} elapsed={t_candidates:.2f}s")
             self.emit_progress(18, f"Found {len(viable_cands)} viable candidates.")
 
             # Paso 5: Selección de candidatos iniciales (Fase 1)
@@ -151,8 +155,8 @@ class MarketRefreshWorker(QThread):
             else:
                 # Solo items con metadata ya en caché
                 resolver = ItemResolver.instance()
-                # Usamos una lista más amplia para el prefetch en Fase 2, pero en Fase 1 solo lo que está listo
-                broad_stats = sorted(final_pool_cands, key=lambda x: x.score, reverse=True)[:_BROAD_POOL_SIZE]
+                # Usamos el pool ya ordenado
+                broad_stats = final_pool_cands[:_BROAD_POOL_SIZE]
                 initial_candidates = []
                 for c in broad_stats:
                     t_id = c.type_id

@@ -32,10 +32,9 @@ def build_economic_candidates(grouped_orders: Dict[int, Dict[str, List[Dict]]], 
         if not buys or not sells:
             continue
 
-        # Mejores precios (asumiendo que las órdenes ya vienen ordenadas por el cliente ESI o el worker)
-        # buy: mayor precio primero. sell: menor precio primero.
-        best_buy = buys[0]['price']
-        best_sell = sells[0]['price']
+        # Mejores precios (max para buy, min para sell)
+        best_buy = max(o['price'] for o in buys)
+        best_sell = min(o['price'] for o in sells)
 
         if best_buy <= 0:
             continue

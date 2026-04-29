@@ -10,6 +10,20 @@ class TestMarketCandidateSelector(unittest.TestCase):
         self.config.margin_min_pct = 5
         self.config.exclude_plex = True
 
+    def test_build_candidates_unsorted(self):
+        # Buy orders desordenadas, Sell orders desordenadas
+        grouped = {
+            10: {
+                'buy': [{'price': 50}, {'price': 100}, {'price': 70}],
+                'sell': [{'price': 200}, {'price': 150}, {'price': 180}]
+            }
+        }
+        cands = build_economic_candidates(grouped, self.config)
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0].best_buy, 100)
+        self.assertEqual(cands[0].best_sell, 150)
+        self.assertEqual(cands[0].spread_pct, 50.0)
+
     def test_build_candidates(self):
         grouped = {
             1: {
@@ -24,12 +38,14 @@ class TestMarketCandidateSelector(unittest.TestCase):
         cands = build_economic_candidates(grouped, self.config)
         self.assertEqual(len(cands), 2)
         
-        # Cand 1: Buy 100, Sell 120. Profit = 120*(0.96) - 100*(1.03) = 115.2 - 103 = 12.2 (aprox)
-        # Broker=3%, Tax=1% -> Total loss approx 4% sell, 3% buy
-        self.assertEqual(cands[0].type_id, 1)
-        self.assertGreater(cands[0].margin_pct, 0)
-        self.assertEqual(cands[1].type_id, 2)
-        self.assertLess(cands[1].margin_pct, 0)
+        # Cand 1: Buy 100, Sell 120.
+        c1 = next(c for c in cands if c.type_id == 1)
+        self.assertEqual(c1.best_buy, 100)
+        self.assertEqual(c1.best_sell, 120)
+        self.assertGreater(c1.margin_pct, 0)
+        
+        c2 = next(c for c in cands if c.type_id == 2)
+        self.assertLess(c2.margin_pct, 0)
 
     def test_prefilter_candidates(self):
         from core.market_candidate_selector import CandidateStats
