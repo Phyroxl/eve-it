@@ -6,11 +6,11 @@
   "exclude_plex": false,
   "broker_fee_pct": 3.0,
   "sales_tax_pct": 1.0,
-  "score_min": 0,
+  "score_min": 0.0,
   "risk_max": 3,
   "buy_orders_min": 0,
   "sell_orders_min": 0,
   "history_days_min": 0,
-  "profit_day_min": 0,
-  "selected_category": "Drones"
+  "profit_day_min": 0.0,
+  "selected_category": "Todos"
 }

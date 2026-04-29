@@ -2705,3 +2705,22 @@ Implementar una ventana modal de diagnóstico que se abre automáticamente al fina
 - **Reporte d47c572b**: Validado que UI Filtered Results = 200 y el candidate selector funciona correctamente.
 - **Regresión**: Suite completa de tests (PASS).
 - **Sintaxis**: py_compile (PASS) en todos los módulos de UI y Core.
+
+## Sesión 36 (Parte 3): Optimización de Rendimiento de Órdenes de Mercado
+
+### Paginación Concurrente
+- **ESIClient**: Se implementó ThreadPoolExecutor en market_orders para descargar todas las páginas en paralelo (8 workers por defecto).
+- **Robustez**: Añadido helper _fetch_market_page con reintentos automáticos y manejo de 429 para evitar fallos por saturación de red.
+
+### Cache de Sesión
+- **MarketOrdersCache**: Nuevo singleton que almacena el snapshot completo de órdenes de mercado en memoria con un TTL de 120 segundos.
+- **UX**: El segundo escaneo dentro del TTL ahora es casi instantáneo (Cache HIT), evitando descargar ~400k órdenes innecesariamente.
+
+### Telemetría de Rendimiento
+- **Reporte**: Nueva sección [MARKET ORDERS FETCH] con detalles de Source (ESI vs Cache), Páginas Totales, Trabajadores y Edad del Cache.
+- **Progreso**: Feedback visual más claro durante la descarga y verificación de cache.
+
+### Verificación
+- **Sintaxis**: py_compile (PASS).
+- **Tests**: Nueva suite 	est_market_orders_cache.py (PASS) + Regresión completa (PASS).
+- **Rendimiento**: Reducción drástica del tiempo de escaneo repetido y mejora significativa en el primer fetch.

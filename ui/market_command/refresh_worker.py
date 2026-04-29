@@ -10,6 +10,7 @@ from core.market_models import FilterConfig
 from core.item_resolver import ItemResolver
 from core.item_categories import is_type_in_category
 from core.market_history_cache import MarketHistoryCache
+from core.market_orders_cache import MarketOrdersCache
 from core.market_scan_diagnostics import MarketScanDiagnostics
 from core.market_candidate_selector import build_economic_candidates, prefilter_candidates, select_final_candidates
 
@@ -67,23 +68,44 @@ class MarketRefreshWorker(QThread):
             t_start = time.time()
             selected_category = getattr(self.config, 'selected_category', 'Todos')
             self.diagnostics.mode = "Advanced" if "Advanced" in str(self.__class__) else "Simple"
-
             # ──────────────────────────────────────────────────────────────────
-            # FASE 1 — SNAPSHOT RÁPIDO (objetivo: < 15 segundos)
+            # FASE 1 — SNAPSHOT RÁPIDO
             # ──────────────────────────────────────────────────────────────────
             self.diagnostics.notes.append("Starting Phase 1 (Initial Data)")
 
             # Paso 1: Descargar market orders
             t0 = time.time()
-            self.emit_progress(5, "Fetching market orders...")
-            logger.info(f"[WORKER DIAG] selected_category={selected_category} region_id={self.region_id}")
+            self.emit_progress(2, "Checking market snapshot cache...")
             
-            orders = self.client.market_orders(self.region_id)
+            cache = MarketOrdersCache.instance()
+            orders = cache.get(self.region_id)
+            
+            if orders:
+                self.diagnostics.market_orders_source = "memory_cache"
+                self.diagnostics.market_orders_cache_hit = True
+                self.diagnostics.market_orders_cache_age_seconds = cache.get_age(self.region_id)
+                self.emit_progress(5, "Using cached market snapshot...")
+                logger.info(f"[WORKER] Cache HIT for region {self.region_id}. Age: {self.diagnostics.market_orders_cache_age_seconds:.1f}s")
+            else:
+                self.diagnostics.market_orders_source = "esi"
+                self.diagnostics.market_orders_cache_hit = False
+                self.emit_progress(5, "Fetching market orders from ESI (concurrent)...")
+                logger.info(f"[WORKER] Cache MISS for region {self.region_id}. Fetching from ESI...")
+                
+                orders = self.client.market_orders(self.region_id)
+                if orders:
+                    cache.set(self.region_id, orders)
+
             if not self.is_running: return
             
             t_orders = time.time() - t0
             self.diagnostics.market_orders_elapsed = t_orders
             self.diagnostics.raw_orders_count = len(orders) if orders else 0
+            
+            # Intentar estimar páginas (1000 orders/page) para el diagnóstico
+            self.diagnostics.market_orders_pages_total = (self.diagnostics.raw_orders_count // 1000) + 1
+            self.diagnostics.market_orders_pages_fetched = self.diagnostics.market_orders_pages_total
+            self.diagnostics.market_orders_workers = self.client.MARKET_ORDERS_WORKERS
 
             if not orders:
                 self.diagnostics.status = "Failed: No orders"
@@ -92,7 +114,8 @@ class MarketRefreshWorker(QThread):
                 self.diagnostics.finished_at = time.time()
                 self.diagnostics_ready.emit(self.diagnostics)
                 return
-            logger.info(f"[WORKER DIAG] raw_orders={len(orders)} elapsed={t_orders:.1f}s")
+            
+            logger.info(f"[WORKER DIAG] raw_orders={len(orders)} source={self.diagnostics.market_orders_source} elapsed={t_orders:.1f}s")
 
             # Paso 2: Agrupar por type_id
             t0 = time.time()

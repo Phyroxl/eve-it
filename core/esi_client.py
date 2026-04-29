@@ -96,46 +96,80 @@ class ESIClient:
                 time.sleep(1)
         return None
 
+    MARKET_ORDERS_WORKERS = 8
+
+    def _fetch_market_page(self, region_id, page, retries=3):
+        """Helper para descargar una página individual con reintentos."""
+        while retries > 0:
+            self._rate_limit()
+            try:
+                params = {'page': page, 'order_type': 'all'}
+                response = self.session.get(f"{self.BASE_URL}/markets/{region_id}/orders/", params=params, timeout=15)
+                if response.status_code == 200:
+                    return response.json(), int(response.headers.get('X-Pages', 1))
+                elif response.status_code == 429:
+                    retry_after = float(response.headers.get('Retry-After', 5))
+                    self.rate_limit_hits += 1
+                    logger.warning(f"[ESI RATE LIMIT] page={page} retry_after={retry_after}s hits={self.rate_limit_hits}")
+                    time.sleep(retry_after)
+                    retries -= 1
+                    continue
+                elif response.status_code >= 500:
+                    time.sleep(1)
+                    retries -= 1
+                    continue
+                else:
+                    return None, None
+            except Exception as e:
+                logger.warning(f"ESI market_orders error page {page}: {e}")
+                time.sleep(1)
+                retries -= 1
+        return None, None
+
     def market_orders(self, region_id: int):
+        """
+        Descarga todas las órdenes de mercado de una región usando paginación concurrente.
+        """
         cache_key = f"market_orders_{region_id}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
 
-        all_orders = []
-        page = 1
-        while True:
-            self._rate_limit()
-            try:
-                params = {'page': page, 'order_type': 'all'}
-                response = self.session.get(f"{self.BASE_URL}/markets/{region_id}/orders/", params=params, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    all_orders.extend(data)
-                    pages = int(response.headers.get('X-Pages', 1))
-                    if page >= pages:
-                        break
-                    page += 1
-                elif response.status_code == 429:
-                    retry_after = float(response.headers.get('Retry-After', 5))
-                    self.rate_limit_hits += 1
-                    logger.warning(
-                        f"[ESI RATE LIMIT] market_orders region={region_id} "
-                        f"retry_after={retry_after}s hits={self.rate_limit_hits}"
-                    )
-                    time.sleep(retry_after)
-                    continue
-                elif response.status_code >= 500:
-                    time.sleep(1)
-                    continue
-                else:
-                    break
-            except Exception as e:
-                logger.warning(f"ESI market_orders error (region {region_id}): {e}")
-                time.sleep(1)
-                break
+        # 1. Obtener primera página para conocer el total
+        first_page_data, total_pages = self._fetch_market_page(region_id, 1)
+        if first_page_data is None:
+            return []
+        
+        all_orders = list(first_page_data)
+        if total_pages <= 1:
+            self.cache.set(cache_key, all_orders, 300)
+            return all_orders
 
-        if all_orders:
+        # 2. Descarga concurrente de páginas restantes
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        pages_to_fetch = range(2, total_pages + 1)
+        pages_failed = 0
+        
+        logger.info(f"[MARKET ORDERS] Region {region_id}: Downloading {total_pages} pages using {self.MARKET_ORDERS_WORKERS} workers...")
+        
+        with ThreadPoolExecutor(max_workers=self.MARKET_ORDERS_WORKERS) as executor:
+            future_to_page = {executor.submit(self._fetch_market_page, region_id, p): p for p in pages_to_fetch}
+            for future in as_completed(future_to_page):
+                p = future_to_page[future]
+                try:
+                    data, _ = future.result()
+                    if data:
+                        all_orders.extend(data)
+                    else:
+                        pages_failed += 1
+                        logger.error(f"[MARKET ORDERS] Page {p} failed after retries.")
+                except Exception as e:
+                    pages_failed += 1
+                    logger.error(f"[MARKET ORDERS] Page {p} exception: {e}")
+
+        logger.info(f"[MARKET ORDERS] Finished. Total orders: {len(all_orders)}, Failed pages: {pages_failed}")
+        
+        if all_orders and pages_failed == 0:
             self.cache.set(cache_key, all_orders, 300)  # Cache 5 mins
         return all_orders
 

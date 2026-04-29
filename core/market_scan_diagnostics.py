@@ -88,6 +88,15 @@ class MarketScanDiagnostics:
     icon_cache_size: int = 0
     icon_last_errors: List[str] = field(default_factory=list)
     
+    # Market Orders Fetch Details
+    market_orders_source: str = "esi"
+    market_orders_cache_hit: bool = False
+    market_orders_cache_age_seconds: float = 0.0
+    market_orders_pages_total: int = 0
+    market_orders_pages_fetched: int = 0
+    market_orders_pages_failed: int = 0
+    market_orders_workers: int = 0
+
     # Timings (seconds)
     market_orders_elapsed: float = 0.0
     grouping_elapsed: float = 0.0
@@ -188,6 +197,18 @@ class MarketScanDiagnostics:
             report.append("Last Icon Errors:")
             for err in self.icon_last_errors:
                 report.append(f"  ! {err}")
+        report.append("")
+
+        report.append("[MARKET ORDERS FETCH]")
+        report.append(f"Source:                   {self.market_orders_source.upper()}")
+        report.append(f"Cache Hit:                {self.market_orders_cache_hit}")
+        if self.market_orders_cache_hit:
+            report.append(f"Cache Age:                {self.market_orders_cache_age_seconds:.1f}s")
+        report.append(f"Pages Total:              {self.market_orders_pages_total}")
+        report.append(f"Pages Fetched/Failed:     {self.market_orders_pages_fetched} / {self.market_orders_pages_failed}")
+        report.append(f"Workers Used:             {self.market_orders_workers}")
+        report.append(f"Orders Count:             {self.raw_orders_count}")
+        report.append(f"Elapsed:                  {self.market_orders_elapsed:.2f}s")
         report.append("")
 
         report.append("[WORKER CONFIG SNAPSHOT]")
