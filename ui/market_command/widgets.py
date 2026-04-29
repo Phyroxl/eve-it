@@ -113,8 +113,6 @@ class MarketTableWidget(QTableWidget):
         self.setColumnCount(9)
         headers = ["Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas (?)"]
         self.setHorizontalHeaderLabels(headers)
-        self.icon_service = EveIconService.instance()
-        self._image_generation = 0
         
         tooltips = [
             "Ranking de oportunidad (1 es la mejor).",
@@ -182,6 +180,9 @@ class MarketTableWidget(QTableWidget):
                 letter-spacing: 0.5px;
             }
         """)
+        
+        self.icon_service = EveIconService.instance()
+        self._image_generation = 0
         
         self.item_action_triggered.connect(self._handle_default_action)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
