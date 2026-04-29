@@ -1,5 +1,6 @@
+import copy
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QFormLayout, QProgressBar, QFrame, QGridLayout, QScrollArea,
     QComboBox
 )
@@ -282,8 +283,7 @@ class MarketSimpleView(QWidget):
         self.progress_bar.setValue(0)
         self.lbl_status.setText("● OBTENIENDO MERCADO (ESI)...")
         self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
-        self.worker = MarketRefreshWorker(region_id=10000002)
-        self.worker.config = self.current_config
+        self.worker = MarketRefreshWorker(region_id=10000002, config=copy.deepcopy(self.current_config))
         self.worker.progress_changed.connect(self.on_progress)
         self.worker.initial_data_ready.connect(self.on_initial_data_ready)
         self.worker.enriched_data_ready.connect(self.on_enriched_data_ready)

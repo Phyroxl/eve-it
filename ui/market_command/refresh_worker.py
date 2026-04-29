@@ -1,3 +1,4 @@
+import copy
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,7 +37,9 @@ class MarketRefreshWorker(QThread):
         super().__init__()
         self.region_id = region_id
         self.client = ESIClient()
-        self.config = config if config else FilterConfig()
+        # Worker config is an immutable snapshot for this scan.
+        # UI may change filters while enrichment continues — that's intentional.
+        self.config = copy.deepcopy(config) if config else FilterConfig()
         self.is_running = True
         self.last_results = []
 
@@ -128,6 +131,13 @@ class MarketRefreshWorker(QThread):
                     f"[WORKER PIPELINE] Phase1 mode=category={selected_category} "
                     f"initial_candidates_from_cache={len(initial_candidates)}"
                 )
+                if not initial_candidates:
+                    logger.warning(
+                        f"[WORKER PIPELINE] Phase1 category={selected_category} "
+                        f"initial_candidates=0 metadata_cache_miss_likely=True. "
+                        f"Continuing to Phase2 metadata prefetch."
+                    )
+                    self.emit_progress(40, f"Preparando metadata para {selected_category}...")
 
             # Excluir PLEX
             plex_id = 44992
@@ -211,12 +221,18 @@ class MarketRefreshWorker(QThread):
 
                 if not category_ids:
                     logger.warning(
-                        f"[WORKER PIPELINE] 0 candidates for category={selected_category}. "
+                        f"[WORKER PIPELINE] Phase2 category={selected_category} "
+                        f"category_ids=0 broad_pool={_BROAD_POOL_SIZE} "
                         f"metadata_failed={p_stats['failed']}. "
                         f"Emitting initial results only."
                     )
-                    # No hay candidatos → terminar con los resultados iniciales
-                    self.emit_progress(100, f"No items found for '{selected_category}'")
+                    # Fase 2 sin candidatos: cerrar UX con lo que tenga Fase 1
+                    msg = (
+                        f"No se encontraron items para '{selected_category}' con el pool actual"
+                        if p_stats['failed'] == 0
+                        else f"Metadata parcial para '{selected_category}' ({p_stats['failed']} fallos ESI)"
+                    )
+                    self.emit_progress(100, msg)
                     self.enriched_data_ready.emit(opps_initial)
                     self.finished.emit(opps_initial)
                     self.data_ready.emit(opps_initial)

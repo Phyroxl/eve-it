@@ -30,21 +30,33 @@ class ESICache:
 
 class ESIClient:
     BASE_URL = "https://esi.evetech.net/latest"
-    
+    # Shared ceiling across all instances — prevents burst 429s when using parallel workers.
+    # 0.03s = ~33 req/s global max; per-instance limit remains 10 req/s via rate_limit_lock.
+    GLOBAL_MIN_REQUEST_INTERVAL = 0.03
+    _global_rate_lock = Lock()
+    _global_last_request_time = 0.0
+
     def __init__(self):
         self.cache = ESICache()
         self.session = requests.Session()
         self.last_request_time = 0
         self.rate_limit_lock = Lock()
-        
+        self.rate_limit_hits = 0
+
     def _rate_limit(self):
         with self.rate_limit_lock:
             now = time.time()
             elapsed = now - self.last_request_time
-            if elapsed < 0.1: # Max 10 req/s -> 100ms per req
+            if elapsed < 0.1:  # 10 req/s per instance
                 time.sleep(0.1 - elapsed)
             self.last_request_time = time.time()
-            
+        with ESIClient._global_rate_lock:
+            now = time.time()
+            elapsed = now - ESIClient._global_last_request_time
+            if elapsed < ESIClient.GLOBAL_MIN_REQUEST_INTERVAL:
+                time.sleep(ESIClient.GLOBAL_MIN_REQUEST_INTERVAL - elapsed)
+            ESIClient._global_last_request_time = time.time()
+
     def _get(self, endpoint, ttl=0, params=None):
         cache_key = f"{endpoint}_{json.dumps(params, sort_keys=True) if params else ''}"
         if ttl > 0:
@@ -64,7 +76,11 @@ class ESIClient:
                     return data
                 elif response.status_code == 429:
                     retry_after = float(response.headers.get('Retry-After', 5))
-                    logger.warning(f"ESI rate limit en {endpoint}, esperando {retry_after}s")
+                    self.rate_limit_hits += 1
+                    logger.warning(
+                        f"[ESI RATE LIMIT] endpoint={endpoint} "
+                        f"retry_after={retry_after}s hits={self.rate_limit_hits}"
+                    )
                     time.sleep(retry_after)
                     retries -= 1
                     continue
@@ -85,7 +101,7 @@ class ESIClient:
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
-            
+
         all_orders = []
         page = 1
         while True:
@@ -100,6 +116,15 @@ class ESIClient:
                     if page >= pages:
                         break
                     page += 1
+                elif response.status_code == 429:
+                    retry_after = float(response.headers.get('Retry-After', 5))
+                    self.rate_limit_hits += 1
+                    logger.warning(
+                        f"[ESI RATE LIMIT] market_orders region={region_id} "
+                        f"retry_after={retry_after}s hits={self.rate_limit_hits}"
+                    )
+                    time.sleep(retry_after)
+                    continue
                 elif response.status_code >= 500:
                     time.sleep(1)
                     continue
@@ -111,7 +136,7 @@ class ESIClient:
                 break
 
         if all_orders:
-            self.cache.set(cache_key, all_orders, 300) # Cache 5 mins
+            self.cache.set(cache_key, all_orders, 300)  # Cache 5 mins
         return all_orders
 
     def market_history(self, region_id: int, type_id: int):

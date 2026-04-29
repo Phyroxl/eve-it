@@ -1,4 +1,5 @@
 # VERSION_STAMP: 2026-04-27_20-00_ADVANCED_RESTORED
+import copy
 import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
@@ -246,8 +247,7 @@ class MarketAdvancedView(QWidget):
         if self.worker and self.worker.isRunning(): return
         self.update_config_from_ui()
         save_market_filters(self.current_config)
-        self.worker = MarketRefreshWorker(region_id=10000002)
-        self.worker.config = self.current_config
+        self.worker = MarketRefreshWorker(region_id=10000002, config=copy.deepcopy(self.current_config))
         self.worker.progress.connect(self.progress.setValue)
         self.worker.status.connect(self.on_status_received)
         self.worker.initial_data_ready.connect(self.on_initial_scan_data)

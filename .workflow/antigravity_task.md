@@ -2555,3 +2555,49 @@ Causa raiz: el pipeline serie con un solo ESIClient (100ms/req) descargando hist
 - ui/market_command/advanced_view.py
 - tests/test_market_history_cache.py (nuevo)
 - tests/test_market_initial_enriched_filters.py (nuevo)
+
+
+---
+
+## Sesion 33 - 2026-04-29
+
+### Contexto
+Revision quirurgica post-2d788dd. Cinco problemas detectados y corregidos.
+
+### Fix 1: Config mutable UI/Worker
+- refresh_worker.__init__: self.config = copy.deepcopy(config)
+- simple_view/advanced_view: pasan deepcopy al constructor, eliminado self.worker.config = self.current_config
+- Comentario en worker: config es snapshot inmutable del scan; UI filtra con config actual (intencional)
+
+### Fix 2: Phase 1 vacia para categorias sin metadata cacheada
+- Si initial_candidates=0 para categoria especifica: log warning + status 'Preparando metadata...'
+- No emite error, no detiene worker. Phase 2 resuelve con prefetch completo.
+
+### Fix 3: Phase 2 sin candidatos - mensaje mejorado
+- Diferencia entre sin fallos ESI vs fallos ESI parciales en el mensaje de status
+- Log incluye category, category_ids=0, broad_pool, metadata_failed
+- enriched_data_ready(opps_initial) garantiza re-habilitar boton en todos los paths
+
+### Fix 4: Rate limit 429 con ESIClients paralelos
+- rate_limit_hits: int por instancia, incrementa en 429
+- Logs mejorados: [ESI RATE LIMIT] endpoint=... retry_after=...s hits=N
+- 429 manejado en market_orders() (antes solo en _get())
+- Rate limiter global ligero: GLOBAL_MIN_REQUEST_INTERVAL=0.03s, ~33 req/s techo global
+- _rate_limit() aplica limite por instancia (0.1s) + limite global (0.03s)
+
+### Fix 5: Boton re-enable en todos los paths
+- Verificado: error, enriched, y category_ids=0 siempre re-habilitan boton
+
+### Tests
+- test_worker_config_snapshot.py (nuevo): 4/4 passed
+- test_market_history_cache.py: 8/8 passed
+- test_market_initial_enriched_filters.py: 11/11 passed
+- test_market_category_pipeline.py: 48/48 passed
+- py_compile: 12/12 OK
+
+### Archivos modificados
+- core/esi_client.py
+- ui/market_command/refresh_worker.py
+- ui/market_command/simple_view.py
+- ui/market_command/advanced_view.py
+- tests/test_worker_config_snapshot.py (nuevo)
