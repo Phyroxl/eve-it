@@ -149,6 +149,12 @@ class EVEWindowAutomation:
         self.require_selection    = bool(config.get("require_window_selection",             True))
         self.allow_title_fallback = bool(config.get("allow_title_fallback_without_selection", False))
         self.exclude_self         = bool(config.get("exclude_self_app_windows",             True))
+        self.exp_paste_enabled    = bool(config.get("experimental_paste_enabled",           False))
+        self.paste_into_focused   = bool(config.get("paste_into_focused_window",            False))
+        self.clear_before_paste   = bool(config.get("clear_price_field_before_paste",       True))
+        self.paste_method         = str(config.get("paste_method",                          "ctrl+v"))
+        self.pre_paste_delay      = int(config.get("pre_paste_delay_ms",                    300))
+        self.never_confirm        = bool(config.get("never_confirm_final_order",            True))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -170,8 +176,14 @@ class EVEWindowAutomation:
             "open_market_delay_ms":  self.open_market_delay,
             "focus_client_delay_ms": self.focus_delay,
             "paste_price_delay_ms":  self.paste_delay,
+            "pre_paste_delay_ms":    self.pre_paste_delay,
             "post_action_delay_ms":  self.post_delay,
         }
+        result["experimental_paste_enabled"]     = self.exp_paste_enabled
+        result["paste_into_focused_window"]      = self.paste_into_focused
+        result["clear_price_field_before_paste"] = self.clear_before_paste
+        result["paste_method"]                   = self.paste_method
+        result["never_confirm_final_order"]      = self.never_confirm
 
         if not self.enabled:
             result["status"] = "disabled"
@@ -207,6 +219,9 @@ class EVEWindowAutomation:
             "would_wait_open_market_delay",
             "would_focus_eve_window",
             "would_copy_price_to_clipboard",
+            "would_wait_pre_paste_delay",
+            "would_send_ctrl_a_if_enabled",
+            "would_paste_price_if_enabled",
             "would_wait_paste_delay",
         ]
         result["steps_skipped"].append("no_confirm_final_action (by_design)")
@@ -255,7 +270,13 @@ class EVEWindowAutomation:
             if focused:
                 self._safe_sleep(self.focus_delay, "focus_delay", result, errors)
 
-        # 5. Safety: NEVER confirm the final order change
+        # 5. Experimental Paste (optional, disabled by default)
+        if result["window_found"] and result["focused"]:
+            self._handle_experimental_paste(result, price_text, errors)
+        else:
+            result["steps_skipped"].append("paste_skipped_no_focus")
+
+        # 6. Safety: NEVER confirm the final order change
         result["steps_skipped"].append("final_confirm_NOT_EXECUTED_BY_DESIGN")
         _log.info("[AUTOMATION] final confirm skipped — user must confirm manually")
 
@@ -368,6 +389,47 @@ class EVEWindowAutomation:
         except Exception as exc:
             errors.append(f"{label}_sleep_error: {exc}")
 
+    def _handle_experimental_paste(self, result: dict, price_text: str, errors: list) -> None:
+        if not self.exp_paste_enabled:
+            result["steps_skipped"].append("experimental_paste_disabled")
+            return
+
+        if not self.paste_into_focused:
+            result["steps_skipped"].append("paste_into_focused_window_disabled")
+            return
+
+        # 1. Pre-paste delay
+        self._safe_sleep(self.pre_paste_delay, "pre_paste_delay", result, errors)
+
+        try:
+            from pywinauto import keyboard
+        except ImportError:
+            errors.append("pywinauto.keyboard not available — cannot paste keys")
+            return
+
+        try:
+            # 2. Clear field
+            if self.clear_before_paste:
+                keyboard.send_keys("^a")
+                result["steps_executed"].append("sent_ctrl_a")
+                time.sleep(0.1)
+
+            # 3. Paste
+            if self.paste_method == "ctrl+v":
+                keyboard.send_keys("^v")
+                result["steps_executed"].append("sent_ctrl_v")
+                result["price_pasted"] = True
+            elif self.paste_method == "typewrite":
+                keyboard.send_keys(price_text)
+                result["steps_executed"].append("typewrite_price")
+                result["price_pasted"] = True
+            
+            _log.info(f"[AUTOMATION] price pasted via {self.paste_method}")
+
+        except Exception as exc:
+            errors.append(f"paste_error: {exc}")
+            _log.error(f"[AUTOMATION] paste error: {exc}")
+
     @staticmethod
     def _base_result(price_text: str) -> dict:
         return {
@@ -382,6 +444,12 @@ class EVEWindowAutomation:
             "focused":                  False,
             "clipboard_set":            False,
             "recommended_price_text":   price_text,
+            "experimental_paste_enabled": False,
+            "paste_into_focused_window":  False,
+            "clear_price_field_before_paste": True,
+            "paste_method":               "ctrl+v",
+            "price_pasted":               False,
+            "never_confirm_final_order":  True,
             "delays":                   {},
             "window_source":            None,
             "selected_window_handle":   None,

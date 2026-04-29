@@ -183,6 +183,12 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Focused              : {_b(automation.get('focused'))}")
     lines.append(f"  Clipboard Set        : {_b(automation.get('clipboard_set'))}")
     lines.append(f"  Recommended Price    : {_b(automation.get('recommended_price_text'))}")
+    lines.append(f"  Exp. Paste Enabled   : {_b(automation.get('experimental_paste_enabled'))}")
+    lines.append(f"  Paste into Focused   : {_b(automation.get('paste_into_focused_window'))}")
+    lines.append(f"  Clear Price Field    : {_b(automation.get('clear_price_field_before_paste'))}")
+    lines.append(f"  Paste Method         : {_b(automation.get('paste_method'))}")
+    lines.append(f"  Price Pasted         : {_b(automation.get('price_pasted'))}")
+    lines.append(f"  Never Confirm Order  : {_b(automation.get('never_confirm_final_order'))}")
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
     cands = automation.get("candidate_windows") or []
     if cands:

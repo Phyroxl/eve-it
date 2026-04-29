@@ -13,5 +13,11 @@
   "max_attempts": 1,
   "require_window_selection": true,
   "allow_title_fallback_without_selection": false,
-  "exclude_self_app_windows": true
+  "exclude_self_app_windows": true,
+  "experimental_paste_enabled": false,
+  "paste_into_focused_window": false,
+  "clear_price_field_before_paste": true,
+  "paste_method": "ctrl+v",
+  "pre_paste_delay_ms": 300,
+  "never_confirm_final_order": true
 }

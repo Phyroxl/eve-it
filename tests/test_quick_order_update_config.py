@@ -183,6 +183,32 @@ class TestValidateConfig(unittest.TestCase):
         self.assertIsInstance(cfg, dict)
         self.assertIn("enabled", cfg)
 
+    def test_experimental_paste_fields_defaults(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertFalse(cfg["experimental_paste_enabled"])
+        self.assertFalse(cfg["paste_into_focused_window"])
+        self.assertTrue(cfg["clear_price_field_before_paste"])
+        self.assertEqual(cfg["paste_method"], "ctrl+v")
+        self.assertEqual(cfg["pre_paste_delay_ms"], 300)
+        self.assertTrue(cfg["never_confirm_final_order"])
+
+    def test_never_confirm_forced_true(self):
+        # Even if user puts false, validator must return true
+        cfg = validate_quick_order_update_config({"never_confirm_final_order": False})
+        self.assertTrue(cfg["never_confirm_final_order"], "Safety: must be forced to True")
+
+    def test_paste_method_validation(self):
+        cfg_valid = validate_quick_order_update_config({"paste_method": "typewrite"})
+        cfg_invalid = validate_quick_order_update_config({"paste_method": "click"})
+        self.assertEqual(cfg_valid["paste_method"], "typewrite")
+        self.assertEqual(cfg_invalid["paste_method"], "ctrl+v")
+
+    def test_pre_paste_delay_clamping(self):
+        cfg_low = validate_quick_order_update_config({"pre_paste_delay_ms": -100})
+        cfg_high = validate_quick_order_update_config({"pre_paste_delay_ms": 60000})
+        self.assertEqual(cfg_low["pre_paste_delay_ms"], 0)
+        self.assertEqual(cfg_high["pre_paste_delay_ms"], 30000)
+
 
 if __name__ == "__main__":
     unittest.main()

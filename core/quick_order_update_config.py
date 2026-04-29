@@ -25,6 +25,12 @@ _DEFAULT_CONFIG: dict = {
     "require_window_selection":             True,
     "allow_title_fallback_without_selection": False,
     "exclude_self_app_windows":             True,
+    "experimental_paste_enabled":           False,
+    "paste_into_focused_window":            False,
+    "clear_price_field_before_paste":       True,
+    "paste_method":                         "ctrl+v",
+    "pre_paste_delay_ms":                   300,
+    "never_confirm_final_order":            True,
 }
 
 _DELAY_KEYS = (
@@ -32,6 +38,7 @@ _DELAY_KEYS = (
     "focus_client_delay_ms",
     "paste_price_delay_ms",
     "post_action_delay_ms",
+    "pre_paste_delay_ms",
 )
 _MAX_DELAY_MS = 30_000
 
@@ -94,6 +101,22 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "exclude_self_app_windows"):
         if key in config:
             result[key] = bool(config[key])
+
+    for key in ("experimental_paste_enabled", "paste_into_focused_window",
+                "clear_price_field_before_paste"):
+        if key in config:
+            result[key] = bool(config[key])
+
+    # Safety: always TRUE
+    result["never_confirm_final_order"] = True
+
+    # Validate paste_method
+    if "paste_method" in config:
+        val = str(config["paste_method"]).lower()
+        if val in ("ctrl+v", "typewrite"):
+            result["paste_method"] = val
+        else:
+            result["paste_method"] = "ctrl+v"
 
     for key in _DELAY_KEYS:
         if key in config:

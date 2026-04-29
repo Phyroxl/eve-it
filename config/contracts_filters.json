@@ -11,5 +11,5 @@
   "price_reference": "sell",
   "exclude_no_price": true,
   "exclude_blueprints": true,
-  "category_filter": "all"
+  "category_filter": "ships"
 }
