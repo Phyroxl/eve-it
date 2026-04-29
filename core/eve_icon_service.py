@@ -256,4 +256,5 @@ class EveIconService(QObject):
         d = self.stats.copy()
         d["cache_size"] = len(self.icon_cache)
         d["failed_count"] = len(self.failed_ids)
+        d["failed_ids_sample"] = list(self.failed_ids)[:50]
         return d

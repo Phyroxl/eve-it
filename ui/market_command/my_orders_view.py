@@ -23,6 +23,8 @@ from ui.market_command.performance_view import MarketPerformanceView
 from core.cost_basis_service import CostBasisService
 from core.tax_service import TaxService
 from utils.formatters import format_isk
+from ui.market_command.diagnostics_dialog import MarketDiagnosticsDialog
+from core.my_orders_diagnostics import format_my_orders_diagnostic_report
 
 _log = logging.getLogger('eve.market.my_orders')
 
@@ -659,8 +661,36 @@ class MarketMyOrdersView(QWidget):
         
         self.setup_ui()
         self.load_layouts()
+        self._init_diagnostics()
         AuthManager.instance().authenticated.connect(self.on_authenticated)
         QTimer.singleShot(100, self.try_auto_login)
+
+    def _init_diagnostics(self):
+        self._orders_diag = {
+            "started_at": 0,
+            "char_id": 0,
+            "char_name": "",
+            "sell_count": 0,
+            "buy_count": 0,
+            "total_count": 0,
+            "sell_icon_requests": 0,
+            "buy_icon_requests": 0,
+            "detail_icon_requests": 0,
+            "icon_direct_applied_sell": 0,
+            "icon_fallback_applied_sell": 0,
+            "icon_missed_sell": 0,
+            "icon_direct_applied_buy": 0,
+            "icon_fallback_applied_buy": 0,
+            "icon_missed_buy": 0,
+            "generation_skipped": 0,
+            "missing_type_id_items": [],
+            "failed_items": [],
+            "callback_missed_items": [],
+            "skipped_items": [],
+            "sell_rows_with_tid": 0,
+            "buy_rows_with_tid": 0,
+            "notes": []
+        }
 
     def setup_ui(self):
         self.main_layout = QVBoxLayout(self)
@@ -874,6 +904,13 @@ class MarketMyOrdersView(QWidget):
             return
         self.table_sell.setRowCount(0)
         self.table_buy.setRowCount(0)
+        
+        # Reset Diagnostics
+        self._init_diagnostics()
+        self._orders_diag["started_at"] = time.time()
+        self._orders_diag["char_id"] = auth.char_id
+        self._orders_diag["char_name"] = auth.char_name
+        
         self._start_sync_ui()
         self.worker = SyncWorker(auth.char_id, t)
         self.worker.status_update.connect(lambda m, v: (self.lbl_status.setText(m), self.progress_bar.setValue(v)))
@@ -925,16 +962,21 @@ class MarketMyOrdersView(QWidget):
             self.lbl_status.setText("INICIANDO SSO EN NAVEGADOR...")
             auth.login()
 
-    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
+    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation, side=None, name=None):
         """Callback robusto para cargar iconos en las tablas de órdenes."""
         try:
-            if generation != self._image_generation: return
+            if generation != self._image_generation:
+                self._orders_diag["generation_skipped"] += 1
+                self._orders_diag["skipped_items"].append({"side": side, "row": row, "type_id": type_id, "item_name": name})
+                return
             if table is None: return
             
             # 1. Intento directo
             item = table.item(row, col)
             if item and item.data(Qt.UserRole) == type_id:
                 item.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                if side == "SELL": self._orders_diag["icon_direct_applied_sell"] += 1
+                elif side == "BUY": self._orders_diag["icon_direct_applied_buy"] += 1
                 return
                 
             # 2. Fallback
@@ -942,8 +984,16 @@ class MarketMyOrdersView(QWidget):
                 it = table.item(r, col)
                 if it and it.data(Qt.UserRole) == type_id:
                     it.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                    if side == "SELL": self._orders_diag["icon_fallback_applied_sell"] += 1
+                    elif side == "BUY": self._orders_diag["icon_fallback_applied_buy"] += 1
                     _log.debug(f"[ORDERS ICON] Applied {type_id} to fallback row {r}")
-                    break
+                    return
+            
+            # Si llegamos aquí, no se aplicó
+            if side == "SELL": self._orders_diag["icon_missed_sell"] += 1
+            elif side == "BUY": self._orders_diag["icon_missed_buy"] += 1
+            self._orders_diag["callback_missed_items"].append({"side": side, "row": row, "type_id": type_id, "item_name": name})
+            
         except Exception as e:
             _log.error(f"[ORDERS ICON ERR] {e}")
 
@@ -955,6 +1005,13 @@ class MarketMyOrdersView(QWidget):
         self.lbl_sell.setText(f"ÓRDENES DE VENTA ({len(sells)})")
         self.lbl_buy.setText(f"ÓRDENES DE COMPRA ({len(buys)})")
         
+        # Diag counts
+        self._orders_diag["sell_count"] = len(sells)
+        self._orders_diag["buy_count"] = len(buys)
+        self._orders_diag["total_count"] = len(data)
+        self._orders_diag["rows_sell_table"] = len(sells)
+        self._orders_diag["rows_buy_table"] = len(buys)
+        
         self._image_generation += 1
         gen = self._image_generation
         _log.info(f"[MY ORDERS] Starting fill_table with gen={gen}")
@@ -962,6 +1019,20 @@ class MarketMyOrdersView(QWidget):
         self.fill_table(self.table_sell, sells, gen)
         self.fill_table(self.table_buy, buys, gen)
         self._stop_sync_ui()
+        
+        # Finalize diag and show report
+        self._orders_diag["finished_at"] = time.time()
+        self._orders_diag["duration"] = self._orders_diag["finished_at"] - self._orders_diag["started_at"]
+        
+        # Count rows with type_id
+        for r in range(self.table_sell.rowCount()):
+            it = self.table_sell.item(r, 0)
+            if it and it.data(Qt.UserRole): self._orders_diag["sell_rows_with_tid"] += 1
+        for r in range(self.table_buy.rowCount()):
+            it = self.table_buy.item(r, 0)
+            if it and it.data(Qt.UserRole): self._orders_diag["buy_rows_with_tid"] += 1
+            
+        QTimer.singleShot(1500, self.show_my_orders_diagnostics)
 
     def fill_table(self, t, data, gen):
         t.setSortingEnabled(False)
@@ -975,9 +1046,17 @@ class MarketMyOrdersView(QWidget):
             i_name.setData(Qt.UserRole, o.type_id)
             i_name.setData(Qt.UserRole + 1, o.order_id)
             
+            side = "SELL" if not o.is_buy_order else "BUY"
+            if side == "SELL": self._orders_diag["sell_icon_requests"] += 1
+            else: self._orders_diag["buy_icon_requests"] += 1
+            
+            if not o.type_id:
+                self._orders_diag["missing_type_id_items"].append({"side": side, "row": r, "item_name": o.item_name})
+
             pix = self.icon_service.get_icon(
                 o.type_id, 24,
-                callback=lambda p, tid=o.type_id, row=r, gen=gen: self._load_icon_into_table_item(t, row, 0, tid, p, gen)
+                callback=lambda p, tid=o.type_id, row=r, gen=gen, s=side, n=o.item_name: 
+                    self._load_icon_into_table_item(t, row, 0, tid, p, gen, side=s, name=n)
             )
             i_name.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
             _log.debug(f"[ORDERS ICON] Requesting {o.type_id} for row {r}")
@@ -1059,6 +1138,7 @@ class MarketMyOrdersView(QWidget):
                 self.lbl_det_icon.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         
         _log.debug(f"[DETAIL ICON] Requesting {o.type_id}")
+        self._orders_diag["detail_icon_requests"] += 1
         pix = self.icon_service.get_icon(o.type_id, 64, callback=on_det_icon_ready)
         self.lbl_det_icon.setPixmap(pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         
@@ -1113,7 +1193,42 @@ class MarketMyOrdersView(QWidget):
         self.lbl_sales_tax.setText(f"SALES TAX: {s_tax:.2f}%")
         self.lbl_broker_fee.setText(f"BROKER FEE: {b_fee:.2f}%")
         self.lbl_tax_source.setText(f"FUENTE: {source}")
+        
+        # Diag taxes
+        self._orders_diag["sales_tax"] = s_tax
+        self._orders_diag["broker_fee"] = b_fee
+        self._orders_diag["tax_source"] = source
+        self._orders_diag["location_id"] = loc_id
+        
         _log.info(f"[TAX_UI_DIAG] char={auth.char_id} loc={loc_id} -> {debug}")
+
+    def show_my_orders_diagnostics(self):
+        if getattr(self, "_orders_diag_dialog", None):
+            self._orders_diag_dialog.close()
+            
+        report = self.build_my_orders_report()
+        self._orders_diag_dialog = MarketDiagnosticsDialog(report, self)
+        self._orders_diag_dialog.setWindowTitle("Market Command — Diagnóstico de Mis Pedidos")
+        self._orders_diag_dialog.show()
+
+    def build_my_orders_report(self) -> str:
+        icon_diag = self.icon_service.get_diagnostics()
+        
+        # Check failed items in this sync
+        failed_sample = icon_diag.get("failed_ids_sample", [])
+        for tid in failed_sample:
+            # See if it was requested in this sync
+            # This is hard to map perfectly without a request log, but we can try to find the item in all_orders
+            ord_obj = next((o for o in self.all_orders if o.type_id == tid), None)
+            if ord_obj:
+                side = "BUY" if ord_obj.is_buy_order else "SELL"
+                self._orders_diag["failed_items"].append({
+                    "side": side,
+                    "type_id": tid,
+                    "item_name": ord_obj.item_name
+                })
+        
+        return format_my_orders_diagnostic_report(self._orders_diag, icon_diag)
 
 
     def do_inventory(self):
