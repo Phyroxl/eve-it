@@ -5,13 +5,14 @@ from PySide6.QtWidgets import (
     QGridLayout, QComboBox, QSplitter
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap, QPainter
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from core.eve_icon_service import EveIconService
 
 from core.contracts_models import ContractsFilterConfig
 from core.config_manager import load_contracts_filters, save_contracts_filters
 from ui.market_command.contracts_worker import ContractsScanWorker
-from ui.market_command.performance_view import AsyncImageLoader
+# from ui.market_command.performance_view import AsyncImageLoader (Removed)
 from core.esi_client import ESIClient
 from core.auth_manager import AuthManager
 from core.item_metadata import ItemMetadataHelper, MARKET_CATEGORIES
@@ -50,8 +51,8 @@ class MarketContractsView(QWidget):
         self.worker = None
         self._all_results = []
         self.config = load_contracts_filters()
+        self.icon_service = EveIconService.instance()
         self._image_generation = 0
-        self.image_loader = AsyncImageLoader()
         self.setup_ui()
         self._load_config()
 
@@ -648,21 +649,11 @@ class MarketContractsView(QWidget):
                 for it in [i_price, i_val, i_pct]:
                     it.setText("-")
             
-            if item.jita_sell_price == 0.0 and item.is_included:
-                for it in [i_name, i_qty, i_price, i_val, i_pct]:
-                    it.setForeground(QColor("#f59e0b"))
-
-            # Placeholder
-            placeholder = QPixmap(24, 24)
-            placeholder.fill(QColor("#0f172a"))
-            i_name.setIcon(QIcon(placeholder))
-            
-            icon_url = ItemMetadataHelper.get_icon_url(
-                item.type_id, 
-                is_blueprint=item.is_blueprint, 
-                is_copy=item.is_copy
+            pix = self.icon_service.get_icon(
+                item.type_id, 24,
+                lambda p, tid=item.type_id: self._load_icon_into_table_item(self.items_table, r, 0, tid, p, gen)
             )
-            self._load_icon_into_table_item(self.items_table, r, 0, item.type_id, icon_url, gen)
+            i_name.setIcon(QIcon(pix))
 
             self.items_table.setItem(r, 0, i_name)
             i_name.setData(Qt.UserRole, item.type_id)
@@ -711,19 +702,17 @@ class MarketContractsView(QWidget):
     def copy_contract_id(self, contract_id):
         QGuiApplication.clipboard().setText(str(contract_id))
 
-    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
-        def apply_icon(pixmap):
-            try:
-                if generation != self._image_generation:
-                    return
-                if table is None or row < 0 or row >= table.rowCount():
-                    return
-                if col < 0 or col >= table.columnCount():
-                    return
-                item = table.item(row, col)
-                if item is None or item.data(Qt.UserRole) != type_id:
-                    return
-                item.setIcon(QIcon(pixmap))
-            except RuntimeError:
+    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
+        try:
+            if generation != self._image_generation:
                 return
-        self.image_loader.load_safe(icon_url, apply_icon)
+            if table is None or row < 0 or row >= table.rowCount():
+                return
+            if col < 0 or col >= table.columnCount():
+                return
+            item = table.item(row, col)
+            if item is None or item.data(Qt.UserRole) != type_id:
+                return
+            item.setIcon(QIcon(pixmap))
+        except RuntimeError:
+            return

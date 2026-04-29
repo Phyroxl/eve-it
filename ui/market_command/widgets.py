@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QMenu, QApplication
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QIcon, QPixmap, QColor, QFont, QClipboard
+from PySide6.QtGui import QIcon, QPixmap, QColor, QFont, QClipboard, QPainter
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from core.eve_icon_service import EveIconService
 
 class CustomTableWidgetItem(QTableWidgetItem):
     def __init__(self, display_text, sort_value):
@@ -179,16 +180,7 @@ class MarketTableWidget(QTableWidget):
             }
         """)
         
-        self.net_manager = QNetworkAccessManager(self)
-        self.icon_cache = {}
-        self._image_generation = 0
-        
-        # Diagnostics
-        self.icon_requests = 0
-        self.icon_loaded = 0
-        self.icon_failed = 0
-        self.icon_cache_hits = 0
-        self.icon_last_errors = []
+        self.icon_service = EveIconService.instance()
         
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
 
@@ -227,17 +219,14 @@ class MarketTableWidget(QTableWidget):
             item = QTableWidgetItem(opp.item_name)
             item.setData(Qt.UserRole, opp.type_id)
             
-            # Icon setup with placeholder
-            placeholder = QPixmap(32, 32)
-            placeholder.fill(QColor("#0f172a"))
-            
-            if opp.type_id in self.icon_cache:
-                self.icon_cache_hits += 1
-                item.setIcon(QIcon(self.icon_cache[opp.type_id]))
-            else:
-                self.icon_requests += 1
-                item.setIcon(QIcon(placeholder))
-                self.load_icon_async(opp.type_id, item, row, gen)
+            # Icon setup with centralized service
+            # We pass a callback to update the item icon once loaded
+            pix = self.icon_service.get_icon(
+                opp.type_id, 
+                32, 
+                lambda p, tid=opp.type_id: self._update_item_icons(tid, p, gen)
+            )
+            item.setIcon(QIcon(pix))
             
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
@@ -293,61 +282,31 @@ class MarketTableWidget(QTableWidget):
         # Default sort by score descending
         self.sortItems(2, Qt.DescendingOrder)
 
-    def load_icon_async(self, type_id, table_item, row, generation):
-        # We use generation to avoid updating items from a previous populate() call
-        url = f"https://images.evetech.net/types/{type_id}/icon?size=32"
-        request = QNetworkRequest(QUrl(url))
-        reply = self.net_manager.get(request)
-        
-        def on_finished():
-            import logging
-            log = logging.getLogger('eve.market.ui')
-            try:
-                if generation != self._image_generation:
-                    reply.deleteLater()
-                    return
-                if reply.error() == QNetworkReply.NoError:
-                    data = reply.readAll()
-                    pixmap = QPixmap()
-                    if pixmap.loadFromData(data):
-                        self.icon_loaded += 1
-                        self.icon_cache[type_id] = pixmap
-                        log.debug(f"[ICON DEBUG] Loaded type_id={type_id}")
-                        # Search for ALL items with this type_id
-                        for r in range(self.rowCount()):
-                            it = self.item(r, 1)
-                            if it and it.data(Qt.UserRole) == type_id:
-                                it.setIcon(QIcon(pixmap))
-                    else:
-                        self.icon_failed += 1
-                        err = f"Pixmap load failed for type_id={type_id}"
-                        log.debug(f"[ICON DEBUG] {err}")
-                        self.icon_last_errors.append(err)
-                        if len(self.icon_last_errors) > 20: self.icon_last_errors.pop(0)
-                else:
-                    self.icon_failed += 1
-                    err = f"Network error for {type_id}: {reply.errorString()}"
-                    log.debug(f"[ICON DEBUG] {err}")
-                    self.icon_last_errors.append(err)
-                    if len(self.icon_last_errors) > 20: self.icon_last_errors.pop(0)
-            except Exception as e:
-                self.icon_failed += 1
-                err = f"Exception loading icon {type_id}: {str(e)}"
-                log.debug(f"[ICON DEBUG] {err}")
-                self.icon_last_errors.append(err)
-            finally:
-                reply.deleteLater()
-
-        reply.finished.connect(on_finished)
+    def _update_item_icons(self, type_id, pixmap, generation):
+        """Updates all icons in the table for a specific type_id."""
+        if generation != self._image_generation:
+            return
+        # Search for ALL items with this type_id
+        for r in range(self.rowCount()):
+            it = self.item(r, 1)
+            if it and it.data(Qt.UserRole) == type_id:
+                it.setIcon(QIcon(pixmap))
 
     def get_icon_diagnostics(self) -> dict:
+        diag = self.icon_service.get_diagnostics()
         return {
-            "icon_cache_size": len(self.icon_cache),
-            "icon_cache_hits": self.icon_cache_hits,
-            "icon_requests": self.icon_requests,
-            "icon_loaded": self.icon_loaded,
-            "icon_failed": self.icon_failed,
-            "icon_last_errors": self.icon_last_errors[-10:]
+            "icon_cache_size": diag["cache_size"],
+            "icon_cache_hits": diag["cache_hits"],
+            "icon_requests": diag["requests"],
+            "icon_loaded": diag["loaded"],
+            "icon_failed": diag["failed_total"],
+            "icon_placeholders_used": diag["placeholders"],
+            "icon_endpoint_icon_success": diag["endpoint_icon"],
+            "icon_endpoint_render_success": diag["endpoint_render"],
+            "icon_endpoint_bp_success": diag["endpoint_bp"],
+            "icon_endpoint_bpc_success": diag["endpoint_bpc"],
+            "icon_all_endpoints_failed": diag["failed_count"],
+            "icon_last_errors": diag["last_errors"][-10:]
         }
 
 class AdvancedMarketTableWidget(MarketTableWidget):
@@ -394,16 +353,13 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             item = QTableWidgetItem(opp.item_name)
             item.setData(Qt.UserRole, opp.type_id)
             
-            placeholder = QPixmap(32, 32)
-            placeholder.fill(QColor("#0f172a"))
-
-            if opp.type_id in self.icon_cache:
-                self.icon_cache_hits += 1
-                item.setIcon(QIcon(self.icon_cache[opp.type_id]))
-            else:
-                self.icon_requests += 1
-                item.setIcon(QIcon(placeholder))
-                self.load_icon_async(opp.type_id, item, row, gen)
+            # Icon setup with centralized service
+            pix = self.icon_service.get_icon(
+                opp.type_id, 
+                32, 
+                lambda p, tid=opp.type_id: self._update_item_icons(tid, p, gen)
+            )
+            item.setIcon(QIcon(pix))
             
             # 2. Score
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0

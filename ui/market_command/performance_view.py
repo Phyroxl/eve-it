@@ -15,42 +15,6 @@ from core.performance_engine import PerformanceEngine
 
 _log = logging.getLogger('eve.performance')
 
-class AsyncImageLoader(QWidget):
-    """Cargador asíncrono de imágenes para evitar bloqueos de UI."""
-    def __init__(self):
-        super().__init__()
-        self.manager = QNetworkAccessManager(self)
-        self.cache = {} # URL -> QPixmap
-
-    def load(self, url, callback):
-        if url in self.cache:
-            callback(self.cache[url])
-            return
-        
-        request = QNetworkRequest(QUrl(url))
-        reply = self.manager.get(request)
-        reply.finished.connect(lambda: self._on_finished(reply, url, callback))
-
-    def load_safe(self, url, callback):
-        """Versión segura que silencia errores si el widget destino fue destruido."""
-        def safe_callback(pixmap):
-            try:
-                callback(pixmap)
-            except RuntimeError:
-                pass # C++ object deleted
-            except Exception:
-                pass
-        self.load(url, safe_callback)
-
-    def _on_finished(self, reply, url, callback):
-        if reply.error() == QNetworkReply.NoError:
-            data = reply.readAll()
-            pixmap = QPixmap()
-            if pixmap.loadFromData(data):
-                self.cache[url] = pixmap
-                callback(pixmap)
-        reply.deleteLater()
-
 class KPIWidget(QFrame):
     def __init__(self, title, value, color="#3b82f6", tooltip=None, parent=None):
         super().__init__(parent)
@@ -206,10 +170,9 @@ class MarketPerformanceView(QWidget):
         self.config = load_performance_config()
         self._sync_in_progress = False
         self._is_auto_sync = False
-        self._image_generation = 0
-        self.image_loader = AsyncImageLoader()
-        
         self.engine = PerformanceEngine()
+        self.icon_service = EveIconService.instance()
+        self._purge_fake_char0()
         self._purge_fake_char0()
         self.setup_ui()
         self.discover_characters()
@@ -821,13 +784,11 @@ class MarketPerformanceView(QWidget):
             item_cell = QTableWidgetItem(item.item_name)
             item_cell.setData(Qt.UserRole, item.item_id)
             
-            # Placeholder
-            placeholder = QPixmap(32, 32)
-            placeholder.fill(QColor("#0f172a"))
-            item_cell.setIcon(QIcon(placeholder))
-            
-            icon_url = f"https://images.evetech.net/types/{item.item_id}/icon?size=32"
-            self._load_icon_into_table_item(self.top_items_table, i, 0, item.item_id, icon_url, gen)
+            pix = self.icon_service.get_icon(
+                item.item_id, 32, 
+                lambda p, tid=item.item_id: self._load_icon_into_table_item(self.top_items_table, i, 0, tid, p, gen)
+            )
+            item_cell.setIcon(QIcon(pix))
             
             self.top_items_table.setItem(i, 0, item_cell)
             self.top_items_table.setItem(i, 1, QTableWidgetItem(f"{item.total_bought_units:,}"))
@@ -880,13 +841,11 @@ class MarketPerformanceView(QWidget):
             name_cell = QTableWidgetItem(r[1] or "Unknown")
             name_cell.setData(Qt.UserRole, r[5])
             
-            # Placeholder
-            placeholder = QPixmap(32, 32)
-            placeholder.fill(QColor("#0f172a"))
-            name_cell.setIcon(QIcon(placeholder))
-            
-            icon_url = f"https://images.evetech.net/types/{r[5]}/icon?size=32"
-            self._load_icon_into_table_item(self.trans_table, i, 1, r[5], icon_url, gen)
+            pix = self.icon_service.get_icon(
+                r[5], 32,
+                lambda p, tid=r[5]: self._load_icon_into_table_item(self.trans_table, i, 1, tid, p, gen)
+            )
+            name_cell.setIcon(QIcon(pix))
             self.trans_table.setItem(i, 1, name_cell)
             
             type_item = QTableWidgetItem(tipo)
@@ -1017,20 +976,18 @@ class MarketPerformanceView(QWidget):
             self.auto_timer.stop() # Pausar mientras sincroniza
             self.on_sync_clicked(is_auto=True)
 
-    def _load_icon_into_table_item(self, table, row, col, type_id, icon_url, generation):
+    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
         """Helper seguro para cargar iconos en tablas sin riesgo de RuntimeError."""
-        def apply_icon(pixmap):
-            try:
-                if generation != self._image_generation:
-                    return
-                if table is None or row < 0 or row >= table.rowCount():
-                    return
-                if col < 0 or col >= table.columnCount():
-                    return
-                item = table.item(row, col)
-                if item is None or item.data(Qt.UserRole) != type_id:
-                    return
-                item.setIcon(QIcon(pixmap))
-            except RuntimeError:
+        try:
+            if generation != self._image_generation:
                 return
-        self.image_loader.load_safe(icon_url, apply_icon)
+            if table is None or row < 0 or row >= table.rowCount():
+                return
+            if col < 0 or col >= table.columnCount():
+                return
+            item = table.item(row, col)
+            if item is None or item.data(Qt.UserRole) != type_id:
+                return
+            item.setIcon(QIcon(pixmap))
+        except RuntimeError:
+            return

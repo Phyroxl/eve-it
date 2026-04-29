@@ -365,6 +365,12 @@ class MarketSimpleView(QWidget):
             diagnostics.icon_failed = icon_stats.get("icon_failed", 0)
             diagnostics.icon_cache_hits = icon_stats.get("icon_cache_hits", 0)
             diagnostics.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+            diagnostics.icon_placeholders_used = icon_stats.get("icon_placeholders_used", 0)
+            diagnostics.icon_endpoint_icon_success = icon_stats.get("icon_endpoint_icon_success", 0)
+            diagnostics.icon_endpoint_render_success = icon_stats.get("icon_endpoint_render_success", 0)
+            diagnostics.icon_endpoint_bp_success = icon_stats.get("icon_endpoint_bp_success", 0)
+            diagnostics.icon_endpoint_bpc_success = icon_stats.get("icon_endpoint_bpc_success", 0)
+            diagnostics.icon_all_endpoints_failed = icon_stats.get("icon_all_endpoints_failed", 0)
             diagnostics.icon_last_errors = icon_stats.get("icon_last_errors", [])
 
         # 4. Show dialog and keep reference to prevent GC
@@ -478,14 +484,9 @@ class MarketSimpleView(QWidget):
 
             tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
             self.lbl_det_tags.setText(tags_str if tags_str else "SIN ETIQUETAS")
-            if opp.type_id in self.table.icon_cache:
-                pixmap = self.table.icon_cache[opp.type_id]
-                self.lbl_det_icon.setPixmap(pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            else: 
-                # Placeholder si no hay icono aún
-                placeholder = QPixmap(48, 48)
-                placeholder.fill(QColor("#0f172a"))
-                self.lbl_det_icon.setPixmap(placeholder)
+            # Get icon from centralized service (will be instant if cached)
+            pixmap = self.table.icon_service.get_icon(opp.type_id, 48)
+            self.lbl_det_icon.setPixmap(pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             
             from utils.formatters import format_isk
             self.lbl_det_buy.setText(f"{format_isk(opp.best_buy_price, short=True)} ISK")

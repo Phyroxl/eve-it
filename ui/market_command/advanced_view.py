@@ -339,6 +339,12 @@ class MarketAdvancedView(QWidget):
             diagnostics.icon_failed = icon_stats.get("icon_failed", 0)
             diagnostics.icon_cache_hits = icon_stats.get("icon_cache_hits", 0)
             diagnostics.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+            diagnostics.icon_placeholders_used = icon_stats.get("icon_placeholders_used", 0)
+            diagnostics.icon_endpoint_icon_success = icon_stats.get("icon_endpoint_icon_success", 0)
+            diagnostics.icon_endpoint_render_success = icon_stats.get("icon_endpoint_render_success", 0)
+            diagnostics.icon_endpoint_bp_success = icon_stats.get("icon_endpoint_bp_success", 0)
+            diagnostics.icon_endpoint_bpc_success = icon_stats.get("icon_endpoint_bpc_success", 0)
+            diagnostics.icon_all_endpoints_failed = icon_stats.get("icon_all_endpoints_failed", 0)
             diagnostics.icon_last_errors = icon_stats.get("icon_last_errors", [])
 
         self._diag_dialog = MarketDiagnosticsDialog(diagnostics.to_report(), self)
@@ -422,10 +428,9 @@ class MarketAdvancedView(QWidget):
         tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
         self.lbl_det_tags.setText(tags_str if tags_str else "ESTRATEGIA ESTÁNDAR")
         
-        if opp.type_id in self.table.icon_cache:
-            pixmap = self.table.icon_cache[opp.type_id]
-            self.lbl_det_icon.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else: self.lbl_det_icon.clear()
+        # Get icon from centralized service
+        pixmap = self.table.icon_service.get_icon(opp.type_id, 64)
+        self.lbl_det_icon.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         
         from utils.formatters import format_isk
         self.lbl_det_buy.setText(format_isk(opp.best_buy_price, True))
