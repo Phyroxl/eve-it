@@ -221,7 +221,6 @@ class MarketTableWidget(QTableWidget):
             item.setData(Qt.UserRole, opp.type_id)
             
             # Icon setup with placeholder
-            from core.item_metadata import ItemMetadataHelper
             placeholder = QPixmap(32, 32)
             placeholder.fill(QColor("#0f172a"))
             
@@ -357,7 +356,6 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             item = QTableWidgetItem(opp.item_name)
             item.setData(Qt.UserRole, opp.type_id)
             
-            from core.item_metadata import ItemMetadataHelper
             placeholder = QPixmap(32, 32)
             placeholder.fill(QColor("#0f172a"))
 

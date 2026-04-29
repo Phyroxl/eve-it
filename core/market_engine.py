@@ -194,12 +194,6 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
 
     return filtered
 
-                f"{cat_fail_wrong_cat} items tienen metadata pero no pertenecen a esta categoría. "
-                f"El pool del worker puede no contener items de '{config.selected_category}' — re-escanear con esa categoría seleccionada."
-            )
-
-    return filtered
-
 def score_opportunity(opp: MarketOpportunity, config: FilterConfig) -> ScoreBreakdown:
     liq_norm = min(opp.liquidity.volume_5d / 5000.0, 1.0)
     roi_norm = min(opp.margin_net_pct / 50.0, 1.0)
