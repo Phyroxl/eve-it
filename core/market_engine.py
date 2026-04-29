@@ -68,14 +68,24 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
     risk_map = {"Low": 1, "Medium": 2, "High": 3}
 
     total_raw = len(opportunities)
-    logger.info(f"[FILTER DEBUG] before_apply_filters={total_raw} selected_category={config.selected_category}")
+    n_initial = sum(1 for o in opportunities if not o.is_enriched)
+    n_enriched = total_raw - n_initial
+    logger.info(
+        f"[FILTER DEBUG] before_apply_filters={total_raw} "
+        f"(enriched={n_enriched} initial={n_initial}) "
+        f"selected_category={config.selected_category}"
+    )
 
     # ── A) Filtros base (rápidos, sin ESI) ──────────────────────────────────────
+    # Para oportunidades iniciales (is_enriched=False): se omiten los filtros que
+    # dependen del historial (volume, history_days, profit_day, risk_max).
+    # Esto evita que vol_min_day=20 mate todos los resultados iniciales con vol_5d=0.
     pass_base = []
     stats = {
         "no_buy_price": 0, "capital": 0, "volume": 0, "margin": 0,
         "spread": 0, "risk": 0, "buy_orders": 0, "sell_orders": 0,
-        "history_days": 0, "profit_day": 0, "plex": 0
+        "history_days": 0, "profit_day": 0, "plex": 0, "score": 0,
+        "skipped_history_filters_initial": 0
     }
 
     for opp in opportunities:
@@ -85,36 +95,51 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
             stats["plex"] += 1; continue
         if opp.best_buy_price > config.capital_max:
             stats["capital"] += 1; continue
-        if opp.liquidity.volume_5d < config.vol_min_day:
-            stats["volume"] += 1; continue
         if opp.margin_net_pct < config.margin_min_pct:
             stats["margin"] += 1; continue
         if opp.spread_pct > config.spread_max_pct:
             stats["spread"] += 1; continue
-        current_risk = risk_map.get(opp.risk_level, 3)
-        if current_risk > config.risk_max:
-            stats["risk"] += 1; continue
         if opp.liquidity.buy_orders_count < config.buy_orders_min:
             stats["buy_orders"] += 1; continue
         if opp.liquidity.sell_orders_count < config.sell_orders_min:
             stats["sell_orders"] += 1; continue
-        if opp.liquidity.history_days < config.history_days_min:
-            stats["history_days"] += 1; continue
-        if opp.profit_day_est < config.profit_day_min:
-            stats["profit_day"] += 1; continue
+
+        if opp.is_enriched:
+            # Filtros que requieren historial: solo para datos enriquecidos
+            if opp.liquidity.volume_5d < config.vol_min_day:
+                stats["volume"] += 1; continue
+            if opp.liquidity.history_days < config.history_days_min:
+                stats["history_days"] += 1; continue
+            if opp.profit_day_est < config.profit_day_min:
+                stats["profit_day"] += 1; continue
+            current_risk = risk_map.get(opp.risk_level, 3)
+            if current_risk > config.risk_max:
+                stats["risk"] += 1; continue
+        else:
+            stats["skipped_history_filters_initial"] += 1
+
+        # Score filter (aplica si hay score calculado y se pide mínimo)
+        if config.score_min > 0 and opp.score_breakdown is not None:
+            if opp.score_breakdown.final_score < config.score_min:
+                stats["score"] += 1; continue
+
         pass_base.append(opp)
 
     logger.info(
         f"[FILTER DEBUG] total={total_raw} after_base={len(pass_base)} | "
         f"no_buy={stats['no_buy_price']} plex={stats['plex']} capital={stats['capital']} "
-        f"volume={stats['volume']} margin={stats['margin']} spread={stats['spread']} "
-        f"risk={stats['risk']} buy_orders={stats['buy_orders']} sell_orders={stats['sell_orders']} "
-        f"history_days={stats['history_days']} profit_day={stats['profit_day']}"
+        f"margin={stats['margin']} spread={stats['spread']} "
+        f"buy_orders={stats['buy_orders']} sell_orders={stats['sell_orders']} "
+        f"volume={stats['volume']} history_days={stats['history_days']} "
+        f"profit_day={stats['profit_day']} risk={stats['risk']} score={stats['score']} "
+        f"skipped_history_filters_initial={stats['skipped_history_filters_initial']}"
     )
 
     if len(pass_base) == 0 and total_raw > 0:
-        # Indicar el filtro dominante para diagnóstico rápido
-        dominant = max(stats, key=stats.get)
+        dominant = max(
+            {k: v for k, v in stats.items() if k not in ('skipped_history_filters_initial',)},
+            key=stats.get
+        )
         logger.warning(
             f"[FILTER DEBUG] after_base=0 — todos los items eliminados por filtros base. "
             f"Filtro dominante: {dominant}={stats[dominant]}. "

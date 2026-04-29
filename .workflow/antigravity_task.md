@@ -2470,3 +2470,88 @@ Vista: apply_filters(all_opportunities, config) una sola vez
 - [x] Worker no llama apply_filters
 - [x] Todos bypassa metadata
 - [x] broad=True en worker, broad=False en apply_filters
+
+
+---
+
+## Sesion 32 - 2026-04-29
+
+### Problema: Escaneos de 5 minutos (inaceptable)
+
+Causa raiz: el pipeline serie con un solo ESIClient (100ms/req) descargando historial para 200-500 items tarda 20-50s solo en historial. Con metadata prefetch (2000 items x 10 req/s) = 200+ segundos.
+
+### Solucion: Escaneo progresivo de dos fases
+
+**Fase 1** (~7-15s, objetivo: resultados visibles rapidamente):
+- Descargar market_orders (multi-pagina, ~5-10s)
+- Calcular economic_candidates por margin x orders_count
+- Para Todos: top 200. Para categorias: solo items con metadata YA en cache (blocking=False)
+- Descargar nombres en batch
+- Parsear oportunidades SIN historial (history_dict={})
+- Marcar opp.is_enriched=False
+- Emitir  -> UI muestra resultados inmediatamente (estado amarillo)
+
+**Fase 2** (background automatico):
+- Prefetch metadata paralelo (4 ESIClients independientes, pool de 500)
+- Filtrar por categoria con broad=True
+- Consultar MarketHistoryCache (disco, TTL 6h) -> hits gratuitos
+- Descarga concurrente de historial: 8 ESIClients independientes via ThreadPoolExecutor
+  - Cada ESIClient tiene su propio rate_limit_lock -> throughput 8x
+- Guardar cache de historial a disco
+- Re-parsear oportunidades con historial completo
+- Marcar opp.is_enriched=True, recalcular scores
+- Emitir  -> UI actualiza tabla (estado verde)
+
+### Nuevo: MarketHistoryCache (core/market_history_cache.py)
+- Singleton, cache JSON en disco (data/market_history_cache.json)
+- TTL = 6 horas (HISTORY_CACHE_TTL_SECONDS = 21600)
+- Limpia entradas expiradas al cargar
+- Renombra archivo corrupto a .corrupt.TIMESTAMP y arranca vacio
+
+### Cambios en apply_filters (core/market_engine.py)
+- Para opp.is_enriched=False: omite vol_min_day, history_days_min, profit_day_min, risk_max
+- Para opp.is_enriched=True: aplica todos los filtros normalmente
+- Nuevo filtro score_min (aplica a ambos si score_breakdown != None)
+- Stats separados: skipped_history_filters_initial
+
+### Cambios en MarketOpportunity (core/market_models.py)
+- Campo nuevo: is_enriched: bool = False
+
+### Nuevo: prefetch_type_metadata_parallel (core/item_resolver.py)
+- min(n_clients, len(missing), 8) ESIClients independientes para type lookups
+- group/category calls usan self.esi compartido (cache en memoria)
+- _save_cache() llamado una vez al final desde hilo principal
+- Retorna: {total, cached, fetched, failed, failed_ids}
+
+### UI: Senales nuevas y handlers
+- refresh_worker.py: initial_data_ready = Signal(list), enriched_data_ready = Signal(list)
+- simple_view.py / advanced_view.py: handlers on_initial_data_ready + on_enriched_data_ready/on_scan_finished
+- Boton unico: muestra ENRIQUECIENDO... durante Fase 2, vuelve a normal al terminar
+- Estado amarillo (fase 1) / verde (fase 2 completa)
+
+### Logs de performance
+- [SCAN PERF] market_orders_elapsed, grouping_elapsed, candidate_selection_elapsed
+- [SCAN PERF] metadata_elapsed, initial_emit_elapsed, history_elapsed, enriched_emit_elapsed, total_elapsed
+- [HISTORY CACHE] candidates, hits, misses
+- [WORKER PIPELINE] phase details
+
+### Constantes del worker
+- _TODOS_POOL_SIZE = 200
+- _BROAD_POOL_SIZE = 500
+- _CATEGORY_LIMIT = 300
+- _HISTORY_WORKERS = 8
+
+### Tests
+- test_market_history_cache.py: 8/8 passed
+- test_market_initial_enriched_filters.py: 11/11 passed
+
+### Archivos modificados
+- core/market_history_cache.py (nuevo)
+- core/market_models.py
+- core/item_resolver.py
+- core/market_engine.py
+- ui/market_command/refresh_worker.py (reescritura completa)
+- ui/market_command/simple_view.py
+- ui/market_command/advanced_view.py
+- tests/test_market_history_cache.py (nuevo)
+- tests/test_market_initial_enriched_filters.py (nuevo)

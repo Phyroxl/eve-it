@@ -33,6 +33,7 @@ class MarketOpportunity:
     score_breakdown: Optional[ScoreBreakdown] = None
     recommended_qty: int = 0
     recommended_cost: float = 0.0
+    is_enriched: bool = False
 
 @dataclass
 class FilterConfig:

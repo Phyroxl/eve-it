@@ -285,7 +285,8 @@ class MarketSimpleView(QWidget):
         self.worker = MarketRefreshWorker(region_id=10000002)
         self.worker.config = self.current_config
         self.worker.progress_changed.connect(self.on_progress)
-        self.worker.data_ready.connect(self.on_data_ready)
+        self.worker.initial_data_ready.connect(self.on_initial_data_ready)
+        self.worker.enriched_data_ready.connect(self.on_enriched_data_ready)
         self.worker.error_occurred.connect(self.on_error)
         self.worker.start()
 
@@ -293,18 +294,30 @@ class MarketSimpleView(QWidget):
         self.progress_bar.setValue(pct)
         self.lbl_status.setText(f"● {text.upper()}")
 
-    def on_data_ready(self, opps):
-        self.btn_refresh.setEnabled(True)
-        self.progress_bar.setVisible(False)
-        self.lbl_status.setText("● SISTEMA LISTO")
-        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
-        
+    def on_initial_data_ready(self, opps):
         import logging
-        log = logging.getLogger('eve.market.simple')
-        log.info(f"[PIPELINE] parsed_opportunities={len(opps)}")
-        
+        logging.getLogger('eve.market.simple').info(f"[PIPELINE] initial_opportunities={len(opps)}")
         self.all_opportunities = opps
         self.apply_and_display()
+        cat = self.current_config.selected_category
+        if opps:
+            msg = f"● RESULTADOS INICIALES ({len(opps)}) — ENRIQUECIENDO HISTORIAL..."
+        else:
+            msg = f"● BUSCANDO {cat.upper()}... DESCARGANDO METADATA" if cat != "Todos" else "● ENRIQUECIENDO..."
+        self.lbl_status.setText(msg)
+        self.lbl_status.setStyleSheet("color: #fbbf24; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        self.btn_refresh.setText("ENRIQUECIENDO...")
+
+    def on_enriched_data_ready(self, opps):
+        import logging
+        logging.getLogger('eve.market.simple').info(f"[PIPELINE] enriched_opportunities={len(opps)}")
+        self.all_opportunities = opps
+        self.apply_and_display()
+        self.btn_refresh.setEnabled(True)
+        self.btn_refresh.setText("REFRESCAR MERCADO (ESI)")
+        self.progress_bar.setVisible(False)
+        self.lbl_status.setText("● ESCANEO COMPLETADO — DATOS ENRIQUECIDOS")
+        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_error(self, err_msg):
         self.btn_refresh.setEnabled(True)

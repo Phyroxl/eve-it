@@ -250,7 +250,8 @@ class MarketAdvancedView(QWidget):
         self.worker.config = self.current_config
         self.worker.progress.connect(self.progress.setValue)
         self.worker.status.connect(self.on_status_received)
-        self.worker.data_ready.connect(self.on_scan_finished)
+        self.worker.initial_data_ready.connect(self.on_initial_scan_data)
+        self.worker.enriched_data_ready.connect(self.on_scan_finished)
         self.worker.error_occurred.connect(self.on_scan_error)
         self.btn_refresh.setEnabled(False)
         self.btn_refresh.setText("ESCANEO EN CURSO...")
@@ -262,23 +263,33 @@ class MarketAdvancedView(QWidget):
             self.lbl_status.setText(f"● {text.upper()}")
             self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
-    def on_scan_finished(self, opportunities):
+    def on_initial_scan_data(self, opportunities):
+        _log.info(f"[PIPELINE] initial_opportunities={len(opportunities)}")
         self.all_opportunities = opportunities
-        
-        _log.info(f"[PIPELINE] parsed_opportunities={len(opportunities)}")
-        _log.info(f"[PIPELINE] before_apply_filters={len(opportunities)}")
-        
         from core.market_engine import apply_filters
         filtered = apply_filters(opportunities, self.current_config)
-        
+        self.table.populate(filtered)
+        cat = self.current_config.selected_category
+        if self.lbl_status:
+            if opportunities:
+                msg = f"● RESULTADOS INICIALES ({len(filtered)}/{len(opportunities)}) — ENRIQUECIENDO..."
+            else:
+                msg = f"● BUSCANDO {cat.upper()}... DESCARGANDO METADATA" if cat != "Todos" else "● ENRIQUECIENDO..."
+            self.lbl_status.setText(msg)
+            self.lbl_status.setStyleSheet("color: #fbbf24; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        self.btn_refresh.setText("ENRIQUECIENDO...")
+
+    def on_scan_finished(self, opportunities):
+        self.all_opportunities = opportunities
+        _log.info(f"[PIPELINE] enriched_opportunities={len(opportunities)}")
+        from core.market_engine import apply_filters
+        filtered = apply_filters(opportunities, self.current_config)
         _log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
-        _log.info(f"[PIPELINE] table_populate_count={len(filtered)}")
-        
         self.table.populate(filtered)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
         if self.lbl_status:
-            self.lbl_status.setText(f"● ESCANEO COMPLETADO: {len(filtered)}/{len(opportunities)} ITEMS")
+            self.lbl_status.setText(f"● ESCANEO COMPLETADO — DATOS ENRIQUECIDOS: {len(filtered)}/{len(opportunities)} ITEMS")
             self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_error(self, err_msg):

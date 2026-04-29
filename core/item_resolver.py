@@ -123,6 +123,71 @@ class ItemResolver:
             
         return res
 
+    def prefetch_type_metadata_parallel(self, type_ids: list, n_clients: int = 4) -> dict:
+        """
+        Prefetch de metadata usando N ESIClient independientes para las llamadas de tipo.
+        Las llamadas de grupo/categoría siguen usando self.esi (beneficio de cache compartido).
+        Speedup esperado: ~3-4x respecto a prefetch_type_metadata secuencial.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from .esi_client import ESIClient
+
+        unique_ids = list(set(int(tid) for tid in type_ids))
+        missing = [tid for tid in unique_ids if tid not in self.cache]
+        cached_count = len(unique_ids) - len(missing)
+
+        if not missing:
+            return {'total': len(unique_ids), 'cached': cached_count, 'fetched': 0, 'failed': 0, 'failed_ids': []}
+
+        n = min(n_clients, len(missing), 8)
+        clients = [ESIClient() for _ in range(n)]
+
+        def fetch_one(args):
+            idx, tid = args
+            client = clients[idx % n]
+            try:
+                info = client._get(f"/universe/types/{tid}/", ttl=86400)
+                if not info:
+                    return tid, None
+                group_id = info.get('group_id')
+                if not group_id:
+                    return tid, {'group_id': None, 'category_id': None, 'group_name': 'Unknown Group', 'category_name': 'Unknown Category'}
+                # self.esi para grupo/categoría → cache compartida entre todos los hilos
+                group_info = self.esi._get(f"/universe/groups/{group_id}/", ttl=86400)
+                if not group_info:
+                    return tid, {'group_id': group_id, 'category_id': None, 'group_name': f'Group {group_id}', 'category_name': 'Unknown Category'}
+                cat_id = group_info.get('category_id')
+                grp_name = group_info.get('name', f'Group {group_id}')
+                cat_name = 'Unknown Category'
+                if cat_id:
+                    cat_info = self.esi._get(f"/universe/categories/{cat_id}/", ttl=86400)
+                    if cat_info:
+                        cat_name = cat_info.get('name', f'Category {cat_id}')
+                return tid, {'group_id': group_id, 'category_id': cat_id, 'group_name': grp_name, 'category_name': cat_name}
+            except Exception:
+                return tid, None
+
+        with ThreadPoolExecutor(max_workers=n) as executor:
+            results = list(executor.map(fetch_one, enumerate(missing)))
+
+        fetched = 0
+        failed = 0
+        failed_ids = []
+        for tid, info in results:
+            if info:
+                self.cache[tid] = info
+                fetched += 1
+            else:
+                failed += 1
+                failed_ids.append(tid)
+
+        self._save_cache()
+        logger.info(
+            f"[METADATA PARALLEL] total={len(unique_ids)} cached={cached_count} "
+            f"fetched={fetched} failed={failed} n_clients={n}"
+        )
+        return {'total': len(unique_ids), 'cached': cached_count, 'fetched': fetched, 'failed': failed, 'failed_ids': failed_ids[:10]}
+
     def _get_detailed_info(self, group_id: int) -> Tuple[Optional[int], str, str]:
         if not group_id: return None, "Unknown Group", "Unknown Category"
         
