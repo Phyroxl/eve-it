@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from .market_models import MarketOpportunity, LiquidityMetrics, ScoreBreakdown, FilterConfig, InventoryItem, InventoryAnalysis
 from .cost_basis_service import CostBasisService
 from .tax_service import TaxService
@@ -168,7 +168,7 @@ def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], confi
     
     category_removed = len(pass_base) - len(filtered)
     if category_removed > 0:
-        relevant_stats["category"] = category_removed
+        stats["category"] = category_removed
         if not dominant_filter or category_removed > stats.get(dominant_filter, 0):
             dominant_filter = "category"
 
