@@ -175,11 +175,27 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Enabled              : {_b(automation.get('enabled'))}")
     lines.append(f"  Dry Run              : {_b(automation.get('dry_run'))}")
     lines.append(f"  Status               : {_b(automation.get('status'))}")
+    lines.append(f"  Window Source        : {_b(automation.get('window_source'))}")
+    lines.append(f"  Selected Win Handle  : {_b(automation.get('selected_window_handle'))}")
+    lines.append(f"  Selected Win Title   : {_b(automation.get('selected_window_title'))}")
     lines.append(f"  Window Found         : {_b(automation.get('window_found'))}")
     lines.append(f"  Window Title         : {_b(automation.get('window_title'))}")
     lines.append(f"  Focused              : {_b(automation.get('focused'))}")
     lines.append(f"  Clipboard Set        : {_b(automation.get('clipboard_set'))}")
     lines.append(f"  Recommended Price    : {_b(automation.get('recommended_price_text'))}")
+    lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
+    cands = automation.get("candidate_windows") or []
+    if cands:
+        lines.append("  Candidate Windows:")
+        for c in cands[:8]:
+            flag = " [IGNORAR-propia app]" if c.get("is_self_app") else ""
+            lines.append(
+                f"    score={c.get('score',0):+4d}  "
+                f"handle={c.get('handle','?')}  "
+                f"{c.get('title','?')}{flag}"
+            )
+    else:
+        lines.append("  Candidate Windows    : (none detected)")
 
     steps_exec = automation.get("steps_executed") or []
     lines.append("  Steps Executed:")

@@ -10,5 +10,8 @@
   "client_window_title_contains": "EVE",
   "use_pywinauto": true,
   "use_pyautogui_fallback": false,
-  "max_attempts": 1
+  "max_attempts": 1,
+  "require_window_selection": true,
+  "allow_title_fallback_without_selection": false,
+  "exclude_self_app_windows": true
 }

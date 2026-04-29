@@ -2,12 +2,14 @@
 Non-modal Quick Order Update dialog (Fase 1 + Fase 2 experimental).
 Shows order data, pricing recommendation, and action buttons.
 Automation button connects to EVEWindowAutomation when enabled in config.
+Window selector lets the user pick the target EVE client window explicitly.
 """
 import logging
+from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QGridLayout, QTextEdit,
+    QFrame, QGridLayout, QTextEdit, QComboBox,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
@@ -59,16 +61,21 @@ class QuickOrderUpdateDialog(QDialog):
         self.open_market_callback = open_market_callback
         self._diag_report = diag_report
         self._report_visible = False
+        self._window_candidates: list = []   # list of candidate dicts from list_candidate_windows
 
         # Load automation config once at init
         try:
             from core.quick_order_update_config import load_quick_order_update_config
             self._automation_cfg = load_quick_order_update_config()
         except Exception:
-            self._automation_cfg = {"enabled": False, "dry_run": True}
+            self._automation_cfg = {
+                "enabled": False, "dry_run": True,
+                "require_window_selection": True,
+                "allow_title_fallback_without_selection": False,
+            }
 
         self.setWindowTitle(f"Quick Order Update — {order.item_name}")
-        self.setMinimumSize(540, 560)
+        self.setMinimumSize(560, 620)
         self.setStyleSheet("background-color:#000000; color:#f1f5f9;")
         self._setup_ui()
 
@@ -76,7 +83,7 @@ class QuickOrderUpdateDialog(QDialog):
     def _setup_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(14)
+        root.setSpacing(12)
 
         root.addWidget(self._build_header())
         root.addWidget(self._build_data_grid())
@@ -87,6 +94,7 @@ class QuickOrderUpdateDialog(QDialog):
             root.addWidget(self._build_warning_frame(validation))
 
         root.addWidget(self._build_reason_frame())
+        root.addWidget(self._build_window_selector())
 
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet("color:#10b981; font-size:9px; font-weight:800;")
@@ -105,6 +113,50 @@ class QuickOrderUpdateDialog(QDialog):
         self._report_edit.setFixedHeight(160)
         self._report_edit.hide()
         root.addWidget(self._report_edit)
+
+    # ------------------------------------------------------------------
+    def _build_window_selector(self) -> QFrame:
+        """Section for detecting and selecting the target EVE client window."""
+        frame = QFrame()
+        frame.setStyleSheet(
+            "background:#0f172a; border-radius:6px; border:1px solid #1e293b;"
+        )
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(14, 10, 14, 10)
+        fl.setSpacing(6)
+
+        hdr = QLabel("VENTANA OBJETIVO (AUTOMATIZACIÓN)")
+        hdr.setStyleSheet("color:#475569; font-size:8px; font-weight:900;")
+        fl.addWidget(hdr)
+
+        row = QHBoxLayout()
+
+        self._window_combo = QComboBox()
+        self._window_combo.setStyleSheet(
+            "QComboBox { background:#0a0f1a; color:#f1f5f9; font-size:9px;"
+            " border:1px solid #334155; border-radius:4px; padding:4px 8px; }"
+            " QComboBox::drop-down { border:none; }"
+            " QComboBox QAbstractItemView { background:#0a0f1a; color:#f1f5f9;"
+            " selection-background-color:#1e293b; font-size:9px; }"
+        )
+        self._window_combo.addItem("— detecta ventanas primero —", None)
+        row.addWidget(self._window_combo, stretch=1)
+
+        self.btn_detect_windows = QPushButton("DETECTAR")
+        self.btn_detect_windows.setStyleSheet(self._BTN)
+        self.btn_detect_windows.clicked.connect(self._on_detect_windows)
+        row.addWidget(self.btn_detect_windows)
+
+        fl.addLayout(row)
+
+        self._window_status_lbl = QLabel(
+            "Pulsa DETECTAR para buscar ventanas del cliente EVE."
+        )
+        self._window_status_lbl.setStyleSheet("color:#475569; font-size:8px;")
+        self._window_status_lbl.setWordWrap(True)
+        fl.addWidget(self._window_status_lbl)
+
+        return frame
 
     def _build_warning_frame(self, validation: dict) -> QFrame:
         """Orange warning block shown when confidence is low."""
@@ -199,12 +251,12 @@ class QuickOrderUpdateDialog(QDialog):
         ]
 
         if analysis:
-            state_color = "#10b981" if analysis.competitive else "#f59e0b"
+            state_color  = "#10b981" if analysis.competitive else "#f59e0b"
             profit_color = "#10b981" if analysis.net_profit_total >= 0 else "#ef4444"
             margin_color = "#10b981" if analysis.margin_pct > 0 else "#ef4444"
             rows_data += [
-                ("ESTADO",       analysis.state.upper(),            state_color),
-                ("MARGEN NETO",  f"{analysis.margin_pct:.1f}%",     margin_color),
+                ("ESTADO",       analysis.state.upper(),              state_color),
+                ("MARGEN NETO",  f"{analysis.margin_pct:.1f}%",       margin_color),
                 ("PROFIT TOTAL", _fmt_isk(analysis.net_profit_total), profit_color),
             ]
 
@@ -254,7 +306,7 @@ class QuickOrderUpdateDialog(QDialog):
         self.btn_report = QPushButton("VER REPORTE")
         self.btn_close  = QPushButton("CERRAR")
 
-        # Phase 2: label reflects enabled state
+        # Phase 2: label reflects enabled/dry-run state
         automation_enabled = self._automation_cfg.get("enabled", False)
         dry_run            = self._automation_cfg.get("dry_run", True)
         if automation_enabled and dry_run:
@@ -326,6 +378,74 @@ class QuickOrderUpdateDialog(QDialog):
         self.adjustSize()
 
     # ------------------------------------------------------------------
+    # Phase 2: window detection
+    # ------------------------------------------------------------------
+    def _on_detect_windows(self):
+        """Enumerate visible windows and populate the selection combo."""
+        self._window_status_lbl.setText("Detectando ventanas...")
+        self._window_status_lbl.setStyleSheet("color:#3b82f6; font-size:8px;")
+
+        try:
+            from core.window_automation import list_candidate_windows
+            candidates = list_candidate_windows(self._automation_cfg)
+        except Exception as exc:
+            self._window_status_lbl.setText(f"Error al detectar ventanas: {exc}")
+            self._window_status_lbl.setStyleSheet("color:#ef4444; font-size:8px;")
+            return
+
+        self._window_candidates = candidates
+        self._window_combo.clear()
+
+        if not candidates:
+            self._window_combo.addItem("(ninguna ventana detectada)", None)
+            self._window_status_lbl.setText(
+                "No se detectaron ventanas. ¿pywinauto instalado y hay ventanas abiertas?"
+            )
+            self._window_status_lbl.setStyleSheet("color:#f59e0b; font-size:8px;")
+            return
+
+        best_idx = 0
+        best_score = -9999
+        for i, c in enumerate(candidates):
+            title  = c["title"]
+            handle = c["handle"]
+            score  = c["score"]
+            if c["is_self_app"]:
+                label = f"{title}  [IGNORAR — propia app]"
+            else:
+                label = f"{title}  [handle: {handle}  score: {score:+d}]"
+            self._window_combo.addItem(label, c)
+            # Track best non-self candidate
+            if not c["is_self_app"] and score > best_score:
+                best_score = score
+                best_idx = i
+
+        # Auto-select best non-self candidate (if any exists)
+        best = candidates[best_idx]
+        if not best["is_self_app"]:
+            self._window_combo.setCurrentIndex(best_idx)
+            self._window_status_lbl.setText(
+                f"Detectadas {len(candidates)} ventana(s). "
+                f"Seleccionada automáticamente: {best['title'][:50]}"
+            )
+            self._window_status_lbl.setStyleSheet("color:#10b981; font-size:8px;")
+        else:
+            self._window_status_lbl.setText(
+                f"Detectadas {len(candidates)} ventana(s). "
+                "Selecciona manualmente el cliente EVE Online."
+            )
+            self._window_status_lbl.setStyleSheet("color:#f59e0b; font-size:8px;")
+
+        _log.info(
+            f"[QUICK UPDATE] detect_windows found={len(candidates)} "
+            f"best_score={best_score}"
+        )
+
+    def _selected_window(self) -> Optional[dict]:
+        """Return the currently selected window candidate dict, or None."""
+        return self._window_combo.currentData()
+
+    # ------------------------------------------------------------------
     # Phase 2: automation
     # ------------------------------------------------------------------
     def _on_automate(self):
@@ -340,14 +460,29 @@ class QuickOrderUpdateDialog(QDialog):
             _log.info("[QUICK UPDATE] automation button clicked but enabled=false")
             return
 
+        selected = self._selected_window()
+        require  = cfg.get("require_window_selection", True)
+        allow_fb = cfg.get("allow_title_fallback_without_selection", False)
+
+        # Guard: no selection + requires selection + no fallback allowed
+        if selected is None and require and not allow_fb:
+            msg = (
+                "No hay ventana objetivo seleccionada. "
+                "Pulsa DETECTAR y selecciona el cliente EVE Online antes de automatizar."
+            )
+            self._status_lbl.setText(msg)
+            self._status_lbl.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:800;")
+            _log.warning("[QUICK UPDATE] automation blocked — no window selected")
+            return
+
         price_text = format_price_for_clipboard(
             self.recommendation.get("recommended_price", 0)
         )
         order_data = {
-            "order_id":   self.order.order_id,
-            "type_id":    self.order.type_id,
-            "item_name":  self.order.item_name,
-            "price":      self.order.price,
+            "order_id":  self.order.order_id,
+            "type_id":   self.order.type_id,
+            "item_name": self.order.item_name,
+            "price":     self.order.price,
         }
 
         self._status_lbl.setText("Ejecutando automatización experimental...")
@@ -355,48 +490,54 @@ class QuickOrderUpdateDialog(QDialog):
 
         try:
             from core.window_automation import EVEWindowAutomation
-            from core.quick_order_update_diagnostics import format_automation_section
-            auto = EVEWindowAutomation(cfg)
-            result = auto.execute_quick_order_update(order_data, price_text)
+            auto   = EVEWindowAutomation(cfg)
+            result = auto.execute_quick_order_update(
+                order_data, price_text, selected_window=selected
+            )
         except Exception as exc:
             _log.error(f"[QUICK UPDATE] automation error: {exc}")
             self._status_lbl.setText(f"Error en automatización: {exc}")
             self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
             return
 
-        # Update the report panel with automation results — ensure single [AUTOMATION] section
+        # Inject candidate list metadata into result for diagnostics
+        result["candidate_windows_count"] = len(self._window_candidates)
+        result["candidate_windows"]       = self._window_candidates[:8]
+
+        # Update the report panel — replace existing [AUTOMATION] if present
         try:
             from core.quick_order_update_diagnostics import (
-                format_automation_section,
-                replace_or_append_automation_section,
+                format_automation_section, replace_or_append_automation_section,
             )
-            auto_section = format_automation_section(result)
-            updated_report = replace_or_append_automation_section(self._diag_report, auto_section)
+            auto_section   = format_automation_section(result)
+            updated_report = replace_or_append_automation_section(
+                self._diag_report, auto_section
+            )
             self._diag_report = updated_report
             self._report_edit.setPlainText(updated_report)
         except Exception as exc:
             _log.warning(f"[QUICK UPDATE] could not update diag report: {exc}")
 
-        status = result.get("status", "unknown")
-        dry_run = result.get("dry_run", True)
+        status  = result.get("status", "unknown")
         errors  = result.get("errors", [])
 
         if status == "dry_run":
-            msg = "Dry-run completado — no se tocó ninguna ventana. Ver reporte para detalles."
+            sel_title = (selected.get("title", "?")[:40] if selected else "fallback por título")
+            msg   = f"Dry-run completado. Ventana: {sel_title}. Ver reporte."
             color = "#10b981"
         elif status == "success":
-            msg = "Automatización completada. Precio copiado y ventana enfocada."
+            msg   = "Automatización completada. Precio copiado y ventana enfocada."
             color = "#10b981"
         elif status == "partial":
             err_summary = errors[0] if errors else "error desconocido"
-            msg = f"Automatización parcial: {err_summary}"
+            msg   = f"Automatización parcial: {err_summary}"
             color = "#f59e0b"
         elif status == "error":
             err_summary = errors[0] if errors else "error desconocido"
-            msg = f"Error en automatización: {err_summary}"
+            msg   = f"Error en automatización: {err_summary}"
             color = "#ef4444"
         else:
-            msg = f"Estado: {status}"
+            msg   = f"Estado: {status}"
             color = "#94a3b8"
 
         self._status_lbl.setText(msg)
@@ -404,11 +545,11 @@ class QuickOrderUpdateDialog(QDialog):
             f"color:{color}; font-size:9px; font-weight:800;"
         )
 
-        # Auto-show report so user can see what happened
+        # Auto-show report
         if not self._report_visible:
             self._toggle_report()
 
         _log.info(
-            f"[QUICK UPDATE] automation status={status} dry_run={dry_run} "
-            f"errors={len(errors)}"
+            f"[QUICK UPDATE] automation status={status} "
+            f"window_source={result.get('window_source')} errors={len(errors)}"
         )

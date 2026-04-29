@@ -10,18 +10,21 @@ import time
 _log = logging.getLogger('eve.market.quick_update.config')
 
 _DEFAULT_CONFIG: dict = {
-    "enabled":                     False,
-    "dry_run":                     True,
-    "confirm_required":            True,
-    "open_market_delay_ms":        1000,
-    "focus_client_delay_ms":       700,
-    "paste_price_delay_ms":        300,
-    "post_action_delay_ms":        300,
-    "restore_clipboard_after":     False,
-    "client_window_title_contains": "EVE",
-    "use_pywinauto":               True,
-    "use_pyautogui_fallback":      False,
-    "max_attempts":                1,
+    "enabled":                              False,
+    "dry_run":                              True,
+    "confirm_required":                     True,
+    "open_market_delay_ms":                 1000,
+    "focus_client_delay_ms":                700,
+    "paste_price_delay_ms":                 300,
+    "post_action_delay_ms":                 300,
+    "restore_clipboard_after":              False,
+    "client_window_title_contains":         "EVE",
+    "use_pywinauto":                        True,
+    "use_pyautogui_fallback":               False,
+    "max_attempts":                         1,
+    "require_window_selection":             True,
+    "allow_title_fallback_without_selection": False,
+    "exclude_self_app_windows":             True,
 }
 
 _DELAY_KEYS = (
@@ -86,7 +89,9 @@ def validate_quick_order_update_config(config: dict) -> dict:
     result = dict(_DEFAULT_CONFIG)
 
     for key in ("enabled", "dry_run", "confirm_required",
-                "restore_clipboard_after", "use_pywinauto", "use_pyautogui_fallback"):
+                "restore_clipboard_after", "use_pywinauto", "use_pyautogui_fallback",
+                "require_window_selection", "allow_title_fallback_without_selection",
+                "exclude_self_app_windows"):
         if key in config:
             result[key] = bool(config[key])
 
