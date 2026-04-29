@@ -127,10 +127,9 @@ class EveIconService(QObject):
         request.setAttribute(QNetworkRequest.Attribute.User, endpoint_type)
         
         reply = self.net_manager.get(request)
-        reply.finished.connect(lambda: self._on_reply_finished(reply, type_id, size))
+        reply.finished.connect(lambda: self._on_reply_finished(reply, type_id, size, endpoint_type))
 
-    def _on_reply_finished(self, reply: QNetworkReply, type_id: int, size: int):
-        endpoint_type = reply.attribute(QNetworkRequest.Attribute.User)
+    def _on_reply_finished(self, reply: QNetworkReply, type_id: int, size: int, endpoint_type: str):
         if endpoint_type is None:
             endpoint_type = "unknown"
         
