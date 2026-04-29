@@ -8,8 +8,10 @@ from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt
 from ui.market_command.widgets import MarketTableWidget
 from ui.market_command.refresh_worker import MarketRefreshWorker
+from ui.market_command.diagnostics_dialog import MarketDiagnosticsDialog
 from core.market_engine import apply_filters, apply_filters_with_diagnostics
 from core.market_models import FilterConfig
+from core.market_scan_diagnostics import MarketScanDiagnostics
 from core.config_manager import save_market_filters, load_market_filters
 
 class MarketSimpleView(QWidget):
@@ -17,6 +19,7 @@ class MarketSimpleView(QWidget):
         super().__init__(parent)
         self.worker = None
         self.all_opportunities = []
+        self.last_scan_diagnostics = None
         self.current_config = load_market_filters()
         self.setup_ui()
         
@@ -288,6 +291,7 @@ class MarketSimpleView(QWidget):
         self.worker.initial_data_ready.connect(self.on_initial_data_ready)
         self.worker.enriched_data_ready.connect(self.on_enriched_data_ready)
         self.worker.error_occurred.connect(self.on_error)
+        self.worker.diagnostics_ready.connect(self.on_diagnostics_ready) # New
         self.worker.start()
 
     def on_progress(self, pct, text):
@@ -326,6 +330,10 @@ class MarketSimpleView(QWidget):
         self.progress_bar.setVisible(False)
         self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
         self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+
+    def on_diagnostics_ready(self, diagnostics):
+        self.last_scan_diagnostics = diagnostics
+        # Dialog will be opened in apply_and_display to have final counts
 
     def update_config_from_ui(self):
         self.current_config.capital_max = self.spin_capital.value()
@@ -409,13 +417,37 @@ class MarketSimpleView(QWidget):
                 best_solid = max(solid_opps, key=lambda x: x.margin_net_pct)
                 self.lbl_sum_margin.setText(f"{best_solid.item_name} ({best_solid.margin_net_pct:.1f}%)")
             else: self.lbl_sum_margin.setText("Ninguna")
-            
             if len(filtered) > 50:
                 self.lbl_sum_insight.setText("MERCADO SALUDABLE")
                 self.lbl_sum_insight.setStyleSheet("color: #34d399; font-size: 13px; font-weight: 800; border: none; background: transparent;")
             else:
                 self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
                 self.lbl_sum_insight.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+
+        # Finalize and show diagnostics report
+        if self.last_scan_diagnostics:
+            diag = self.last_scan_diagnostics
+            diag.ui_all_opportunities_count = len(self.all_opportunities)
+            diag.ui_filtered_count = len(filtered)
+            diag.ui_config_at_filter_time = self.current_config.__dict__.copy() if hasattr(self.current_config, '__dict__') else {}
+            diag.filter_diagnostics = diag
+            diag.dominant_filter = diag.get("dominant_filter")
+            diag.selected_category_ui = self.current_config.selected_category
+            diag.mode = "Simple"
+            
+            if hasattr(self.table, 'get_icon_diagnostics'):
+                icon_stats = self.table.get_icon_diagnostics()
+                diag.icon_requests = icon_stats.get("icon_requests", 0)
+                diag.icon_loaded = icon_stats.get("icon_loaded", 0)
+                diag.icon_failed = icon_stats.get("icon_failed", 0)
+                diag.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+
+            # Open automatically
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1000, lambda: MarketDiagnosticsDialog(diag.to_report(), self).show())
+            # Clear it so it doesn't open twice for Phase 1 and Phase 2 if not desired, 
+            # but we want it at the end of every scan phase if it emits.
+            # Actually, better keep it until next refresh.
 
     def on_table_selection(self):
         sel = self.table.selectedItems()

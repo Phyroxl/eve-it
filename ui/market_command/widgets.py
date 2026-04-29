@@ -183,6 +183,11 @@ class MarketTableWidget(QTableWidget):
         self.icon_cache = {}
         self._image_generation = 0
         
+        # Diagnostics
+        self.icon_requests = 0
+        self.icon_loaded = 0
+        self.icon_failed = 0
+        
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
 
     def contextMenuEvent(self, event):
@@ -227,6 +232,7 @@ class MarketTableWidget(QTableWidget):
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
+                self.icon_requests += 1
                 item.setIcon(QIcon(placeholder))
                 self.load_icon_async(opp.type_id, item, row, gen)
             
@@ -299,17 +305,31 @@ class MarketTableWidget(QTableWidget):
                     data = reply.readAll()
                     pixmap = QPixmap()
                     if pixmap.loadFromData(data):
+                        self.icon_loaded += 1
                         self.icon_cache[type_id] = pixmap
                         # Search for ALL items with this type_id (in case of duplicates or moved rows)
                         for r in range(self.rowCount()):
                             it = self.item(r, 1)
                             if it and it.data(Qt.UserRole) == type_id:
                                 it.setIcon(QIcon(pixmap))
+                    else:
+                        self.icon_failed += 1
+                else:
+                    self.icon_failed += 1
             except Exception as e:
+                self.icon_failed += 1
                 import logging
                 logging.getLogger('eve.market.ui').debug(f"Error loading icon for {type_id}: {e}")
             finally:
                 reply.deleteLater()
+
+    def get_icon_diagnostics(self) -> dict:
+        return {
+            "icon_cache_size": len(self.icon_cache),
+            "icon_requests": self.icon_requests,
+            "icon_loaded": self.icon_loaded,
+            "icon_failed": self.icon_failed
+        }
             
         reply.finished.connect(on_finished)
 class AdvancedMarketTableWidget(MarketTableWidget):
@@ -362,6 +382,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             if opp.type_id in self.icon_cache:
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
+                self.icon_requests += 1
                 item.setIcon(QIcon(placeholder))
                 self.load_icon_async(opp.type_id, item, row, gen)
             

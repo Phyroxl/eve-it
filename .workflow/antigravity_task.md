@@ -2632,3 +2632,37 @@ Revision quirurgica post-2d788dd. Cinco problemas detectados y corregidos.
 - ui/market_command/advanced_view.py
 - ui/market_command/widgets.py
 - tests/test_market_simple_filters_relaxed.py (nuevo)
+
+## Sesión 35: Implementación de Ventana de Diagnóstico de Escaneo
+
+### Problema
+A pesar de múltiples correcciones en el pipeline de filtrado, algunos usuarios siguen reportando tablas vacías sin una causa clara. El diagnóstico mediante logs de consola es insuficiente para usuarios finales y para el análisis remoto.
+
+### Decisión
+Implementar una ventana modal de diagnóstico que se abre automáticamente al finalizar cada escaneo (éxito o error). Esta ventana genera un reporte exhaustivo y copiable de todos los estados internos del worker y de la UI.
+
+### Implementación
+1.  **Nuevo Objeto de Diagnóstico**: core/market_scan_diagnostics.py define la clase MarketScanDiagnostics que captura:
+    *   Configuración real usada (worker y UI).
+    *   Conteos en cada fase del pipeline (raw orders -> candidates -> filtered).
+    *   Estadísticas de metadata e historial (hits/misses).
+    *   Timings por fase.
+    *   Detalles de fallback y errores.
+    *   Estadísticas de iconos (icon_requests, loaded, failed).
+2.  **Instrumentación del Worker**: ui/market_command/refresh_worker.py ahora rellena este objeto en tiempo real y lo emite mediante la señal diagnostics_ready.
+3.  **UI de Diagnóstico**: ui/market_command/diagnostics_dialog.py proporciona una ventana con estilo 'consola táctica' que permite copiar el reporte al portapapeles.
+4.  **Integración en Vistas**: Tanto MarketSimpleView como MarketAdvancedView capturan el diagnóstico, le añaden las estadísticas de filtrado de la UI y abren la ventana automáticamente.
+
+### Verificación
+- **Tests**: Nuevo test tests/test_market_scan_diagnostics.py (PASS).
+- **Regresión**: Suite completa ejecutada (48+ pipeline tests PASS, 11 filter tests PASS).
+- **Estabilidad**: py_compile verificado en todos los archivos modificados.
+
+### Archivos Modificados
+- core/market_scan_diagnostics.py (Nuevo)
+- ui/market_command/diagnostics_dialog.py (Nuevo)
+- tests/test_market_scan_diagnostics.py (Nuevo)
+- ui/market_command/refresh_worker.py (Instrumentado)
+- ui/market_command/simple_view.py (Integrado)
+- ui/market_command/advanced_view.py (Integrado)
+- ui/market_command/widgets.py (Estadísticas de iconos)

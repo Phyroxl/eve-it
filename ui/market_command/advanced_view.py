@@ -13,6 +13,7 @@ from core.market_models import FilterConfig
 from core.config_manager import save_market_filters, load_market_filters
 from ui.market_command.refresh_worker import MarketRefreshWorker
 from core.market_engine import apply_filters, apply_filters_with_diagnostics
+from ui.market_command.diagnostics_dialog import MarketDiagnosticsDialog
 
 _log = logging.getLogger('eve.market.advanced')
 
@@ -21,6 +22,7 @@ class MarketAdvancedView(QWidget):
         super().__init__(parent)
         self.worker = None
         self.all_opportunities = []
+        self.last_scan_diagnostics = None
         self.current_config = load_market_filters()
         self.lbl_status = None
         self.setup_ui()
@@ -254,6 +256,7 @@ class MarketAdvancedView(QWidget):
         self.worker.initial_data_ready.connect(self.on_initial_scan_data)
         self.worker.enriched_data_ready.connect(self.on_scan_finished)
         self.worker.error_occurred.connect(self.on_scan_error)
+        self.worker.diagnostics_ready.connect(self.on_diagnostics_ready)
         self.btn_refresh.setEnabled(False)
         self.btn_refresh.setText("ESCANEO EN CURSO...")
         self.progress.setValue(0)
@@ -304,12 +307,37 @@ class MarketAdvancedView(QWidget):
                 self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(filtered)} RESULTADOS")
                 self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
+        # Finalize and show diagnostics report
+        if self.last_scan_diagnostics:
+            diag = self.last_scan_diagnostics
+            diag.ui_all_opportunities_count = len(opportunities)
+            diag.ui_filtered_count = len(filtered)
+            diag.ui_config_at_filter_time = self.current_config.__dict__.copy() if hasattr(self.current_config, '__dict__') else {}
+            diag.filter_diagnostics = diag
+            diag.dominant_filter = diag.get("dominant_filter")
+            diag.selected_category_ui = self.current_config.selected_category
+            diag.mode = "Advanced"
+            
+            if hasattr(self.table, 'get_icon_diagnostics'):
+                icon_stats = self.table.get_icon_diagnostics()
+                diag.icon_requests = icon_stats.get("icon_requests", 0)
+                diag.icon_loaded = icon_stats.get("icon_loaded", 0)
+                diag.icon_failed = icon_stats.get("icon_failed", 0)
+                diag.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+
+            # Open automatically
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1000, lambda: MarketDiagnosticsDialog(diag.to_report(), self).show())
+
     def on_scan_error(self, err_msg):
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
         if self.lbl_status:
             self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
             self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+
+    def on_diagnostics_ready(self, diagnostics):
+        self.last_scan_diagnostics = diagnostics
 
     def on_apply_filters(self):
         self.update_config_from_ui()
