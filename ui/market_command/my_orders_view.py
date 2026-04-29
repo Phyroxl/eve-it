@@ -954,15 +954,18 @@ class MarketMyOrdersView(QWidget):
         buys = [o for o in data if o.is_buy_order]
         self.lbl_sell.setText(f"ÓRDENES DE VENTA ({len(sells)})")
         self.lbl_buy.setText(f"ÓRDENES DE COMPRA ({len(buys)})")
-        self.fill_table(self.table_sell, sells)
-        self.fill_table(self.table_buy, buys)
-        self._stop_sync_ui()
-
-    def fill_table(self, t, data):
-        t.setSortingEnabled(False)
-        t.setRowCount(len(data))
+        
         self._image_generation += 1
         gen = self._image_generation
+        _log.info(f"[MY ORDERS] Starting fill_table with gen={gen}")
+        
+        self.fill_table(self.table_sell, sells, gen)
+        self.fill_table(self.table_buy, buys, gen)
+        self._stop_sync_ui()
+
+    def fill_table(self, t, data, gen):
+        t.setSortingEnabled(False)
+        t.setRowCount(len(data))
         for r, o in enumerate(data):
             a = o.analysis
             cost = CostBasisService.instance().get_cost_basis(o.type_id)
