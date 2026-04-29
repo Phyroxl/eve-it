@@ -324,9 +324,10 @@ class MarketRefreshWorker(QThread):
             logger.info(f"[WORKER DIAG] opps_enriched={len(opps_enriched)} elapsed={t_enrich:.2f}s")
 
             if not opps_enriched and opps_initial:
-                logger.warning(f"[WORKER DIAG] Enriched results EMPTY but initial had {len(opps_initial)}. Falling back.")
+                logger.warning(f"[WORKER DIAG] Enriched results EMPTY but initial had {len(opps_initial)}. Falling back to initial data.")
                 opps_enriched = opps_initial
-                for o in opps_enriched: o.is_enriched = True # Mark as enriched for fallback
+                for o in opps_enriched: 
+                    o.is_enriched = False  # Keep as False to bypass history filters in UI
 
             self.last_results = opps_enriched
             self.emit_progress(100, f"Done. {len(opps_enriched)} items.")

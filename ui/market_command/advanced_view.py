@@ -12,6 +12,7 @@ from ui.market_command.widgets import AdvancedMarketTableWidget
 from core.market_models import FilterConfig
 from core.config_manager import save_market_filters, load_market_filters
 from ui.market_command.refresh_worker import MarketRefreshWorker
+from core.market_engine import apply_filters, apply_filters_with_diagnostics
 
 _log = logging.getLogger('eve.market.advanced')
 
@@ -283,8 +284,8 @@ class MarketAdvancedView(QWidget):
         self.all_opportunities = opportunities
         _log.info(f"[UI DIAG] enriched_opportunities_received={len(opportunities)}")
         
-        from core.market_engine import apply_filters
-        filtered = apply_filters(opportunities, self.current_config)
+        from core.market_engine import apply_filters_with_diagnostics
+        filtered, diag = apply_filters_with_diagnostics(opportunities, self.current_config)
         _log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
         
         self.table.populate(filtered)
@@ -296,7 +297,8 @@ class MarketAdvancedView(QWidget):
                 self.lbl_status.setText("● ESCANEO COMPLETADO — SIN RESULTADOS EN EL POOL")
                 self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
             elif not filtered:
-                self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(opportunities)} ITEMS PERO 0 TRAS FILTROS")
+                dom = diag.get("dominant_filter", "DESCONOCIDO")
+                self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(opportunities)} ITEMS PERO 0 TRAS FILTRO: {dom.upper()}")
                 self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
             else:
                 self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(filtered)} RESULTADOS")
@@ -316,8 +318,8 @@ class MarketAdvancedView(QWidget):
         
         save_market_filters(self.current_config)
         
-        from core.market_engine import apply_filters
-        filtered = apply_filters(self.all_opportunities, self.current_config)
+        from core.market_engine import apply_filters_with_diagnostics
+        filtered, diag = apply_filters_with_diagnostics(self.all_opportunities, self.current_config)
         
         _log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
         
@@ -329,7 +331,8 @@ class MarketAdvancedView(QWidget):
                 self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif len(filtered) == 0:
             if self.lbl_status:
-                self.lbl_status.setText(f"● {len(self.all_opportunities)} ITEMS EN EL POOL PERO 0 TRAS FILTROS")
+                dom = diag.get("dominant_filter", "DESCONOCIDO")
+                self.lbl_status.setText(f"● {len(self.all_opportunities)} ITEMS EN EL POOL PERO 0 TRAS FILTRO: {dom.upper()}")
                 self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         else:
             if self.lbl_status:

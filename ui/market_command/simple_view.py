@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt
 from ui.market_command.widgets import MarketTableWidget
 from ui.market_command.refresh_worker import MarketRefreshWorker
-from core.market_engine import apply_filters
+from core.market_engine import apply_filters, apply_filters_with_diagnostics
 from core.market_models import FilterConfig
 from core.config_manager import save_market_filters, load_market_filters
 
@@ -297,6 +297,7 @@ class MarketSimpleView(QWidget):
     def on_initial_data_ready(self, opps):
         import logging
         logging.getLogger('eve.market.simple').info(f"[PIPELINE] initial_opportunities={len(opps)}")
+        self.update_config_from_ui()
         self.all_opportunities = opps
         self.apply_and_display()
         cat = self.current_config.selected_category
@@ -311,6 +312,7 @@ class MarketSimpleView(QWidget):
     def on_enriched_data_ready(self, opps):
         import logging
         logging.getLogger('eve.market.simple').info(f"[PIPELINE] enriched_opportunities={len(opps)}")
+        self.update_config_from_ui()
         self.all_opportunities = opps
         self.apply_and_display()
         self.btn_refresh.setEnabled(True)
@@ -372,7 +374,7 @@ class MarketSimpleView(QWidget):
         total_raw = len(self.all_opportunities)
         log.info(f"[UI DIAG] before_apply_filters={total_raw} selected_category={self.current_config.selected_category}")
         
-        filtered = apply_filters(self.all_opportunities, self.current_config)
+        filtered, diag = apply_filters_with_diagnostics(self.all_opportunities, self.current_config)
         filtered.sort(key=lambda x: x.score_breakdown.final_score if x.score_breakdown else 0, reverse=True)
         
         log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
@@ -390,9 +392,13 @@ class MarketSimpleView(QWidget):
             self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif len(filtered) == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
-            self.lbl_sum_insight.setText("0 RESULTADOS TRAS FILTROS")
-            self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 13px; font-weight: 800; border: none; background: transparent;")
-            self.lbl_status.setText(f"● {total_raw} ITEMS ENCONTRADOS PERO 0 PASAN LOS FILTROS")
+            
+            dom = diag.get("dominant_filter", "DESCONOCIDO")
+            count = diag["removed"].get(dom, total_raw)
+            self.lbl_sum_insight.setText(f"FILTRO DOMINANTE: {dom.upper()} ({count})")
+            self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 11px; font-weight: 800; border: none; background: transparent;")
+            
+            self.lbl_status.setText(f"● {total_raw} ITEMS ENCONTRADOS PERO 0 PASAN FILTRO: {dom.upper()}")
             self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         else:
             self.lbl_sum_top.setText(top_50[0].item_name)

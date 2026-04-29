@@ -78,6 +78,10 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
     return opportunities
 
 def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) -> List[MarketOpportunity]:
+    filtered, _ = apply_filters_with_diagnostics(opportunities, config)
+    return filtered
+
+def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], config: FilterConfig) -> Tuple[List[MarketOpportunity], Dict]:
     filtered = []
     risk_map = {"Low": 1, "Medium": 2, "High": 3}
 
@@ -140,59 +144,45 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
 
         pass_base.append(opp)
 
-    logger.info(
-        f"[FILTER DEBUG] after_base={len(pass_base)} | "
-        f"removed_no_buy={stats['no_buy_price']} removed_plex={stats['plex']} removed_capital={stats['capital']} "
-        f"removed_margin={stats['margin']} removed_spread={stats['spread']} "
-        f"removed_buy_orders={stats['buy_orders']} removed_sell_orders={stats['sell_orders']} "
-        f"removed_volume={stats['volume']} removed_history_days={stats['history_days']} "
-        f"removed_profit_day={stats['profit_day']} removed_risk={stats['risk']} removed_score={stats['score']} "
-        f"skipped_history_filters_initial={stats['skipped_history_filters_initial']}"
-    )
-
-    if len(pass_base) == 0 and total_raw > 0:
-        relevant_stats = {k: v for k, v in stats.items() if k != 'skipped_history_filters_initial' and v > 0}
-        if relevant_stats:
-            dominant = max(relevant_stats, key=relevant_stats.get)
-            logger.warning(f"[FILTER DEBUG] after_base=0 — Filtro dominante: {dominant}={stats[dominant]}.")
-
     # ── B) Shortcut para "Todos" (sin metadata) ──────────────────────────────────
     if config.selected_category == "Todos":
-        logger.info(f"[FILTER DEBUG] selected_category=Todos | bypassing category filter | final={len(pass_base)}")
-        return pass_base
+        filtered = pass_base
+    else:
+        # ── C) Prefetch de metadata solo si se necesita filtro de categoría ──────────
+        if pass_base:
+            type_ids = [o.type_id for o in pass_base]
+            ItemResolver.instance().prefetch_type_metadata(type_ids)
 
-    # ── C) Prefetch de metadata solo si se necesita filtro de categoría ──────────
-    if pass_base:
-        type_ids = [o.type_id for o in pass_base]
-        p_stats = ItemResolver.instance().prefetch_type_metadata(type_ids)
-        logger.info(f"[FILTER DEBUG] metadata_prefetch total={p_stats['total']} cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}")
+        # ── D) Filtro de categoría (estricto) ────────────────────────────────────────
+        cat_filtered = []
+        for opp in pass_base:
+            cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
+            match, _ = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
+            if match:
+                cat_filtered.append(opp)
+        filtered = cat_filtered
 
-    # ── D) Filtro de categoría (estricto) ────────────────────────────────────────
-    filtered = []
-    cat_pass = 0
-    cat_fail_no_meta = 0
-    cat_fail_wrong_cat = 0
+    # Preparar diagnóstico
+    relevant_stats = {k: v for k, v in stats.items() if k != 'skipped_history_filters_initial' and v > 0}
+    dominant_filter = max(relevant_stats, key=relevant_stats.get) if relevant_stats else None
+    
+    category_removed = len(pass_base) - len(filtered)
+    if category_removed > 0:
+        relevant_stats["category"] = category_removed
+        if not dominant_filter or category_removed > stats.get(dominant_filter, 0):
+            dominant_filter = "category"
 
-    for opp in pass_base:
-        cat_id, grp_id, grp_name, cat_name = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
-        match, reason = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
-        if match:
-            cat_pass += 1
-            filtered.append(opp)
-            logger.debug(f"[CATEGORY DEBUG] PASS name={opp.item_name} cat={cat_name}({cat_id}) grp={grp_name}({grp_id})")
-        else:
-            if cat_id is None or grp_id is None:
-                cat_fail_no_meta += 1
-            else:
-                cat_fail_wrong_cat += 1
-            logger.debug(f"[CATEGORY DEBUG] FAIL name={opp.item_name} cat={cat_name}({cat_id}) grp={grp_name}({grp_id}) reason={reason}")
+    diagnostics = {
+        "total_raw": total_raw,
+        "after_base": len(pass_base),
+        "after_category": len(filtered),
+        "removed": stats,
+        "dominant_filter": dominant_filter,
+        "selected_category": config.selected_category
+    }
 
-    logger.info(f"[FILTER DEBUG] after_category={len(filtered)} | cat_pass={cat_pass} cat_fail_wrong_cat={cat_fail_wrong_cat} cat_fail_no_meta={cat_fail_no_meta}")
-
-    if len(filtered) == 0 and len(pass_base) > 0:
-        logger.warning(f"[CATEGORY WARNING] Category filter '{config.selected_category}' excluded ALL ({len(pass_base)}) items that passed base filters.")
-
-    return filtered
+    logger.info(f"[FILTER DIAG] final={len(filtered)} dominant={dominant_filter} stats={relevant_stats}")
+    return filtered, diagnostics
 
 def score_opportunity(opp: MarketOpportunity, config: FilterConfig) -> ScoreBreakdown:
     liq_norm = min(opp.liquidity.volume_5d / 5000.0, 1.0)

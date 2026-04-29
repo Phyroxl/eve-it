@@ -2601,3 +2601,34 @@ Revision quirurgica post-2d788dd. Cinco problemas detectados y corregidos.
 - ui/market_command/simple_view.py
 - ui/market_command/advanced_view.py
 - tests/test_worker_config_snapshot.py (nuevo)
+
+## Sesion 34 - 2026-04-29 (Reparacion Final Pipeline y Filtros)
+
+### Problema
+- 200 items encontrados pero 0 pasaban filtros en Modo Simple.
+- Iconos desaparecidos tras cambios anteriores.
+- Fallback de Phase 2 marcaba incorrectamente items iniciales como enriquecidos.
+
+### Causa Encontrada
+1. Fallback Incorrecto: Al marcar opps_initial como is_enriched=True, apply_filters aplicaba filtros de historial (volumen, etc.) a items que no lo tenian (0), eliminandolos todos.
+2. Filtros Ocultos: Modo Simple no reseteaba robustamente filtros avanzados como buy_orders_min o score_min que podian estar persistidos.
+3. Regresion en Iconos: El cargador asincrono dependia del indice de fila original, que se perdia al ordenar la tabla.
+
+### Cambios Realizados
+1. market_engine.py: Implementado apply_filters_with_diagnostics que devuelve un diccionario con el filtro dominante que esta eliminando los items.
+2. simple_view.py & advanced_view.py: La UI ahora muestra exactamente que filtro esta causando que la tabla este vacia (ej: 'FILTRO DOMINANTE: MARGEN').
+3. simple_view.py: update_config_from_ui ahora fuerza el reseteo de filtros avanzados a valores seguros (0/Any) cada vez que se aplican filtros.
+4. refresh_worker.py: El fallback a datos iniciales ahora mantiene is_enriched=False, permitiendo que pasen los filtros de la fase inicial.
+5. widgets.py: load_icon_async ahora busca el type_id en toda la tabla, garantizando que el icono se ponga en la fila correcta independientemente del ordenamiento.
+
+### Tests
+- tests/test_market_simple_filters_relaxed.py (nuevo): 4/4 passed.
+- Otros tests: Todos los tests previos pasan 100%.
+
+### Archivos modificados
+- core/market_engine.py
+- ui/market_command/refresh_worker.py
+- ui/market_command/simple_view.py
+- ui/market_command/advanced_view.py
+- ui/market_command/widgets.py
+- tests/test_market_simple_filters_relaxed.py (nuevo)
