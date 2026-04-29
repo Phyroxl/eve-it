@@ -408,6 +408,7 @@ class MarketRefreshWorker(QThread):
 
             try:
                 opps_enriched = parse_opportunities(relevant_orders_enriched, history_dict, names_dict, self.config)
+                self.diagnostics.opps_enriched_count = len(opps_enriched)
             except Exception as e:
                 logger.exception(f"[WORKER ERROR] Error in parse_opportunities: {e}")
                 self.diagnostics.errors.append(f"Error in parse_opportunities: {str(e)}")

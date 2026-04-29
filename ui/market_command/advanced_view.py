@@ -317,7 +317,7 @@ class MarketAdvancedView(QWidget):
 
     def on_diagnostics_ready(self, diagnostics):
         self.last_scan_diagnostics = diagnostics
-        QTimer.singleShot(500, lambda: self.complete_and_show_diagnostics(diagnostics))
+        QTimer.singleShot(2000, lambda: self.complete_and_show_diagnostics(diagnostics))
 
     def complete_and_show_diagnostics(self, diagnostics):
         self.update_config_from_ui()
@@ -337,7 +337,9 @@ class MarketAdvancedView(QWidget):
             diagnostics.icon_requests = icon_stats.get("icon_requests", 0)
             diagnostics.icon_loaded = icon_stats.get("icon_loaded", 0)
             diagnostics.icon_failed = icon_stats.get("icon_failed", 0)
+            diagnostics.icon_cache_hits = icon_stats.get("icon_cache_hits", 0)
             diagnostics.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+            diagnostics.icon_last_errors = icon_stats.get("icon_last_errors", [])
 
         self._diag_dialog = MarketDiagnosticsDialog(diagnostics.to_report(), self)
         self._diag_dialog.show()

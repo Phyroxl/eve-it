@@ -3,7 +3,7 @@
   "vol_min_day": 0,
   "margin_min_pct": 0.0,
   "spread_max_pct": 500.0,
-  "exclude_plex": true,
+  "exclude_plex": false,
   "broker_fee_pct": 3.0,
   "sales_tax_pct": 1.0,
   "score_min": 0,
@@ -12,5 +12,5 @@
   "sell_orders_min": 0,
   "history_days_min": 0,
   "profit_day_min": 0,
-  "selected_category": "Todos"
+  "selected_category": "Drones"
 }

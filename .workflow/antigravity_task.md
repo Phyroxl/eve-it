@@ -2689,3 +2689,19 @@ Implementar una ventana modal de diagnóstico que se abre automáticamente al fina
 - core/market_scan_diagnostics.py (Nuevos campos y secciones)
 - ui/market_command/refresh_worker.py (Integración del selector y telemetría)
 - tests/test_market_candidate_selector.py (Nuevo)
+
+## Sesión 36 (Parte 2): Mejora de Telemetría e Iconos
+
+### Correcciones de Diagnóstico
+- **Opps Enriched**: Se corrigió el registro de opps_enriched_count en el Worker, que anteriormente se mostraba como 0 a pesar de tener resultados.
+- **Delay de Diálogo**: Se aumentó el tiempo de espera para abrir el reporte a 2000ms para permitir que las peticiones asíncronas de iconos tengan tiempo de finalizar.
+- **Performance Warning**: El reporte ahora añade una advertencia si la descarga de órdenes de mercado supera los 20 segundos.
+
+### Mejoras de Iconos
+- **Telemetry**: Añadido seguimiento de icon_cache_hits y registro de los últimos errores de red/pixmap (icon_last_errors).
+- **Depuración**: La tabla ahora informa si las peticiones están pendientes o si fallaron por errores de red o carga de pixmap.
+
+### Verificación
+- **Reporte d47c572b**: Validado que UI Filtered Results = 200 y el candidate selector funciona correctamente.
+- **Regresión**: Suite completa de tests (PASS).
+- **Sintaxis**: py_compile (PASS) en todos los módulos de UI y Core.

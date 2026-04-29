@@ -187,6 +187,8 @@ class MarketTableWidget(QTableWidget):
         self.icon_requests = 0
         self.icon_loaded = 0
         self.icon_failed = 0
+        self.icon_cache_hits = 0
+        self.icon_last_errors = []
         
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
 
@@ -230,6 +232,7 @@ class MarketTableWidget(QTableWidget):
             placeholder.fill(QColor("#0f172a"))
             
             if opp.type_id in self.icon_cache:
+                self.icon_cache_hits += 1
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
                 self.icon_requests += 1
@@ -297,6 +300,8 @@ class MarketTableWidget(QTableWidget):
         reply = self.net_manager.get(request)
         
         def on_finished():
+            import logging
+            log = logging.getLogger('eve.market.ui')
             try:
                 if generation != self._image_generation:
                     reply.deleteLater()
@@ -307,31 +312,44 @@ class MarketTableWidget(QTableWidget):
                     if pixmap.loadFromData(data):
                         self.icon_loaded += 1
                         self.icon_cache[type_id] = pixmap
-                        # Search for ALL items with this type_id (in case of duplicates or moved rows)
+                        log.debug(f"[ICON DEBUG] Loaded type_id={type_id}")
+                        # Search for ALL items with this type_id
                         for r in range(self.rowCount()):
                             it = self.item(r, 1)
                             if it and it.data(Qt.UserRole) == type_id:
                                 it.setIcon(QIcon(pixmap))
                     else:
                         self.icon_failed += 1
+                        err = f"Pixmap load failed for type_id={type_id}"
+                        log.debug(f"[ICON DEBUG] {err}")
+                        self.icon_last_errors.append(err)
+                        if len(self.icon_last_errors) > 20: self.icon_last_errors.pop(0)
                 else:
                     self.icon_failed += 1
+                    err = f"Network error for {type_id}: {reply.errorString()}"
+                    log.debug(f"[ICON DEBUG] {err}")
+                    self.icon_last_errors.append(err)
+                    if len(self.icon_last_errors) > 20: self.icon_last_errors.pop(0)
             except Exception as e:
                 self.icon_failed += 1
-                import logging
-                logging.getLogger('eve.market.ui').debug(f"Error loading icon for {type_id}: {e}")
+                err = f"Exception loading icon {type_id}: {str(e)}"
+                log.debug(f"[ICON DEBUG] {err}")
+                self.icon_last_errors.append(err)
             finally:
                 reply.deleteLater()
+
+        reply.finished.connect(on_finished)
 
     def get_icon_diagnostics(self) -> dict:
         return {
             "icon_cache_size": len(self.icon_cache),
+            "icon_cache_hits": self.icon_cache_hits,
             "icon_requests": self.icon_requests,
             "icon_loaded": self.icon_loaded,
-            "icon_failed": self.icon_failed
+            "icon_failed": self.icon_failed,
+            "icon_last_errors": self.icon_last_errors[-10:]
         }
-            
-        reply.finished.connect(on_finished)
+
 class AdvancedMarketTableWidget(MarketTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -380,6 +398,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             placeholder.fill(QColor("#0f172a"))
 
             if opp.type_id in self.icon_cache:
+                self.icon_cache_hits += 1
                 item.setIcon(QIcon(self.icon_cache[opp.type_id]))
             else:
                 self.icon_requests += 1

@@ -335,8 +335,8 @@ class MarketSimpleView(QWidget):
     def on_diagnostics_ready(self, diagnostics):
         from PySide6.QtCore import QTimer
         self.last_scan_diagnostics = diagnostics
-        # Delay opening to ensure UI has applied final filters for the report
-        QTimer.singleShot(500, lambda: self.complete_and_show_diagnostics(diagnostics))
+        # Delay opening to ensure UI has applied final filters for the report and icons have time to load
+        QTimer.singleShot(2000, lambda: self.complete_and_show_diagnostics(diagnostics))
 
     def complete_and_show_diagnostics(self, diagnostics):
         # 1. Update config from UI to have final filter values
@@ -363,7 +363,9 @@ class MarketSimpleView(QWidget):
             diagnostics.icon_requests = icon_stats.get("icon_requests", 0)
             diagnostics.icon_loaded = icon_stats.get("icon_loaded", 0)
             diagnostics.icon_failed = icon_stats.get("icon_failed", 0)
+            diagnostics.icon_cache_hits = icon_stats.get("icon_cache_hits", 0)
             diagnostics.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+            diagnostics.icon_last_errors = icon_stats.get("icon_last_errors", [])
 
         # 4. Show dialog and keep reference to prevent GC
         self._diag_dialog = MarketDiagnosticsDialog(diagnostics.to_report(), self)

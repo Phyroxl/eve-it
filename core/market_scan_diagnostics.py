@@ -84,7 +84,9 @@ class MarketScanDiagnostics:
     icon_requests: int = 0
     icon_loaded: int = 0
     icon_failed: int = 0
+    icon_cache_hits: int = 0
     icon_cache_size: int = 0
+    icon_last_errors: List[str] = field(default_factory=list)
     
     # Timings (seconds)
     market_orders_elapsed: float = 0.0
@@ -180,7 +182,12 @@ class MarketScanDiagnostics:
         report.append("[ICONS]")
         report.append(f"Icon Requests:            {self.icon_requests}")
         report.append(f"Icon Loaded/Failed:       {self.icon_loaded} / {self.icon_failed}")
+        report.append(f"Icon Cache Hits:          {self.icon_cache_hits}")
         report.append(f"Icon Cache Size:          {self.icon_cache_size}")
+        if self.icon_last_errors:
+            report.append("Last Icon Errors:")
+            for err in self.icon_last_errors:
+                report.append(f"  ! {err}")
         report.append("")
 
         report.append("[WORKER CONFIG SNAPSHOT]")
@@ -199,6 +206,12 @@ class MarketScanDiagnostics:
         report.append(f"Parse/Enrich:             {self.parse_elapsed:.2f}s")
         report.append(f"Total Worker Time:        {self.total_elapsed:.2f}s")
         report.append("")
+
+        if self.market_orders_elapsed > 20:
+            report.append("[PERFORMANCE WARNING]")
+            report.append(f"! Market orders fetch is slow ({self.market_orders_elapsed:.2f}s).")
+            report.append("! Main bottleneck is ESI market_orders pagination.")
+            report.append("")
 
         if self.fallback_used:
             report.append("[FALLBACK]")
