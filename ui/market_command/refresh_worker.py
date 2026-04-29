@@ -73,28 +73,13 @@ class MarketRefreshWorker(QThread):
             # ──────────────────────────────────────────────────────────────────
             self.diagnostics.notes.append("Starting Phase 1 (Initial Data)")
 
-            # Paso 1: Descargar market orders
+            # Paso 1: Descargar market orders (ESIClient maneja el caché internamente)
             t0 = time.time()
-            self.emit_progress(2, "Checking market snapshot cache...")
-            
-            cache = MarketOrdersCache.instance()
-            orders = cache.get(self.region_id)
-            
-            if orders:
-                self.diagnostics.market_orders_source = "memory_cache"
-                self.diagnostics.market_orders_cache_hit = True
-                self.diagnostics.market_orders_cache_age_seconds = cache.get_age(self.region_id)
-                self.emit_progress(5, "Using cached market snapshot...")
-                logger.info(f"[WORKER] Cache HIT for region {self.region_id}. Age: {self.diagnostics.market_orders_cache_age_seconds:.1f}s")
-            else:
-                self.diagnostics.market_orders_source = "esi"
-                self.diagnostics.market_orders_cache_hit = False
-                self.emit_progress(5, "Fetching market orders from ESI (concurrent)...")
-                logger.info(f"[WORKER] Cache MISS for region {self.region_id}. Fetching from ESI...")
-                
-                orders = self.client.market_orders(self.region_id)
-                if orders:
-                    cache.set(self.region_id, orders)
+            self.emit_progress(2, "Checking market orders...")
+            orders = self.client.market_orders(self.region_id)
+            if not orders:
+                self.emit_error("No se pudieron obtener órdenes de mercado.")
+                return
 
             if not self.is_running: return
             
