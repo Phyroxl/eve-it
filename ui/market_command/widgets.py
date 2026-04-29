@@ -139,30 +139,6 @@ class MarketTableWidget(QTableWidget):
         self.horizontalHeader().setSectionsMovable(True)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         
-        self.item_action_triggered.connect(self._handle_default_action)
-
-    def _handle_default_action(self, action, item_name, type_id):
-        """Default handler for signals if not connected elsewhere."""
-        if action == "double_clicked" and type_id:
-            import logging
-            logging.getLogger('eve.interaction').info(f"[TABLE] Default double-click action for {item_name} ({type_id})")
-
-    def _get_type_id_from_item(self, item) -> int:
-        """Robusta recuperación del type_id desde cualquier celda de la fila."""
-        if item is None: return None
-        
-        # 1. Intentar el item directo
-        tid = item.data(Qt.UserRole)
-        if tid: return int(tid)
-        
-        # 2. Intentar buscar en toda la fila
-        row = item.row()
-        for col in range(self.columnCount()):
-            it = self.item(row, col)
-            if it:
-                tid = it.data(Qt.UserRole)
-                if tid: return int(tid)
-        return None
         self.setColumnWidth(0, 50)
         self.setColumnWidth(1, 250)
         self.setColumnWidth(2, 60)
@@ -207,9 +183,31 @@ class MarketTableWidget(QTableWidget):
             }
         """)
         
-        self.icon_service = EveIconService.instance()
-        
+        self.item_action_triggered.connect(self._handle_default_action)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
+
+    def _handle_default_action(self, action, item_name, type_id):
+        """Default handler for signals if not connected elsewhere."""
+        if action == "double_clicked" and type_id:
+            import logging
+            logging.getLogger('eve.interaction').info(f"[TABLE] Default double-click action for {item_name} ({type_id})")
+
+    def _get_type_id_from_item(self, item) -> int:
+        """Robusta recuperación del type_id desde cualquier celda de la fila."""
+        if item is None: return None
+        
+        # 1. Intentar el item directo
+        tid = item.data(Qt.UserRole)
+        if tid: return int(tid)
+        
+        # 2. Intentar buscar en toda la fila
+        row = item.row()
+        for col in range(self.columnCount()):
+            it = self.item(row, col)
+            if it:
+                tid = it.data(Qt.UserRole)
+                if tid: return int(tid)
+        return None
 
     def contextMenuEvent(self, event):
         item = self.itemAt(event.pos())
