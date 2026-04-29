@@ -286,28 +286,35 @@ class MarketAdvancedView(QWidget):
         self.btn_refresh.setText("ENRIQUECIENDO...")
 
     def on_scan_finished(self, opportunities):
-        self.all_opportunities = opportunities
-        _log.info(f"[UI DIAG] enriched_opportunities_received={len(opportunities)}")
-        
-        from core.market_engine import apply_filters_with_diagnostics
-        filtered, diag = apply_filters_with_diagnostics(opportunities, self.current_config)
-        _log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
-        
-        self.table.populate(filtered)
-        self.btn_refresh.setEnabled(True)
-        self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
-        
-        if self.lbl_status:
-            if not opportunities:
-                self.lbl_status.setText("● ESCANEO COMPLETADO — SIN RESULTADOS EN EL POOL")
-                self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
-            elif not filtered:
-                dom = diag.get("dominant_filter", "DESCONOCIDO")
-                self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(opportunities)} ITEMS PERO 0 TRAS FILTRO: {dom.upper()}")
-                self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
-            else:
-                self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(filtered)} RESULTADOS")
-                self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        try:
+            self.all_opportunities = opportunities
+            _log.info(f"[UI DIAG] enriched_opportunities_received={len(opportunities)}")
+            
+            from core.market_engine import apply_filters_with_diagnostics
+            filtered, diag = apply_filters_with_diagnostics(opportunities, self.current_config)
+            _log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
+            
+            self.table.populate(filtered)
+            
+            if self.lbl_status:
+                if not opportunities:
+                    self.lbl_status.setText("● ESCANEO COMPLETADO — SIN RESULTADOS EN EL POOL")
+                    self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+                elif not filtered:
+                    dom = diag.get("dominant_filter", "DESCONOCIDO")
+                    self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(opportunities)} ITEMS PERO 0 TRAS FILTRO: {dom.upper()}")
+                    self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+                else:
+                    self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(filtered)} RESULTADOS")
+                    self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        except Exception as e:
+            _log.exception(f"Error in on_scan_finished: {e}")
+            self.on_scan_error(str(e))
+        finally:
+            self.btn_refresh.setEnabled(True)
+            self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
+            if hasattr(self, 'progress'):
+                self.progress.setValue(100)
 
     def on_scan_error(self, err_msg):
         self.btn_refresh.setEnabled(True)

@@ -317,15 +317,20 @@ class MarketSimpleView(QWidget):
 
     def on_enriched_data_ready(self, opps):
         import logging
-        logging.getLogger('eve.market.simple').info(f"[PIPELINE] enriched_opportunities={len(opps)}")
-        self.update_config_from_ui()
-        self.all_opportunities = opps
-        self.apply_and_display()
-        self.btn_refresh.setEnabled(True)
-        self.btn_refresh.setText("REFRESCAR MERCADO (ESI)")
-        self.progress_bar.setVisible(False)
-        self.lbl_status.setText("● ESCANEO COMPLETADO — DATOS ENRIQUECIDOS")
-        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        try:
+            logging.getLogger('eve.market.simple').info(f"[PIPELINE] enriched_opportunities={len(opps)}")
+            self.update_config_from_ui()
+            self.all_opportunities = opps
+            self.apply_and_display()
+            self.lbl_status.setText("● ESCANEO COMPLETADO — DATOS ENRIQUECIDOS")
+            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        except Exception as e:
+            logging.getLogger('eve.market.simple').exception(f"Error in on_enriched_data_ready: {e}")
+            self.on_error(str(e))
+        finally:
+            self.btn_refresh.setEnabled(True)
+            self.btn_refresh.setText("REFRESCAR MERCADO (ESI)")
+            self.progress_bar.setVisible(False)
 
     def on_error(self, err_msg):
         self.btn_refresh.setEnabled(True)
