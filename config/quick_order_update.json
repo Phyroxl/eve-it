@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "dry_run": true,
+  "dry_run": false,
   "confirm_required": true,
   "open_market_delay_ms": 1000,
   "focus_client_delay_ms": 700,
