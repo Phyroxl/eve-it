@@ -11,6 +11,7 @@ from core.item_resolver import ItemResolver
 from core.item_categories import is_type_in_category
 from core.market_history_cache import MarketHistoryCache
 from core.market_scan_diagnostics import MarketScanDiagnostics
+from core.market_candidate_selector import build_economic_candidates, prefilter_candidates, select_final_candidates
 
 logger = logging.getLogger('eve.market.worker')
 
@@ -109,46 +110,52 @@ class MarketRefreshWorker(QThread):
             self.diagnostics.grouped_type_ids_count = len(temp_grouped)
             logger.info(f"[WORKER DIAG] grouped_type_ids={len(temp_grouped)} elapsed={t_group:.2f}s")
 
-            # Paso 3: Pool económico (sin filtros de capital/margen para red amplia)
+            # Paso 3: Construir pool de candidatos económicos
             t0 = time.time()
-            b_fee = self.config.broker_fee_pct / 100.0
-            s_tax = self.config.sales_tax_pct / 100.0
-            economic_candidates = []
-            for t_id, group in temp_grouped.items():
-                if not group['buy'] or not group['sell']:
-                    continue
-                best_buy = max(o['price'] for o in group['buy'])
-                best_sell = min(o['price'] for o in group['sell'])
-                if best_buy <= 0 or best_sell <= 0:
-                    continue
-                profit = best_sell * (1.0 - s_tax - b_fee) - best_buy * (1.0 + b_fee)
-                margin = (profit / best_buy) * 100 if best_buy > 0 else 0
-                orders_count = len(group['buy']) + len(group['sell'])
-                economic_candidates.append({
-                    'type_id': t_id,
-                    'margin': margin,
-                    'orders_count': orders_count,
-                    'score': max(0.0, margin) * min(orders_count, 50)
-                })
-            economic_candidates.sort(key=lambda x: x['score'], reverse=True)
+            all_cands = build_economic_candidates(temp_grouped, self.config)
+            self.diagnostics.economic_candidates_count = len(all_cands)
+            
+            # Paso 4: Pre-filtro rápido (capital, spread, margin, plex)
+            viable_cands, pre_stats = prefilter_candidates(all_cands, self.config)
+            
+            self.diagnostics.viable_candidates_count = len(viable_cands)
+            self.diagnostics.prefilter_removed_capital = pre_stats.get("capital", 0)
+            self.diagnostics.prefilter_removed_margin = pre_stats.get("margin", 0)
+            self.diagnostics.prefilter_removed_spread = pre_stats.get("spread", 0)
+            self.diagnostics.prefilter_removed_profit = pre_stats.get("profit", 0)
+            self.diagnostics.prefilter_removed_plex = pre_stats.get("plex", 0)
+            
+            # Estadísticas de distribución de spread
+            if all_cands:
+                all_spreads = [c.spread_pct for c in all_cands]
+                self.diagnostics.candidate_top_spread_min = min(all_spreads)
+                self.diagnostics.candidate_top_spread_max = max(all_spreads)
+                self.diagnostics.candidate_top_spread_avg = sum(all_spreads) / len(all_spreads)
+            
+            # Si no hay candidatos viables, fallback a los económicos pero con aviso
+            final_pool_cands = viable_cands if viable_cands else all_cands
+            if not viable_cands and all_cands:
+                self.diagnostics.warnings.append("No viable candidates after pre-filter. Using raw economic candidates as fallback.")
+            
             t_candidates = time.time() - t0
             self.diagnostics.candidate_selection_elapsed = t_candidates
-            self.diagnostics.economic_candidates_count = len(economic_candidates)
-            logger.info(f"[WORKER DIAG] economic_candidates={len(economic_candidates)} elapsed={t_candidates:.2f}s")
-            self.emit_progress(18, f"Found {len(economic_candidates)} economic candidates.")
+            logger.info(f"[WORKER DIAG] economic_cands={len(all_cands)} viable={len(viable_cands)} elapsed={t_candidates:.2f}s")
+            self.emit_progress(18, f"Found {len(viable_cands)} viable candidates.")
 
-            # Paso 4: Candidatos iniciales de Fase 1 (solo desde metadata en caché, sin ESI)
+            # Paso 5: Selección de candidatos iniciales (Fase 1)
             t0 = time.time()
             if selected_category == "Todos":
-                initial_candidates = [c['type_id'] for c in economic_candidates[:_TODOS_POOL_SIZE]]
-                self.diagnostics.notes.append(f"Phase 1 using top {_TODOS_POOL_SIZE} for 'Todos'")
-                logger.info(f"[WORKER DIAG] Phase1 mode=Todos initial_candidates={len(initial_candidates)}")
+                # Seleccionar top N type_ids
+                initial_candidates = select_final_candidates(final_pool_cands, _TODOS_POOL_SIZE)
+                self.diagnostics.notes.append(f"Phase 1 using top {len(initial_candidates)} from final_pool")
             else:
-                # Solo items con metadata ya en caché → sin llamadas ESI en Fase 1
+                # Solo items con metadata ya en caché
                 resolver = ItemResolver.instance()
+                # Usamos una lista más amplia para el prefetch en Fase 2, pero en Fase 1 solo lo que está listo
+                broad_stats = sorted(final_pool_cands, key=lambda x: x.score, reverse=True)[:_BROAD_POOL_SIZE]
                 initial_candidates = []
-                for c in economic_candidates[:_BROAD_POOL_SIZE]:
-                    t_id = c['type_id']
+                for c in broad_stats:
+                    t_id = c.type_id
                     cat_id, grp_id, _, _ = resolver.resolve_category_info(t_id, blocking=False)
                     if cat_id is not None and grp_id is not None:
                         match, _ = is_type_in_category(selected_category, cat_id, grp_id, broad=True)
@@ -218,11 +225,11 @@ class MarketRefreshWorker(QThread):
             # Paso 7: Determinar candidatos finales con metadata completa
             t0 = time.time()
             if selected_category == "Todos":
-                final_candidates = [c['type_id'] for c in economic_candidates[:_TODOS_POOL_SIZE]]
+                final_candidates = select_final_candidates(final_pool_cands, _TODOS_POOL_SIZE)
                 logger.info(f"[WORKER DIAG] Phase2 mode=Todos final_candidates={len(final_candidates)}")
             else:
                 # Prefetch metadata paralelo para pool amplio
-                broad_ids = [c['type_id'] for c in economic_candidates[:_BROAD_POOL_SIZE]]
+                broad_ids = [c.type_id for c in final_pool_cands[:_BROAD_POOL_SIZE]]
                 self.emit_progress(54, f"Prefetching metadata for {len(broad_ids)} items (parallel)...")
                 p_stats = ItemResolver.instance().prefetch_type_metadata_parallel(broad_ids, n_clients=4)
                 if not self.is_running: return
@@ -239,42 +246,35 @@ class MarketRefreshWorker(QThread):
 
                 self.emit_progress(65, f"Filtering by category '{selected_category}'...")
                 category_ids = []
-                for c in economic_candidates[:_BROAD_POOL_SIZE]:
-                    t_id = c['type_id']
+                for c in final_pool_cands[:_BROAD_POOL_SIZE]:
+                    t_id = c.type_id
                     cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(t_id, blocking=False)
                     match, _ = is_type_in_category(selected_category, cat_id, grp_id, broad=True)
                     if match:
                         category_ids.append(t_id)
 
                 logger.info(f"[WORKER DIAG] Phase2 category_ids={len(category_ids)} for category={selected_category}")
-
-                if not category_ids:
-                    logger.warning(f"[WORKER DIAG] Phase2 category={selected_category} category_ids=0. Falling back to initial.")
-                    # Fase 2 sin candidatos: cerrar UX con lo que tenga Fase 1
-                    msg = (
-                        f"No se encontraron items para '{selected_category}' con el pool actual"
-                        if p_stats['failed'] == 0
-                        else f"Metadata parcial para '{selected_category}' ({p_stats['failed']} fallos ESI)"
-                    )
-                    self.emit_progress(100, msg)
-                    self.diagnostics.status = f"Success: No category results ({selected_category})"
-                    self.diagnostics.final_emitted_count = len(opps_initial)
-                    self.diagnostics.finished_at = time.time()
-                    self.diagnostics.total_elapsed = self.diagnostics.finished_at - self.diagnostics.started_at
-                    
-                    self.enriched_data_ready.emit(opps_initial)
-                    self.finished.emit(opps_initial)
-                    self.data_ready.emit(opps_initial)
-                    self.diagnostics_ready.emit(self.diagnostics)
-                    return
-
                 final_candidates = category_ids[:_CATEGORY_LIMIT]
-                logger.info(f"[WORKER DIAG] Phase2 final_candidates={len(final_candidates)}")
+
+            # Estadísticas de distribución final
+            if final_candidates:
+                # Buscar stats de los elegidos
+                final_stats = [c for c in final_pool_cands if c.type_id in set(final_candidates)]
+                if final_stats:
+                    spreads = [c.spread_pct for c in final_stats]
+                    margins = [c.margin_pct for c in final_stats]
+                    self.diagnostics.final_candidates_spread_min = min(spreads)
+                    self.diagnostics.final_candidates_spread_max = max(spreads)
+                    self.diagnostics.final_candidates_spread_avg = sum(spreads) / len(spreads)
+                    self.diagnostics.final_candidates_margin_min = min(margins)
+                    self.diagnostics.final_candidates_margin_max = max(margins)
+                    self.diagnostics.final_candidates_margin_avg = sum(margins) / len(margins)
+            
+            self.diagnostics.final_candidates_count = len(final_candidates)
 
             t_metadata = time.time() - t0
             self.diagnostics.metadata_elapsed = t_metadata
-            self.diagnostics.final_candidates_count = len(final_candidates)
-            logger.info(f"[WORKER DIAG] metadata_elapsed={t_metadata:.1f}s")
+            logger.info(f"[WORKER DIAG] metadata_elapsed={t_metadata:.1f}s final_candidates={len(final_candidates)}")
 
             if self.config.exclude_plex and plex_id in final_candidates:
                 final_candidates.remove(plex_id)
@@ -369,7 +369,51 @@ class MarketRefreshWorker(QThread):
             self.diagnostics.relevant_orders_enriched_count = len(relevant_orders_enriched)
             logger.info(f"[WORKER DIAG] relevant_orders_enriched={len(relevant_orders_enriched)}")
             
-            opps_enriched = parse_opportunities(relevant_orders_enriched, history_dict, names_dict, self.config)
+            # Diagnóstico de entrada a parse
+            self.diagnostics.enriched_with_both_count = 0
+            self.diagnostics.enriched_with_buy_count = 0
+            self.diagnostics.enriched_with_sell_count = 0
+            self.diagnostics.enriched_parse_input_sample = []
+            
+            # Análisis rápido de qué estamos mandando a parse
+            temp_parse_map = {}
+            for o in relevant_orders_enriched:
+                tid = o['type_id']
+                if tid not in temp_parse_map: temp_parse_map[tid] = {'buy': 0, 'sell': 0, 'prices': []}
+                if o.get('is_buy_order'): temp_parse_map[tid]['buy'] += 1
+                else: temp_parse_map[tid]['sell'] += 1
+                temp_parse_map[tid]['prices'].append(o['price'])
+
+            for tid, data in temp_parse_map.items():
+                if data['buy'] > 0 and data['sell'] > 0: self.diagnostics.enriched_with_both_count += 1
+                elif data['buy'] > 0: self.diagnostics.enriched_with_buy_count += 1
+                elif data['sell'] > 0: self.diagnostics.enriched_with_sell_count += 1
+                
+                if len(self.diagnostics.enriched_parse_input_sample) < 10:
+                    # Calcular spread rápido para el diagnóstico
+                    spr = 0.0
+                    try:
+                        b = max([o['price'] for o in relevant_orders_enriched if o['type_id'] == tid and o.get('is_buy_order')])
+                        s = min([o['price'] for o in relevant_orders_enriched if o['type_id'] == tid and not o.get('is_buy_order')])
+                        spr = ((s-b)/b)*100
+                    except: pass
+                    self.diagnostics.enriched_parse_input_sample.append({
+                        'id': tid, 'buy_count': data['buy'], 'sell_count': data['sell'], 
+                        'spread': spr, 'has_history': (tid in history_dict)
+                    })
+
+            try:
+                opps_enriched = parse_opportunities(relevant_orders_enriched, history_dict, names_dict, self.config)
+            except Exception as e:
+                logger.exception(f"[WORKER ERROR] Error in parse_opportunities: {e}")
+                self.diagnostics.errors.append(f"Error in parse_opportunities: {str(e)}")
+                opps_enriched = []
+
+            if not opps_enriched and self.diagnostics.enriched_with_both_count > 0:
+                msg = f"parse_opportunities returned 0 despite {self.diagnostics.enriched_with_both_count} items with buy/sell orders."
+                logger.error(f"[WORKER ERROR] {msg}")
+                self.diagnostics.errors.append(msg)
+
             for opp in opps_enriched:
                 opp.is_enriched = True
                 opp.score_breakdown = score_opportunity(opp, self.config)

@@ -2666,3 +2666,26 @@ Implementar una ventana modal de diagnóstico que se abre automáticamente al fina
 - ui/market_command/simple_view.py (Integrado)
 - ui/market_command/advanced_view.py (Integrado)
 - ui/market_command/widgets.py (Estadísticas de iconos)
+
+## Sesión 36: Alineación de Candidatos con Filtros Visibles
+
+### Diagnóstico del Reporte 0d6b524b
+- **Causa Raíz**: El worker seleccionaba los 'top 200' basándose únicamente en el margen teórico sin saneamiento previo. Ítems con spreads astronómicos (>500% o incluso >10000%) dominaban el pool por tener márgenes irreales, siendo luego descartados al 100% por la UI.
+- **Anomalía de Enriquecimiento**: Se observó Relevant Orders (Enr)=3581 pero Opps Enriched=0, sugiriendo un fallo en el filtrado posterior al enriquecimiento o en el agrupamiento.
+
+### Solución
+1.  **Nuevo Módulo de Selección**: core/market_candidate_selector.py extrae la lógica de selección y añade un pre-filtro de saneamiento (Pre-Filter) alineado con los filtros visibles (Capital, Spread, Margen, PLEX).
+2.  **Instrumentación de Prefilter**: El worker ahora informa cuántos candidatos fueron eliminados por spread, capital o margen antes de elegir el top 200.
+3.  **Diagnóstico de Enriquecimiento**: Añadido análisis detallado de la entrada a parse_opportunities para detectar por qué se pierden ítems durante la fase 2.
+4.  **Aislamiento de Lógica**: La lógica de selección ahora es puramente funcional y testeable.
+
+### Verificación
+- **Unit Tests**: Nuevo test tests/test_market_candidate_selector.py (PASS).
+- **Regresión**: Suite completa de 60+ tests (PASS).
+- **Estabilidad**: py_compile verificado en todos los archivos del core y UI.
+
+### Archivos Modificados
+- core/market_candidate_selector.py (Nuevo)
+- core/market_scan_diagnostics.py (Nuevos campos y secciones)
+- ui/market_command/refresh_worker.py (Integración del selector y telemetría)
+- tests/test_market_candidate_selector.py (Nuevo)

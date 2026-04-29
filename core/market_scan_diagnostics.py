@@ -30,6 +30,31 @@ class MarketScanDiagnostics:
     opps_enriched_count: int = 0
     final_emitted_count: int = 0
     
+    # Candidate Prefilter Stats
+    viable_candidates_count: int = 0
+    prefilter_removed_capital: int = 0
+    prefilter_removed_margin: int = 0
+    prefilter_removed_spread: int = 0
+    prefilter_removed_profit: int = 0
+    prefilter_removed_plex: int = 0
+    
+    # Candidate Distribution
+    candidate_top_spread_min: float = 0.0
+    candidate_top_spread_max: float = 0.0
+    candidate_top_spread_avg: float = 0.0
+    final_candidates_spread_min: float = 0.0
+    final_candidates_spread_max: float = 0.0
+    final_candidates_spread_avg: float = 0.0
+    final_candidates_margin_min: float = 0.0
+    final_candidates_margin_max: float = 0.0
+    final_candidates_margin_avg: float = 0.0
+    
+    # Enrichment Diagnosis
+    enriched_with_buy_count: int = 0
+    enriched_with_sell_count: int = 0
+    enriched_with_both_count: int = 0
+    enriched_parse_input_sample: List[Dict[str, Any]] = field(default_factory=list)
+    
     # UI Results
     ui_all_opportunities_count: int = 0
     ui_filtered_count: int = 0
@@ -105,6 +130,29 @@ class MarketScanDiagnostics:
         report.append(f"UI Received:              {self.ui_all_opportunities_count}")
         report.append(f"UI Filtered Results:      {self.ui_filtered_count}")
         report.append("")
+
+        report.append("[CANDIDATE PREFILTER]")
+        report.append(f"Economic Candidates:      {self.economic_candidates_count}")
+        report.append(f"Viable Candidates:        {self.viable_candidates_count}")
+        report.append(f"Removed by Capital:       {self.prefilter_removed_capital}")
+        report.append(f"Removed by Margin:        {self.prefilter_removed_margin}")
+        report.append(f"Removed by Spread:        {self.prefilter_removed_spread}")
+        report.append(f"Removed by Profit:        {self.prefilter_removed_profit}")
+        report.append(f"Removed by PLEX:          {self.prefilter_removed_plex}")
+        report.append(f"Top Cand. Spread (m/a/M): {self.candidate_top_spread_min:.1f} / {self.candidate_top_spread_avg:.1f} / {self.candidate_top_spread_max:.1f}")
+        report.append(f"Final Spread (m/a/M):     {self.final_candidates_spread_min:.1f} / {self.final_candidates_spread_avg:.1f} / {self.final_candidates_spread_max:.1f}")
+        report.append(f"Final Margin (m/a/M):     {self.final_candidates_margin_min:.1f} / {self.final_candidates_margin_avg:.1f} / {self.final_candidates_margin_max:.1f}")
+        report.append("")
+
+        if self.enriched_parse_input_sample:
+            report.append("[ENRICHMENT DIAGNOSIS]")
+            report.append(f"Types with Both B/S:      {self.enriched_with_both_count}")
+            report.append(f"Types with Buy Only:      {self.enriched_with_buy_count}")
+            report.append(f"Types with Sell Only:     {self.enriched_with_sell_count}")
+            report.append("Sample Input to Parse (Top 5):")
+            for item in self.enriched_parse_input_sample[:5]:
+                report.append(f"  - ID {item.get('id')}: B={item.get('buy_count')} S={item.get('sell_count')} Spr={item.get('spread'):.1f}% Hist={item.get('has_history')}")
+            report.append("")
 
         if self.filter_diagnostics:
             report.append("[FILTER DIAGNOSTICS]")
