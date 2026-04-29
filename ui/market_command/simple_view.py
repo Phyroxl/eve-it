@@ -20,6 +20,7 @@ class MarketSimpleView(QWidget):
         self.worker = None
         self.all_opportunities = []
         self.last_scan_diagnostics = None
+        self._diag_dialog = None
         self.current_config = load_market_filters()
         self.setup_ui()
         
@@ -332,8 +333,41 @@ class MarketSimpleView(QWidget):
         self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_diagnostics_ready(self, diagnostics):
+        from PySide6.QtCore import QTimer
         self.last_scan_diagnostics = diagnostics
-        # Dialog will be opened in apply_and_display to have final counts
+        # Delay opening to ensure UI has applied final filters for the report
+        QTimer.singleShot(500, lambda: self.complete_and_show_diagnostics(diagnostics))
+
+    def complete_and_show_diagnostics(self, diagnostics):
+        # 1. Update config from UI to have final filter values
+        self.update_config_from_ui()
+        
+        # 2. Get fresh filter diagnostics for the report
+        _, filter_diag = apply_filters_with_diagnostics(self.all_opportunities, self.current_config)
+        
+        # 3. Populate diagnostics object
+        diagnostics.ui_all_opportunities_count = len(self.all_opportunities)
+        diagnostics.ui_filtered_count = len([o for o in self.all_opportunities if o in self.all_opportunities]) # Just count pass
+        # Re-apply filters to get exact filtered count if needed, or just use filter_diag result
+        filtered_results, _ = apply_filters_with_diagnostics(self.all_opportunities, self.current_config)
+        diagnostics.ui_filtered_count = len(filtered_results)
+        
+        diagnostics.ui_config_at_filter_time = self.current_config.__dict__.copy() if hasattr(self.current_config, '__dict__') else {}
+        diagnostics.filter_diagnostics = filter_diag
+        diagnostics.dominant_filter = filter_diag.get("dominant_filter")
+        diagnostics.selected_category_ui = self.current_config.selected_category
+        diagnostics.mode = "Simple"
+        
+        if hasattr(self.table, 'get_icon_diagnostics'):
+            icon_stats = self.table.get_icon_diagnostics()
+            diagnostics.icon_requests = icon_stats.get("icon_requests", 0)
+            diagnostics.icon_loaded = icon_stats.get("icon_loaded", 0)
+            diagnostics.icon_failed = icon_stats.get("icon_failed", 0)
+            diagnostics.icon_cache_size = icon_stats.get("icon_cache_size", 0)
+
+        # 4. Show dialog and keep reference to prevent GC
+        self._diag_dialog = MarketDiagnosticsDialog(diagnostics.to_report(), self)
+        self._diag_dialog.show()
 
     def update_config_from_ui(self):
         self.current_config.capital_max = self.spin_capital.value()
@@ -392,6 +426,7 @@ class MarketSimpleView(QWidget):
         
         self.lbl_sum_count.setText(f"{len(filtered)}")
         
+        # Actualizar UI si no hay resultados
         if total_raw == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
             self.lbl_sum_insight.setText("SIN DATOS DEL ESCANEO")
@@ -423,31 +458,6 @@ class MarketSimpleView(QWidget):
             else:
                 self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
                 self.lbl_sum_insight.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 800; border: none; background: transparent;")
-
-        # Finalize and show diagnostics report
-        if self.last_scan_diagnostics:
-            diag = self.last_scan_diagnostics
-            diag.ui_all_opportunities_count = len(self.all_opportunities)
-            diag.ui_filtered_count = len(filtered)
-            diag.ui_config_at_filter_time = self.current_config.__dict__.copy() if hasattr(self.current_config, '__dict__') else {}
-            diag.filter_diagnostics = diag
-            diag.dominant_filter = diag.get("dominant_filter")
-            diag.selected_category_ui = self.current_config.selected_category
-            diag.mode = "Simple"
-            
-            if hasattr(self.table, 'get_icon_diagnostics'):
-                icon_stats = self.table.get_icon_diagnostics()
-                diag.icon_requests = icon_stats.get("icon_requests", 0)
-                diag.icon_loaded = icon_stats.get("icon_loaded", 0)
-                diag.icon_failed = icon_stats.get("icon_failed", 0)
-                diag.icon_cache_size = icon_stats.get("icon_cache_size", 0)
-
-            # Open automatically
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(1000, lambda: MarketDiagnosticsDialog(diag.to_report(), self).show())
-            # Clear it so it doesn't open twice for Phase 1 and Phase 2 if not desired, 
-            # but we want it at the end of every scan phase if it emits.
-            # Actually, better keep it until next refresh.
 
     def on_table_selection(self):
         sel = self.table.selectedItems()
