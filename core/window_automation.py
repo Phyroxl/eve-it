@@ -264,10 +264,13 @@ class EVEWindowAutomation:
             result["window_source"] = "title_search"
             win = self._find_eve_window(result, errors)
 
+        if win is not None:
+            result["window_found"] = True
+
         # 4. Focus window
         if win is not None:
-            focused = self._focus_window(win, result, errors)
-            if focused:
+            if self._focus_window(win, result, errors):
+                result["focused"] = True
                 self._safe_sleep(self.focus_delay, "focus_delay", result, errors)
 
         # 5. Experimental Paste (optional, disabled by default)

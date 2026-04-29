@@ -228,6 +228,16 @@ class ESIClient:
             cache.set(region_id, all_orders)
         return all_orders
 
+    def get_market_orders_for_type(self, region_id: int, type_id: int) -> list:
+        """
+        Fetch current market orders for a specific type in a region.
+        Uses the ESI type_id filter for efficiency.
+        """
+        endpoint = f"/markets/{region_id}/orders/"
+        params = {"order_type": "all", "type_id": type_id}
+        data = self._get(endpoint, params=params)
+        return data if data is not None else []
+
     def market_history(self, region_id: int, type_id: int):
         # Cache 6h = 21600 seconds
         return self._get(f"/markets/{region_id}/history/", ttl=21600, params={'type_id': type_id})

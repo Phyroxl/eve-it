@@ -4,6 +4,7 @@ No Qt, no ESI, no side effects.
 """
 
 _NO_COMPETITOR = 0.0
+_SENTINEL_MIN = 0.0
 _SENTINEL_MAX = 9_000_000_000_000.0  # ESI uses 9e12 when no orders exist
 _PRICE_EQ_TOLERANCE = 0.005          # 0.5 cent — same price for EVE purposes
 
@@ -189,4 +190,87 @@ def build_order_update_recommendation(order, analysis) -> dict:
         "reason": reason,
         "action_needed": action_needed,
         "validation": validation,
+    }
+
+
+def recalculate_competitor_price(market_orders: list, own_orders: list, 
+                                 type_id: int, is_buy: bool) -> dict:
+    """
+    Calculate the best competitor price from a fresh market list,
+    excluding own orders.
+
+    Parameters
+    ----------
+    market_orders : list of dicts (ESI market orders)
+    own_orders    : list of dicts or OpenOrder objects (own active orders)
+    type_id       : int
+    is_buy        : bool
+
+    Returns
+    -------
+    dict with:
+        best_sell, best_buy, competitor_price, orders_count, own_excluded_count
+    """
+    # 1. Prepare own orders counts at each price
+    my_counts = {}
+    for o in own_orders:
+        o_tid = getattr(o, "type_id", None) or o.get("type_id")
+        o_is_buy = getattr(o, "is_buy_order", None)
+        if o_is_buy is None:
+            o_is_buy = o.get("is_buy_order")
+        
+        if o_tid == type_id and o_is_buy == is_buy:
+            price = getattr(o, "price", None) or o.get("price")
+            my_counts[price] = my_counts.get(price, 0) + 1
+
+    # 2. Extract and sort market prices
+    market_prices = []
+    for mo in market_orders:
+        if mo.get("is_buy_order") == is_buy:
+            market_prices.append(mo["price"])
+
+    if is_buy:
+        market_prices.sort(reverse=True)
+    else:
+        market_prices.sort()
+
+    abs_best_buy = 0.0
+    abs_best_sell = 0.0
+    if market_orders:
+        buys = [o["price"] for o in market_orders if o.get("is_buy_order")]
+        sells = [o["price"] for o in market_orders if not o.get("is_buy_order")]
+        abs_best_buy = max(buys) if buys else 0.0
+        abs_best_sell = min(sells) if sells else 0.0
+
+    # 3. Exclude own orders
+    comp_prices = []
+    temp_my_counts = dict(my_counts)
+    excluded_count = 0
+    
+    for p in market_prices:
+        # Match with tolerance since float comparison can be tricky
+        matched_price = None
+        for my_p in temp_my_counts:
+            if abs(p - my_p) < _PRICE_EQ_TOLERANCE:
+                matched_price = my_p
+                break
+        
+        if matched_price is not None and temp_my_counts[matched_price] > 0:
+            temp_my_counts[matched_price] -= 1
+            excluded_count += 1
+        else:
+            comp_prices.append(p)
+
+    if is_buy:
+        competitor = comp_prices[0] if comp_prices else _SENTINEL_MIN
+    else:
+        competitor = comp_prices[0] if comp_prices else _SENTINEL_MAX
+
+    return {
+        "best_sell": abs_best_sell,
+        "best_buy": abs_best_buy,
+        "competitor_price": competitor,
+        "orders_count": len(market_prices),
+        "own_excluded_count": excluded_count,
+        "comp_prices_found": len(comp_prices) > 0
     }

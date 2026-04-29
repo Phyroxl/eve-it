@@ -352,7 +352,9 @@ class TestLaunchQuickOrderUpdate(unittest.TestCase):
         with patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
                    return_value=mock_dlg_instance) as mock_dlg_cls, \
              patch.object(self.view, "_open_market_for_order", return_value=market_ok), \
-             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness):
+             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness), \
+             patch.object(self.view, "_revalidate_market_competitor", 
+                          return_value={"used_fresh_price": False, "checked": True, "is_fresh": True}):
             self.view._launch_quick_order_update(order)
             return mock_dlg_cls, mock_dlg_instance
 
@@ -363,7 +365,9 @@ class TestLaunchQuickOrderUpdate(unittest.TestCase):
              patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
                    return_value=MagicMock()), \
              patch.object(self.view, "_open_market_for_order", return_value=True), \
-             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness):
+             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness), \
+             patch.object(self.view, "_revalidate_market_competitor", 
+                          return_value={"used_fresh_price": False, "checked": True, "is_fresh": True}):
             self.view._launch_quick_order_update(self.order)
         mock_build.assert_called_once_with(self.order, self.order.analysis)
 

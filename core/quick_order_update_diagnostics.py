@@ -79,17 +79,47 @@ def format_quick_update_report(data: dict) -> str:
         lines.append("  Warnings             : (none)")
     # ------------------------------------------------------------------ /freshness
 
+    # ------------------------------------------------------------------ market validation
+    m_val = data.get("market_validation") or {}
+    lines.append("")
+    lines.append("[MARKET COMPETITOR REVALIDATION]")
+    lines.append(f"  Checked              : {m_val.get('checked', 'N/A')}")
+    lines.append(f"  Is Fresh             : {m_val.get('is_fresh', 'N/A')}")
+    lines.append(f"  Region ID            : {m_val.get('region_id', 'N/A')}")
+    lines.append(f"  Location ID          : {m_val.get('location_id', 'N/A')}")
+    lines.append(f"  Old Competitor Price : {_fmt(m_val.get('old_competitor_price'), ' ISK')}")
+    lines.append(f"  Fresh Best Sell      : {_fmt(m_val.get('fresh_best_sell'), ' ISK')}")
+    lines.append(f"  Fresh Best Buy       : {_fmt(m_val.get('fresh_best_buy'), ' ISK')}")
+    lines.append(f"  Fresh Competitor Price: {_fmt(m_val.get('fresh_competitor_price'), ' ISK')}")
+    lines.append(f"  Fresh Recommended    : {_fmt(m_val.get('fresh_recommended_price'), ' ISK')}")
+    lines.append(f"  Used Fresh Price     : {m_val.get('used_fresh_price', 'N/A')}")
+    lines.append(f"  Price Changed        : {m_val.get('price_changed', 'N/A')}")
+    lines.append(f"  Market Orders Count  : {m_val.get('market_orders_count', 'N/A')}")
+    lines.append(f"  Own Orders Excluded  : {m_val.get('own_orders_excluded_count', 'N/A')}")
+    m_warnings = m_val.get("warnings") or []
+    if m_warnings:
+        lines.append("  Warnings:")
+        for mw in m_warnings:
+            lines.append(f"    * {mw}")
+    else:
+        lines.append("  Warnings             : (none)")
+    # ------------------------------------------------------------------ /market validation
+
     lines.append("")
     lines.append("[WHY NOT AUTO COPY]")
-    all_block_reasons = list(v_warnings) + list(f_warnings)
-    if not validation.get("is_confident", True) or not freshness.get("is_fresh", True):
+    all_block_reasons = list(v_warnings) + list(f_warnings) + list(m_warnings)
+    is_conf = validation.get("is_confident", True)
+    is_fresh_ord = freshness.get("is_fresh", True)
+    is_fresh_mkt = m_val.get("is_fresh", True)
+    
+    if not is_conf or not is_fresh_ord or not is_fresh_mkt:
         lines.append("  Auto-copy was BLOCKED because:")
         for r in all_block_reasons:
             lines.append(f"    - {r}")
         if not all_block_reasons:
             lines.append("    (no specific reason recorded)")
     else:
-        lines.append("  Auto-copy proceeded normally (confidence: Alta, order fresh).")
+        lines.append("  Auto-copy proceeded normally (confidence: Alta, order fresh, market fresh).")
     # ------------------------------------------------------------------ /validation
 
     lines.append("")

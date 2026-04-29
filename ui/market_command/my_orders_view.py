@@ -28,7 +28,13 @@ from core.my_orders_diagnostics import format_my_orders_diagnostic_report
 from ui.market_command.quick_order_update_dialog import (
     QuickOrderUpdateDialog, format_price_for_clipboard,
 )
-from core.market_order_pricing import build_order_update_recommendation
+from core.market_order_pricing import (
+    build_order_update_recommendation, 
+    recalculate_competitor_price,
+    recommend_sell_price,
+    recommend_buy_price,
+    price_tick
+)
 from core.quick_order_update_diagnostics import format_quick_update_report
 
 _log = logging.getLogger('eve.market.my_orders')
@@ -1429,6 +1435,71 @@ class MarketMyOrdersView(QWidget):
             return
         self._launch_quick_order_update(order)
 
+    def _revalidate_market_competitor(self, order) -> dict:
+        """
+        Fetch fresh market orders for the item and find the best competitor.
+        Returns a dict with revalidation results.
+        """
+        res = {
+            "checked": False,
+            "is_fresh": False,
+            "type_id": order.type_id,
+            "region_id": 10000002,  # Default The Forge/Jita
+            "location_id": order.location_id,
+            "side": "BUY" if order.is_buy_order else "SELL",
+            "old_competitor_price": order.analysis.competitor_price if order.analysis else 0.0,
+            "fresh_best_sell": 0.0,
+            "fresh_best_buy": 0.0,
+            "fresh_competitor_price": 0.0,
+            "fresh_recommended_price": 0.0,
+            "used_fresh_price": False,
+            "price_changed": False,
+            "warnings": [],
+            "market_orders_count": 0,
+            "own_orders_excluded_count": 0,
+            "price_source": "analysis.competitor_price"
+        }
+        
+        client = ESIClient()
+        try:
+            # 1. Fetch fresh orders
+            market_orders = client.get_market_orders_for_type(res["region_id"], order.type_id)
+            res["checked"] = True
+            res["market_orders_count"] = len(market_orders)
+            
+            # 2. Recalculate using helper (pure logic)
+            fresh = recalculate_competitor_price(market_orders, self.all_orders, order.type_id, order.is_buy_order)
+            
+            res["fresh_best_buy"] = fresh["best_buy"]
+            res["fresh_best_sell"] = fresh["best_sell"]
+            res["fresh_competitor_price"] = fresh["competitor_price"]
+            res["own_orders_excluded_count"] = fresh["own_excluded_count"]
+            
+            # 3. Calculate fresh recommendation
+            if order.is_buy_order:
+                res["fresh_recommended_price"] = recommend_buy_price(res["fresh_competitor_price"])
+            else:
+                res["fresh_recommended_price"] = recommend_sell_price(res["fresh_competitor_price"])
+                
+            # 4. Compare
+            diff = abs(res["fresh_competitor_price"] - res["old_competitor_price"])
+            if diff > 0.01:
+                res["price_changed"] = True
+                res["warnings"].append(
+                    f"Market change detected: old={res['old_competitor_price']:,.2f}, fresh={res['fresh_competitor_price']:,.2f}"
+                )
+            
+            # 5. Mark as successful
+            res["is_fresh"] = True
+            res["used_fresh_price"] = True
+            res["price_source"] = "fresh_market_book"
+            
+        except Exception as e:
+            res["warnings"].append(f"Error revalidando mercado: {e}")
+            _log.warning(f"[QUICK UPDATE] market revalidation error: {e}")
+            
+        return res
+
     def _launch_quick_order_update(self, order):
         """Calculate recommendation, copy price, open market, show popup."""
         side = "BUY" if order.is_buy_order else "SELL"
@@ -1437,20 +1508,49 @@ class MarketMyOrdersView(QWidget):
             f"row=? order_id={order.order_id} type_id={order.type_id}"
         )
 
-        # Step 1: ESI freshness check — must happen before auto-copy decision
-        self.lbl_status.setText("Validando orden con ESI...")
+        # Step 1: ESI freshness checks — both own order and market book
+        self.lbl_status.setText("Revalidando mercado con ESI...")
         self.lbl_status.setStyleSheet("color: #3b82f6;")
-        freshness = self._revalidate_order_freshness(order)
+        
+        freshness  = self._revalidate_order_freshness(order)
+        market_val = self._revalidate_market_competitor(order)
 
-        # Step 2: Build pricing recommendation (includes base price-source validation)
+        # Step 2: Build pricing recommendation
         rec        = build_order_update_recommendation(order, order.analysis)
+        
+        # Override with fresh market data if available
+        if market_val.get("used_fresh_price"):
+            rec["competitor_price"]  = market_val["fresh_competitor_price"]
+            rec["best_buy"]          = market_val["fresh_best_buy"]
+            rec["best_sell"]         = market_val["fresh_best_sell"]
+            rec["recommended_price"] = market_val["fresh_recommended_price"]
+            rec["price_source"]      = market_val["price_source"]
+            rec["tick"]              = price_tick(rec["competitor_price"])
+            
+            # Update reason based on fresh results
+            is_best = False
+            if order.is_buy_order:
+                is_best = order.price >= (rec["competitor_price"] - 0.01)
+                rec["reason"] = "Ya liderando — sin cambio necesario" if is_best else f"Subir a {rec['recommended_price']:,.2f} ISK para superar competidor"
+            else:
+                is_best = order.price <= (rec["competitor_price"] + 0.01)
+                rec["reason"] = "Ya liderando — sin cambio necesario" if is_best else f"Bajar a {rec['recommended_price']:,.2f} ISK para superar competidor"
+            
+            if not is_best:
+                rec["action_needed"] = True
+
         validation = rec.get("validation", {})
 
-        # Step 3: Merge freshness into validation — stale or missing order → no auto-copy
+        # Step 3: Merge freshness into validation — block auto-copy if anything is unreliable
         if not freshness.get("checked") or not freshness.get("is_fresh"):
             validation["is_confident"]    = False
             validation["confidence_label"] = "Baja"
             validation.setdefault("warnings", []).extend(freshness.get("warnings", []))
+            
+        if not market_val.get("checked") or not market_val.get("is_fresh"):
+            validation["is_confident"]    = False
+            validation["confidence_label"] = "Baja"
+            validation.setdefault("warnings", []).extend(market_val.get("warnings", []))
 
         is_confident = validation.get("is_confident", True)
 
@@ -1500,6 +1600,7 @@ class MarketMyOrdersView(QWidget):
             "clipboard_value":   clipboard_value,
             "validation":        validation,
             "freshness":         freshness,
+            "market_validation": market_val,
         }
         diag_report = format_quick_update_report(diag_data)
         _log.debug(f"[QUICK UPDATE] report:\n{diag_report}")
