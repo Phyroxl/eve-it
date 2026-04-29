@@ -374,6 +374,7 @@ class InventoryAnalysisDialog(QDialog):
             
             for i, it in enumerate([i_name, i_qty, i_avg, i_price, i_profit, i_pct, i_rec, i_reason]):
                 it.setTextAlignment(Qt.AlignCenter)
+                it.setData(Qt.UserRole, item.type_id) # Redundancia
                 self.table.setItem(row, i, it)
             
         self.table.setSortingEnabled(True)
@@ -383,9 +384,24 @@ class InventoryAnalysisDialog(QDialog):
         self.table.horizontalHeader().sectionResized.connect(self.save_layout)
 
     def on_double_click(self, item):
-        tid = self.table.item(item.row(), 0).data(Qt.UserRole)
-        name = self.table.item(item.row(), 0).text()
-        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
+        row = item.row()
+        tid = None
+        name = ""
+        
+        # Buscar type_id en la fila
+        for col in range(self.table.columnCount()):
+            it = self.table.item(row, col)
+            if it:
+                if not tid: tid = it.data(Qt.UserRole)
+                if col == 0: name = it.text() # Columna Ítem
+
+        import logging
+        log = logging.getLogger('eve.interaction')
+        if tid:
+            log.info(f"[OPEN MARKET] inventory double_clicked row={row} type_id={tid}")
+            ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
+        else:
+            log.warning(f"[OPEN MARKET] inventory double_clicked without type_id row={row}")
 
     def save_layout(self):
         cfg = {"widths": [self.table.columnWidth(i) for i in range(self.table.columnCount())]}
@@ -546,6 +562,7 @@ class TradeProfitsDialog(QDialog):
             cells = [i_date, i_item, i_qty, i_buy_u, i_sell_u, i_buy_t, i_sell_t, i_fees, i_mar, i_prof]
             for col, it in enumerate(cells):
                 it.setTextAlignment(Qt.AlignCenter)
+                it.setData(Qt.UserRole, t['type_id']) # Redundancia
                 self.table.setItem(r, col, it)
             
         self.table.setSortingEnabled(True)
@@ -576,11 +593,23 @@ class TradeProfitsDialog(QDialog):
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def on_double_click(self, item):
-        # Usar siempre la columna 1 (ÍTEM) para obtener los datos
         row = item.row()
-        tid = self.table.item(row, 1).data(Qt.UserRole)
-        name = self.table.item(row, 1).text()
-        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
+        tid = None
+        name = ""
+        
+        for col in range(self.table.columnCount()):
+            it = self.table.item(row, col)
+            if it:
+                if not tid: tid = it.data(Qt.UserRole)
+                if col == 1: name = it.text()
+
+        import logging
+        log = logging.getLogger('eve.interaction')
+        if tid:
+            log.info(f"[OPEN MARKET] trades double_clicked row={row} type_id={tid}")
+            ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
+        else:
+            log.warning(f"[OPEN MARKET] trades double_clicked without type_id row={row}")
 
 # --- Main View ---
 
@@ -937,6 +966,7 @@ class MarketMyOrdersView(QWidget):
             items = [i_name, i_type, i_price, i_avg, i_ref, i_tot, i_rem, i_spr, i_mar, i_prof, i_state]
             for i, it in enumerate(items):
                 it.setTextAlignment(Qt.AlignCenter)
+                it.setData(Qt.UserRole, o.type_id) # Redundancia
                 t.setItem(r, i, it)
                 
         t.setSortingEnabled(True)
@@ -983,9 +1013,23 @@ class MarketMyOrdersView(QWidget):
         self.det_state.setText(a.state.upper())
 
     def on_double_click_item(self, item, t):
-        tid = t.item(item.row(), 0).data(Qt.UserRole)
-        name = t.item(item.row(), 0).text()
-        ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: self.lbl_status.setText(m))
+        row = item.row()
+        tid = None
+        name = ""
+        
+        for col in range(t.columnCount()):
+            it = t.item(row, col)
+            if it:
+                if not tid: tid = it.data(Qt.UserRole)
+                if col == 0: name = it.text()
+
+        import logging
+        log = logging.getLogger('eve.interaction')
+        if tid:
+            log.info(f"[OPEN MARKET] my_orders double_clicked row={row} type_id={tid}")
+            ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: self.lbl_status.setText(m))
+        else:
+            log.warning(f"[OPEN MARKET] my_orders double_clicked without type_id row={row}")
 
     def update_taxes_info(self):
         auth = AuthManager.instance()

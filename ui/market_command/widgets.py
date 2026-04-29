@@ -138,6 +138,31 @@ class MarketTableWidget(QTableWidget):
             
         self.horizontalHeader().setSectionsMovable(True)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        
+        self.item_action_triggered.connect(self._handle_default_action)
+
+    def _handle_default_action(self, action, item_name, type_id):
+        """Default handler for signals if not connected elsewhere."""
+        if action == "double_clicked" and type_id:
+            import logging
+            logging.getLogger('eve.interaction').info(f"[TABLE] Default double-click action for {item_name} ({type_id})")
+
+    def _get_type_id_from_item(self, item) -> int:
+        """Robusta recuperación del type_id desde cualquier celda de la fila."""
+        if item is None: return None
+        
+        # 1. Intentar el item directo
+        tid = item.data(Qt.UserRole)
+        if tid: return int(tid)
+        
+        # 2. Intentar buscar en toda la fila
+        row = item.row()
+        for col in range(self.columnCount()):
+            it = self.item(row, col)
+            if it:
+                tid = it.data(Qt.UserRole)
+                if tid: return int(tid)
+        return None
         self.setColumnWidth(0, 50)
         self.setColumnWidth(1, 250)
         self.setColumnWidth(2, 60)
@@ -204,10 +229,24 @@ class MarketTableWidget(QTableWidget):
                 self.item_action_triggered.emit("copied", item_name, type_id)
 
     def on_item_double_clicked(self, item):
+        type_id = self._get_type_id_from_item(item)
         row = item.row()
-        item_name = self.item(row, 1).text()
-        type_id = self.item(row, 1).data(Qt.UserRole)
-        self.item_action_triggered.emit("double_clicked", item_name, type_id)
+        item_name = ""
+        
+        # Intentar obtener el nombre desde la columna 1 (o la primera que tenga texto)
+        for col in range(self.columnCount()):
+            it = self.item(row, col)
+            if it and it.text() and col in (0, 1): # Generalmente Rank o Item
+                item_name = it.text()
+                if col == 1: break # Prioridad a la columna Item
+        
+        import logging
+        log = logging.getLogger('eve.interaction')
+        if type_id:
+            log.info(f"[OPEN MARKET] double_clicked row={row} col={item.column()} type_id={type_id} name={item_name}")
+            self.item_action_triggered.emit("double_clicked", item_name, type_id)
+        else:
+            log.warning(f"[OPEN MARKET] double_clicked without type_id at row={row} col={item.column()}")
 
     def populate(self, opportunities):
         self.setSortingEnabled(False)
@@ -278,7 +317,9 @@ class MarketTableWidget(QTableWidget):
             
             for i in range(9):
                 it = self.item(row, i)
-                if it: it.setTextAlignment(Qt.AlignCenter)
+                if it: 
+                    it.setTextAlignment(Qt.AlignCenter)
+                    it.setData(Qt.UserRole, opp.type_id) # Redundancia para doble click
             
         self.setSortingEnabled(True)
         # Default sort by score descending
@@ -439,7 +480,9 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             
             for i in range(13):
                 it = self.item(row, i)
-                if it: it.setTextAlignment(Qt.AlignCenter)
+                if it: 
+                    it.setTextAlignment(Qt.AlignCenter)
+                    it.setData(Qt.UserRole, opp.type_id) # Redundancia
             
         self.setSortingEnabled(True)
         self.sortItems(2, Qt.DescendingOrder)
