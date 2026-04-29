@@ -1326,6 +1326,97 @@ class MarketMyOrdersView(QWidget):
             _log.warning(f"[QUICK UPDATE] market open error: {e}")
             return False
 
+    def _revalidate_order_freshness(self, order) -> dict:
+        """
+        Call ESI to verify the local order snapshot is still current.
+        Returns a freshness dict; non-fresh result blocks auto-copy.
+        """
+        _PRICE_TOL = 0.005  # Half-cent — same as EVE's minimum tick
+
+        result = {
+            "checked":       False,
+            "is_fresh":      False,
+            "order_exists":  False,
+            "fresh_price":   None,
+            "old_price":     order.price,
+            "price_changed": False,
+            "warnings":      [],
+            "fresh_order":   None,
+        }
+
+        try:
+            auth  = AuthManager.instance()
+            token = auth.get_valid_access_token()
+            if not token:
+                result["warnings"].append(
+                    "Sin token ESI activo — no se pudo revalidar la orden."
+                )
+                _log.warning("[QUICK UPDATE] freshness: no token available")
+                return result
+
+            client     = ESIClient()
+            raw_orders = client.character_orders(auth.char_id, token)
+            result["checked"] = True
+
+            if not isinstance(raw_orders, list):
+                result["warnings"].append(
+                    "ESI devolvio respuesta inesperada al revalidar "
+                    f"({type(raw_orders).__name__})."
+                )
+                return result
+
+            # Locate by order_id
+            fresh_raw = next(
+                (o for o in raw_orders if o.get("order_id") == order.order_id),
+                None,
+            )
+
+            if fresh_raw is None:
+                result["order_exists"] = False
+                result["warnings"].append(
+                    f"La orden {order.order_id} no existe en ESI "
+                    f"(cancelada, expirada, o aun no sincronizada). "
+                    f"Refresca Mis Pedidos."
+                )
+                _log.warning(
+                    f"[QUICK UPDATE] freshness: order_id={order.order_id} "
+                    f"not found in ESI response ({len(raw_orders)} orders)"
+                )
+                return result
+
+            result["order_exists"] = True
+            result["fresh_order"]  = fresh_raw
+            fresh_price            = float(fresh_raw.get("price", order.price))
+            result["fresh_price"]  = fresh_price
+
+            if abs(fresh_price - order.price) > _PRICE_TOL:
+                result["price_changed"] = True
+                result["is_fresh"]      = False
+                result["warnings"].append(
+                    f"Precio local desactualizado: "
+                    f"local={order.price:.2f} ISK, ESI fresco={fresh_price:.2f} ISK. "
+                    f"Refresca Mis Pedidos y vuelve a intentarlo."
+                )
+                _log.warning(
+                    f"[QUICK UPDATE] freshness: price_changed "
+                    f"local={order.price} fresh={fresh_price} "
+                    f"order_id={order.order_id}"
+                )
+            else:
+                result["is_fresh"] = True
+                _log.info(
+                    f"[QUICK UPDATE] freshness: OK "
+                    f"price={fresh_price} order_id={order.order_id}"
+                )
+
+        except Exception as exc:
+            result["warnings"].append(
+                f"Error al revalidar con ESI: {str(exc)[:100]}"
+            )
+            _log.warning(f"[QUICK UPDATE] freshness check error: {exc}")
+
+        return result
+
     def _handle_quick_order_update_double_click(self, item, table):
         """Entry point when user double-clicks the TIPO column."""
         row   = item.row()
@@ -1346,19 +1437,32 @@ class MarketMyOrdersView(QWidget):
             f"row=? order_id={order.order_id} type_id={order.type_id}"
         )
 
-        # Recommendation (includes validation)
-        rec = build_order_update_recommendation(order, order.analysis)
+        # Step 1: ESI freshness check — must happen before auto-copy decision
+        self.lbl_status.setText("Validando orden con ESI...")
+        self.lbl_status.setStyleSheet("color: #3b82f6;")
+        freshness = self._revalidate_order_freshness(order)
+
+        # Step 2: Build pricing recommendation (includes base price-source validation)
+        rec        = build_order_update_recommendation(order, order.analysis)
         validation = rec.get("validation", {})
+
+        # Step 3: Merge freshness into validation — stale or missing order → no auto-copy
+        if not freshness.get("checked") or not freshness.get("is_fresh"):
+            validation["is_confident"]    = False
+            validation["confidence_label"] = "Baja"
+            validation.setdefault("warnings", []).extend(freshness.get("warnings", []))
+
         is_confident = validation.get("is_confident", True)
 
         _log.info(
             f"[QUICK UPDATE] recommendation price={rec['recommended_price']} "
             f"competitor={rec['competitor_price']} tick={rec['tick']} "
-            f"confidence={validation.get('confidence_label', '?')}"
+            f"confidence={validation.get('confidence_label', '?')} "
+            f"fresh={freshness.get('is_fresh')} checked={freshness.get('checked')}"
         )
         if not is_confident:
             for w in validation.get("warnings", []):
-                _log.warning(f"[QUICK UPDATE] VALIDATION WARNING: {w}")
+                _log.warning(f"[QUICK UPDATE] WARNING: {w}")
 
         # Clipboard — ONLY auto-copy if validation is confident
         if is_confident:
@@ -1395,6 +1499,7 @@ class MarketMyOrdersView(QWidget):
             "market_window_opened": market_ok,
             "clipboard_value":   clipboard_value,
             "validation":        validation,
+            "freshness":         freshness,
         }
         diag_report = format_quick_update_report(diag_data)
         _log.debug(f"[QUICK UPDATE] report:\n{diag_report}")

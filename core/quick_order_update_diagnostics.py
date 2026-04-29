@@ -59,14 +59,37 @@ def format_quick_update_report(data: dict) -> str:
     else:
         lines.append("  Warnings                    : (none)")
 
+    # ------------------------------------------------------------------ freshness
+    freshness = data.get("freshness") or {}
+    lines.append("")
+    lines.append("[ORDER FRESHNESS]")
+    lines.append(f"  Checked              : {freshness.get('checked', 'N/A')}")
+    lines.append(f"  Order Exists         : {freshness.get('order_exists', 'N/A')}")
+    lines.append(f"  Old Local Price      : {_fmt(freshness.get('old_price'), ' ISK')}")
+    fp = freshness.get("fresh_price")
+    lines.append(f"  Fresh ESI Price      : {_fmt(fp, ' ISK') if fp is not None else 'N/A'}")
+    lines.append(f"  Price Changed        : {freshness.get('price_changed', 'N/A')}")
+    lines.append(f"  Is Fresh             : {freshness.get('is_fresh', 'N/A')}")
+    f_warnings = freshness.get("warnings") or []
+    if f_warnings:
+        lines.append("  Warnings:")
+        for fw in f_warnings:
+            lines.append(f"    * {fw}")
+    else:
+        lines.append("  Warnings             : (none)")
+    # ------------------------------------------------------------------ /freshness
+
     lines.append("")
     lines.append("[WHY NOT AUTO COPY]")
-    if not validation.get("is_confident", True):
+    all_block_reasons = list(v_warnings) + list(f_warnings)
+    if not validation.get("is_confident", True) or not freshness.get("is_fresh", True):
         lines.append("  Auto-copy was BLOCKED because:")
-        for w in v_warnings:
-            lines.append(f"    - {w}")
+        for r in all_block_reasons:
+            lines.append(f"    - {r}")
+        if not all_block_reasons:
+            lines.append("    (no specific reason recorded)")
     else:
-        lines.append("  Auto-copy proceeded normally (confidence: Alta).")
+        lines.append("  Auto-copy proceeded normally (confidence: Alta, order fresh).")
     # ------------------------------------------------------------------ /validation
 
     lines.append("")

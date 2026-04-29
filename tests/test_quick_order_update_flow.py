@@ -330,23 +330,40 @@ class TestLaunchQuickOrderUpdate(unittest.TestCase):
     def tearDown(self):
         self.view.close()
 
-    def _patched_launch(self, order=None, market_ok=True):
-        """Helper: launch with QuickOrderUpdateDialog fully mocked."""
+    def _fresh_result(self, order, is_fresh=True):
+        """Build a synthetic freshness result for an order."""
+        return {
+            "checked":       True,
+            "is_fresh":      is_fresh,
+            "order_exists":  True,
+            "fresh_price":   order.price,
+            "old_price":     order.price,
+            "price_changed": not is_fresh,
+            "warnings":      [] if is_fresh else ["Precio desactualizado (mock)"],
+            "fresh_order":   {"order_id": order.order_id, "price": order.price},
+        }
+
+    def _patched_launch(self, order=None, market_ok=True, is_fresh=True):
+        """Helper: launch with QuickOrderUpdateDialog and freshness fully mocked."""
         if order is None:
             order = self.order
         mock_dlg_instance = MagicMock()
+        freshness = self._fresh_result(order, is_fresh=is_fresh)
         with patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
                    return_value=mock_dlg_instance) as mock_dlg_cls, \
-             patch.object(self.view, "_open_market_for_order", return_value=market_ok):
+             patch.object(self.view, "_open_market_for_order", return_value=market_ok), \
+             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness):
             self.view._launch_quick_order_update(order)
             return mock_dlg_cls, mock_dlg_instance
 
     def test_calls_build_order_update_recommendation(self):
+        freshness = self._fresh_result(self.order)
         with patch("ui.market_command.my_orders_view.build_order_update_recommendation",
                    wraps=build_order_update_recommendation) as mock_build, \
              patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
                    return_value=MagicMock()), \
-             patch.object(self.view, "_open_market_for_order", return_value=True):
+             patch.object(self.view, "_open_market_for_order", return_value=True), \
+             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness):
             self.view._launch_quick_order_update(self.order)
         mock_build.assert_called_once_with(self.order, self.order.analysis)
 
