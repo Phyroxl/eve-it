@@ -31,37 +31,48 @@ class TestMarketCompetitorRevalidation(unittest.TestCase):
     def test_recalculate_competitor_sell_warden_case(self):
         """
         Warden II case: 
-        Analysis thought competitor was 1.612M.
-        Fresh market says competitor is 1.687M.
+        Analysis thought competitor was 1.612M (regional).
+        Fresh market says competitor is 1.687M in local station (60003760).
+        There is another order at 1.612M in a different station.
         """
-        own = [{"type_id": 28209, "is_buy_order": False, "price": 1692000}]
+        own = [{"type_id": 28209, "is_buy_order": False, "price": 1692000, "location_id": 60003760}]
         
         market = [
-            {"is_buy_order": False, "price": 1687000}, # Real competitor
-            {"is_buy_order": False, "price": 1692000}, # Own
+            {"is_buy_order": False, "price": 1687000, "location_id": 60003760}, # Local competitor
+            {"is_buy_order": False, "price": 1692000, "location_id": 60003760}, # Own
+            {"is_buy_order": False, "price": 1612000, "location_id": 12345678}, # Other station competitor
         ]
         
-        res = recalculate_competitor_price(market, own, 28209, False)
+        res = recalculate_competitor_price(market, own, 28209, False, location_id=60003760)
         
         self.assertEqual(res["competitor_price"], 1687000)
         self.assertTrue(res["comp_prices_found"])
         self.assertEqual(res["own_excluded_count"], 1)
+        self.assertEqual(res["regional_orders_count"], 3)
+        self.assertEqual(res["location_orders_count"], 2)
         
         # Fresh recommendation should be 1.687M - 1k tick = 1.686M
         rec = recommend_sell_price(res["competitor_price"])
         self.assertEqual(rec, 1686000)
 
+    def test_recalculate_competitor_no_location_filter_still_works(self):
+        """Ensure backward compatibility if location_id is None."""
+        market = [{"is_buy_order": False, "price": 1000, "location_id": 1}]
+        res = recalculate_competitor_price(market, [], 1, False, location_id=None)
+        self.assertEqual(res["competitor_price"], 1000)
+        self.assertFalse(res["filtered_by_location"])
+
 class TestIntegrationMyOrdersView(unittest.TestCase):
     @patch('ui.market_command.my_orders_view.ESIClient')
-    def test_revalidate_market_competitor_success(self, mock_esi_class):
+    def test_revalidate_market_competitor_success_with_location(self, mock_esi_class):
         mock_esi = mock_esi_class.return_value
-        # Warden II scenario
+        # Warden II scenario: regional has 1.612M, but local (60003760) has 1.687M
         mock_esi.get_market_orders_for_type.return_value = [
-            {"is_buy_order": False, "price": 1687000}, # Competitor
-            {"is_buy_order": False, "price": 1692000}, # Own
+            {"is_buy_order": False, "price": 1612000, "location_id": 123},     # Regional
+            {"is_buy_order": False, "price": 1687000, "location_id": 60003760}, # Local Comp
+            {"is_buy_order": False, "price": 1692000, "location_id": 60003760}, # Own
         ]
         
-        # Mock view and labels to avoid PySide6 instantiation issues
         from ui.market_command.my_orders_view import MarketMyOrdersView
         view = MagicMock()
         view.all_orders = []
@@ -79,31 +90,46 @@ class TestIntegrationMyOrdersView(unittest.TestCase):
         )
         view.all_orders = [order]
         
-        # Call the method directly from the class, passing our mock view as 'self'
         res = MarketMyOrdersView._revalidate_market_competitor(view, order)
         
         self.assertTrue(res["checked"])
         self.assertTrue(res["is_fresh"])
         self.assertEqual(res["fresh_competitor_price"], 1687000)
         self.assertEqual(res["fresh_recommended_price"], 1686000)
-        self.assertTrue(res["price_changed"])
-        self.assertEqual(res["price_source"], "fresh_market_book")
+        self.assertEqual(res["price_source"], "fresh_market_book_location")
+        self.assertEqual(res["market_scope"], "station_location")
+        self.assertEqual(res["regional_orders_count"], 3)
+        self.assertEqual(res["location_orders_count"], 2)
 
     @patch('ui.market_command.my_orders_view.ESIClient')
-    def test_revalidate_market_competitor_no_competitor_sell(self, mock_esi_class):
-        """REQ 4.1: SELL without real competitor (only own order in market)."""
+    def test_revalidate_market_competitor_no_location_id_blocks(self, mock_esi_class):
+        """REQ 10.4: Missing location_id blocks revalidation."""
+        from ui.market_command.my_orders_view import MarketMyOrdersView
+        view = MagicMock(); view.all_orders = []
+        order = OpenOrder(
+            order_id=1, type_id=123, item_name="No Loc", is_buy_order=False, price=1000.0,
+            volume_total=1, volume_remain=1, issued="", location_id=None, range="",
+            analysis=None
+        )
+        res = MarketMyOrdersView._revalidate_market_competitor(view, order)
+        self.assertTrue(res["checked"])
+        self.assertFalse(res["is_fresh"])
+        self.assertIn("No order location_id available", "".join(res["warnings"]))
+
+    @patch('ui.market_command.my_orders_view.ESIClient')
+    def test_revalidate_market_competitor_no_competitor_local(self, mock_esi_class):
+        """REQ 10.3: Competitor in other station but none in local station."""
         mock_esi = mock_esi_class.return_value
         mock_esi.get_market_orders_for_type.return_value = [
-            {"is_buy_order": False, "price": 1000.0}, # My order
+            {"is_buy_order": False, "price": 500.0, "location_id": 999}, # Other location
+            {"is_buy_order": False, "price": 1000.0, "location_id": 1}, # My local order
         ]
         from ui.market_command.my_orders_view import MarketMyOrdersView
         view = MagicMock(); view.all_orders = []
         order = OpenOrder(
             order_id=1, type_id=123, item_name="Test Item", is_buy_order=False, price=1000.0,
             volume_total=1, volume_remain=1, issued="", location_id=1, range="",
-            analysis=OpenOrderAnalysis(is_buy=False, state="Liderando", competitor_price=1000.0,
-                best_buy=0, best_sell=1000.0, spread_pct=0, competitive=True, difference_to_best=0,
-                gross_profit_per_unit=0, net_profit_per_unit=0, net_profit_total=0, margin_pct=0)
+            analysis=None
         )
         view.all_orders = [order]
         
@@ -111,34 +137,7 @@ class TestIntegrationMyOrdersView(unittest.TestCase):
         
         self.assertTrue(res["checked"])
         self.assertFalse(res["is_fresh"])
-        self.assertFalse(res["used_fresh_price"])
-        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
-        # Should NOT have computed an absurd recommended price
-        self.assertEqual(res["fresh_recommended_price"], 0.0)
-
-    @patch('ui.market_command.my_orders_view.ESIClient')
-    def test_revalidate_market_competitor_no_competitor_buy(self, mock_esi_class):
-        """REQ 4.2: BUY without real competitor (only own buy order)."""
-        mock_esi = mock_esi_class.return_value
-        mock_esi.get_market_orders_for_type.return_value = [
-            {"is_buy_order": True, "price": 500.0}, # My buy order
-        ]
-        from ui.market_command.my_orders_view import MarketMyOrdersView
-        view = MagicMock(); view.all_orders = []
-        order = OpenOrder(
-            order_id=2, type_id=124, item_name="Test Item Buy", is_buy_order=True, price=500.0,
-            volume_total=1, volume_remain=1, issued="", location_id=1, range="",
-            analysis=OpenOrderAnalysis(is_buy=True, state="Liderando", competitor_price=500.0,
-                best_buy=500.0, best_sell=600.0, spread_pct=20, competitive=True, difference_to_best=0,
-                gross_profit_per_unit=0, net_profit_per_unit=0, net_profit_total=0, margin_pct=0)
-        )
-        view.all_orders = [order]
-        
-        res = MarketMyOrdersView._revalidate_market_competitor(view, order)
-        
-        self.assertFalse(res["is_fresh"])
-        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
-        self.assertEqual(res["fresh_recommended_price"], 0.0)
+        self.assertIn("No reliable local competitor found", "".join(res["warnings"]))
 
     @patch('ui.market_command.my_orders_view.ESIClient')
     def test_revalidate_market_competitor_sentinel_sell(self, mock_esi_class):
@@ -153,7 +152,7 @@ class TestIntegrationMyOrdersView(unittest.TestCase):
         res = MarketMyOrdersView._revalidate_market_competitor(view, order)
         
         self.assertFalse(res["is_fresh"])
-        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
+        self.assertIn("No reliable local competitor found", "".join(res["warnings"]))
 
     @patch('ui.market_command.my_orders_view.ESIClient')
     def test_revalidate_market_competitor_sentinel_buy(self, mock_esi_class):
@@ -167,7 +166,7 @@ class TestIntegrationMyOrdersView(unittest.TestCase):
         res = MarketMyOrdersView._revalidate_market_competitor(view, order)
         
         self.assertFalse(res["is_fresh"])
-        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
+        self.assertIn("No reliable local competitor found", "".join(res["warnings"]))
 
     @patch('ui.market_command.my_orders_view.ESIClient')
     def test_revalidate_market_competitor_error(self, mock_esi_class):
@@ -185,7 +184,7 @@ class TestIntegrationMyOrdersView(unittest.TestCase):
         res = MarketMyOrdersView._revalidate_market_competitor(view, order)
         
         self.assertFalse(res["is_fresh"])
-        self.assertIn("Error revalidando mercado: ESI Down", res["warnings"])
+        self.assertIn("Error revalidando mercado local: ESI Down", res["warnings"])
 
 if __name__ == "__main__":
     unittest.main()

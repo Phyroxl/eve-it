@@ -85,8 +85,11 @@ def format_quick_update_report(data: dict) -> str:
     lines.append("[MARKET COMPETITOR REVALIDATION]")
     lines.append(f"  Checked              : {m_val.get('checked', 'N/A')}")
     lines.append(f"  Is Fresh             : {m_val.get('is_fresh', 'N/A')}")
-    lines.append(f"  Region ID            : {m_val.get('region_id', 'N/A')}")
-    lines.append(f"  Location ID          : {m_val.get('location_id', 'N/A')}")
+    lines.append(f"  Market Scope         : {m_val.get('market_scope', 'N/A')}")
+    lines.append(f"  Filtered By Location : {m_val.get('filtered_by_location', 'N/A')}")
+    lines.append(f"  Target Location ID   : {m_val.get('target_location_id', 'N/A')}")
+    lines.append(f"  Regional Orders Count: {m_val.get('regional_orders_count', 'N/A')}")
+    lines.append(f"  Location Orders Count: {m_val.get('location_orders_count', 'N/A')}")
     lines.append(f"  Old Competitor Price : {_fmt(m_val.get('old_competitor_price'), ' ISK')}")
     lines.append(f"  Fresh Best Sell      : {_fmt(m_val.get('fresh_best_sell'), ' ISK')}")
     lines.append(f"  Fresh Best Buy       : {_fmt(m_val.get('fresh_best_buy'), ' ISK')}")
@@ -94,7 +97,6 @@ def format_quick_update_report(data: dict) -> str:
     lines.append(f"  Fresh Recommended    : {_fmt(m_val.get('fresh_recommended_price'), ' ISK')}")
     lines.append(f"  Used Fresh Price     : {m_val.get('used_fresh_price', 'N/A')}")
     lines.append(f"  Price Changed        : {m_val.get('price_changed', 'N/A')}")
-    lines.append(f"  Market Orders Count  : {m_val.get('market_orders_count', 'N/A')}")
     lines.append(f"  Own Orders Excluded  : {m_val.get('own_orders_excluded_count', 'N/A')}")
     m_warnings = m_val.get("warnings") or []
     if m_warnings:

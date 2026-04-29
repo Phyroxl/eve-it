@@ -1439,7 +1439,8 @@ class MarketMyOrdersView(QWidget):
 
     def _revalidate_market_competitor(self, order) -> dict:
         """
-        Fetch fresh market orders for the item and find the best competitor.
+        Fetch fresh market orders for the item and find the best competitor,
+        scoped by the order's location_id (station-local scope).
         Returns a dict with revalidation results.
         """
         res = {
@@ -1448,6 +1449,7 @@ class MarketMyOrdersView(QWidget):
             "type_id": order.type_id,
             "region_id": 10000002,  # Default The Forge/Jita
             "location_id": order.location_id,
+            "target_location_id": order.location_id,
             "side": "BUY" if order.is_buy_order else "SELL",
             "old_competitor_price": order.analysis.competitor_price if order.analysis else 0.0,
             "fresh_best_sell": 0.0,
@@ -1458,32 +1460,48 @@ class MarketMyOrdersView(QWidget):
             "price_changed": False,
             "warnings": [],
             "market_orders_count": 0,
+            "regional_orders_count": 0,
+            "location_orders_count": 0,
             "own_orders_excluded_count": 0,
-            "price_source": "analysis.competitor_price"
+            "price_source": "analysis.competitor_price",
+            "market_scope": "station_location",
+            "filtered_by_location": True
         }
+
+        # Guard: order location is required for station-local scope
+        if not order.location_id:
+            res["checked"] = True
+            res["warnings"].append("No order location_id available; cannot use local market scope.")
+            _log.warning(f"[QUICK UPDATE] location_id missing for order {order.order_id}")
+            return res
         
         client = ESIClient()
         try:
-            # 1. Fetch fresh orders
+            # 1. Fetch fresh orders (regional)
             market_orders = client.get_market_orders_for_type(res["region_id"], order.type_id)
             res["checked"] = True
-            res["market_orders_count"] = len(market_orders)
+            res["regional_orders_count"] = len(market_orders)
             
-            # 2. Recalculate using helper (pure logic)
-            fresh = recalculate_competitor_price(market_orders, self.all_orders, order.type_id, order.is_buy_order)
+            # 2. Recalculate using local scope (pure logic)
+            fresh = recalculate_competitor_price(
+                market_orders, self.all_orders, order.type_id, order.is_buy_order, 
+                location_id=order.location_id
+            )
             
             res["fresh_best_buy"] = fresh["best_buy"]
             res["fresh_best_sell"] = fresh["best_sell"]
             res["fresh_competitor_price"] = fresh["competitor_price"]
             res["own_orders_excluded_count"] = fresh["own_excluded_count"]
+            res["location_orders_count"] = fresh["location_orders_count"]
+            res["market_orders_count"] = fresh["location_orders_count"]
             
-            # REQUISITO 2: Bloquear si no hay competidor real
+            # REQUISITO 8: Bloquear si no hay competidor local fiable
             if not fresh.get("comp_prices_found"):
-                res["warnings"].append("No reliable competitor found in fresh market book.")
+                res["warnings"].append("No reliable local competitor found in fresh market book.")
                 return res
 
             if res["fresh_competitor_price"] <= _SENTINEL_MIN or res["fresh_competitor_price"] >= _SENTINEL_MAX:
-                res["warnings"].append("Invalid competitor price (sentinel detected).")
+                res["warnings"].append("Invalid local competitor price (sentinel detected).")
                 return res
 
             # 3. Calculate fresh recommendation
@@ -1492,9 +1510,9 @@ class MarketMyOrdersView(QWidget):
             else:
                 res["fresh_recommended_price"] = recommend_sell_price(res["fresh_competitor_price"])
                 
-            # REQUISITO 3: Validar recomendación
+            # Validar recomendación
             if res["fresh_recommended_price"] <= 0:
-                res["warnings"].append("Invalid recommended price calculated (<= 0).")
+                res["warnings"].append("Invalid local recommended price calculated (<= 0).")
                 return res
 
             # 4. Compare
@@ -1502,17 +1520,17 @@ class MarketMyOrdersView(QWidget):
             if diff > 0.01:
                 res["price_changed"] = True
                 res["warnings"].append(
-                    f"Market change detected: old={res['old_competitor_price']:,.2f}, fresh={res['fresh_competitor_price']:,.2f}"
+                    f"Local market change: old={res['old_competitor_price']:,.2f}, fresh={res['fresh_competitor_price']:,.2f}"
                 )
             
             # 5. Mark as successful
             res["is_fresh"] = True
             res["used_fresh_price"] = True
-            res["price_source"] = "fresh_market_book"
+            res["price_source"] = "fresh_market_book_location"
             
         except Exception as e:
-            res["warnings"].append(f"Error revalidando mercado: {e}")
-            _log.warning(f"[QUICK UPDATE] market revalidation error: {e}")
+            res["warnings"].append(f"Error revalidando mercado local: {e}")
+            _log.warning(f"[QUICK UPDATE] local market revalidation error: {e}")
             
         return res
 
@@ -1531,29 +1549,38 @@ class MarketMyOrdersView(QWidget):
         freshness  = self._revalidate_order_freshness(order)
         market_val = self._revalidate_market_competitor(order)
 
+        _log.info(
+            f"[QUICK UPDATE MARKET REVALIDATION] checked={market_val.get('checked')} "
+            f"is_fresh={market_val.get('is_fresh')} used_fresh={market_val.get('used_fresh_price')} "
+            f"old_comp={market_val.get('old_competitor_price')} fresh_comp={market_val.get('fresh_competitor_price')} "
+            f"fresh_rec={market_val.get('fresh_recommended_price')} warnings={len(market_val.get('warnings', []))}"
+        )
+
         # Step 2: Build pricing recommendation
         rec        = build_order_update_recommendation(order, order.analysis)
         
         # Override with fresh market data if available
         if market_val.get("used_fresh_price"):
+            _log.info(f"[QUICK UPDATE] Overriding cached analysis with fresh local market data for {order.item_name} at location {order.location_id}")
             rec["competitor_price"]  = market_val["fresh_competitor_price"]
             rec["best_buy"]          = market_val["fresh_best_buy"]
             rec["best_sell"]         = market_val["fresh_best_sell"]
             rec["recommended_price"] = market_val["fresh_recommended_price"]
             rec["price_source"]      = market_val["price_source"]
+            rec["market_scope"]      = market_val.get("market_scope", "station_location")
+            rec["location_id"]       = market_val.get("target_location_id")
             rec["tick"]              = price_tick(rec["competitor_price"])
             
-            # Update reason based on fresh results
+            # Update reason and action_needed based on fresh results
             is_best = False
             if order.is_buy_order:
-                is_best = order.price >= (rec["competitor_price"] - 0.01)
+                is_best = order.price >= (rec["competitor_price"] - 0.005)
                 rec["reason"] = "Ya liderando — sin cambio necesario" if is_best else f"Subir a {rec['recommended_price']:,.2f} ISK para superar competidor"
             else:
-                is_best = order.price <= (rec["competitor_price"] + 0.01)
+                is_best = order.price <= (rec["competitor_price"] + 0.005)
                 rec["reason"] = "Ya liderando — sin cambio necesario" if is_best else f"Bajar a {rec['recommended_price']:,.2f} ISK para superar competidor"
             
-            if not is_best:
-                rec["action_needed"] = True
+            rec["action_needed"] = not is_best
 
         validation = rec.get("validation", {})
 
@@ -1571,10 +1598,10 @@ class MarketMyOrdersView(QWidget):
         is_confident = validation.get("is_confident", True)
 
         _log.info(
-            f"[QUICK UPDATE] recommendation price={rec['recommended_price']} "
+            f"[QUICK UPDATE] FINAL recommendation price={rec['recommended_price']} "
             f"competitor={rec['competitor_price']} tick={rec['tick']} "
             f"confidence={validation.get('confidence_label', '?')} "
-            f"fresh={freshness.get('is_fresh')} checked={freshness.get('checked')}"
+            f"fresh={freshness.get('is_fresh')} market_fresh={market_val.get('is_fresh')}"
         )
         if not is_confident:
             for w in validation.get("warnings", []):
@@ -1617,6 +1644,8 @@ class MarketMyOrdersView(QWidget):
             "validation":        validation,
             "freshness":         freshness,
             "market_validation": market_val,
+            "market_scope":      rec.get("market_scope", "regional"),
+            "location_id":       rec.get("location_id"),
         }
         diag_report = format_quick_update_report(diag_data)
         _log.debug(f"[QUICK UPDATE] report:\n{diag_report}")

@@ -370,13 +370,53 @@ class TestLaunchQuickOrderUpdate(unittest.TestCase):
                           return_value={"used_fresh_price": False, "checked": True, "is_fresh": True}):
             self.view._launch_quick_order_update(self.order)
         mock_build.assert_called_once_with(self.order, self.order.analysis)
-
     def test_sets_clipboard(self):
         from PySide6.QtGui import QGuiApplication
         self._patched_launch()
         cb_text = QGuiApplication.clipboard().text()
         # SELL, competitor=1000 → recommended=999 → clipboard "999"
         self.assertEqual(cb_text, "999")
+
+    def test_uses_fresh_market_data_if_available(self):
+        """REQ 7: ensure fresh market override is applied to dialog and clipboard."""
+        from PySide6.QtGui import QGuiApplication
+        # Old analysis: competitor=1612000 (from self.order setup)
+        # Fresh market: competitor=1687000, recommended=1686000
+        market_val = {
+            "checked": True,
+            "is_fresh": True,
+            "used_fresh_price": True,
+            "fresh_competitor_price": 1687000,
+            "fresh_best_buy": 1500000,
+            "fresh_best_sell": 1687000,
+            "fresh_recommended_price": 1686000,
+            "price_source": "fresh_market_book_location",
+            "market_scope": "station_location",
+            "target_location_id": 60003760
+        }
+        mock_dlg_instance = MagicMock()
+        freshness = self._fresh_result(self.order, is_fresh=True)
+        
+        with patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
+                   return_value=mock_dlg_instance) as mock_dlg_cls, \
+             patch.object(self.view, "_open_market_for_order", return_value=True), \
+             patch.object(self.view, "_revalidate_order_freshness", return_value=freshness), \
+             patch.object(self.view, "_revalidate_market_competitor", return_value=market_val):
+            
+            self.view._launch_quick_order_update(self.order)
+            
+            # Verify clipboard
+            cb_text = QGuiApplication.clipboard().text()
+            self.assertEqual(cb_text, "1686000")
+            
+            # Verify dialog args
+            args, kwargs = mock_dlg_cls.call_args
+            recommendation = kwargs.get("recommendation") or args[1]
+            self.assertEqual(recommendation["competitor_price"], 1687000)
+            self.assertEqual(recommendation["recommended_price"], 1686000)
+            self.assertEqual(recommendation["price_source"], "fresh_market_book_location")
+            self.assertEqual(recommendation["market_scope"], "station_location")
+            self.assertEqual(recommendation["location_id"], 60003760)
 
     def test_creates_dialog_instance(self):
         mock_cls, mock_inst = self._patched_launch()

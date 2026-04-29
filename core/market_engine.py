@@ -209,33 +209,35 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
     grouped_market = {}
     for o in market_orders:
         t_id = o['type_id']
-        if t_id not in grouped_market: grouped_market[t_id] = {'buy': [], 'sell': []}
-        if o.get('is_buy_order', False): grouped_market[t_id]['buy'].append(o)
-        else: grouped_market[t_id]['sell'].append(o)
+        l_id = o['location_id']
+        key = (t_id, l_id)
+        if key not in grouped_market: grouped_market[key] = {'buy': [], 'sell': []}
+        if o.get('is_buy_order', False): grouped_market[key]['buy'].append(o)
+        else: grouped_market[key]['sell'].append(o)
             
     best_prices = {}
     best_competitor_buy = {} 
     best_competitor_sell = {} 
 
-    # Diccionario de {type_id: {price: count}} para nuestras órdenes
+    # Diccionario de {(type_id, location_id, is_buy): {price: count}} para nuestras órdenes
     my_order_counts = {}
     for o in esi_orders:
         t_id = o['type_id']
+        l_id = o.get('location_id', 0)
         is_buy = o.get('is_buy_order', False)
         price = o['price']
-        key = (t_id, is_buy)
+        key = (t_id, l_id, is_buy)
         if key not in my_order_counts: my_order_counts[key] = {}
         my_order_counts[key][price] = my_order_counts[key].get(price, 0) + 1
 
-    for t_id, data in grouped_market.items():
-        # Para encontrar el mejor competidor:
-        # 1. Tomamos todas las órdenes del mercado
-        # 2. Si hay órdenes con mi mismo precio, restamos la cantidad de órdenes que yo tengo a ese precio.
-        # 3. Lo que queda son los competidores.
+    for (t_id, l_id), data in grouped_market.items():
+        # Para encontrar el mejor competidor en ESTA LOCALIZACIÓN:
+        # 1. Tomamos todas las órdenes del mercado en esta loc
+        # 2. Restamos mis órdenes en esta misma loc y precio.
         
         # BUY
         all_buys = sorted([o['price'] for o in data['buy']], reverse=True)
-        my_buys = my_order_counts.get((t_id, True), {})
+        my_buys = my_order_counts.get((t_id, l_id, True), {})
         comp_buys = []
         temp_my_buys = my_buys.copy()
         for p in all_buys:
@@ -246,7 +248,7 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         
         # SELL
         all_sells = sorted([o['price'] for o in data['sell']])
-        my_sells = my_order_counts.get((t_id, False), {})
+        my_sells = my_order_counts.get((t_id, l_id, False), {})
         comp_sells = []
         temp_my_sells = my_sells.copy()
         for p in all_sells:
@@ -257,10 +259,11 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         
         abs_best_buy = all_buys[0] if all_buys else 0.0
         abs_best_sell = all_sells[0] if all_sells else 0.0
-        best_prices[t_id] = (abs_best_buy, abs_best_sell)
         
-        best_competitor_buy[t_id] = comp_buys[0] if comp_buys else 0.0
-        best_competitor_sell[t_id] = comp_sells[0] if comp_sells else 999999999999.0
+        m_key = (t_id, l_id)
+        best_prices[m_key] = (abs_best_buy, abs_best_sell)
+        best_competitor_buy[m_key] = comp_buys[0] if comp_buys else 0.0
+        best_competitor_sell[m_key] = comp_sells[0] if comp_sells else 999999999999.0
 
     parsed_orders = []
     EPSILON = 0.01
@@ -275,9 +278,10 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         s_tax = s_tax_val / 100.0
         b_fee = b_fee_val / 100.0
         
-        bb, bs = best_prices.get(t_id, (0.0, 0.0))
-        comp_buy = best_competitor_buy.get(t_id, 0.0)
-        comp_sell = best_competitor_sell.get(t_id, 999999999999.0)
+        m_key = (t_id, loc_id)
+        bb, bs = best_prices.get(m_key, (0.0, 0.0))
+        comp_buy = best_competitor_buy.get(m_key, 0.0)
+        comp_sell = best_competitor_sell.get(m_key, 999999999999.0)
         
         cost_basis = CostBasisService.instance().get_cost_basis(t_id)
         avg_cost = cost_basis.average_buy_price if cost_basis else 0.0

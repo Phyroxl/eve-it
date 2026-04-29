@@ -194,10 +194,11 @@ def build_order_update_recommendation(order, analysis) -> dict:
 
 
 def recalculate_competitor_price(market_orders: list, own_orders: list, 
-                                 type_id: int, is_buy: bool) -> dict:
+                                 type_id: int, is_buy: bool,
+                                 location_id: int | None = None) -> dict:
     """
     Calculate the best competitor price from a fresh market list,
-    excluding own orders.
+    optionally filtering by location_id and excluding own orders.
 
     Parameters
     ----------
@@ -205,13 +206,27 @@ def recalculate_competitor_price(market_orders: list, own_orders: list,
     own_orders    : list of dicts or OpenOrder objects (own active orders)
     type_id       : int
     is_buy        : bool
+    location_id   : int, optional (filter market and own orders by this ID)
 
     Returns
     -------
     dict with:
-        best_sell, best_buy, competitor_price, orders_count, own_excluded_count
+        best_sell, best_buy, competitor_price, orders_count, own_excluded_count,
+        regional_orders_count, location_orders_count, filtered_by_location, location_id
     """
-    # 1. Prepare own orders counts at each price
+    regional_count = len(market_orders)
+    
+    # 1. Filter market orders by location if requested
+    if location_id:
+        market_orders = [
+            mo for mo in market_orders 
+            if int(mo.get("location_id", 0)) == int(location_id)
+        ]
+    
+    location_count = len(market_orders)
+    filtered = location_id is not None
+
+    # 2. Prepare own orders counts at each price (also filtered by location if requested)
     my_counts = {}
     for o in own_orders:
         o_tid = getattr(o, "type_id", None) or o.get("type_id")
@@ -219,11 +234,18 @@ def recalculate_competitor_price(market_orders: list, own_orders: list,
         if o_is_buy is None:
             o_is_buy = o.get("is_buy_order")
         
+        o_loc = getattr(o, "location_id", None) or o.get("location_id")
+        
+        # Match type and side
         if o_tid == type_id and o_is_buy == is_buy:
+            # If location filter active, must also match location
+            if location_id and int(o_loc or 0) != int(location_id):
+                continue
+                
             price = getattr(o, "price", None) or o.get("price")
             my_counts[price] = my_counts.get(price, 0) + 1
 
-    # 2. Extract and sort market prices
+    # 3. Extract and sort market prices
     market_prices = []
     for mo in market_orders:
         if mo.get("is_buy_order") == is_buy:
@@ -242,7 +264,7 @@ def recalculate_competitor_price(market_orders: list, own_orders: list,
         abs_best_buy = max(buys) if buys else 0.0
         abs_best_sell = min(sells) if sells else 0.0
 
-    # 3. Exclude own orders
+    # 4. Exclude own orders
     comp_prices = []
     temp_my_counts = dict(my_counts)
     excluded_count = 0
@@ -267,10 +289,16 @@ def recalculate_competitor_price(market_orders: list, own_orders: list,
         competitor = comp_prices[0] if comp_prices else _SENTINEL_MAX
 
     return {
-        "best_sell": abs_best_sell,
+        "best_sell": abs_best_buy if is_buy else abs_best_sell, # Keep original behavior for these?
+        # Actually Requisito 3 says best_sell: ..., best_buy: ...
         "best_buy": abs_best_buy,
+        "best_sell": abs_best_sell,
         "competitor_price": competitor,
         "orders_count": len(market_prices),
         "own_excluded_count": excluded_count,
-        "comp_prices_found": len(comp_prices) > 0
+        "comp_prices_found": len(comp_prices) > 0,
+        "regional_orders_count": regional_count,
+        "location_orders_count": location_count,
+        "location_id": location_id,
+        "filtered_by_location": filtered
     }

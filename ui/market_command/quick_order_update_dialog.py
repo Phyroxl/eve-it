@@ -86,6 +86,19 @@ class QuickOrderUpdateDialog(QDialog):
         root.setSpacing(12)
 
         root.addWidget(self._build_header())
+
+        # Fresh data indicator banner
+        price_src = self.recommendation.get("price_source", "analysis.competitor_price")
+        if price_src == "fresh_market_book":
+            info = QFrame()
+            info.setStyleSheet("background:#1e3a8a; border-radius:6px; border:1px solid #3b82f6;")
+            il = QHBoxLayout(info)
+            il.setContentsMargins(10, 6, 10, 6)
+            msg = QLabel("ℹ  PRECIOS REVALIDADOS CON MARKET BOOK FRESCO (ESI)")
+            msg.setStyleSheet("color:#93c5fd; font-size:8px; font-weight:900;")
+            il.addWidget(msg)
+            root.addWidget(info)
+
         root.addWidget(self._build_data_grid())
 
         # Confidence / warning banner
@@ -238,6 +251,10 @@ class QuickOrderUpdateDialog(QDialog):
         conf_label = validation.get("confidence_label", "Alta")
         conf_color = "#10b981" if conf_label == "Alta" else "#f59e0b"
 
+        price_src = rec.get("price_source", "analysis.competitor_price")
+        src_label = "FRESCO (ESI)" if price_src == "fresh_market_book" else "CACHÉ (ANÁLISIS)"
+        src_color = "#3b82f6" if price_src == "fresh_market_book" else "#475569"
+
         rows_data = [
             ("MI PRECIO ACTUAL",   _fmt_isk(self.order.price),           "#f1f5f9"),
             ("PRECIO COMPETIDOR",  _fmt_isk(rec.get("competitor_price")), "#f59e0b"),
@@ -246,6 +263,9 @@ class QuickOrderUpdateDialog(QDialog):
             ("TICK",               _fmt_isk(rec.get("tick")),             "#64748b"),
             ("PRECIO RECOMENDADO", _fmt_isk(rec.get("recommended_price")), rec_color),
             ("CONFIANZA",          conf_label,                            conf_color),
+            ("FUENTE PRECIO",      src_label,                             src_color),
+            ("MARKET SCOPE",       rec.get("market_scope", "regional"),   "#94a3b8"),
+            ("LOCATION ID",       str(rec.get("location_id") or "N/A"),  "#94a3b8"),
             ("VOLUMEN RESTANTE",
              f"{self.order.volume_remain:,} / {self.order.volume_total:,}", "#94a3b8"),
         ]
