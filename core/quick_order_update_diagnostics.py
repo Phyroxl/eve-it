@@ -144,6 +144,26 @@ def format_automation_section(automation: dict) -> str:
     return "\n".join(_format_automation_section(automation))
 
 
+def replace_or_append_automation_section(report: str, automation_section: str) -> str:
+    """
+    Ensure [AUTOMATION] appears exactly once in a diagnostic report.
+
+    If `report` already contains '[AUTOMATION]', that block (from the marker to
+    end-of-string) is replaced with `automation_section`.
+    If it does not, `automation_section` is appended.
+
+    This prevents the double-section problem that occurs when:
+      1. format_quick_update_report() includes [AUTOMATION] because data["automation"] is set, AND
+      2. _on_automate() in the dialog appends format_automation_section() on top.
+    """
+    marker = "[AUTOMATION]"
+    if marker in report:
+        # Keep everything before the first occurrence of the marker
+        head = report[: report.index(marker)].rstrip()
+        return head + "\n\n" + automation_section
+    return report + "\n\n" + automation_section
+
+
 def _format_automation_section(automation: dict) -> list:
     def _b(val) -> str:
         if val is None:

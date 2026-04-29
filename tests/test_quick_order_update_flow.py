@@ -539,7 +539,7 @@ class TestAutomationButton(unittest.TestCase):
         dlg.close()
 
     def test_dry_run_config_executes_automation(self):
-        """With enabled=True dry_run=True, click runs automation and updates report."""
+        """With enabled=True dry_run=True, click runs automation and updates report exactly once."""
         dlg = self._make_dialog(automation_cfg={
             "enabled": True, "dry_run": True, "confirm_required": True,
             "open_market_delay_ms": 0, "focus_client_delay_ms": 0,
@@ -548,14 +548,29 @@ class TestAutomationButton(unittest.TestCase):
             "use_pywinauto": False, "use_pyautogui_fallback": False,
             "max_attempts": 1, "restore_clipboard_after": False,
         })
+        
+        # Manually set a report that ALREADY has [AUTOMATION] to simulate duplication risk
+        dlg._diag_report += "\n\n[AUTOMATION]\n  Enabled              : True\n  Status               : stale"
+        dlg._report_edit.setPlainText(dlg._diag_report)
+        
         dlg.btn_phase2.click()
 
         status_text = dlg._status_lbl.text()
         self.assertGreater(len(status_text), 0)
         # Should mention dry-run
         self.assertIn("dry", status_text.lower())
+        
+        report_text = dlg._report_edit.toPlainText()
         # Report edit should contain automation section
-        self.assertIn("[AUTOMATION]", dlg._report_edit.toPlainText())
+        self.assertIn("[AUTOMATION]", report_text)
+        
+        # CRITICAL: Section should appear exactly once
+        self.assertEqual(report_text.count("[AUTOMATION]"), 1, "Should not have duplicate [AUTOMATION] section")
+        
+        # Verify content
+        self.assertIn("Status               : dry_run", report_text)
+        self.assertIn("Final Confirm Action : NOT_EXECUTED_BY_DESIGN", report_text)
+        
         dlg.close()
 
     def test_copy_button_still_works_after_automation_button_added(self):

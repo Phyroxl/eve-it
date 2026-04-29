@@ -364,11 +364,14 @@ class QuickOrderUpdateDialog(QDialog):
             self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
             return
 
-        # Update the report panel with automation results
+        # Update the report panel with automation results — ensure single [AUTOMATION] section
         try:
-            from core.quick_order_update_diagnostics import format_automation_section
+            from core.quick_order_update_diagnostics import (
+                format_automation_section,
+                replace_or_append_automation_section,
+            )
             auto_section = format_automation_section(result)
-            updated_report = self._diag_report + "\n\n" + auto_section
+            updated_report = replace_or_append_automation_section(self._diag_report, auto_section)
             self._diag_report = updated_report
             self._report_edit.setPlainText(updated_report)
         except Exception as exc:
