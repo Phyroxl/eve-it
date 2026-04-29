@@ -15,7 +15,7 @@ def format_quick_update_report(data: dict) -> str:
         side, my_price, competitor_price, best_buy, best_sell,
         tick, recommended_price, reason, action_needed,
         clipboard_value, market_window_opened,
-        config, errors, notes
+        validation, config, errors, notes
     """
 
     def _fmt(val: Any, suffix: str = "") -> str:
@@ -41,6 +41,33 @@ def format_quick_update_report(data: dict) -> str:
     lines.append(f"  best_buy        : {_fmt(data.get('best_buy'), ' ISK')}")
     lines.append(f"  best_sell       : {_fmt(data.get('best_sell'), ' ISK')}")
     lines.append(f"  tick            : {_fmt(data.get('tick'), ' ISK')}")
+
+    # ------------------------------------------------------------------ validation
+    validation = data.get("validation") or {}
+    lines.append("")
+    lines.append("[ORDER PRICE VALIDATION]")
+    lines.append(f"  My Order Price              : {_fmt(data.get('my_price'), ' ISK')}")
+    lines.append(f"  Competitor Price            : {_fmt(validation.get('competitor_price', data.get('competitor_price')), ' ISK')}")
+    lines.append(f"  Competitor == My Price      : {validation.get('own_price_eq_competitor', 'N/A')}")
+    lines.append(f"  Stale Order Suspected       : {validation.get('stale_suspected', 'N/A')}")
+    lines.append(f"  Confidence                  : {validation.get('confidence_label', 'N/A')}")
+    v_warnings = validation.get("warnings") or []
+    if v_warnings:
+        lines.append("  Warnings:")
+        for w in v_warnings:
+            lines.append(f"    ⚠ {w}")
+    else:
+        lines.append("  Warnings                    : (none)")
+
+    lines.append("")
+    lines.append("[WHY NOT AUTO COPY]")
+    if not validation.get("is_confident", True):
+        lines.append("  Auto-copy was BLOCKED because:")
+        for w in v_warnings:
+            lines.append(f"    - {w}")
+    else:
+        lines.append("  Auto-copy proceeded normally (confidence: Alta).")
+    # ------------------------------------------------------------------ /validation
 
     lines.append("")
     lines.append("[RECOMMENDATION]")

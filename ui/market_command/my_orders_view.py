@@ -1346,19 +1346,35 @@ class MarketMyOrdersView(QWidget):
             f"row=? order_id={order.order_id} type_id={order.type_id}"
         )
 
-        # Recommendation
+        # Recommendation (includes validation)
         rec = build_order_update_recommendation(order, order.analysis)
+        validation = rec.get("validation", {})
+        is_confident = validation.get("is_confident", True)
+
         _log.info(
             f"[QUICK UPDATE] recommendation price={rec['recommended_price']} "
-            f"competitor={rec['competitor_price']} tick={rec['tick']}"
+            f"competitor={rec['competitor_price']} tick={rec['tick']} "
+            f"confidence={validation.get('confidence_label', '?')}"
         )
+        if not is_confident:
+            for w in validation.get("warnings", []):
+                _log.warning(f"[QUICK UPDATE] VALIDATION WARNING: {w}")
 
-        # Clipboard (auto on launch)
-        price_text = format_price_for_clipboard(rec["recommended_price"])
-        QGuiApplication.clipboard().setText(price_text)
-        _log.info(f"[QUICK UPDATE] clipboard_set text={price_text}")
+        # Clipboard — ONLY auto-copy if validation is confident
+        if is_confident:
+            price_text = format_price_for_clipboard(rec["recommended_price"])
+            QGuiApplication.clipboard().setText(price_text)
+            _log.info(f"[QUICK UPDATE] clipboard_set text={price_text}")
+            clipboard_value = price_text
+        else:
+            price_text = format_price_for_clipboard(rec["recommended_price"])
+            clipboard_value = f"(no copiado: confianza baja) {price_text}"
+            _log.warning(
+                f"[QUICK UPDATE] auto-copy SKIPPED — low confidence. "
+                f"Suggested price: {price_text}"
+            )
 
-        # Market (auto on launch)
+        # Market (auto on launch regardless of confidence)
         market_ok = self._open_market_for_order(order)
         _log.info(
             f"[QUICK UPDATE] market_open_sent type_id={order.type_id} ok={market_ok}"
@@ -1372,10 +1388,13 @@ class MarketMyOrdersView(QWidget):
             "side":              side,
             "my_price":          order.price,
             "competitor_price":  rec.get("competitor_price"),
+            "best_buy":          rec.get("best_buy"),
+            "best_sell":         rec.get("best_sell"),
             "recommended_price": rec.get("recommended_price"),
             "tick":              rec.get("tick"),
             "market_window_opened": market_ok,
-            "clipboard_value":   price_text,
+            "clipboard_value":   clipboard_value,
+            "validation":        validation,
         }
         diag_report = format_quick_update_report(diag_data)
         _log.debug(f"[QUICK UPDATE] report:\n{diag_report}")
@@ -1393,10 +1412,18 @@ class MarketMyOrdersView(QWidget):
         )
         self._quick_order_dialog.show()
 
-        self.lbl_status.setText(
-            f"Precio copiado y mercado abierto — {order.item_name}"
-        )
-        self.lbl_status.setStyleSheet("color: #10b981;")
+        # Status bar feedback
+        if is_confident:
+            self.lbl_status.setText(
+                f"Precio copiado y mercado abierto — {order.item_name}"
+            )
+            self.lbl_status.setStyleSheet("color: #10b981;")
+        else:
+            warnings_text = " | ".join(validation.get("warnings", ["confianza baja"]))
+            self.lbl_status.setText(
+                f"⚠ Recomendación no fiable — revisa manualmente: {warnings_text}"
+            )
+            self.lbl_status.setStyleSheet("color: #f59e0b;")
 
     # ------------------------------------------------------------------
     # Double-click dispatch (column-aware)

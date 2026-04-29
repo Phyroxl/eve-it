@@ -73,6 +73,12 @@ class QuickOrderUpdateDialog(QDialog):
 
         root.addWidget(self._build_header())
         root.addWidget(self._build_data_grid())
+
+        # Confidence / warning banner
+        validation = self.recommendation.get("validation", {})
+        if not validation.get("is_confident", True):
+            root.addWidget(self._build_warning_frame(validation))
+
         root.addWidget(self._build_reason_frame())
 
         self._status_lbl = QLabel("")
@@ -92,6 +98,35 @@ class QuickOrderUpdateDialog(QDialog):
         self._report_edit.setFixedHeight(160)
         self._report_edit.hide()
         root.addWidget(self._report_edit)
+
+    def _build_warning_frame(self, validation: dict) -> QFrame:
+        """Orange warning block shown when confidence is low."""
+        frame = QFrame()
+        frame.setStyleSheet(
+            "background:#431407; border-radius:6px; border:1px solid #f59e0b;"
+        )
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(14, 10, 14, 10)
+        fl.setSpacing(4)
+
+        hdr = QLabel("⚠  CONFIANZA BAJA — PRECIO NO COPIADO AUTOMÁTICAMENTE")
+        hdr.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:900;")
+        fl.addWidget(hdr)
+
+        for w in validation.get("warnings", []):
+            lbl = QLabel(f"• {w}")
+            lbl.setStyleSheet("color:#fbbf24; font-size:8px;")
+            lbl.setWordWrap(True)
+            fl.addWidget(lbl)
+
+        note = QLabel(
+            "Refresca Mis Pedidos para actualizar datos o copia el precio manualmente si deseas continuar."
+        )
+        note.setStyleSheet("color:#94a3b8; font-size:8px;")
+        note.setWordWrap(True)
+        fl.addWidget(note)
+
+        return frame
 
     def _build_header(self) -> QFrame:
         hdr = QFrame()
@@ -140,6 +175,10 @@ class QuickOrderUpdateDialog(QDialog):
         action_needed = rec.get("action_needed", False)
         rec_color = "#10b981" if action_needed else "#94a3b8"
 
+        validation = rec.get("validation", {})
+        conf_label = validation.get("confidence_label", "Alta")
+        conf_color = "#10b981" if conf_label == "Alta" else "#f59e0b"
+
         rows_data = [
             ("MI PRECIO ACTUAL",   _fmt_isk(self.order.price),           "#f1f5f9"),
             ("PRECIO COMPETIDOR",  _fmt_isk(rec.get("competitor_price")), "#f59e0b"),
@@ -147,6 +186,7 @@ class QuickOrderUpdateDialog(QDialog):
             ("MEJOR VENTA",        _fmt_isk(rec.get("best_sell")),        "#94a3b8"),
             ("TICK",               _fmt_isk(rec.get("tick")),             "#64748b"),
             ("PRECIO RECOMENDADO", _fmt_isk(rec.get("recommended_price")), rec_color),
+            ("CONFIANZA",          conf_label,                            conf_color),
             ("VOLUMEN RESTANTE",
              f"{self.order.volume_remain:,} / {self.order.volume_total:,}", "#94a3b8"),
         ]

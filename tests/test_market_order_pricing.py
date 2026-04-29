@@ -232,7 +232,7 @@ class TestBuildOrderUpdateRecommendation(unittest.TestCase):
         rec = build_order_update_recommendation(order, analysis)
         expected_keys = {
             "side", "my_price", "competitor_price", "best_buy", "best_sell",
-            "tick", "recommended_price", "reason", "action_needed",
+            "tick", "recommended_price", "reason", "action_needed", "validation",
         }
         self.assertEqual(set(rec.keys()), expected_keys)
 
@@ -257,7 +257,8 @@ class TestFormatQuickUpdateReport(unittest.TestCase):
             "action_needed": True,
         }
         report = format_quick_update_report(data)
-        for section in ("[ORDER]", "[MARKET]", "[RECOMMENDATION]", "[ACTIONS]",
+        for section in ("[ORDER]", "[MARKET]", "[ORDER PRICE VALIDATION]",
+                        "[WHY NOT AUTO COPY]", "[RECOMMENDATION]", "[ACTIONS]",
                         "[CONFIG]", "[ERRORS]", "[NOTES]"):
             self.assertIn(section, report)
 
