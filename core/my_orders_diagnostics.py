@@ -59,7 +59,9 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         f"Buy Missed:    {diag.get('icon_missed_buy', 0)}",
         f"Gen Skipped:   {diag.get('generation_skipped', 0)}",
         "",
-        "[MISSING / PLACEHOLDER ICON ITEMS]",
+        "[DASH CELL DIAGNOSTICS]",
+        f"Sell Dash Cells: {len(diag.get('sell_dash_cells', []))}",
+        f"Buy Dash Cells:  {len(diag.get('buy_dash_cells', []))}",
     ]
     
     # Failed/Missing Items
@@ -84,6 +86,16 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
             reason = item.get('reason', 'UNKNOWN')
             row = item.get('row', '???')
             lines.append(f"{i+1:2}. [{side}] {name} (ID {tid}) - Row {row} - Status: {reason}")
+
+    # Dash Cells Sample
+    lines.append("")
+    lines.append("[DASH CELL DETAILS]")
+    dash_cells = diag.get('sell_dash_cells', []) + diag.get('buy_dash_cells', [])
+    if not dash_cells:
+        lines.append("No cells with '-' found.")
+    else:
+        for i, cell in enumerate(dash_cells[:20]):
+            lines.append(f"{i+1:2}. [{cell['side']}] Row {cell['row']} Col {cell['col']} ({cell['header']}) - TID {cell['type_id']} - Has Icon: {cell['has_icon']}")
 
     lines.append("")
     lines.append("[LAST ICON ERRORS]")

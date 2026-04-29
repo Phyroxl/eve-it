@@ -428,6 +428,7 @@ class InventoryAnalysisDialog(QDialog):
             # 1. Intento directo por fila/columna
             item = table.item(row, col)
             if item and item.data(Qt.UserRole) == type_id:
+                if item.text().strip() == "-": item.setText("") # Limpiar placeholder si existe
                 item.setIcon(QIcon(pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                 return
                 
@@ -435,6 +436,7 @@ class InventoryAnalysisDialog(QDialog):
             for r in range(table.rowCount()):
                 it = table.item(r, col)
                 if it and it.data(Qt.UserRole) == type_id:
+                    if it.text().strip() == "-": it.setText("") # Limpiar placeholder si existe
                     it.setIcon(QIcon(pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                     _log.debug(f"[INVENTORY ICON] Applied {type_id} to fallback row {r}")
                     break
@@ -600,6 +602,7 @@ class TradeProfitsDialog(QDialog):
             # 1. Intento directo
             item = table.item(row, col)
             if item and item.data(Qt.UserRole) == type_id:
+                if item.text().strip() == "-": item.setText("") # Limpiar placeholder si existe
                 item.setIcon(QIcon(pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                 return
                 
@@ -607,6 +610,7 @@ class TradeProfitsDialog(QDialog):
             for r in range(table.rowCount()):
                 it = table.item(r, col)
                 if it and it.data(Qt.UserRole) == type_id:
+                    if it.text().strip() == "-": it.setText("") # Limpiar placeholder si existe
                     it.setIcon(QIcon(pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                     _log.debug(f"[TRADES ICON] Applied {type_id} to fallback row {r}")
                     break
@@ -689,6 +693,8 @@ class MarketMyOrdersView(QWidget):
             "skipped_items": [],
             "sell_rows_with_tid": 0,
             "buy_rows_with_tid": 0,
+            "sell_dash_cells": [],
+            "buy_dash_cells": [],
             "notes": []
         }
 
@@ -974,6 +980,7 @@ class MarketMyOrdersView(QWidget):
             # 1. Intento directo
             item = table.item(row, col)
             if item and item.data(Qt.UserRole) == type_id:
+                if item.text().strip() == "-": item.setText("") # Limpiar placeholder si existe
                 item.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                 if side == "SELL": self._orders_diag["icon_direct_applied_sell"] += 1
                 elif side == "BUY": self._orders_diag["icon_direct_applied_buy"] += 1
@@ -983,6 +990,7 @@ class MarketMyOrdersView(QWidget):
             for r in range(table.rowCount()):
                 it = table.item(r, col)
                 if it and it.data(Qt.UserRole) == type_id:
+                    if it.text().strip() == "-": it.setText("") # Limpiar placeholder si existe
                     it.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                     if side == "SELL": self._orders_diag["icon_fallback_applied_sell"] += 1
                     elif side == "BUY": self._orders_diag["icon_fallback_applied_buy"] += 1
@@ -996,6 +1004,14 @@ class MarketMyOrdersView(QWidget):
             
         except Exception as e:
             _log.error(f"[ORDERS ICON ERR] {e}")
+
+    def _get_item_column(self, table) -> int:
+        """Encuentra el índice de la columna que contiene el texto ÍTEM."""
+        for i in range(table.columnCount()):
+            header = table.horizontalHeaderItem(i)
+            if header and "ÍTEM" in header.text().upper():
+                return i
+        return 0
 
     def on_data(self, data):
         self.all_orders = data
@@ -1032,7 +1048,26 @@ class MarketMyOrdersView(QWidget):
             it = self.table_buy.item(r, 0)
             if it and it.data(Qt.UserRole): self._orders_diag["buy_rows_with_tid"] += 1
             
+        # Dash Cell Scan
+        self._scan_for_dash_cells(self.table_sell, "SELL")
+        self._scan_for_dash_cells(self.table_buy, "BUY")
+            
         QTimer.singleShot(1500, self.show_my_orders_diagnostics)
+
+    def _scan_for_dash_cells(self, table, side):
+        diag_key = "sell_dash_cells" if side == "SELL" else "buy_dash_cells"
+        for r in range(table.rowCount()):
+            for c in range(table.columnCount()):
+                it = table.item(r, c)
+                if it and it.text().strip() == "-":
+                    h = table.horizontalHeaderItem(c)
+                    h_txt = h.text() if h else str(c)
+                    tid = it.data(Qt.UserRole)
+                    has_icon = not it.icon().isNull()
+                    self._orders_diag[diag_key].append({
+                        "side": side, "row": r, "col": c, "header": h_txt,
+                        "type_id": tid, "has_icon": has_icon
+                    })
 
     def fill_table(self, t, data, gen):
         t.setSortingEnabled(False)
@@ -1053,10 +1088,12 @@ class MarketMyOrdersView(QWidget):
             if not o.type_id:
                 self._orders_diag["missing_type_id_items"].append({"side": side, "row": r, "item_name": o.item_name})
 
+            icon_col = self._get_item_column(t)
+            
             pix = self.icon_service.get_icon(
                 o.type_id, 24,
-                callback=lambda p, tid=o.type_id, row=r, gen=gen, s=side, n=o.item_name: 
-                    self._load_icon_into_table_item(t, row, 0, tid, p, gen, side=s, name=n)
+                callback=lambda p, tid=o.type_id, row=r, gen=gen, s=side, n=o.item_name, col=icon_col: 
+                    self._load_icon_into_table_item(t, row, col, tid, p, gen, side=s, name=n)
             )
             i_name.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
             _log.debug(f"[ORDERS ICON] Requesting {o.type_id} for row {r}")
