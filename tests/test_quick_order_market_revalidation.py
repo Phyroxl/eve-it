@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
-from core.market_order_pricing import recalculate_competitor_price, recommend_sell_price, recommend_buy_price
+from core.market_order_pricing import recalculate_competitor_price, recommend_sell_price, recommend_buy_price, _SENTINEL_MAX, _SENTINEL_MIN
 from core.market_models import OpenOrder, OpenOrderAnalysis
 
 class TestMarketCompetitorRevalidation(unittest.TestCase):
@@ -24,6 +24,7 @@ class TestMarketCompetitorRevalidation(unittest.TestCase):
         res = recalculate_competitor_price(market, own, 28209, False)
         
         self.assertEqual(res["competitor_price"], 1612000)
+        self.assertTrue(res["comp_prices_found"])
         self.assertEqual(res["own_excluded_count"], 2)
         self.assertEqual(res["orders_count"], 3) # only sells
 
@@ -43,6 +44,7 @@ class TestMarketCompetitorRevalidation(unittest.TestCase):
         res = recalculate_competitor_price(market, own, 28209, False)
         
         self.assertEqual(res["competitor_price"], 1687000)
+        self.assertTrue(res["comp_prices_found"])
         self.assertEqual(res["own_excluded_count"], 1)
         
         # Fresh recommendation should be 1.687M - 1k tick = 1.686M
@@ -86,6 +88,86 @@ class TestIntegrationMyOrdersView(unittest.TestCase):
         self.assertEqual(res["fresh_recommended_price"], 1686000)
         self.assertTrue(res["price_changed"])
         self.assertEqual(res["price_source"], "fresh_market_book")
+
+    @patch('ui.market_command.my_orders_view.ESIClient')
+    def test_revalidate_market_competitor_no_competitor_sell(self, mock_esi_class):
+        """REQ 4.1: SELL without real competitor (only own order in market)."""
+        mock_esi = mock_esi_class.return_value
+        mock_esi.get_market_orders_for_type.return_value = [
+            {"is_buy_order": False, "price": 1000.0}, # My order
+        ]
+        from ui.market_command.my_orders_view import MarketMyOrdersView
+        view = MagicMock(); view.all_orders = []
+        order = OpenOrder(
+            order_id=1, type_id=123, item_name="Test Item", is_buy_order=False, price=1000.0,
+            volume_total=1, volume_remain=1, issued="", location_id=1, range="",
+            analysis=OpenOrderAnalysis(is_buy=False, state="Liderando", competitor_price=1000.0,
+                best_buy=0, best_sell=1000.0, spread_pct=0, competitive=True, difference_to_best=0,
+                gross_profit_per_unit=0, net_profit_per_unit=0, net_profit_total=0, margin_pct=0)
+        )
+        view.all_orders = [order]
+        
+        res = MarketMyOrdersView._revalidate_market_competitor(view, order)
+        
+        self.assertTrue(res["checked"])
+        self.assertFalse(res["is_fresh"])
+        self.assertFalse(res["used_fresh_price"])
+        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
+        # Should NOT have computed an absurd recommended price
+        self.assertEqual(res["fresh_recommended_price"], 0.0)
+
+    @patch('ui.market_command.my_orders_view.ESIClient')
+    def test_revalidate_market_competitor_no_competitor_buy(self, mock_esi_class):
+        """REQ 4.2: BUY without real competitor (only own buy order)."""
+        mock_esi = mock_esi_class.return_value
+        mock_esi.get_market_orders_for_type.return_value = [
+            {"is_buy_order": True, "price": 500.0}, # My buy order
+        ]
+        from ui.market_command.my_orders_view import MarketMyOrdersView
+        view = MagicMock(); view.all_orders = []
+        order = OpenOrder(
+            order_id=2, type_id=124, item_name="Test Item Buy", is_buy_order=True, price=500.0,
+            volume_total=1, volume_remain=1, issued="", location_id=1, range="",
+            analysis=OpenOrderAnalysis(is_buy=True, state="Liderando", competitor_price=500.0,
+                best_buy=500.0, best_sell=600.0, spread_pct=20, competitive=True, difference_to_best=0,
+                gross_profit_per_unit=0, net_profit_per_unit=0, net_profit_total=0, margin_pct=0)
+        )
+        view.all_orders = [order]
+        
+        res = MarketMyOrdersView._revalidate_market_competitor(view, order)
+        
+        self.assertFalse(res["is_fresh"])
+        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
+        self.assertEqual(res["fresh_recommended_price"], 0.0)
+
+    @patch('ui.market_command.my_orders_view.ESIClient')
+    def test_revalidate_market_competitor_sentinel_sell(self, mock_esi_class):
+        """REQ 4.3: Recalculate returns sentinel MAX (SELL)."""
+        mock_esi = mock_esi_class.return_value
+        # Empty market or logic error results in sentinel
+        mock_esi.get_market_orders_for_type.return_value = []
+        from ui.market_command.my_orders_view import MarketMyOrdersView
+        view = MagicMock(); view.all_orders = []
+        order = MagicMock(); order.type_id=123; order.is_buy_order=False; order.analysis.competitor_price=100.0
+        
+        res = MarketMyOrdersView._revalidate_market_competitor(view, order)
+        
+        self.assertFalse(res["is_fresh"])
+        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
+
+    @patch('ui.market_command.my_orders_view.ESIClient')
+    def test_revalidate_market_competitor_sentinel_buy(self, mock_esi_class):
+        """REQ 4.4: Recalculate returns sentinel MIN (BUY)."""
+        mock_esi = mock_esi_class.return_value
+        mock_esi.get_market_orders_for_type.return_value = []
+        from ui.market_command.my_orders_view import MarketMyOrdersView
+        view = MagicMock(); view.all_orders = []
+        order = MagicMock(); order.type_id=123; order.is_buy_order=True; order.analysis.competitor_price=100.0
+        
+        res = MarketMyOrdersView._revalidate_market_competitor(view, order)
+        
+        self.assertFalse(res["is_fresh"])
+        self.assertIn("No reliable competitor found", "".join(res["warnings"]))
 
     @patch('ui.market_command.my_orders_view.ESIClient')
     def test_revalidate_market_competitor_error(self, mock_esi_class):

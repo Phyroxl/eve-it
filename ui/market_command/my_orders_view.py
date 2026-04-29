@@ -33,7 +33,9 @@ from core.market_order_pricing import (
     recalculate_competitor_price,
     recommend_sell_price,
     recommend_buy_price,
-    price_tick
+    price_tick,
+    _SENTINEL_MAX,
+    _SENTINEL_MIN
 )
 from core.quick_order_update_diagnostics import format_quick_update_report
 
@@ -1475,12 +1477,26 @@ class MarketMyOrdersView(QWidget):
             res["fresh_competitor_price"] = fresh["competitor_price"]
             res["own_orders_excluded_count"] = fresh["own_excluded_count"]
             
+            # REQUISITO 2: Bloquear si no hay competidor real
+            if not fresh.get("comp_prices_found"):
+                res["warnings"].append("No reliable competitor found in fresh market book.")
+                return res
+
+            if res["fresh_competitor_price"] <= _SENTINEL_MIN or res["fresh_competitor_price"] >= _SENTINEL_MAX:
+                res["warnings"].append("Invalid competitor price (sentinel detected).")
+                return res
+
             # 3. Calculate fresh recommendation
             if order.is_buy_order:
                 res["fresh_recommended_price"] = recommend_buy_price(res["fresh_competitor_price"])
             else:
                 res["fresh_recommended_price"] = recommend_sell_price(res["fresh_competitor_price"])
                 
+            # REQUISITO 3: Validar recomendación
+            if res["fresh_recommended_price"] <= 0:
+                res["warnings"].append("Invalid recommended price calculated (<= 0).")
+                return res
+
             # 4. Compare
             diff = abs(res["fresh_competitor_price"] - res["old_competitor_price"])
             if diff > 0.01:
