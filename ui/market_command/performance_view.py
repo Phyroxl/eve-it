@@ -764,8 +764,7 @@ class MarketPerformanceView(QWidget):
         self.context_lbl.setText(summary.period_context.upper())
 
         # Portrait
-        portrait_url = f"https://images.evetech.net/characters/{char_id}/portrait?size=64"
-        self.image_loader.load(portrait_url, lambda pix: self.lbl_portrait.setPixmap(pix))
+        self.icon_service.get_portrait(char_id, 64, lambda pix: self.lbl_portrait.setPixmap(pix))
 
         # ── Gráfico ───────────────────────────────────────────────────────
         self.chart.set_data([(d.date, d.profit_net) for d in daily_pnl])
@@ -787,7 +786,7 @@ class MarketPerformanceView(QWidget):
             
             pix = self.icon_service.get_icon(
                 item.item_id, 32, 
-                lambda p, tid=item.item_id: self._load_icon_into_table_item(self.top_items_table, i, 0, tid, p, gen)
+                lambda p, tid=item.item_id, row=i: self._load_icon_into_table_item(self.top_items_table, row, 0, tid, p, gen)
             )
             item_cell.setIcon(QIcon(pix))
             
@@ -844,7 +843,7 @@ class MarketPerformanceView(QWidget):
             
             pix = self.icon_service.get_icon(
                 r[5], 32,
-                lambda p, tid=r[5]: self._load_icon_into_table_item(self.trans_table, i, 1, tid, p, gen)
+                lambda p, tid=r[5], row=i: self._load_icon_into_table_item(self.trans_table, row, 1, tid, p, gen)
             )
             name_cell.setIcon(QIcon(pix))
             self.trans_table.setItem(i, 1, name_cell)

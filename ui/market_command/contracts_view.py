@@ -651,7 +651,7 @@ class MarketContractsView(QWidget):
             
             pix = self.icon_service.get_icon(
                 item.type_id, 24,
-                lambda p, tid=item.type_id: self._load_icon_into_table_item(self.items_table, r, 0, tid, p, gen)
+                lambda p, tid=item.type_id, row=r: self._load_icon_into_table_item(self.items_table, row, 0, tid, p, gen)
             )
             i_name.setIcon(QIcon(pix))
 

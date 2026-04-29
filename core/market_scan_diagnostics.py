@@ -102,6 +102,8 @@ class MarketScanDiagnostics:
     market_orders_pages_fetched: int = 0
     market_orders_pages_failed: int = 0
     market_orders_workers: int = 0
+    market_orders_first_page_elapsed: float = 0.0
+    market_orders_remaining_pages_elapsed: float = 0.0
 
     # Timings (seconds)
     market_orders_elapsed: float = 0.0
@@ -221,7 +223,9 @@ class MarketScanDiagnostics:
         report.append(f"Pages Fetched/Failed:     {self.market_orders_pages_fetched} / {self.market_orders_pages_failed}")
         report.append(f"Workers Used:             {self.market_orders_workers}")
         report.append(f"Orders Count:             {self.raw_orders_count}")
-        report.append(f"Elapsed:                  {self.market_orders_elapsed:.2f}s")
+        report.append(f"First Page Time:          {self.market_orders_first_page_elapsed:.2f}s")
+        report.append(f"Remaining Pages Time:     {self.market_orders_remaining_pages_elapsed:.2f}s")
+        report.append(f"Total Fetch Time:         {self.market_orders_elapsed:.2f}s")
         report.append("")
 
         report.append("[WORKER CONFIG SNAPSHOT]")

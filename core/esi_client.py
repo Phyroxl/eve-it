@@ -42,13 +42,15 @@ class ESIClient:
         self.last_request_time = 0
         self.rate_limit_lock = Lock()
         self.rate_limit_hits = 0
+        self.market_orders_timings = {} # region_id -> timing_data
 
     def _rate_limit(self):
         with self.rate_limit_lock:
             now = time.time()
             elapsed = now - self.last_request_time
-            if elapsed < 0.1:  # 10 req/s per instance
-                time.sleep(0.1 - elapsed)
+            # 0.02s = 50 req/s per instance; enough for concurrency without hitting 429 too hard
+            if elapsed < 0.02:  
+                time.sleep(0.02 - elapsed)
             self.last_request_time = time.time()
         with ESIClient._global_rate_lock:
             now = time.time()
@@ -136,7 +138,10 @@ class ESIClient:
             return cached
 
         # 1. Obtener primera página para conocer el total
+        t0 = time.time()
         first_page_data, total_pages = self._fetch_market_page(region_id, 1)
+        t_first = time.time() - t0
+        
         if first_page_data is None:
             return []
         
@@ -152,6 +157,7 @@ class ESIClient:
         
         logger.info(f"[MARKET ORDERS] Region {region_id}: Downloading {total_pages} pages using {self.MARKET_ORDERS_WORKERS} workers...")
         
+        t_batch_start = time.time()
         with ThreadPoolExecutor(max_workers=self.MARKET_ORDERS_WORKERS) as executor:
             future_to_page = {executor.submit(self._fetch_market_page, region_id, p): p for p in pages_to_fetch}
             for future in as_completed(future_to_page):
@@ -166,8 +172,20 @@ class ESIClient:
                 except Exception as e:
                     pages_failed += 1
                     logger.error(f"[MARKET ORDERS] Page {p} exception: {e}")
+        
+        t_batch = time.time() - t_batch_start
+        total_elapsed = time.time() - t0
+        
+        # Store timings for diagnostics
+        self.market_orders_timings[region_id] = {
+            "first_page_elapsed": t_first,
+            "remaining_pages_elapsed": t_batch,
+            "total_elapsed": total_elapsed,
+            "pages_total": total_pages,
+            "effective_pages_per_second": total_pages / total_elapsed if total_elapsed > 0 else 0
+        }
 
-        logger.info(f"[MARKET ORDERS] Finished. Total orders: {len(all_orders)}, Failed pages: {pages_failed}")
+        logger.info(f"[MARKET ORDERS] Finished in {total_elapsed:.2f}s. Pages: {total_pages}, Orders: {len(all_orders)}, Failed: {pages_failed}")
         
         if all_orders and pages_failed == 0:
             self.cache.set(cache_key, all_orders, 300)  # Cache 5 mins

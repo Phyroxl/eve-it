@@ -290,7 +290,9 @@ class MarketTableWidget(QTableWidget):
         for r in range(self.rowCount()):
             it = self.item(r, 1)
             if it and it.data(Qt.UserRole) == type_id:
-                it.setIcon(QIcon(pixmap))
+                # Scaled to icon size of table (32)
+                s_pix = pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                it.setIcon(QIcon(s_pix))
 
     def get_icon_diagnostics(self) -> dict:
         diag = self.icon_service.get_diagnostics()

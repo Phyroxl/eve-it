@@ -282,7 +282,7 @@ class TradeProfitsWorker(QThread):
 # --- Diálogos ---
 
 class InventoryAnalysisDialog(QDialog):
-    def __init__(self, items, loc_name, image_loader, parent=None):
+    def __init__(self, items, loc_name, parent=None):
         super().__init__(parent)
         self.items = items
         self.loc_name = loc_name
@@ -345,7 +345,7 @@ class InventoryAnalysisDialog(QDialog):
             
             pix = self.icon_service.get_icon(
                 item.type_id, 32,
-                lambda p, tid=item.type_id: self._load_icon_into_table_item(self.table, row, 0, tid, p, gen)
+                lambda p, tid=item.type_id, row=row: self._load_icon_into_table_item(self.table, row, 0, tid, p, gen)
             )
             i_name.setIcon(QIcon(pix))
             
@@ -415,7 +415,7 @@ class InventoryAnalysisDialog(QDialog):
             return
 
 class TradeProfitsDialog(QDialog):
-    def __init__(self, char_id, token, image_loader, parent=None):
+    def __init__(self, char_id, token, parent=None):
         super().__init__(parent)
         self.char_id = char_id
         self.token = token
@@ -518,9 +518,10 @@ class TradeProfitsDialog(QDialog):
             
             pix = self.icon_service.get_icon(
                 t['type_id'], 24,
-                lambda p, tid=t['type_id']: self._load_icon_into_table_item(self.table, r, 1, tid, p, gen)
+                lambda p, tid=t['type_id'], row=r: self._load_icon_into_table_item(self.table, row, 1, tid, p, gen)
             )
-            i_item.setIcon(QIcon(pix))
+            s_pix = pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            i_item.setIcon(QIcon(s_pix))
             
             i_qty = NumericTableWidgetItem(f"{t['qty']:,}", t['qty'])
             i_buy_u = NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit'])
@@ -891,9 +892,10 @@ class MarketMyOrdersView(QWidget):
             
             pix = self.icon_service.get_icon(
                 o.type_id, 24,
-                lambda p, tid=o.type_id: self._load_icon_into_table_item(t, r, 0, tid, p, gen)
+                lambda p, tid=o.type_id, row=r: self._load_icon_into_table_item(t, row, 0, tid, p, gen)
             )
-            i_name.setIcon(QIcon(pix))
+            s_pix = pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            i_name.setIcon(QIcon(s_pix))
             
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
             i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
@@ -964,7 +966,7 @@ class MarketMyOrdersView(QWidget):
         self.lbl_det_type.setText("COMPRA" if o.is_buy_order else "VENTA")
         self.lbl_det_type.setStyleSheet("color:#3b82f6;" if o.is_buy_order else "color:#ef4444;")
         pix = self.icon_service.get_icon(o.type_id, 64)
-        self.lbl_det_icon.setPixmap(pix.scaled(64, 64, Qt.KeepAspectRatio))
+        self.lbl_det_icon.setPixmap(pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         
         a = o.analysis
         cost = CostBasisService.instance().get_cost_basis(o.type_id)
@@ -1016,7 +1018,7 @@ class MarketMyOrdersView(QWidget):
             item = table.item(row, col)
             if item is None or item.data(Qt.UserRole) != type_id:
                 return
-            item.setIcon(QIcon(pixmap))
+            item.setIcon(QIcon(pixmap.scaled(item.tableWidget().iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
         except RuntimeError:
             return
 
@@ -1033,7 +1035,7 @@ class MarketMyOrdersView(QWidget):
             self._stop_sync_ui()
             loc_name = getattr(self, '_pending_loc_name', 'INVENTARIO')
             if data:
-                InventoryAnalysisDialog(data, loc_name, self.image_loader, self).exec()
+                InventoryAnalysisDialog(data, loc_name, self).exec()
             else:
                 QMessageBox.information(self, "Vacío", "No hay items en esta ubicación.")
         self.inv_worker.finished_data.connect(on_done)
@@ -1043,7 +1045,7 @@ class MarketMyOrdersView(QWidget):
         auth = AuthManager.instance()
         t = auth.get_token()
         if t:
-            TradeProfitsDialog(auth.char_id, t, self.image_loader, self).exec()
+            TradeProfitsDialog(auth.char_id, t, self).exec()
 
     def _update_spinner(self):
         self.spinner_idx = (self.spinner_idx + 1) % 4

@@ -14,6 +14,8 @@ class EveIconService(QObject):
     icon_loaded = Signal(int, QPixmap)  # type_id, pixmap
     icon_failed = Signal(int, str)      # type_id, reason
     
+    VALID_EVE_IMAGE_SIZES = [32, 64, 128, 256, 512, 1024]
+    
     _instance = None
 
     def __new__(cls):
@@ -25,6 +27,13 @@ class EveIconService(QObject):
     @classmethod
     def instance(cls):
         return cls()
+
+    def normalize_size(self, requested_size: int) -> int:
+        """Normalizes requested size to the nearest valid EVE image size >= requested_size."""
+        for s in self.VALID_EVE_IMAGE_SIZES:
+            if s >= requested_size:
+                return s
+        return 1024
 
     def __init__(self):
         if self._initialized:
@@ -83,12 +92,36 @@ class EveIconService(QObject):
         # Return generic placeholder while loading
         return self._generate_placeholder(type_id, size, label="...")
 
+    def get_portrait(self, char_id: int, size: int = 64, callback: Optional[Callable[[QPixmap], None]] = None) -> QPixmap:
+        """Fetch character portrait from ESI."""
+        # Using a negative ID space for characters in cache to avoid collisions with type_ids
+        cache_id = -char_id
+        
+        if cache_id in self.icon_cache:
+            pix = self.icon_cache[cache_id]
+            if callback: callback(pix)
+            return pix
+            
+        if cache_id in self.pending_requests:
+            if callback: self.pending_requests[cache_id].append(callback)
+        else:
+            self.pending_requests[cache_id] = [callback] if callback else []
+            norm_size = self.normalize_size(size)
+            url = f"https://images.evetech.net/characters/{char_id}/portrait?size={norm_size}"
+            request = QNetworkRequest(QUrl(url))
+            request.setAttribute(QNetworkRequest.Attribute.User, "portrait")
+            reply = self.net_manager.get(request)
+            reply.finished.connect(lambda: self._on_reply_finished(reply, cache_id, size))
+            
+        return self._generate_placeholder(0, size, label="PILOT")
+
     def _start_fetch_chain(self, type_id: int, size: int):
         """Starts the sequential fetch: icon -> render -> bp -> bpc."""
         self._try_endpoint(type_id, size, "icon")
 
     def _try_endpoint(self, type_id: int, size: int, endpoint_type: str):
-        url = f"https://images.evetech.net/types/{type_id}/{endpoint_type}?size={size}"
+        norm_size = self.normalize_size(size)
+        url = f"https://images.evetech.net/types/{type_id}/{endpoint_type}?size={norm_size}"
         request = QNetworkRequest(QUrl(url))
         request.setAttribute(QNetworkRequest.Attribute.User, endpoint_type)
         
@@ -97,6 +130,8 @@ class EveIconService(QObject):
 
     def _on_reply_finished(self, reply: QNetworkReply, type_id: int, size: int):
         endpoint_type = reply.attribute(QNetworkRequest.Attribute.User)
+        if endpoint_type is None:
+            endpoint_type = "unknown"
         
         try:
             if reply.error() == QNetworkReply.NetworkError.NoError:
@@ -112,7 +147,7 @@ class EveIconService(QObject):
             self.stats["last_errors"].append(f"ID {type_id}: {error_str}")
             if len(self.stats["last_errors"]) > 20: self.stats["last_errors"].pop(0)
             
-            # Fallback chain
+            # Fallback chain for types
             chain = ["icon", "render", "bp", "bpc"]
             if endpoint_type in chain:
                 curr_idx = chain.index(endpoint_type)
@@ -120,8 +155,9 @@ class EveIconService(QObject):
                     next_endpoint = chain[curr_idx + 1]
                     self._try_endpoint(type_id, size, next_endpoint)
                 else:
-                    # End of chain, generate placeholder
                     self._on_total_failure(type_id, size)
+            elif endpoint_type == "portrait":
+                self._on_total_failure(type_id, size, label="PILOT")
             else:
                 self._on_total_failure(type_id, size)
                 
@@ -134,20 +170,21 @@ class EveIconService(QObject):
     def _on_success(self, type_id: int, pixmap: QPixmap, endpoint_type: str):
         self.icon_cache[type_id] = pixmap
         self.stats["loaded"] += 1
-        self.stats[f"endpoint_{endpoint_type}"] += 1
+        if endpoint_type in self.stats:
+            self.stats[f"endpoint_{endpoint_type}"] += 1
         
         callbacks = self.pending_requests.pop(type_id, [])
         for cb in callbacks:
             if cb: cb(pixmap)
         self.icon_loaded.emit(type_id, pixmap)
 
-    def _on_total_failure(self, type_id: int, size: int):
+    def _on_total_failure(self, type_id: int, size: int, label: Optional[str] = None):
         logger.debug(f"Total icon failure for ID {type_id}. Generating placeholder.")
         self.stats["failed_total"] += 1
         self.stats["placeholders"] += 1
         self.failed_ids.add(type_id)
         
-        pixmap = self._generate_placeholder(type_id, size)
+        pixmap = self._generate_placeholder(type_id if type_id > 0 else 0, size, label=label)
         self.icon_cache[type_id] = pixmap
         
         callbacks = self.pending_requests.pop(type_id, [])
