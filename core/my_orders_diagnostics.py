@@ -51,17 +51,25 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         f"/portrait: {icon_diag.get('endpoint_portrait', 0)}",
         "",
         "[TABLE CALLBACK DIAGNOSTICS]",
-        f"Sell Direct:   {diag.get('icon_direct_applied_sell', 0)}",
-        f"Sell Fallback: {diag.get('icon_fallback_applied_sell', 0)}",
-        f"Sell Missed:   {diag.get('icon_missed_sell', 0)}",
-        f"Buy Direct:    {diag.get('icon_direct_applied_buy', 0)}",
-        f"Buy Fallback:  {diag.get('icon_fallback_applied_buy', 0)}",
-        f"Buy Missed:    {diag.get('icon_missed_buy', 0)}",
-        f"Gen Skipped:   {diag.get('generation_skipped', 0)}",
+        f"Sell Immediate Applied: {diag.get('icon_immediate_applied_sell', 0)}",
+        f"Buy Immediate Applied:  {diag.get('icon_immediate_applied_buy', 0)}",
+        f"Sell Callback Direct:   {diag.get('icon_direct_applied_sell', 0)}",
+        f"Sell Callback Fallback: {diag.get('icon_fallback_applied_sell', 0)}",
+        f"Sell Callback Missed:   {diag.get('icon_missed_sell', 0)}",
+        f"Buy Callback Direct:    {diag.get('icon_direct_applied_buy', 0)}",
+        f"Buy Callback Fallback:  {diag.get('icon_fallback_applied_buy', 0)}",
+        f"Buy Callback Missed:    {diag.get('icon_missed_buy', 0)}",
+        f"Gen Skipped:            {diag.get('generation_skipped', 0)}",
         "",
         "[DASH CELL DIAGNOSTICS]",
         f"Sell Dash Cells: {len(diag.get('sell_dash_cells', []))}",
         f"Buy Dash Cells:  {len(diag.get('buy_dash_cells', []))}",
+        "",
+        "[ITEM COLUMN DIAGNOSTICS]",
+        f"Sell Item Column: {diag.get('sell_item_col', 'Unknown')}",
+        f"Buy Item Column:  {diag.get('buy_item_col', 'Unknown')}",
+        f"Sell Header:      {diag.get('sell_header', 'Unknown')}",
+        f"Buy Header:       {diag.get('buy_header', 'Unknown')}",
     ]
     
     # Failed/Missing Items
@@ -79,6 +87,7 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
     if not all_troubled:
         lines.append("No troubled items found.")
     else:
+        lines.append("[MISSING / PLACEHOLDER ICON ITEMS]")
         for i, item in enumerate(all_troubled[:50]):
             side = item.get('side', '???')
             name = item.get('item_name', 'Unknown')

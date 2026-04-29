@@ -682,9 +682,11 @@ class MarketMyOrdersView(QWidget):
             "detail_icon_requests": 0,
             "icon_direct_applied_sell": 0,
             "icon_fallback_applied_sell": 0,
+            "icon_immediate_applied_sell": 0,
             "icon_missed_sell": 0,
             "icon_direct_applied_buy": 0,
             "icon_fallback_applied_buy": 0,
+            "icon_immediate_applied_buy": 0,
             "icon_missed_buy": 0,
             "generation_skipped": 0,
             "missing_type_id_items": [],
@@ -977,33 +979,53 @@ class MarketMyOrdersView(QWidget):
                 return
             if table is None: return
             
-            # 1. Intento directo
-            item = table.item(row, col)
-            if item and item.data(Qt.UserRole) == type_id:
-                if item.text().strip() == "-": item.setText("") # Limpiar placeholder si existe
-                item.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+            # 1. Intento directo por fila/columna
+            if self._apply_icon_to_row(table, row, col, pixmap):
                 if side == "SELL": self._orders_diag["icon_direct_applied_sell"] += 1
                 elif side == "BUY": self._orders_diag["icon_direct_applied_buy"] += 1
                 return
                 
-            # 2. Fallback
+            # 2. Fallback: buscar por type_id en la columna especificada
             for r in range(table.rowCount()):
                 it = table.item(r, col)
                 if it and it.data(Qt.UserRole) == type_id:
-                    if it.text().strip() == "-": it.setText("") # Limpiar placeholder si existe
-                    it.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
-                    if side == "SELL": self._orders_diag["icon_fallback_applied_sell"] += 1
-                    elif side == "BUY": self._orders_diag["icon_fallback_applied_buy"] += 1
-                    _log.debug(f"[ORDERS ICON] Applied {type_id} to fallback row {r}")
-                    return
+                    if self._apply_icon_to_row(table, r, col, pixmap):
+                        if side == "SELL": self._orders_diag["icon_fallback_applied_sell"] += 1
+                        elif side == "BUY": self._orders_diag["icon_fallback_applied_buy"] += 1
+                        _log.debug(f"[ORDERS ICON] Applied {type_id} to fallback row {r}")
+                        return
             
-            # Si llegamos aquí, no se aplicó
+            # 3. Comprobación final: si ya tiene icono (por aplicación inmediata), no contar como missed
+            if self._row_has_icon_for_type_id(table, type_id):
+                # Ya tiene icono, probablemente aplicado inmediatamente desde cache
+                return
+
+            # Si llegamos aquí, realmente se perdió
             if side == "SELL": self._orders_diag["icon_missed_sell"] += 1
             elif side == "BUY": self._orders_diag["icon_missed_buy"] += 1
             self._orders_diag["callback_missed_items"].append({"side": side, "row": row, "type_id": type_id, "item_name": name})
             
         except Exception as e:
             _log.error(f"[ORDERS ICON ERR] {e}")
+
+    def _row_has_icon_for_type_id(self, table, type_id):
+        """Verifica si alguna celda de la fila para ese type_id ya tiene icono."""
+        for r in range(table.rowCount()):
+            it_name = table.item(r, 0) # Asumimos col 0 es Ítem por ahora, o buscamos por type_id
+            if it_name and it_name.data(Qt.UserRole) == type_id:
+                if not it_name.icon().isNull():
+                    return True
+        return False
+
+    def _apply_icon_to_row(self, table, row, item_col, pixmap):
+        """Aplica el icono a la celda de la fila/columna especificada, limpiando guiones."""
+        item = table.item(row, item_col)
+        if item:
+            if item.text().strip() == "-":
+                item.setText("")
+            item.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+            return True
+        return False
 
     def _get_item_column(self, table) -> int:
         """Encuentra el índice de la columna que contiene el texto ÍTEM."""
@@ -1051,6 +1073,16 @@ class MarketMyOrdersView(QWidget):
         # Dash Cell Scan
         self._scan_for_dash_cells(self.table_sell, "SELL")
         self._scan_for_dash_cells(self.table_buy, "BUY")
+        
+        # Column Diag
+        s_col = self._get_item_column(self.table_sell)
+        b_col = self._get_item_column(self.table_buy)
+        self._orders_diag["sell_item_col"] = s_col
+        self._orders_diag["buy_item_col"] = b_col
+        sh = self.table_sell.horizontalHeaderItem(s_col)
+        bh = self.table_buy.horizontalHeaderItem(b_col)
+        self._orders_diag["sell_header"] = sh.text() if sh else "None"
+        self._orders_diag["buy_header"] = bh.text() if bh else "None"
             
         QTimer.singleShot(1500, self.show_my_orders_diagnostics)
 
@@ -1095,8 +1127,15 @@ class MarketMyOrdersView(QWidget):
                 callback=lambda p, tid=o.type_id, row=r, gen=gen, s=side, n=o.item_name, col=icon_col: 
                     self._load_icon_into_table_item(t, row, col, tid, p, gen, side=s, name=n)
             )
-            i_name.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
-            _log.debug(f"[ORDERS ICON] Requesting {o.type_id} for row {r}")
+            
+            # Aplicación inmediata si ya tenemos el pixmap (cache hit)
+            if pix and not pix.isNull():
+                i_name.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                if side == "SELL": self._orders_diag["icon_immediate_applied_sell"] += 1
+                else: self._orders_diag["icon_immediate_applied_buy"] += 1
+                _log.debug(f"[ORDERS ICON] Immediate apply for {o.type_id} at row {r}")
+            else:
+                _log.debug(f"[ORDERS ICON] Requesting {o.type_id} for row {r}")
             
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
             i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
