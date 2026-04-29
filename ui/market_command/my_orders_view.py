@@ -288,6 +288,7 @@ class InventoryAnalysisDialog(QDialog):
         self.loc_name = loc_name
         self.icon_service = EveIconService.instance()
         self._image_generation = 0
+        _log.info(f"[INVENTORY] Dialog initialized for loc_name={loc_name}")
         self.setWindowTitle("INVENTARIO - VALOR DE ACTIVOS")
         self.setMinimumSize(1150, 750)
         self.setStyleSheet("background-color: #000000;")
@@ -345,9 +346,10 @@ class InventoryAnalysisDialog(QDialog):
             
             pix = self.icon_service.get_icon(
                 item.type_id, 32,
-                lambda p, tid=item.type_id, row=row: self._load_icon_into_table_item(self.table, row, 0, tid, p, gen)
+                callback=lambda p, tid=item.type_id, row=row, gen=gen: self._load_icon_into_table_item(self.table, row, 0, tid, p, gen)
             )
-            i_name.setIcon(QIcon(pix))
+            i_name.setIcon(QIcon(pix.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+            _log.debug(f"[INVENTORY ICON] Requesting {item.type_id} for row {row}")
             
             i_qty = NumericTableWidgetItem(f"{item.quantity:,}", item.quantity)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "Sin registros", avg)
@@ -416,19 +418,26 @@ class InventoryAnalysisDialog(QDialog):
                     self.table.setColumnWidth(i, w)
 
     def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
+        """Callback robusto para cargar iconos en la tabla de inventario."""
         try:
-            if generation != self._image_generation:
-                return
-            if table is None or row < 0 or row >= table.rowCount():
-                return
-            if col < 0 or col >= table.columnCount():
-                return
+            if generation != self._image_generation: return
+            if table is None: return
+            
+            # 1. Intento directo por fila/columna
             item = table.item(row, col)
-            if item is None or item.data(Qt.UserRole) != type_id:
+            if item and item.data(Qt.UserRole) == type_id:
+                item.setIcon(QIcon(pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
                 return
-            item.setIcon(QIcon(pixmap))
-        except RuntimeError:
-            return
+                
+            # 2. Fallback: la tabla se ha ordenado, buscar por type_id
+            for r in range(table.rowCount()):
+                it = table.item(r, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                    _log.debug(f"[INVENTORY ICON] Applied {type_id} to fallback row {r}")
+                    break
+        except Exception as e:
+            _log.error(f"[INVENTORY ICON ERR] {e}")
 
 class TradeProfitsDialog(QDialog):
     def __init__(self, char_id, token, parent=None):
@@ -534,10 +543,10 @@ class TradeProfitsDialog(QDialog):
             
             pix = self.icon_service.get_icon(
                 t['type_id'], 24,
-                lambda p, tid=t['type_id'], row=r: self._load_icon_into_table_item(self.table, row, 1, tid, p, gen)
+                callback=lambda p, tid=t['type_id'], row=r, gen=gen: self._load_icon_into_table_item(self.table, row, 1, tid, p, gen)
             )
-            s_pix = pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            i_item.setIcon(QIcon(s_pix))
+            i_item.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+            _log.debug(f"[TRADES ICON] Requesting {t['type_id']} for row {r}")
             
             i_qty = NumericTableWidgetItem(f"{t['qty']:,}", t['qty'])
             i_buy_u = NumericTableWidgetItem(format_isk(t['buy_unit']), t['buy_unit'])
@@ -579,6 +588,28 @@ class TradeProfitsDialog(QDialog):
     def next_page(self):
         self.current_page += 1
         self.update_table()
+
+    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
+        """Callback robusto para cargar iconos en la tabla de trades."""
+        try:
+            if generation != self._image_generation: return
+            if table is None: return
+            
+            # 1. Intento directo
+            item = table.item(row, col)
+            if item and item.data(Qt.UserRole) == type_id:
+                item.setIcon(QIcon(pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                return
+                
+            # 2. Fallback
+            for r in range(table.rowCount()):
+                it = table.item(r, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                    _log.debug(f"[TRADES ICON] Applied {type_id} to fallback row {r}")
+                    break
+        except Exception as e:
+            _log.error(f"[TRADES ICON ERR] {e}")
 
     def show_context_menu(self, pos):
         idx = self.table.indexAt(pos)
@@ -894,6 +925,28 @@ class MarketMyOrdersView(QWidget):
             self.lbl_status.setText("INICIANDO SSO EN NAVEGADOR...")
             auth.login()
 
+    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
+        """Callback robusto para cargar iconos en las tablas de órdenes."""
+        try:
+            if generation != self._image_generation: return
+            if table is None: return
+            
+            # 1. Intento directo
+            item = table.item(row, col)
+            if item and item.data(Qt.UserRole) == type_id:
+                item.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                return
+                
+            # 2. Fallback
+            for r in range(table.rowCount()):
+                it = table.item(r, col)
+                if it and it.data(Qt.UserRole) == type_id:
+                    it.setIcon(QIcon(pixmap.scaled(table.iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                    _log.debug(f"[ORDERS ICON] Applied {type_id} to fallback row {r}")
+                    break
+        except Exception as e:
+            _log.error(f"[ORDERS ICON ERR] {e}")
+
     def on_data(self, data):
         self.all_orders = data
         self.update_taxes_info()
@@ -921,10 +974,10 @@ class MarketMyOrdersView(QWidget):
             
             pix = self.icon_service.get_icon(
                 o.type_id, 24,
-                lambda p, tid=o.type_id, row=r: self._load_icon_into_table_item(t, row, 0, tid, p, gen)
+                callback=lambda p, tid=o.type_id, row=r, gen=gen: self._load_icon_into_table_item(t, row, 0, tid, p, gen)
             )
-            s_pix = pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            i_name.setIcon(QIcon(s_pix))
+            i_name.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+            _log.debug(f"[ORDERS ICON] Requesting {o.type_id} for row {r}")
             
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
             i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
@@ -984,6 +1037,7 @@ class MarketMyOrdersView(QWidget):
         if o: self.update_det(o)
 
     def update_det(self, o):
+        self._selected_detail_type_id = o.type_id
         item_name = o.item_name.upper()
         self.lbl_det_item.setText(item_name)
         self.lbl_det_item.setToolTip(item_name)
@@ -995,7 +1049,14 @@ class MarketMyOrdersView(QWidget):
 
         self.lbl_det_type.setText("COMPRA" if o.is_buy_order else "VENTA")
         self.lbl_det_type.setStyleSheet("color:#3b82f6;" if o.is_buy_order else "color:#ef4444;")
-        pix = self.icon_service.get_icon(o.type_id, 64)
+        
+        def on_det_icon_ready(pixmap, tid=o.type_id):
+            if getattr(self, "_selected_detail_type_id", None) == tid:
+                _log.debug(f"[DETAIL ICON] Applying high-res icon for {tid}")
+                self.lbl_det_icon.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        
+        _log.debug(f"[DETAIL ICON] Requesting {o.type_id}")
+        pix = self.icon_service.get_icon(o.type_id, 64, callback=on_det_icon_ready)
         self.lbl_det_icon.setPixmap(pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         
         a = o.analysis
@@ -1051,20 +1112,6 @@ class MarketMyOrdersView(QWidget):
         self.lbl_tax_source.setText(f"FUENTE: {source}")
         _log.info(f"[TAX_UI_DIAG] char={auth.char_id} loc={loc_id} -> {debug}")
 
-    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
-        try:
-            if generation != self._image_generation:
-                return
-            if table is None or row < 0 or row >= table.rowCount():
-                return
-            if col < 0 or col >= table.columnCount():
-                return
-            item = table.item(row, col)
-            if item is None or item.data(Qt.UserRole) != type_id:
-                return
-            item.setIcon(QIcon(pixmap.scaled(item.tableWidget().iconSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
-        except RuntimeError:
-            return
 
     def do_inventory(self):
         auth = AuthManager.instance()
