@@ -1,0 +1,472 @@
+"""
+Tests for Quick Order Update flow (Fase 1).
+Covers: column detection, order recovery, double-click dispatch,
+        recommendation building, clipboard formatting, and dialog.
+"""
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import sys
+import unittest
+from unittest.mock import MagicMock, patch, call
+from dataclasses import dataclass, field
+from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Path setup
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# ---------------------------------------------------------------------------
+# Mock heavy dependencies BEFORE importing anything from our modules.
+# Only mock what my_orders_view.py needs; do NOT mock quick_order_update_dialog,
+# market_order_pricing, or quick_order_update_diagnostics.
+# ---------------------------------------------------------------------------
+
+_auth_instance = MagicMock()
+_auth_instance.authenticated = MagicMock()
+_auth_instance.authenticated.connect = MagicMock()
+_auth_instance.current_token = "test_token"
+_auth_instance.char_id = 12345
+_auth_instance.char_name = "TestChar"
+_auth_instance.get_token = MagicMock(return_value="test_token")
+_auth_instance.get_valid_access_token = MagicMock(return_value="test_token")
+
+_auth_mod = MagicMock()
+_auth_mod.AuthManager = MagicMock()
+_auth_mod.AuthManager.instance = MagicMock(return_value=_auth_instance)
+
+_fake_pixmap = MagicMock()
+_fake_pixmap.isNull = MagicMock(return_value=True)
+_fake_pixmap.scaled = MagicMock(return_value=_fake_pixmap)
+
+_icon_instance = MagicMock()
+_icon_instance.get_icon = MagicMock(return_value=_fake_pixmap)
+_icon_instance.get_diagnostics = MagicMock(return_value={
+    "cache_size": 0, "cache_hits": 0, "requests": 0, "loaded": 0,
+    "failed_total": 0, "placeholders": 0, "endpoint_icon": 0,
+    "endpoint_render": 0, "endpoint_bp": 0, "endpoint_bpc": 0,
+    "failed_count": 0, "last_errors": [], "failed_ids_sample": [],
+})
+_icon_mod = MagicMock()
+_icon_mod.EveIconService = MagicMock()
+_icon_mod.EveIconService.instance = MagicMock(return_value=_icon_instance)
+
+_cost_result = MagicMock()
+_cost_result.average_buy_price = 0.0
+_cost_instance = MagicMock()
+_cost_instance.get_cost_basis = MagicMock(return_value=_cost_result)
+_cost_mod = MagicMock()
+_cost_mod.CostBasisService = MagicMock()
+_cost_mod.CostBasisService.instance = MagicMock(return_value=_cost_instance)
+
+_cfg_mod = MagicMock()
+_cfg_mod.load_ui_config = MagicMock(return_value={})
+_cfg_mod.save_ui_config = MagicMock()
+_cfg_mod.load_market_filters = MagicMock(return_value=MagicMock())
+
+_fmt_mod = MagicMock()
+_fmt_mod.format_isk = MagicMock(side_effect=lambda v: f"{v:.2f}")
+
+_item_helper = MagicMock()
+_item_helper.open_market_with_fallback = MagicMock(return_value=True)
+_widgets_mod = MagicMock()
+_widgets_mod.ItemInteractionHelper = _item_helper
+
+_tax_instance = MagicMock()
+_tax_instance.get_effective_taxes = MagicMock(return_value=(3.0, 3.0, "mock", ""))
+_tax_mod = MagicMock()
+_tax_mod.TaxService = MagicMock()
+_tax_mod.TaxService.instance = MagicMock(return_value=_tax_instance)
+
+_diag_mod = MagicMock()
+_diag_mod.format_my_orders_diagnostic_report = MagicMock(return_value="diag_report")
+
+_MOCKS = {
+    "core.eve_icon_service":             _icon_mod,
+    "core.auth_manager":                 _auth_mod,
+    "core.esi_client":                   MagicMock(),
+    "core.market_engine":                MagicMock(),
+    "core.config_manager":               _cfg_mod,
+    "core.item_metadata":                MagicMock(),
+    "core.cost_basis_service":           _cost_mod,
+    "core.tax_service":                  _tax_mod,
+    "core.my_orders_diagnostics":        _diag_mod,
+    "utils.formatters":                  _fmt_mod,
+    "ui.market_command.widgets":         _widgets_mod,
+    "ui.market_command.performance_view": MagicMock(),
+    "ui.market_command.diagnostics_dialog": MagicMock(),
+}
+for _mod_name, _mock_obj in _MOCKS.items():
+    if _mod_name not in sys.modules:
+        sys.modules[_mod_name] = _mock_obj
+
+# ---------------------------------------------------------------------------
+# Qt setup (offscreen)
+# ---------------------------------------------------------------------------
+from PySide6.QtWidgets import QApplication, QTableWidget, QTableWidgetItem
+from PySide6.QtCore import Qt
+
+_app = QApplication.instance() or QApplication(sys.argv)
+
+# ---------------------------------------------------------------------------
+# Import modules under test AFTER mocks and QApplication are ready
+# ---------------------------------------------------------------------------
+from ui.market_command.my_orders_view import MarketMyOrdersView
+from ui.market_command.quick_order_update_dialog import (
+    QuickOrderUpdateDialog, format_price_for_clipboard,
+)
+from core.market_order_pricing import build_order_update_recommendation
+
+# ---------------------------------------------------------------------------
+# Fake data models
+# ---------------------------------------------------------------------------
+@dataclass
+class _FakeAnalysis:
+    is_buy: bool = False
+    state: str = "Superada"
+    gross_profit_per_unit: float = 100.0
+    net_profit_per_unit: float = 80.0
+    net_profit_total: float = 80_000.0
+    margin_pct: float = 10.0
+    best_buy: float = 900.0
+    best_sell: float = 1_050.0
+    spread_pct: float = 10.0
+    competitive: bool = False
+    difference_to_best: float = -50.0
+    competitor_price: float = 1_050.0
+
+
+@dataclass
+class _FakeOrder:
+    order_id: int = 999
+    type_id: int = 34
+    item_name: str = "Tritanium"
+    is_buy_order: bool = False
+    price: float = 1_100.0
+    volume_total: int = 1_000
+    volume_remain: int = 500
+    issued: str = "2026-01-01T00:00:00Z"
+    location_id: int = 60_003_760
+    range: str = "station"
+    analysis: Optional[object] = None
+
+
+def _make_view() -> MarketMyOrdersView:
+    """Instantiate MarketMyOrdersView with all dependencies mocked."""
+    return MarketMyOrdersView()
+
+
+def _make_table_with_headers(headers):
+    """Return a QTableWidget with the given string headers."""
+    t = QTableWidget(0, len(headers))
+    t.setHorizontalHeaderLabels(headers)
+    return t
+
+
+# ---------------------------------------------------------------------------
+# 1. format_price_for_clipboard
+# ---------------------------------------------------------------------------
+class TestFormatPriceForClipboard(unittest.TestCase):
+
+    def test_integer_price(self):
+        self.assertEqual(format_price_for_clipboard(12540.0), "12540")
+
+    def test_half_decimal(self):
+        self.assertEqual(format_price_for_clipboard(12540.5), "12540.5")
+
+    def test_small_decimal(self):
+        self.assertEqual(format_price_for_clipboard(0.01), "0.01")
+
+    def test_large_integer(self):
+        self.assertEqual(format_price_for_clipboard(15_750_000.0), "15750000")
+
+    def test_zero(self):
+        self.assertEqual(format_price_for_clipboard(0.0), "0")
+
+    def test_two_decimals(self):
+        # 1000.99 → not int → "1000.99"
+        self.assertEqual(format_price_for_clipboard(1_000.99), "1000.99")
+
+
+# ---------------------------------------------------------------------------
+# 2. _get_type_column
+# ---------------------------------------------------------------------------
+class TestGetTypeColumn(unittest.TestCase):
+
+    def setUp(self):
+        self.view = _make_view()
+
+    def tearDown(self):
+        self.view.close()
+
+    def test_finds_tipo_in_sell_table(self):
+        col = self.view._get_type_column(self.view.table_sell)
+        # Header list: ["ÍTEM","TIPO","PRECIO","PROMEDIO","MEJOR","TOTAL","RESTO","SPREAD","MARGEN","PROFIT","ESTADO"]
+        self.assertEqual(col, 1)
+
+    def test_finds_tipo_in_buy_table(self):
+        col = self.view._get_type_column(self.view.table_buy)
+        self.assertEqual(col, 1)
+
+    def test_fallback_when_column_missing(self):
+        t = _make_table_with_headers(["A", "B", "C"])
+        col = self.view._get_type_column(t)
+        self.assertEqual(col, 1)
+
+    def test_accepts_type_english(self):
+        t = _make_table_with_headers(["ITEM", "TYPE", "PRICE"])
+        col = self.view._get_type_column(t)
+        self.assertEqual(col, 1)
+
+
+# ---------------------------------------------------------------------------
+# 3. _get_order_from_row
+# ---------------------------------------------------------------------------
+class TestGetOrderFromRow(unittest.TestCase):
+
+    def setUp(self):
+        self.view = _make_view()
+        self.order = _FakeOrder(order_id=42, type_id=34, is_buy_order=False)
+        self.view.all_orders = [self.order]
+
+        # Put one row into table_sell with correct data
+        self.view.table_sell.setRowCount(1)
+        name_item = QTableWidgetItem("Tritanium")
+        name_item.setData(Qt.UserRole, 34)
+        name_item.setData(Qt.UserRole + 1, 42)
+        self.view.table_sell.setItem(0, 0, name_item)
+
+        tipo_item = QTableWidgetItem("SELL")
+        tipo_item.setData(Qt.UserRole, 34)
+        self.view.table_sell.setItem(0, 1, tipo_item)
+
+    def tearDown(self):
+        self.view.close()
+
+    def test_recovers_by_order_id(self):
+        order = self.view._get_order_from_row(self.view.table_sell, 0)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.order_id, 42)
+
+    def test_returns_none_when_row_empty(self):
+        self.view.table_sell.setRowCount(2)
+        order = self.view._get_order_from_row(self.view.table_sell, 1)
+        self.assertIsNone(order)
+
+    def test_fallback_by_type_id_and_side(self):
+        # Remove order_id from UserRole+1 to force fallback
+        name_item = QTableWidgetItem("Tritanium")
+        name_item.setData(Qt.UserRole, 34)
+        name_item.setData(Qt.UserRole + 1, None)
+        self.view.table_sell.setItem(0, 0, name_item)
+
+        order = self.view._get_order_from_row(self.view.table_sell, 0)
+        # Should still find by type_id=34 and is_buy=False
+        self.assertIsNotNone(order)
+        self.assertEqual(order.type_id, 34)
+
+
+# ---------------------------------------------------------------------------
+# 4. Double-click dispatch: ÍTEM column → open market, no popup
+# ---------------------------------------------------------------------------
+class TestDoubleClickDispatch(unittest.TestCase):
+
+    def setUp(self):
+        self.view = _make_view()
+        self.order = _FakeOrder(order_id=99, type_id=34, is_buy_order=False)
+        self.order.analysis = _FakeAnalysis()
+        self.view.all_orders = [self.order]
+
+        self.view.table_sell.setRowCount(1)
+        name_item = QTableWidgetItem("Tritanium")
+        name_item.setData(Qt.UserRole, 34)
+        name_item.setData(Qt.UserRole + 1, 99)
+        self.view.table_sell.setItem(0, 0, name_item)
+
+        tipo_item = QTableWidgetItem("SELL")
+        tipo_item.setData(Qt.UserRole, 34)
+        self.view.table_sell.setItem(0, 1, tipo_item)
+
+    def tearDown(self):
+        if getattr(self.view, "_quick_order_dialog", None):
+            self.view._quick_order_dialog.close()
+        self.view.close()
+
+    def test_item_column_calls_open_market_not_popup(self):
+        # Click on col 0 (ÍTEM) → calls open_market, no popup
+        item = self.view.table_sell.item(0, 0)
+        with patch.object(self.view, "_open_market_from_table_item") as mock_market, \
+             patch.object(self.view, "_handle_quick_order_update_double_click") as mock_popup:
+            self.view.on_double_click_item(item, self.view.table_sell)
+            mock_market.assert_called_once()
+            mock_popup.assert_not_called()
+
+    def test_tipo_column_calls_quick_update_not_open_market(self):
+        # Click on col 1 (TIPO) → calls quick update handler, not open_market
+        item = self.view.table_sell.item(0, 1)
+        with patch.object(self.view, "_open_market_from_table_item") as mock_market, \
+             patch.object(self.view, "_handle_quick_order_update_double_click") as mock_popup:
+            self.view.on_double_click_item(item, self.view.table_sell)
+            mock_popup.assert_called_once()
+            mock_market.assert_not_called()
+
+    def test_none_item_does_not_crash(self):
+        self.view.on_double_click_item(None, self.view.table_sell)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# 5. _launch_quick_order_update calls build_order_update_recommendation
+#    (QuickOrderUpdateDialog is fully mocked to avoid cross-widget segfaults)
+# ---------------------------------------------------------------------------
+class TestLaunchQuickOrderUpdate(unittest.TestCase):
+
+    def setUp(self):
+        self.view = _make_view()
+        self.order = _FakeOrder(order_id=77, type_id=34, is_buy_order=False)
+        self.order.analysis = _FakeAnalysis(competitor_price=1_000.0)
+        self.view.all_orders = [self.order]
+
+    def tearDown(self):
+        self.view.close()
+
+    def _patched_launch(self, order=None, market_ok=True):
+        """Helper: launch with QuickOrderUpdateDialog fully mocked."""
+        if order is None:
+            order = self.order
+        mock_dlg_instance = MagicMock()
+        with patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
+                   return_value=mock_dlg_instance) as mock_dlg_cls, \
+             patch.object(self.view, "_open_market_for_order", return_value=market_ok):
+            self.view._launch_quick_order_update(order)
+            return mock_dlg_cls, mock_dlg_instance
+
+    def test_calls_build_order_update_recommendation(self):
+        with patch("ui.market_command.my_orders_view.build_order_update_recommendation",
+                   wraps=build_order_update_recommendation) as mock_build, \
+             patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
+                   return_value=MagicMock()), \
+             patch.object(self.view, "_open_market_for_order", return_value=True):
+            self.view._launch_quick_order_update(self.order)
+        mock_build.assert_called_once_with(self.order, self.order.analysis)
+
+    def test_sets_clipboard(self):
+        from PySide6.QtGui import QGuiApplication
+        self._patched_launch()
+        cb_text = QGuiApplication.clipboard().text()
+        # SELL, competitor=1000 → recommended=999 → clipboard "999"
+        self.assertEqual(cb_text, "999")
+
+    def test_creates_dialog_instance(self):
+        mock_cls, mock_inst = self._patched_launch()
+        # Constructor was called once
+        mock_cls.assert_called_once()
+        # .show() was called on the instance
+        mock_inst.show.assert_called_once()
+
+    def test_dialog_reference_stored(self):
+        _, mock_inst = self._patched_launch()
+        self.assertIs(self.view._quick_order_dialog, mock_inst)
+
+    def test_no_analysis_does_not_crash(self):
+        order_no_analysis = _FakeOrder(order_id=88, type_id=35, is_buy_order=True)
+        order_no_analysis.analysis = None
+        self.view.all_orders = [order_no_analysis]
+        self._patched_launch(order=order_no_analysis, market_ok=False)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# 6. QuickOrderUpdateDialog instantiation
+# ---------------------------------------------------------------------------
+class TestQuickOrderUpdateDialogInstantiation(unittest.TestCase):
+
+    def _make_dialog(self, order=None, rec=None, callback=None):
+        if order is None:
+            order = _FakeOrder()
+            order.analysis = _FakeAnalysis()
+        if rec is None:
+            rec = build_order_update_recommendation(order, order.analysis)
+        return QuickOrderUpdateDialog(
+            order=order,
+            recommendation=rec,
+            parent=None,
+            open_market_callback=callback,
+        )
+
+    def test_instantiates_without_crash(self):
+        dlg = self._make_dialog()
+        self.assertIsNotNone(dlg)
+        dlg.close()
+
+    def test_is_non_modal(self):
+        dlg = self._make_dialog()
+        self.assertFalse(dlg.isModal())
+        dlg.close()
+
+    def test_instantiates_with_no_analysis(self):
+        order = _FakeOrder()
+        order.analysis = None
+        rec = build_order_update_recommendation(order, None)
+        dlg = QuickOrderUpdateDialog(order=order, recommendation=rec)
+        self.assertIsNotNone(dlg)
+        dlg.close()
+
+
+# ---------------------------------------------------------------------------
+# 7. Dialog button: copy price → sets clipboard
+# ---------------------------------------------------------------------------
+class TestDialogCopyButton(unittest.TestCase):
+
+    def setUp(self):
+        self.order = _FakeOrder(is_buy_order=False, price=1_100.0)
+        self.order.analysis = _FakeAnalysis(competitor_price=1_000.0)
+        self.rec = build_order_update_recommendation(self.order, self.order.analysis)
+        self.dlg = QuickOrderUpdateDialog(
+            order=self.order, recommendation=self.rec
+        )
+
+    def tearDown(self):
+        self.dlg.close()
+
+    def test_copy_button_sets_clipboard(self):
+        from PySide6.QtGui import QGuiApplication
+        self.dlg.btn_copy.click()
+        cb = QGuiApplication.clipboard().text()
+        expected = format_price_for_clipboard(self.rec["recommended_price"])
+        self.assertEqual(cb, expected)
+
+
+# ---------------------------------------------------------------------------
+# 8. Dialog button: open market → calls callback
+# ---------------------------------------------------------------------------
+class TestDialogOpenMarketButton(unittest.TestCase):
+
+    def setUp(self):
+        self.order = _FakeOrder(is_buy_order=True, price=900.0)
+        self.order.analysis = _FakeAnalysis(is_buy=True, competitor_price=910.0)
+        self.rec = build_order_update_recommendation(self.order, self.order.analysis)
+        self.callback = MagicMock()
+        self.dlg = QuickOrderUpdateDialog(
+            order=self.order,
+            recommendation=self.rec,
+            open_market_callback=self.callback,
+        )
+
+    def tearDown(self):
+        self.dlg.close()
+
+    def test_open_market_button_calls_callback(self):
+        self.dlg.btn_market.click()
+        self.callback.assert_called_once_with(self.order)
+
+    def test_copy_and_open_calls_both(self):
+        from PySide6.QtGui import QGuiApplication
+        self.callback.reset_mock()
+        self.dlg.btn_both.click()
+        self.callback.assert_called_once_with(self.order)
+        cb = QGuiApplication.clipboard().text()
+        self.assertNotEqual(cb, "")  # clipboard was set
+
+
+if __name__ == "__main__":
+    unittest.main()

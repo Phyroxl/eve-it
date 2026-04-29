@@ -25,6 +25,11 @@ from core.tax_service import TaxService
 from utils.formatters import format_isk
 from ui.market_command.diagnostics_dialog import MarketDiagnosticsDialog
 from core.my_orders_diagnostics import format_my_orders_diagnostic_report
+from ui.market_command.quick_order_update_dialog import (
+    QuickOrderUpdateDialog, format_price_for_clipboard,
+)
+from core.market_order_pricing import build_order_update_recommendation
+from core.quick_order_update_diagnostics import format_quick_update_report
 
 _log = logging.getLogger('eve.market.my_orders')
 
@@ -1241,24 +1246,174 @@ class MarketMyOrdersView(QWidget):
         self.det_profit_t.setText(format_isk(a.net_profit_total))
         self.det_state.setText(a.state.upper())
 
-    def on_double_click_item(self, item, t):
-        row = item.row()
-        tid = None
-        name = ""
-        
+    # ------------------------------------------------------------------
+    # Quick Order Update helpers
+    # ------------------------------------------------------------------
+
+    def _get_type_column(self, table) -> int:
+        """Return the logical column index whose header is TIPO or TYPE."""
+        for i in range(table.columnCount()):
+            header = table.horizontalHeaderItem(i)
+            if header and header.text().strip().upper() in ("TIPO", "TYPE"):
+                return i
+        return 1  # fallback
+
+    def _get_order_from_row(self, table, row):
+        """Recover the OpenOrder for a given table row. Prefers order_id lookup."""
+        item_col = self._get_item_column(table)
+        name_item = table.item(row, item_col)
+        if not name_item:
+            return None
+
+        order_id = name_item.data(Qt.UserRole + 1)
+        type_id  = name_item.data(Qt.UserRole)
+
+        if order_id:
+            for order in self.all_orders:
+                if order.order_id == order_id:
+                    return order
+
+        # Fallback: match by type_id + side read from TIPO column
+        if type_id:
+            tipo_col  = self._get_type_column(table)
+            tipo_item = table.item(row, tipo_col)
+            if tipo_item:
+                is_buy = tipo_item.text().upper() == "BUY"
+                for order in self.all_orders:
+                    if order.type_id == type_id and order.is_buy_order == is_buy:
+                        return order
+
+        return None
+
+    def _open_market_from_table_item(self, item, t):
+        """Open in-game market for the item in a table row (original double-click behavior)."""
+        row      = item.row()
+        item_col = self._get_item_column(t)
+        tid      = None
+        name     = ""
+
         for col in range(t.columnCount()):
             it = t.item(row, col)
             if it:
-                if not tid: tid = it.data(Qt.UserRole)
-                if col == 0: name = it.text()
+                if not tid:
+                    tid = it.data(Qt.UserRole)
+                if col == item_col:
+                    name = it.text()
 
-        import logging
-        log = logging.getLogger('eve.interaction')
         if tid:
-            log.info(f"[OPEN MARKET] my_orders double_clicked row={row} type_id={tid}")
-            ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, lambda m, c: self.lbl_status.setText(m))
+            _log.info(f"[OPEN MARKET] my_orders double_clicked row={row} type_id={tid}")
+            ItemInteractionHelper.open_market_with_fallback(
+                ESIClient(), AuthManager.instance().char_id, tid, name,
+                lambda m, c: self.lbl_status.setText(m),
+            )
         else:
-            log.warning(f"[OPEN MARKET] my_orders double_clicked without type_id row={row}")
+            _log.warning(
+                f"[OPEN MARKET] my_orders double_clicked without type_id row={row}"
+            )
+
+    def _open_market_for_order(self, order) -> bool:
+        """Open the in-game market window for an order's item."""
+        try:
+            auth = AuthManager.instance()
+            return ItemInteractionHelper.open_market_with_fallback(
+                ESIClient(),
+                auth.char_id,
+                order.type_id,
+                order.item_name,
+                feedback_callback=lambda m, c: self.lbl_status.setText(m),
+            )
+        except Exception as e:
+            _log.warning(f"[QUICK UPDATE] market open error: {e}")
+            return False
+
+    def _handle_quick_order_update_double_click(self, item, table):
+        """Entry point when user double-clicks the TIPO column."""
+        row   = item.row()
+        order = self._get_order_from_row(table, row)
+        if not order:
+            _log.warning(
+                f"[QUICK UPDATE] failed reason=order_not_found row={row}"
+            )
+            self.lbl_status.setText("Quick Update: orden no encontrada en esta fila")
+            return
+        self._launch_quick_order_update(order)
+
+    def _launch_quick_order_update(self, order):
+        """Calculate recommendation, copy price, open market, show popup."""
+        side = "BUY" if order.is_buy_order else "SELL"
+        _log.info(
+            f"[QUICK UPDATE] double_click side={side} "
+            f"row=? order_id={order.order_id} type_id={order.type_id}"
+        )
+
+        # Recommendation
+        rec = build_order_update_recommendation(order, order.analysis)
+        _log.info(
+            f"[QUICK UPDATE] recommendation price={rec['recommended_price']} "
+            f"competitor={rec['competitor_price']} tick={rec['tick']}"
+        )
+
+        # Clipboard (auto on launch)
+        price_text = format_price_for_clipboard(rec["recommended_price"])
+        QGuiApplication.clipboard().setText(price_text)
+        _log.info(f"[QUICK UPDATE] clipboard_set text={price_text}")
+
+        # Market (auto on launch)
+        market_ok = self._open_market_for_order(order)
+        _log.info(
+            f"[QUICK UPDATE] market_open_sent type_id={order.type_id} ok={market_ok}"
+        )
+
+        # Diagnostics report (logged, also shown in dialog)
+        diag_data = {
+            "order_id":          order.order_id,
+            "type_id":           order.type_id,
+            "item_name":         order.item_name,
+            "side":              side,
+            "my_price":          order.price,
+            "competitor_price":  rec.get("competitor_price"),
+            "recommended_price": rec.get("recommended_price"),
+            "tick":              rec.get("tick"),
+            "market_window_opened": market_ok,
+            "clipboard_value":   price_text,
+        }
+        diag_report = format_quick_update_report(diag_data)
+        _log.debug(f"[QUICK UPDATE] report:\n{diag_report}")
+
+        # One dialog at a time
+        if getattr(self, "_quick_order_dialog", None):
+            self._quick_order_dialog.close()
+
+        self._quick_order_dialog = QuickOrderUpdateDialog(
+            order=order,
+            recommendation=rec,
+            parent=self,
+            open_market_callback=self._open_market_for_order,
+            diag_report=diag_report,
+        )
+        self._quick_order_dialog.show()
+
+        self.lbl_status.setText(
+            f"Precio copiado y mercado abierto — {order.item_name}"
+        )
+        self.lbl_status.setStyleSheet("color: #10b981;")
+
+    # ------------------------------------------------------------------
+    # Double-click dispatch (column-aware)
+    # ------------------------------------------------------------------
+
+    def on_double_click_item(self, item, t):
+        if not item:
+            return
+        col      = item.column()
+        type_col = self._get_type_column(t)
+
+        if col == type_col:
+            self._handle_quick_order_update_double_click(item, t)
+            return
+
+        # ÍTEM column and any other column → open market (original behavior)
+        self._open_market_from_table_item(item, t)
 
     def update_taxes_info(self):
         auth = AuthManager.instance()

@@ -2,8 +2,35 @@
 
 **Proyecto:** EVE iT / Market Command / Mis Pedidos  
 **Feature:** Quick Order Update Assistant  
-**Estado:** Diseño — no implementado  
-**Fecha:** 2026-04-29  
+**Estado:** Fase 1 implementada — commit `FEAT: Add Quick Order Update popup for My Orders`  
+**Fecha diseño:** 2026-04-29 | **Fecha implementación Fase 1:** 2026-04-29  
+
+### Checklist Fase 1 completada
+
+- [x] Doble click ÍTEM conserva comportamiento anterior
+- [x] Doble click TIPO lanza Quick Order Update
+- [x] Orden recuperada por `order_id` (fallback por type_id + side)
+- [x] `analysis.competitor_price` usado para recomendación
+- [x] SELL recomienda `competitor_sell - tick`
+- [x] BUY recomienda `competitor_buy + tick`
+- [x] Precio copiado automáticamente al portapapeles (sin separadores de miles)
+- [x] Mercado in-game abierto automáticamente
+- [x] Popup no modal (`QDialog` con `.show()`)
+- [x] Referencia guardada en `self._quick_order_dialog`
+- [x] Sin pyautogui/pywinauto en esta fase
+- [x] No se tocaron: filtros, candidate selector, cache, iconos, auth, taxes
+- [x] 27 tests nuevos pasan (`test_quick_order_update_flow.py`)
+- [x] 35 tests pricing pasan (regresión OK)
+- [x] 12 tests ESI session pasan (regresión OK)
+- [x] py_compile OK en todos los archivos
+
+### Archivos creados / modificados en Fase 1
+
+| Archivo | Cambio |
+|---------|--------|
+| `ui/market_command/quick_order_update_dialog.py` | Nuevo — `QuickOrderUpdateDialog`, `format_price_for_clipboard` |
+| `ui/market_command/my_orders_view.py` | Modificado — `on_double_click_item` diferencia columnas, 6 nuevos helpers |
+| `tests/test_quick_order_update_flow.py` | Nuevo — 27 tests |
 
 ---
 
