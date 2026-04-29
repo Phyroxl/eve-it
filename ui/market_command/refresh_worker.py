@@ -61,13 +61,16 @@ class MarketRefreshWorker(QThread):
             # Paso 1: Descargar market orders
             t0 = time.time()
             self.emit_progress(5, "Fetching market orders...")
+            logger.info(f"[WORKER DIAG] selected_category={selected_category} region_id={self.region_id}")
+            
             orders = self.client.market_orders(self.region_id)
             if not self.is_running: return
             if not orders:
+                logger.error("[WORKER DIAG] raw_orders=0 - Failed to fetch market orders.")
                 self.emit_error("Failed to fetch market orders.")
                 return
             t_orders = time.time() - t0
-            logger.info(f"[SCAN PERF] market_orders_elapsed={t_orders:.1f}s raw_orders={len(orders)}")
+            logger.info(f"[WORKER DIAG] raw_orders={len(orders)} elapsed={t_orders:.1f}s")
 
             # Paso 2: Agrupar por type_id
             t0 = time.time()
@@ -80,7 +83,7 @@ class MarketRefreshWorker(QThread):
                     temp_grouped[t]['buy'].append(o)
                 else:
                     temp_grouped[t]['sell'].append(o)
-            logger.info(f"[SCAN PERF] grouping_elapsed={time.time()-t0:.2f}s grouped_type_ids={len(temp_grouped)}")
+            logger.info(f"[WORKER DIAG] grouped_type_ids={len(temp_grouped)} elapsed={time.time()-t0:.2f}s")
 
             # Paso 3: Pool económico (sin filtros de capital/margen para red amplia)
             t0 = time.time()
@@ -105,17 +108,14 @@ class MarketRefreshWorker(QThread):
                 })
             economic_candidates.sort(key=lambda x: x['score'], reverse=True)
             t_candidates = time.time() - t0
-            logger.info(
-                f"[SCAN PERF] candidate_selection_elapsed={t_candidates:.2f}s "
-                f"economic_candidates={len(economic_candidates)}"
-            )
+            logger.info(f"[WORKER DIAG] economic_candidates={len(economic_candidates)} elapsed={t_candidates:.2f}s")
             self.emit_progress(18, f"Found {len(economic_candidates)} economic candidates.")
 
             # Paso 4: Candidatos iniciales de Fase 1 (solo desde metadata en caché, sin ESI)
             t0 = time.time()
             if selected_category == "Todos":
                 initial_candidates = [c['type_id'] for c in economic_candidates[:_TODOS_POOL_SIZE]]
-                logger.info(f"[WORKER PIPELINE] Phase1 mode=Todos initial_candidates={len(initial_candidates)}")
+                logger.info(f"[WORKER DIAG] Phase1 mode=Todos initial_candidates={len(initial_candidates)}")
             else:
                 # Solo items con metadata ya en caché → sin llamadas ESI en Fase 1
                 resolver = ItemResolver.instance()
@@ -127,16 +127,9 @@ class MarketRefreshWorker(QThread):
                         match, _ = is_type_in_category(selected_category, cat_id, grp_id, broad=True)
                         if match:
                             initial_candidates.append(t_id)
-                logger.info(
-                    f"[WORKER PIPELINE] Phase1 mode=category={selected_category} "
-                    f"initial_candidates_from_cache={len(initial_candidates)}"
-                )
+                logger.info(f"[WORKER DIAG] Phase1 category={selected_category} initial_candidates={len(initial_candidates)}")
                 if not initial_candidates:
-                    logger.warning(
-                        f"[WORKER PIPELINE] Phase1 category={selected_category} "
-                        f"initial_candidates=0 metadata_cache_miss_likely=True. "
-                        f"Continuing to Phase2 metadata prefetch."
-                    )
+                    logger.warning(f"[WORKER DIAG] Phase1 category={selected_category} initial_candidates=0. metadata_cache_miss likely.")
                     self.emit_progress(40, f"Preparando metadata para {selected_category}...")
 
             # Excluir PLEX
@@ -158,23 +151,22 @@ class MarketRefreshWorker(QThread):
                     if names_data:
                         for n in names_data:
                             names_dict[n['id']] = n['name']
-            logger.info(f"[SCAN PERF] names_elapsed={time.time()-t0:.2f}s names_loaded={len(names_dict)}")
+            logger.info(f"[WORKER DIAG] names_dict={len(names_dict)} elapsed={time.time()-t0:.2f}s")
 
             # Paso 6: Crear oportunidades iniciales SIN historial
             t0 = time.time()
             self.emit_progress(35, "Creating initial opportunities...")
             initial_set = set(initial_candidates)
             relevant_orders_initial = [o for o in orders if o['type_id'] in initial_set]
+            logger.info(f"[WORKER DIAG] relevant_orders_initial={len(relevant_orders_initial)}")
+            
             opps_initial = parse_opportunities(relevant_orders_initial, {}, names_dict, self.config)
             for opp in opps_initial:
                 opp.is_enriched = False
                 opp.score_breakdown = score_opportunity(opp, self.config)
 
             t_initial_emit = time.time() - t0
-            logger.info(
-                f"[SCAN PERF] initial_emit_elapsed={t_initial_emit:.2f}s "
-                f"initial_opportunities={len(opps_initial)}"
-            )
+            logger.info(f"[WORKER DIAG] opps_initial={len(opps_initial)} elapsed={t_initial_emit:.2f}s")
 
             # Emitir resultados iniciales a la UI
             self.emit_progress(50, f"Initial results: {len(opps_initial)} items. Enriching...")
@@ -193,7 +185,7 @@ class MarketRefreshWorker(QThread):
             t0 = time.time()
             if selected_category == "Todos":
                 final_candidates = [c['type_id'] for c in economic_candidates[:_TODOS_POOL_SIZE]]
-                logger.info(f"[WORKER PIPELINE] Phase2 mode=Todos final_candidates={len(final_candidates)}")
+                logger.info(f"[WORKER DIAG] Phase2 mode=Todos final_candidates={len(final_candidates)}")
             else:
                 # Prefetch metadata paralelo para pool amplio
                 broad_ids = [c['type_id'] for c in economic_candidates[:_BROAD_POOL_SIZE]]
@@ -201,7 +193,7 @@ class MarketRefreshWorker(QThread):
                 p_stats = ItemResolver.instance().prefetch_type_metadata_parallel(broad_ids, n_clients=4)
                 if not self.is_running: return
                 logger.info(
-                    f"[WORKER PIPELINE] metadata total={p_stats['total']} "
+                    f"[WORKER DIAG] metadata total={p_stats['total']} "
                     f"cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}"
                 )
 
@@ -214,18 +206,10 @@ class MarketRefreshWorker(QThread):
                     if match:
                         category_ids.append(t_id)
 
-                logger.info(
-                    f"[WORKER PIPELINE] category_pool={len(category_ids)} "
-                    f"category={selected_category} broad_pool={_BROAD_POOL_SIZE}"
-                )
+                logger.info(f"[WORKER DIAG] Phase2 category_ids={len(category_ids)} for category={selected_category}")
 
                 if not category_ids:
-                    logger.warning(
-                        f"[WORKER PIPELINE] Phase2 category={selected_category} "
-                        f"category_ids=0 broad_pool={_BROAD_POOL_SIZE} "
-                        f"metadata_failed={p_stats['failed']}. "
-                        f"Emitting initial results only."
-                    )
+                    logger.warning(f"[WORKER DIAG] Phase2 category={selected_category} category_ids=0. Falling back to initial.")
                     # Fase 2 sin candidatos: cerrar UX con lo que tenga Fase 1
                     msg = (
                         f"No se encontraron items para '{selected_category}' con el pool actual"
@@ -239,10 +223,10 @@ class MarketRefreshWorker(QThread):
                     return
 
                 final_candidates = category_ids[:_CATEGORY_LIMIT]
-                logger.info(f"[WORKER PIPELINE] Phase2 final_candidates={len(final_candidates)}")
+                logger.info(f"[WORKER DIAG] Phase2 final_candidates={len(final_candidates)}")
 
             t_metadata = time.time() - t0
-            logger.info(f"[SCAN PERF] metadata_elapsed={t_metadata:.1f}s")
+            logger.info(f"[WORKER DIAG] metadata_elapsed={t_metadata:.1f}s")
 
             if self.config.exclude_plex and plex_id in final_candidates:
                 final_candidates.remove(plex_id)
@@ -253,10 +237,7 @@ class MarketRefreshWorker(QThread):
             hist_cache = MarketHistoryCache.instance()
             history_hits = hist_cache.get_many(self.region_id, final_candidates)
             missing_hist = [t for t in final_candidates if t not in history_hits]
-            logger.info(
-                f"[HISTORY CACHE] candidates={len(final_candidates)} "
-                f"hits={len(history_hits)} misses={len(missing_hist)}"
-            )
+            logger.info(f"[WORKER DIAG] history_hits={len(history_hits)} history_misses={len(missing_hist)}")
 
             # Paso 9: Descarga concurrente de historial faltante
             fetched_history = {}
@@ -299,11 +280,7 @@ class MarketRefreshWorker(QThread):
                             self.emit_progress(pct, f"History: {done}/{len(missing_hist)}")
 
             t_history = time.time() - t0
-            logger.info(
-                f"[HISTORY FETCH] workers={_HISTORY_WORKERS if missing_hist else 0} "
-                f"fetched={len(fetched_history)} failed={failed_hist} "
-                f"elapsed={t_history:.1f}s"
-            )
+            logger.info(f"[WORKER DIAG] fetched_history={len(fetched_history)} failed_hist={failed_hist} elapsed={t_history:.1f}s")
 
             # Actualizar cache de historial en disco
             for t_id, hist in fetched_history.items():
@@ -313,6 +290,7 @@ class MarketRefreshWorker(QThread):
 
             # Merge historial completo
             history_dict = {**history_hits, **fetched_history}
+            logger.info(f"[WORKER DIAG] total_history_dict={len(history_dict)}")
 
             # Paso 10: Nombres para nuevos candidatos (Fase 2 puede tener más que Fase 1)
             t0 = time.time()
@@ -325,7 +303,7 @@ class MarketRefreshWorker(QThread):
                     if names_data:
                         for n in names_data:
                             names_dict[n['id']] = n['name']
-            logger.info(f"[SCAN PERF] names_phase2_elapsed={time.time()-t0:.2f}s total_names={len(names_dict)}")
+            logger.info(f"[WORKER DIAG] names_dict_total={len(names_dict)} elapsed={time.time()-t0:.2f}s")
 
             if not self.is_running: return
 
@@ -334,6 +312,8 @@ class MarketRefreshWorker(QThread):
             self.emit_progress(90, "Parsing enriched opportunities...")
             final_set = set(final_candidates)
             relevant_orders_enriched = [o for o in orders if o['type_id'] in final_set]
+            logger.info(f"[WORKER DIAG] relevant_orders_enriched={len(relevant_orders_enriched)}")
+            
             opps_enriched = parse_opportunities(relevant_orders_enriched, history_dict, names_dict, self.config)
             for opp in opps_enriched:
                 opp.is_enriched = True
@@ -341,17 +321,15 @@ class MarketRefreshWorker(QThread):
 
             t_enrich = time.time() - t0
             t_total_elapsed = time.time() - t_total
-            logger.info(
-                f"[SCAN PERF] enriched_emit_elapsed={t_enrich:.2f}s "
-                f"enriched_opportunities={len(opps_enriched)}"
-            )
-            logger.info(
-                f"[SCAN PERF] total_elapsed={t_total_elapsed:.1f}s "
-                f"phase2_elapsed={time.time()-t_phase2_start:.1f}s"
-            )
+            logger.info(f"[WORKER DIAG] opps_enriched={len(opps_enriched)} elapsed={t_enrich:.2f}s")
+
+            if not opps_enriched and opps_initial:
+                logger.warning(f"[WORKER DIAG] Enriched results EMPTY but initial had {len(opps_initial)}. Falling back.")
+                opps_enriched = opps_initial
+                for o in opps_enriched: o.is_enriched = True # Mark as enriched for fallback
 
             self.last_results = opps_enriched
-            self.emit_progress(100, f"Done. {len(opps_enriched)} enriched items.")
+            self.emit_progress(100, f"Done. {len(opps_enriched)} items.")
             self.enriched_data_ready.emit(opps_enriched)
             self.finished.emit(opps_enriched)
             self.data_ready.emit(opps_enriched)  # legacy compat

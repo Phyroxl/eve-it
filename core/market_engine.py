@@ -59,7 +59,21 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
             cap_limit = int(config.capital_max / best_buy)
             rec_qty = min(rec_qty, cap_limit)
         rec_cost = rec_qty * best_buy
-        opp = MarketOpportunity(type_id=t_id, item_name=item_names.get(t_id, f"Type {t_id}"), best_buy_price=best_buy, best_sell_price=best_sell, margin_net_pct=margin_net_pct, profit_per_unit=profit_per_unit, profit_day_est=profit_day_est, spread_pct=spread_pct, risk_level=risk_level, tags=tags, liquidity=liq, recommended_qty=rec_qty, recommended_cost=rec_cost)
+        opp = MarketOpportunity(
+            type_id=t_id, 
+            item_name=item_names.get(t_id, f"Type {t_id}"), 
+            best_buy_price=best_buy, 
+            best_sell_price=best_sell, 
+            margin_net_pct=margin_net_pct, 
+            profit_per_unit=profit_per_unit, 
+            profit_day_est=profit_day_est, 
+            spread_pct=spread_pct, 
+            risk_level=risk_level, 
+            tags=tags, 
+            liquidity=liq, 
+            recommended_qty=rec_qty, 
+            recommended_cost=rec_cost
+        )
         opportunities.append(opp)
     return opportunities
 
@@ -70,16 +84,11 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
     total_raw = len(opportunities)
     n_initial = sum(1 for o in opportunities if not o.is_enriched)
     n_enriched = total_raw - n_initial
-    logger.info(
-        f"[FILTER DEBUG] before_apply_filters={total_raw} "
-        f"(enriched={n_enriched} initial={n_initial}) "
-        f"selected_category={config.selected_category}"
-    )
+    
+    logger.info(f"[FILTER DEBUG] before_apply_filters={total_raw} (enriched={n_enriched} initial={n_initial}) selected_category={config.selected_category}")
+    logger.info(f"[FILTER DEBUG] config capital_max={config.capital_max:.0f} vol_min_day={config.vol_min_day} margin_min_pct={config.margin_min_pct:.1f} spread_max_pct={config.spread_max_pct:.1f} score_min={config.score_min:.1f} risk_max={config.risk_max} buy_orders_min={config.buy_orders_min} sell_orders_min={config.sell_orders_min} history_days_min={config.history_days_min} profit_day_min={config.profit_day_min:.0f} exclude_plex={config.exclude_plex}")
 
     # ── A) Filtros base (rápidos, sin ESI) ──────────────────────────────────────
-    # Para oportunidades iniciales (is_enriched=False): se omiten los filtros que
-    # dependen del historial (volume, history_days, profit_day, risk_max).
-    # Esto evita que vol_min_day=20 mate todos los resultados iniciales con vol_5d=0.
     pass_base = []
     stats = {
         "no_buy_price": 0, "capital": 0, "volume": 0, "margin": 0,
@@ -91,16 +100,22 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
     for opp in opportunities:
         if opp.best_buy_price <= 0:
             stats["no_buy_price"] += 1; continue
+            
         if config.exclude_plex and ("plex" in opp.item_name.lower() or "skin" in opp.item_name.lower()):
             stats["plex"] += 1; continue
+            
         if opp.best_buy_price > config.capital_max:
             stats["capital"] += 1; continue
+            
         if opp.margin_net_pct < config.margin_min_pct:
             stats["margin"] += 1; continue
+            
         if opp.spread_pct > config.spread_max_pct:
             stats["spread"] += 1; continue
+            
         if opp.liquidity.buy_orders_count < config.buy_orders_min:
             stats["buy_orders"] += 1; continue
+            
         if opp.liquidity.sell_orders_count < config.sell_orders_min:
             stats["sell_orders"] += 1; continue
 
@@ -126,26 +141,20 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
         pass_base.append(opp)
 
     logger.info(
-        f"[FILTER DEBUG] total={total_raw} after_base={len(pass_base)} | "
-        f"no_buy={stats['no_buy_price']} plex={stats['plex']} capital={stats['capital']} "
-        f"margin={stats['margin']} spread={stats['spread']} "
-        f"buy_orders={stats['buy_orders']} sell_orders={stats['sell_orders']} "
-        f"volume={stats['volume']} history_days={stats['history_days']} "
-        f"profit_day={stats['profit_day']} risk={stats['risk']} score={stats['score']} "
+        f"[FILTER DEBUG] after_base={len(pass_base)} | "
+        f"removed_no_buy={stats['no_buy_price']} removed_plex={stats['plex']} removed_capital={stats['capital']} "
+        f"removed_margin={stats['margin']} removed_spread={stats['spread']} "
+        f"removed_buy_orders={stats['buy_orders']} removed_sell_orders={stats['sell_orders']} "
+        f"removed_volume={stats['volume']} removed_history_days={stats['history_days']} "
+        f"removed_profit_day={stats['profit_day']} removed_risk={stats['risk']} removed_score={stats['score']} "
         f"skipped_history_filters_initial={stats['skipped_history_filters_initial']}"
     )
 
     if len(pass_base) == 0 and total_raw > 0:
-        dominant = max(
-            {k: v for k, v in stats.items() if k not in ('skipped_history_filters_initial',)},
-            key=stats.get
-        )
-        logger.warning(
-            f"[FILTER DEBUG] after_base=0 — todos los items eliminados por filtros base. "
-            f"Filtro dominante: {dominant}={stats[dominant]}. "
-            f"Considera bajar: capital_max={config.capital_max:.0f} vol_min_day={config.vol_min_day} "
-            f"margin_min_pct={config.margin_min_pct:.1f} spread_max_pct={config.spread_max_pct:.1f}"
-        )
+        relevant_stats = {k: v for k, v in stats.items() if k != 'skipped_history_filters_initial' and v > 0}
+        if relevant_stats:
+            dominant = max(relevant_stats, key=relevant_stats.get)
+            logger.warning(f"[FILTER DEBUG] after_base=0 — Filtro dominante: {dominant}={stats[dominant]}.")
 
     # ── B) Shortcut para "Todos" (sin metadata) ──────────────────────────────────
     if config.selected_category == "Todos":
@@ -156,12 +165,10 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
     if pass_base:
         type_ids = [o.type_id for o in pass_base]
         p_stats = ItemResolver.instance().prefetch_type_metadata(type_ids)
-        logger.info(
-            f"[FILTER DEBUG] metadata_prefetch total={p_stats['total']} "
-            f"cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}"
-        )
+        logger.info(f"[FILTER DEBUG] metadata_prefetch total={p_stats['total']} cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}")
 
     # ── D) Filtro de categoría (estricto) ────────────────────────────────────────
+    filtered = []
     cat_pass = 0
     cat_fail_no_meta = 0
     cat_fail_wrong_cat = 0
@@ -172,41 +179,21 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
         if match:
             cat_pass += 1
             filtered.append(opp)
-            logger.debug(
-                f"[CATEGORY DEBUG] PASS name={opp.item_name} "
-                f"cat={cat_name}({cat_id}) grp={grp_name}({grp_id})"
-            )
+            logger.debug(f"[CATEGORY DEBUG] PASS name={opp.item_name} cat={cat_name}({cat_id}) grp={grp_name}({grp_id})")
         else:
             if cat_id is None or grp_id is None:
                 cat_fail_no_meta += 1
             else:
                 cat_fail_wrong_cat += 1
-            logger.debug(
-                f"[CATEGORY DEBUG] FAIL name={opp.item_name} "
-                f"cat={cat_name}({cat_id}) grp={grp_name}({grp_id}) reason={reason}"
-            )
+            logger.debug(f"[CATEGORY DEBUG] FAIL name={opp.item_name} cat={cat_name}({cat_id}) grp={grp_name}({grp_id}) reason={reason}")
 
-    logger.info(
-        f"[FILTER DEBUG] selected_category={config.selected_category} "
-        f"before_cat={len(pass_base)} after_cat={len(filtered)} "
-        f"cat_pass={cat_pass} cat_fail_wrong_cat={cat_fail_wrong_cat} cat_fail_no_meta={cat_fail_no_meta}"
-    )
+    logger.info(f"[FILTER DEBUG] after_category={len(filtered)} | cat_pass={cat_pass} cat_fail_wrong_cat={cat_fail_wrong_cat} cat_fail_no_meta={cat_fail_no_meta}")
 
-    if len(filtered) == 0:
-        if len(pass_base) == 0:
-            logger.warning(
-                f"[CATEGORY WARNING] '{config.selected_category}' → 0 resultados porque "
-                f"los filtros base ya eliminaron todos los items (ver [FILTER DEBUG] above)."
-            )
-        elif cat_fail_no_meta > 0 and cat_pass == 0:
-            logger.warning(
-                f"[CATEGORY WARNING] '{config.selected_category}' → 0 resultados. "
-                f"{cat_fail_no_meta} items sin metadata tras prefetch. "
-                f"La metadata puede no estar en caché todavía. Re-escanear para descargarla."
-            )
-        else:
-            logger.warning(
-                f"[CATEGORY WARNING] '{config.selected_category}' → 0 resultados. "
+    if len(filtered) == 0 and len(pass_base) > 0:
+        logger.warning(f"[CATEGORY WARNING] Category filter '{config.selected_category}' excluded ALL ({len(pass_base)}) items that passed base filters.")
+
+    return filtered
+
                 f"{cat_fail_wrong_cat} items tienen metadata pero no pertenecen a esta categoría. "
                 f"El pool del worker puede no contener items de '{config.selected_category}' — re-escanear con esa categoría seleccionada."
             )

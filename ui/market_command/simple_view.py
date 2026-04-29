@@ -369,20 +369,32 @@ class MarketSimpleView(QWidget):
     def apply_and_display(self):
         import logging
         log = logging.getLogger('eve.market.simple')
-        log.info(f"[PIPELINE] before_apply_filters={len(self.all_opportunities)}")
+        total_raw = len(self.all_opportunities)
+        log.info(f"[UI DIAG] before_apply_filters={total_raw} selected_category={self.current_config.selected_category}")
         
         filtered = apply_filters(self.all_opportunities, self.current_config)
         filtered.sort(key=lambda x: x.score_breakdown.final_score if x.score_breakdown else 0, reverse=True)
         
-        log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
+        log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
         
         top_50 = filtered[:50]
         self.table.populate(top_50)
         
-        log.info(f"[PIPELINE] table_populate_count={len(top_50)}")
-        
         self.lbl_sum_count.setText(f"{len(filtered)}")
-        if top_50:
+        
+        if total_raw == 0:
+            self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
+            self.lbl_sum_insight.setText("SIN DATOS DEL ESCANEO")
+            self.lbl_sum_insight.setStyleSheet("color: #94a3b8; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+            self.lbl_status.setText("● SIN DATOS DISPONIBLES — REALIZA UN ESCANEO")
+            self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        elif len(filtered) == 0:
+            self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
+            self.lbl_sum_insight.setText("0 RESULTADOS TRAS FILTROS")
+            self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+            self.lbl_status.setText(f"● {total_raw} ITEMS ENCONTRADOS PERO 0 PASAN LOS FILTROS")
+            self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        else:
             self.lbl_sum_top.setText(top_50[0].item_name)
             liquid_opp = max(filtered, key=lambda x: x.liquidity.volume_5d)
             self.lbl_sum_liquid.setText(f"{liquid_opp.item_name}")
@@ -398,10 +410,6 @@ class MarketSimpleView(QWidget):
             else:
                 self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
                 self.lbl_sum_insight.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 800; border: none; background: transparent;")
-        else:
-            self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
-            self.lbl_sum_insight.setText("SIN RESULTADOS")
-            self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 13px; font-weight: 800; border: none; background: transparent;")
 
     def on_table_selection(self):
         sel = self.table.selectedItems()

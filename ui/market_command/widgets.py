@@ -286,6 +286,7 @@ class MarketTableWidget(QTableWidget):
         self.sortItems(2, Qt.DescendingOrder)
 
     def load_icon_async(self, type_id, table_item, row, generation):
+        # We use generation to avoid updating items from a previous populate() call
         url = f"https://images.evetech.net/types/{type_id}/icon?size=32"
         request = QNetworkRequest(QUrl(url))
         reply = self.net_manager.get(request)
@@ -300,12 +301,14 @@ class MarketTableWidget(QTableWidget):
                     pixmap = QPixmap()
                     if pixmap.loadFromData(data):
                         self.icon_cache[type_id] = pixmap
-                        # Buscar el item en la columna 1 (donde va el nombre/icono)
-                        it = self.item(row, 1)
-                        if it and it.data(Qt.UserRole) == type_id:
-                            it.setIcon(QIcon(pixmap))
-            except RuntimeError:
-                pass
+                        # Search for ALL items with this type_id (in case of duplicates or moved rows)
+                        for r in range(self.rowCount()):
+                            it = self.item(r, 1)
+                            if it and it.data(Qt.UserRole) == type_id:
+                                it.setIcon(QIcon(pixmap))
+            except Exception as e:
+                import logging
+                logging.getLogger('eve.market.ui').debug(f"Error loading icon for {type_id}: {e}")
             finally:
                 reply.deleteLater()
             

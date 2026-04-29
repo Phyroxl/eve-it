@@ -281,16 +281,26 @@ class MarketAdvancedView(QWidget):
 
     def on_scan_finished(self, opportunities):
         self.all_opportunities = opportunities
-        _log.info(f"[PIPELINE] enriched_opportunities={len(opportunities)}")
+        _log.info(f"[UI DIAG] enriched_opportunities_received={len(opportunities)}")
+        
         from core.market_engine import apply_filters
         filtered = apply_filters(opportunities, self.current_config)
-        _log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
+        _log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
+        
         self.table.populate(filtered)
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText("EJECUTAR ESCANEO AVANZADO")
+        
         if self.lbl_status:
-            self.lbl_status.setText(f"● ESCANEO COMPLETADO — DATOS ENRIQUECIDOS: {len(filtered)}/{len(opportunities)} ITEMS")
-            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            if not opportunities:
+                self.lbl_status.setText("● ESCANEO COMPLETADO — SIN RESULTADOS EN EL POOL")
+                self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            elif not filtered:
+                self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(opportunities)} ITEMS PERO 0 TRAS FILTROS")
+                self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            else:
+                self.lbl_status.setText(f"● ESCANEO COMPLETADO — {len(filtered)} RESULTADOS")
+                self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_scan_error(self, err_msg):
         self.btn_refresh.setEnabled(True)
@@ -301,18 +311,30 @@ class MarketAdvancedView(QWidget):
 
     def on_apply_filters(self):
         self.update_config_from_ui()
-        _log.info(f"[CATEGORY UI] mode=Advanced selected_category={self.current_config.selected_category}")
-        _log.info(f"[PIPELINE] before_apply_filters={len(self.all_opportunities)}")
+        _log.info(f"[UI DIAG] mode=Advanced selected_category={self.current_config.selected_category}")
+        _log.info(f"[UI DIAG] before_apply_filters={len(self.all_opportunities)}")
         
         save_market_filters(self.current_config)
         
         from core.market_engine import apply_filters
         filtered = apply_filters(self.all_opportunities, self.current_config)
         
-        _log.info(f"[PIPELINE] after_apply_filters={len(filtered)}")
-        _log.info(f"[PIPELINE] table_populate_count={len(filtered)}")
+        _log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
         
         self.table.populate(filtered)
+        
+        if len(self.all_opportunities) == 0:
+            if self.lbl_status:
+                self.lbl_status.setText("● SIN DATOS DISPONIBLES — REALIZA UN ESCANEO")
+                self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        elif len(filtered) == 0:
+            if self.lbl_status:
+                self.lbl_status.setText(f"● {len(self.all_opportunities)} ITEMS EN EL POOL PERO 0 TRAS FILTROS")
+                self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        else:
+            if self.lbl_status:
+                self.lbl_status.setText(f"● FILTROS APLICADOS: {len(filtered)} RESULTADOS")
+                self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_reset_filters(self):
         self.current_config = FilterConfig()
