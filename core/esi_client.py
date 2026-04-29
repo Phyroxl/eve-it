@@ -255,7 +255,7 @@ class ESIClient:
     def _headers(self, token=None):
         if token is None:
             from .auth_manager import AuthManager
-            token = AuthManager.instance().get_token()
+            token = AuthManager.instance().get_valid_access_token()
         return {"Authorization": f"Bearer {token}", "User-Agent": "EVE-iT-Market-Command"}
 
     def _request_auth(self, method, endpoint, token, params=None, json_data=None, retries=1):
@@ -265,10 +265,9 @@ class ESIClient:
             self._rate_limit()
             res = self.session.request(method, url, headers=self._headers(token), params=params, json=json_data, timeout=15)
             if res.status_code == 401 and retries > 0:
-                logger.info(f"ESI: 401 detectado en {endpoint}, forzando refresh...")
+                logger.info(f"ESI: 401 en {endpoint}, forzando refresh...")
                 from .auth_manager import AuthManager
-                # get_token() intentará renovar si está caducado
-                new_token = AuthManager.instance().get_token()
+                new_token = AuthManager.instance().get_valid_access_token()
                 if new_token:
                     return self._request_auth(method, endpoint, new_token, params, json_data, retries - 1)
             return res

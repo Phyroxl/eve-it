@@ -903,12 +903,10 @@ class MarketMyOrdersView(QWidget):
 
     def do_sync(self):
         auth = AuthManager.instance()
-        t = auth.get_token()
+        t = auth.get_valid_access_token()
         if not t:
-            self.lbl_status.setText("ERROR: NO AUTENTICADO")
-            self.lbl_status.setStyleSheet("color: #ef4444;")
-            # Si no hay token, intentar login automático o pedirlo
-            auth.login()
+            self.lbl_status.setText("SIN SESIÓN ESI — PULSA VINCULAR ESI")
+            self.lbl_status.setStyleSheet("color: #f59e0b;")
             return
         self.table_sell.setRowCount(0)
         self.table_buy.setRowCount(0)
@@ -939,6 +937,13 @@ class MarketMyOrdersView(QWidget):
 
     def try_auto_login(self):
         auth = AuthManager.instance()
+        # Si ya está autenticado (restaurado por MarketCommandMain), sólo actualizar UI
+        if auth.current_token:
+            self.btn_esi.setText(f"SALIR ({auth.char_name.upper()})")
+            self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#3b82f6", "#1e293b"))
+            self.lbl_status.setText(f"SESIÓN ACTIVA: {auth.char_name.upper()}")
+            self.lbl_status.setStyleSheet("color: #10b981;")
+            return
         res = auth.try_restore_session()
         if res == "ok":
             self.lbl_status.setText(f"SESIÓN RESTAURADA: {auth.char_name.upper()}")
@@ -946,7 +951,11 @@ class MarketMyOrdersView(QWidget):
         elif res == "new_scopes_required":
             self.lbl_status.setText("FALTAN PERMISOS NUEVOS DE ESI. REAUTORIZA EL PERSONAJE.")
             self.lbl_status.setStyleSheet("color: #f59e0b;")
-            QMessageBox.warning(self, "ESI - Nuevos Permisos", "Se requieren permisos adicionales de ESI para las nuevas funciones.\n\nPor favor, vuelve a vincular tu personaje.")
+            QMessageBox.warning(
+                self, "ESI - Nuevos Permisos",
+                "Se requieren permisos adicionales de ESI para las nuevas funciones.\n\n"
+                "Por favor, vuelve a vincular tu personaje."
+            )
         elif res == "expired":
             self.lbl_status.setText("SESIÓN EXPIRADA. REAUTORIZACIÓN REQUERIDA.")
             self.lbl_status.setStyleSheet("color: #ef4444;")
