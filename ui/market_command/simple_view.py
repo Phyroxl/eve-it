@@ -13,6 +13,7 @@ from core.market_engine import apply_filters, apply_filters_with_diagnostics
 from core.market_models import FilterConfig
 from core.market_scan_diagnostics import MarketScanDiagnostics
 from core.config_manager import save_market_filters, load_market_filters
+from core.eve_icon_service import EveIconService
 
 class MarketSimpleView(QWidget):
     def __init__(self, parent=None):

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta
 
 from core.performance_engine import PerformanceEngine
+from core.eve_icon_service import EveIconService
 
 _log = logging.getLogger('eve.performance')
 

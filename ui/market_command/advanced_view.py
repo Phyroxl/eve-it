@@ -13,6 +13,7 @@ from core.market_models import FilterConfig
 from core.config_manager import save_market_filters, load_market_filters
 from ui.market_command.refresh_worker import MarketRefreshWorker
 from core.market_engine import apply_filters, apply_filters_with_diagnostics
+from core.eve_icon_service import EveIconService
 from ui.market_command.diagnostics_dialog import MarketDiagnosticsDialog
 
 _log = logging.getLogger('eve.market.advanced')
