@@ -32,7 +32,12 @@ venv.bak/
 # Local UI and Tax Overrides
 config/ui_*.json
 config/tax_overrides.json
+# ESI session tokens - never commit
 config/esi_session.json
+config/esi_session.json.corrupt.*
+config/*.session.json
+data/esi_session.json
+data/esi_session.json.corrupt.*
 
 # EVE iT Specific
 .main.pid
