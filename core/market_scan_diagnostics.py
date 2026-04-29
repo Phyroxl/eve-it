@@ -86,6 +86,12 @@ class MarketScanDiagnostics:
     icon_failed: int = 0
     icon_cache_hits: int = 0
     icon_cache_size: int = 0
+    icon_placeholders_used: int = 0
+    icon_endpoint_icon_success: int = 0
+    icon_endpoint_render_success: int = 0
+    icon_endpoint_bp_success: int = 0
+    icon_endpoint_bpc_success: int = 0
+    icon_all_endpoints_failed: int = 0
     icon_last_errors: List[str] = field(default_factory=list)
     
     # Market Orders Fetch Details
@@ -193,6 +199,13 @@ class MarketScanDiagnostics:
         report.append(f"Icon Loaded/Failed:       {self.icon_loaded} / {self.icon_failed}")
         report.append(f"Icon Cache Hits:          {self.icon_cache_hits}")
         report.append(f"Icon Cache Size:          {self.icon_cache_size}")
+        report.append(f"Placeholders Used:        {self.icon_placeholders_used}")
+        report.append(f"Success by Endpoint:")
+        report.append(f"  - /icon:                {self.icon_endpoint_icon_success}")
+        report.append(f"  - /render:              {self.icon_endpoint_render_success}")
+        report.append(f"  - /bp:                  {self.icon_endpoint_bp_success}")
+        report.append(f"  - /bpc:                 {self.icon_endpoint_bpc_success}")
+        report.append(f"All Endpoints Failed:     {self.icon_all_endpoints_failed}")
         if self.icon_last_errors:
             report.append("Last Icon Errors:")
             for err in self.icon_last_errors:
