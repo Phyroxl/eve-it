@@ -102,19 +102,19 @@ class MarketRefreshWorker(QThread):
             self.diagnostics.market_orders_elapsed = t_orders
             self.diagnostics.raw_orders_count = len(orders) if orders else 0
             
-            # Retrieve detailed timings if available (from ESI)
-            if self.region_id in self.client.market_orders_timings:
-                t_data = self.client.market_orders_timings[self.region_id]
-                self.diagnostics.market_orders_first_page_elapsed = t_data.get("first_page_elapsed", 0)
-                self.diagnostics.market_orders_remaining_pages_elapsed = t_data.get("remaining_pages_elapsed", 0)
-                self.diagnostics.market_orders_pages_total = t_data.get("pages_total", 0)
-                self.diagnostics.market_orders_pages_fetched = self.diagnostics.market_orders_pages_total
-            else:
-                # If cache hit, estimated pages
-                self.diagnostics.market_orders_pages_total = (self.diagnostics.raw_orders_count // 1000) + 1
-                self.diagnostics.market_orders_pages_fetched = self.diagnostics.market_orders_pages_total
-            
-            self.diagnostics.market_orders_workers = self.client.MARKET_ORDERS_WORKERS
+            # Retrieve detailed timings and source from ESIClient
+            t_data = self.client.market_orders_timings.get(self.region_id, {})
+            self.diagnostics.market_orders_source = t_data.get("source", "esi")
+            self.diagnostics.market_orders_cache_hit = t_data.get("cache_hit", False)
+            self.diagnostics.market_orders_cache_age_seconds = t_data.get("cache_age_seconds", 0)
+            self.diagnostics.market_orders_first_page_elapsed = t_data.get("first_page_elapsed", 0)
+            self.diagnostics.market_orders_remaining_pages_elapsed = t_data.get("remaining_pages_elapsed", 0)
+            self.diagnostics.market_orders_elapsed = t_data.get("total_elapsed", t_orders)
+            self.diagnostics.market_orders_pages_total = t_data.get("pages_total", 0)
+            self.diagnostics.market_orders_pages_fetched = t_data.get("pages_fetched", 0)
+            self.diagnostics.market_orders_pages_failed = t_data.get("pages_failed", 0)
+            self.diagnostics.market_orders_workers = t_data.get("workers", 0)
+            self.diagnostics.raw_orders_count = t_data.get("orders_count", len(orders))
 
             if not orders:
                 self.diagnostics.status = "Failed: No orders"

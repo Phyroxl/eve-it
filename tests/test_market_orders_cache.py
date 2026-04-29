@@ -22,7 +22,7 @@ class TestMarketOrdersCache(unittest.TestCase):
         self.cache.set(region_id, orders)
         
         # Manually expire by setting old timestamp
-        self.cache._cache[region_id]['timestamp'] = time.time() - 200
+        self.cache._cache[region_id]['timestamp'] = time.time() - 400
         
         cached = self.cache.get(region_id)
         self.assertIsNone(cached)

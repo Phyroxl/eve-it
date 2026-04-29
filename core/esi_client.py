@@ -3,6 +3,7 @@ import logging
 import time
 import requests
 from threading import Lock
+from .market_orders_cache import MarketOrdersCache
 
 logger = logging.getLogger('eve.esi')
 
@@ -131,23 +132,53 @@ class ESIClient:
     def market_orders(self, region_id: int):
         """
         Descarga todas las órdenes de mercado de una región usando paginación concurrente.
+        Utiliza MarketOrdersCache para evitar descargas redundantes.
         """
-        cache_key = f"market_orders_{region_id}"
-        cached = self.cache.get(cache_key)
+        t_start = time.time()
+        cache = MarketOrdersCache.instance()
+        cached = cache.get(region_id)
+        
         if cached is not None:
+            elapsed = time.time() - t_start
+            self.market_orders_timings[region_id] = {
+                "source": "memory_cache",
+                "cache_hit": True,
+                "cache_age_seconds": cache.get_age(region_id),
+                "first_page_elapsed": 0,
+                "remaining_pages_elapsed": 0,
+                "total_elapsed": elapsed,
+                "pages_total": 0,
+                "pages_fetched": 0,
+                "pages_failed": 0,
+                "workers": 0,
+                "orders_count": len(cached)
+            }
             return cached
 
         # 1. Obtener primera página para conocer el total
-        t0 = time.time()
+        t_p1_start = time.time()
         first_page_data, total_pages = self._fetch_market_page(region_id, 1)
-        t_first = time.time() - t0
+        t_first = time.time() - t_p1_start
         
         if first_page_data is None:
             return []
         
         all_orders = list(first_page_data)
         if total_pages <= 1:
-            self.cache.set(cache_key, all_orders, 300)
+            cache.set(region_id, all_orders)
+            self.market_orders_timings[region_id] = {
+                "source": "esi",
+                "cache_hit": False,
+                "cache_age_seconds": 0,
+                "first_page_elapsed": t_first,
+                "remaining_pages_elapsed": 0,
+                "total_elapsed": time.time() - t_start,
+                "pages_total": total_pages,
+                "pages_fetched": 1,
+                "pages_failed": 0,
+                "workers": 1,
+                "orders_count": len(all_orders)
+            }
             return all_orders
 
         # 2. Descarga concurrente de páginas restantes
@@ -174,21 +205,27 @@ class ESIClient:
                     logger.error(f"[MARKET ORDERS] Page {p} exception: {e}")
         
         t_batch = time.time() - t_batch_start
-        total_elapsed = time.time() - t0
+        total_elapsed = time.time() - t_start
         
         # Store timings for diagnostics
         self.market_orders_timings[region_id] = {
+            "source": "esi",
+            "cache_hit": False,
+            "cache_age_seconds": 0,
             "first_page_elapsed": t_first,
             "remaining_pages_elapsed": t_batch,
             "total_elapsed": total_elapsed,
             "pages_total": total_pages,
-            "effective_pages_per_second": total_pages / total_elapsed if total_elapsed > 0 else 0
+            "pages_fetched": total_pages - pages_failed,
+            "pages_failed": pages_failed,
+            "workers": self.MARKET_ORDERS_WORKERS,
+            "orders_count": len(all_orders)
         }
 
         logger.info(f"[MARKET ORDERS] Finished in {total_elapsed:.2f}s. Pages: {total_pages}, Orders: {len(all_orders)}, Failed: {pages_failed}")
         
         if all_orders and pages_failed == 0:
-            self.cache.set(cache_key, all_orders, 300)  # Cache 5 mins
+            cache.set(region_id, all_orders)
         return all_orders
 
     def market_history(self, region_id: int, type_id: int):

@@ -14,7 +14,7 @@ class MarketOrdersCache:
         if cls._instance is None:
             cls._instance = super(MarketOrdersCache, cls).__new__(cls)
             cls._instance._cache = {} # region_id -> {'orders': list, 'timestamp': float}
-            cls._instance.ttl = 120 # Default TTL: 2 minutes
+            cls._instance.ttl = 300 # Default TTL: 5 minutes
         return cls._instance
 
     @classmethod

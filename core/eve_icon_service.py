@@ -55,6 +55,7 @@ class EveIconService(QObject):
             "endpoint_render": 0,
             "endpoint_bp": 0,
             "endpoint_bpc": 0,
+            "endpoint_portrait": 0,
             "last_errors": []
         }
         self._initialized = True
@@ -167,11 +168,18 @@ class EveIconService(QObject):
         finally:
             reply.deleteLater()
 
+    def _endpoint_stat_key(self, endpoint_type: str) -> str:
+        return f"endpoint_{endpoint_type}"
+
     def _on_success(self, type_id: int, pixmap: QPixmap, endpoint_type: str):
         self.icon_cache[type_id] = pixmap
         self.stats["loaded"] += 1
-        if endpoint_type in self.stats:
-            self.stats[f"endpoint_{endpoint_type}"] += 1
+        
+        key = self._endpoint_stat_key(endpoint_type)
+        if key in self.stats:
+            self.stats[key] += 1
+        else:
+            logger.debug(f"[ICON DEBUG] Unknown endpoint stat key: {key}")
         
         callbacks = self.pending_requests.pop(type_id, [])
         for cb in callbacks:
