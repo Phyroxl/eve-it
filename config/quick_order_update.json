@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "dry_run": true,
   "confirm_required": true,
   "open_market_delay_ms": 1000,
