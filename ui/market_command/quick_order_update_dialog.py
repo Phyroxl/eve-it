@@ -514,13 +514,10 @@ class QuickOrderUpdateDialog(QDialog):
 
         # Guard: no selection + requires selection + no fallback allowed
         if selected is None and require and not allow_fb:
-            msg = (
-                "AUTOMATIZACIÓN DESACTIVADA en config/quick_order_update.json.\n"
-                "Actívala primero para usar esta función."
-            )
-            self._status_lbl.setText("Automatización desactivada")
+            msg = "No se ha seleccionado una ventana de destino. Selecciona un cliente EVE primero."
+            self._status_lbl.setText("Falta selección de ventana")
             self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
-            self._diag_report += f"\n\n[AUTOMATION]\n  Status: blocked\n  Reason: disabled_in_config\n\n{msg}"
+            self._diag_report += f"\n\n[AUTOMATION]\n  Status: blocked\n  Reason: missing_window_selection\n\n{msg}"
             self._report_edit.setPlainText(self._diag_report)
             return
 
@@ -657,6 +654,15 @@ class QuickOrderUpdateDialog(QDialog):
             # Allow UI to process events (close, etc) during sleeps
             from PySide6.QtWidgets import QApplication
             auto.set_poll_callback(lambda: QApplication.processEvents())
+            # HARDENING: Pass active run check callback to automation engine
+            auto.set_active_run_check(
+                lambda rid: (
+                    not self._automation_cancelled
+                    and self._automation_running
+                    and rid is not None
+                    and self._active_automation_run_id == rid
+                )
+            )
 
             result = auto.execute_quick_order_update(
                 order_data, price_text, selected_window=selected, 
@@ -689,9 +695,10 @@ class QuickOrderUpdateDialog(QDialog):
                             result_metadata["manual_region_source"] = "selected_now_retry"
                             result_metadata["visual_ocr_retry_after_profile_fail"] = True
                             
-                            # Re-run execution ONCE
+                            # Re-run execution ONCE - PRESERVE run_id
                             result = auto.execute_quick_order_update(
-                                order_data, price_text, selected_window=selected, manual_region=new_manual_region
+                                order_data, price_text, selected_window=selected,
+                                manual_region=new_manual_region, run_id=run_id
                             )
                         else:
                             _log.info("[QUICK UPDATE] user cancelled recalibration during retry")

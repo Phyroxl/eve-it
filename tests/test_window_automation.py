@@ -388,68 +388,76 @@ class TestSelectedWindowHandle(unittest.TestCase):
 # Experimental Paste tests
 # ---------------------------------------------------------------------------
 class TestExperimentalPaste(unittest.TestCase):
-
     def setUp(self):
         self._cfg_base = {
-            "enabled": True, "dry_run": False, "use_pywinauto": True,
+            "enabled": True,
+            "dry_run": False,
             "experimental_paste_enabled": True,
             "paste_into_focused_window": True,
             "clear_price_field_before_paste": True,
-            "paste_method": "ctrl+v",
             "pre_paste_delay_ms": 0,
+            "paste_price_delay_ms": 0,
             "client_window_title_contains": "EVE",
-            "require_window_selection": False,
-            "allow_title_fallback_without_selection": True,
+            "require_window_selection": True,
+            "allow_title_fallback_without_selection": False,
         }
         self._order = {"order_id": 1}
+        self._selected = {"handle": 12345, "title": "EVE - Test"}
 
+    @patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle")
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle")
     @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
-    @patch("core.window_automation.EVEWindowAutomation._find_via_pywinauto")
     @patch("pywinauto.keyboard.send_keys")
-    def test_paste_ctrl_v_executed(self, mock_keys, mock_find, mock_focus):
-        mock_find.return_value = MagicMock()
+    def test_paste_ctrl_v_executed(self, mock_keys, mock_focus, mock_conn, mock_fg):
+        mock_conn.return_value = MagicMock()
+        mock_fg.return_value = 12345
         auto = EVEWindowAutomation(self._cfg_base)
-        result = auto.execute_quick_order_update(self._order, "100.50")
+        result = auto.execute_quick_order_update(self._order, "100.50", selected_window=self._selected)
         
-        self.assertTrue(result["price_pasted"])
+        self.assertTrue(result["price_pasted"], f"Price should be pasted, reason: {result.get('paste_block_reason')}")
         self.assertIn("sent_ctrl_a", result["steps_executed"])
         self.assertIn("sent_ctrl_v", result["steps_executed"])
-        # Check mock calls: ^a then ^v
         self.assertEqual(mock_keys.call_count, 2)
         mock_keys.assert_any_call("^a")
         mock_keys.assert_any_call("^v")
 
+    @patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle")
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle")
     @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
-    @patch("core.window_automation.EVEWindowAutomation._find_via_pywinauto")
     @patch("pywinauto.keyboard.send_keys")
-    def test_paste_typewrite_executed(self, mock_keys, mock_find, mock_focus):
+    def test_paste_typewrite_executed(self, mock_keys, mock_focus, mock_conn, mock_fg):
         cfg = {**self._cfg_base, "paste_method": "typewrite"}
-        mock_find.return_value = MagicMock()
+        mock_conn.return_value = MagicMock()
+        mock_fg.return_value = 12345
         auto = EVEWindowAutomation(cfg)
-        result = auto.execute_quick_order_update(self._order, "100.50")
+        result = auto.execute_quick_order_update(self._order, "100.50", selected_window=self._selected)
         
-        self.assertTrue(result["price_pasted"])
+        self.assertTrue(result["price_pasted"], f"Price should be pasted, reason: {result.get('paste_block_reason')}")
         self.assertIn("typewrite_price", result["steps_executed"])
         mock_keys.assert_any_call("100.50")
 
+    @patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle")
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle")
     @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
-    @patch("core.window_automation.EVEWindowAutomation._find_via_pywinauto")
-    def test_paste_skipped_if_disabled(self, mock_find, mock_focus):
+    def test_paste_skipped_if_disabled(self, mock_focus, mock_conn, mock_fg):
         cfg = {**self._cfg_base, "experimental_paste_enabled": False}
-        mock_find.return_value = MagicMock()
+        mock_conn.return_value = MagicMock()
+        mock_fg.return_value = 12345
         auto = EVEWindowAutomation(cfg)
-        result = auto.execute_quick_order_update(self._order, "100.50")
+        result = auto.execute_quick_order_update(self._order, "100.50", selected_window=self._selected)
         
         self.assertFalse(result["price_pasted"])
         self.assertIn("experimental_paste_disabled", result["steps_skipped"])
 
+    @patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle")
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle")
     @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
-    @patch("core.window_automation.EVEWindowAutomation._find_via_pywinauto")
-    def test_paste_skipped_if_paste_into_focused_false(self, mock_find, mock_focus):
+    def test_paste_skipped_if_paste_into_focused_false(self, mock_focus, mock_conn, mock_fg):
         cfg = {**self._cfg_base, "paste_into_focused_window": False}
-        mock_find.return_value = MagicMock()
+        mock_conn.return_value = MagicMock()
+        mock_fg.return_value = 12345
         auto = EVEWindowAutomation(cfg)
-        result = auto.execute_quick_order_update(self._order, "100.50")
+        result = auto.execute_quick_order_update(self._order, "100.50", selected_window=self._selected)
         
         self.assertFalse(result["price_pasted"])
         self.assertIn("paste_into_focused_window_disabled", result["steps_skipped"])
@@ -1023,6 +1031,8 @@ class TestVisualOCRStrategy(unittest.TestCase):
                    return_value=True), \
              patch("core.window_automation.EVEWindowAutomation._check_image_difference",
                    return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle",
+                   return_value=99999), \
              patch("core.window_automation.EVEWindowAutomation._mouse_move"), \
              patch("core.window_automation.EVEWindowAutomation._mouse_click"), \
              patch("PIL.ImageGrab.grab", return_value=MagicMock()), \
@@ -1159,6 +1169,61 @@ class TestVisualOCRStrategy(unittest.TestCase):
         self.assertIn("visual_ocr_manual_region_enabled", result["config"])
         self.assertIn("visual_ocr_manual_region_prompt_each_time", result["config"])
         self.assertIn("visual_ocr_manual_region_save_profile", result["config"])
+
+
+class TestEVEWindowAutomationSafetyMicrofixes(unittest.TestCase):
+    """REQUIRED FIX 5 — Tests for safety microfixes."""
+
+    def setUp(self):
+        self.cfg = {
+            "enabled": True,
+            "dry_run": False,
+            "experimental_paste_enabled": True,
+            "paste_into_focused_window": True,
+            "require_window_selection": True,
+            "paste_method": "ctrl+v",
+            "pre_paste_delay_ms": 0,
+            "focus_client_delay_ms": 0,
+            "modify_order_strategy": "visual_ocr"
+        }
+        self.selected = {"handle": 12345, "title": "EVE - Test"}
+        self.order = {"price": 100.0}
+
+    def test_run_id_mismatch_blocks_paste_before_hotkeys(self):
+        auto = EVEWindowAutomation(self.cfg)
+        # Setup active run check that returns False (mismatch)
+        auto.set_active_run_check(lambda rid: False)
+        
+        result = auto._base_result("100.00")
+        result["automation_run_id"] = "abc123"
+        result["selected_window_handle"] = 12345
+        result["window_found"] = True
+        result["focused"] = True
+        # Even if OCR is "perfect"
+        result["visual_ocr_status"] = "unique_match"
+        result["context_menu_click_sent"] = True
+        result["modify_menu_click_sent"] = True
+        
+        with patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=12345), \
+             patch("pywinauto.keyboard.send_keys") as mock_keys:
+            
+            auto._handle_experimental_paste(result, "100.00", [])
+            
+            self.assertFalse(result.get("price_pasted"))
+            self.assertEqual(result.get("paste_block_reason"), "run_id_mismatch")
+            self.assertEqual(mock_keys.call_count, 0)
+
+    def test_paste_guard_already_consumed_releases_modifiers(self):
+        auto = EVEWindowAutomation(self.cfg)
+        auto._paste_guard_consumed = True
+        
+        with patch("core.window_automation.EVEWindowAutomation._release_modifiers") as mock_release:
+            result = auto._base_result("100.00")
+            auto._handle_experimental_paste(result, "100.00", [])
+            
+            self.assertFalse(result.get("price_pasted"))
+            self.assertEqual(result.get("paste_block_reason"), "paste_guard_already_consumed")
+            mock_release.assert_called()
 
 if __name__ == "__main__":
     unittest.main()

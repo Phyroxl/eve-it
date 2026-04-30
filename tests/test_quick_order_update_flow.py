@@ -600,7 +600,9 @@ class TestAutomationButton(unittest.TestCase):
         dlg._diag_report += "\n\n[AUTOMATION]\n  Enabled              : True\n  Status               : stale"
         dlg._report_edit.setPlainText(dlg._diag_report)
         
-        dlg.btn_phase2.click()
+        # Must mock selected_window to pass the selection guard
+        with patch.object(QuickOrderUpdateDialog, "_selected_window", return_value={"handle": 123, "score": 100}):
+            dlg.btn_phase2.click()
 
         status_text = dlg._status_lbl.text()
         self.assertGreater(len(status_text), 0)
@@ -770,8 +772,9 @@ class TestWindowSelectorUI(unittest.TestCase):
         from core.window_automation import EVEWindowAutomation
         orig_execute = EVEWindowAutomation.execute_quick_order_update
 
-        def capture_execute(self_inner, order_data, price_text, selected_window=None):
+        def capture_execute(self_inner, order_data, price_text, selected_window=None, manual_region=None, run_id=None):
             captured["selected_window"] = selected_window
+            captured["run_id"] = run_id
             return {
                 "status": "dry_run", "enabled": True, "dry_run": True,
                 "steps_executed": ["would_use_selected_window: EVE - Nina Herrera"],
@@ -803,6 +806,54 @@ class TestWindowSelectorUI(unittest.TestCase):
                                      open_market_callback=callback)
         dlg.btn_market.click()
         callback.assert_called_once_with(order)
+        dlg.close()
+
+    def test_visual_ocr_retry_preserves_run_id(self):
+        """REQUIRED FIX 5 — Retry execution must keep the same Automation Run ID."""
+        order = _FakeOrder()
+        order.analysis = _FakeAnalysis()
+        # Ensure item_name is set for order_data builder
+        order.item_name = "Test Item"
+        rec = build_order_update_recommendation(order, order.analysis)
+        
+        cfg = {
+            "enabled": True, "dry_run": False,
+            "visual_ocr_enabled": True,
+            "modify_order_strategy": "visual_ocr",
+            "require_window_selection": False,
+        }
+        
+        from ui.market_command.quick_order_update_dialog import QuickOrderUpdateDialog
+        dlg = QuickOrderUpdateDialog(order=order, recommendation=rec)
+        dlg._automation_cfg = cfg
+        
+        # Mock dependencies to reach the retry point
+        with patch("ui.market_command.quick_order_update_dialog.load_quick_order_update_regions", return_value={"sell": {"c": 1}}), \
+             patch.object(QuickOrderUpdateDialog, "_has_valid_calibration", return_value=True), \
+             patch.object(QuickOrderUpdateDialog, "_prompt_recalibration_retry", return_value=True), \
+             patch.object(QuickOrderUpdateDialog, "_prompt_single_side_calibration", return_value={"c": 2}), \
+             patch("core.window_automation.EVEWindowAutomation.execute_quick_order_update") as mock_execute, \
+             patch("ui.market_command.quick_order_update_dialog.format_price_for_clipboard", return_value="100.00"), \
+             patch.object(QuickOrderUpdateDialog, "_selected_window", return_value={"handle": 123, "score": 100}):
+            
+            # First execution returns a failure that triggers retry
+            mock_execute.side_effect = [
+                {"status": "partial", "visual_ocr_status": "not_found", "price_pasted": False, "errors": [], "steps_skipped": []},
+                {"status": "success", "price_pasted": True, "steps_executed": ["retry"]}
+            ]
+            
+            dlg.btn_phase2.click()
+            
+            # Check that execute_quick_order_update was called twice
+            self.assertEqual(mock_execute.call_count, 2)
+            
+            # Verify both calls used the same run_id
+            first_run_id = mock_execute.call_args_list[0].kwargs.get("run_id")
+            second_run_id = mock_execute.call_args_list[1].kwargs.get("run_id")
+            
+            self.assertIsNotNone(first_run_id)
+            self.assertEqual(first_run_id, second_run_id)
+            
         dlg.close()
 
 

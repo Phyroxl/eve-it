@@ -265,6 +265,7 @@ class EVEWindowAutomation:
         
         # Phase 3F: safety guards
         self._abort_check_callback = None
+        self._active_run_check_callback = None
         self._paste_guard_consumed = False
         self._process_pid = os.getpid()
         self._poll_callback = None
@@ -275,6 +276,13 @@ class EVEWindowAutomation:
         Usually passed from a UI to signal the user closed the window.
         """
         self._abort_check_callback = check_fn
+
+    def set_active_run_check(self, check_fn: callable):
+        """
+        Sets a function to be called to verify if the current execution is still the active one.
+        Should return True if active, False if blocked/replaced.
+        """
+        self._active_run_check_callback = check_fn
 
     def set_poll_callback(self, poll_fn: callable):
         """
@@ -287,6 +295,17 @@ class EVEWindowAutomation:
         if self._abort_check_callback and self._abort_check_callback():
             return True
         return False
+
+    def _active_run_matches(self, run_id: Optional[str]) -> bool:
+        """Verify the current run_id against the UI's active run tracking."""
+        if self._active_run_check_callback:
+            try:
+                # If callback exists, it MUST return True for us to continue.
+                # rid=None will usually fail the callback.
+                return bool(self._active_run_check_callback(run_id))
+            except Exception:
+                return False
+        return True
 
     def _safe_sleep(self, seconds: float):
         """Sleeps in small chunks while checking for abort and polling."""
@@ -1227,10 +1246,12 @@ class EVEWindowAutomation:
             result["safe_to_paste"] = False
             result["paste_block_reason"] = "paste_guard_already_consumed"
             result["steps_skipped"].append("paste_skipped_guard_consumed")
+            self._release_modifiers()
             return
 
         # 1. Gather foreground state
         selected_handle = result.get("selected_window_handle")
+        run_id = result.get("automation_run_id")
         foreground_handle = self._get_foreground_window_handle()
         foreground_title = self._get_foreground_window_title()
         
@@ -1242,6 +1263,7 @@ class EVEWindowAutomation:
         
         conditions = {
             "automation_cancelled":           not self._is_aborted(),
+            "run_id_mismatch":                self._active_run_matches(run_id),
             "selected_window_handle_missing": bool(selected_handle),
             "window_not_found":               result.get("window_found", False),
             "focus_failed":                   result.get("focused", False),
