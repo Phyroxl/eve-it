@@ -153,9 +153,10 @@ class EveMarketVisualDetector:
     """
 
     # Approximate RGB range for EVE's own-order row highlight (dark blue)
-    _BLUE_MIN = (15,  35,  70)
-    _BLUE_MAX = (90, 130, 210)
-    _BLUE_THRESHOLD = 0.12
+    # Default fallback values (will be overridden by config)
+    _BLUE_MIN = (5,   10,  35)
+    _BLUE_MAX = (80,  90,  130)
+    _BLUE_THRESHOLD = 0.02
 
     # Own-order marker: bright-blue pixels distinct from the dim row background
     _MARKER_MIN_B     = 140
@@ -169,20 +170,39 @@ class EveMarketVisualDetector:
         self.match_quantity        = bool(config.get("visual_ocr_match_quantity",           True))
         self.require_own_marker    = bool(config.get("visual_ocr_require_own_order_marker", True))
         self.side_section_required = bool(config.get("visual_ocr_side_section_required",    True))
+        
         # Section y-axis ratios
         self.sell_y_min_ratio   = float(config.get("visual_ocr_sell_section_y_min_ratio", 0.22))
         self.sell_y_max_ratio   = float(config.get("visual_ocr_sell_section_y_max_ratio", 0.58))
         self.buy_y_min_ratio    = float(config.get("visual_ocr_buy_section_y_min_ratio",  0.55))
         self.buy_y_max_ratio    = float(config.get("visual_ocr_buy_section_y_max_ratio",  0.88))
-        # Column x-axis ratios
-        self.price_x_min_ratio  = float(config.get("visual_ocr_price_col_x_min_ratio",   0.48))
+        
+        # Market Panel (The subset of the window containing the actual order book)
+        self.panel_x_min_ratio  = float(config.get("visual_ocr_market_panel_x_min_ratio", 0.36))
+        self.panel_x_max_ratio  = float(config.get("visual_ocr_market_panel_x_max_ratio", 0.70))
+
+        # Column x-axis ratios (RELATIVE to Market Panel)
+        self.price_x_min_ratio  = float(config.get("visual_ocr_price_col_x_min_ratio",   0.43))
         self.price_x_max_ratio  = float(config.get("visual_ocr_price_col_x_max_ratio",   0.68))
-        self.qty_x_min_ratio    = float(config.get("visual_ocr_qty_col_x_min_ratio",     0.38))
-        self.qty_x_max_ratio    = float(config.get("visual_ocr_qty_col_x_max_ratio",     0.52))
-        # Marker detection ratios
-        self.marker_x_min_ratio = float(config.get("visual_ocr_marker_x_min_ratio",      0.20))
-        self.marker_x_max_ratio = float(config.get("visual_ocr_marker_x_max_ratio",      0.32))
+        self.qty_x_min_ratio    = float(config.get("visual_ocr_qty_col_x_min_ratio",     0.25))
+        self.qty_x_max_ratio    = float(config.get("visual_ocr_qty_col_x_max_ratio",     0.45))
+        
+        # Marker detection ratios (RELATIVE to Market Panel)
+        self.marker_x_min_ratio = float(config.get("visual_ocr_marker_x_min_ratio",      0.00))
+        self.marker_x_max_ratio = float(config.get("visual_ocr_marker_x_max_ratio",      0.18))
         self.marker_required    = bool(config.get("visual_ocr_marker_required",           True))
+
+        # Dark Blue Detection Calibration
+        self.blue_r_min = int(config.get("visual_ocr_blue_r_min", 5))
+        self.blue_r_max = int(config.get("visual_ocr_blue_r_max", 80))
+        self.blue_g_min = int(config.get("visual_ocr_blue_g_min", 10))
+        self.blue_g_max = int(config.get("visual_ocr_blue_g_max", 90))
+        self.blue_b_min = int(config.get("visual_ocr_blue_b_min", 35))
+        self.blue_b_max = int(config.get("visual_ocr_blue_b_max", 130))
+        self.blue_b_over_r = int(config.get("visual_ocr_blue_b_over_r", 8))
+        self.blue_b_over_g = int(config.get("visual_ocr_blue_b_over_g", 5))
+        self.blue_row_threshold = float(config.get("visual_ocr_blue_row_threshold", 0.02))
+        self.blue_detection_mode = config.get("visual_ocr_blue_detection_mode", "rgb_or_relative")
 
     def detect_own_order_row(self, screenshot, order_data: dict,
                              window_rect: dict) -> dict:
@@ -241,19 +261,26 @@ class EveMarketVisualDetector:
         result["debug"]["section_y_max"] = section_y_max
         result["matched_side_section"]   = True
 
-        # 2. Pre-compute column pixel coordinates (always set for debug/calibration)
-        price_x0 = int(w * self.price_x_min_ratio)
-        price_x1 = int(w * self.price_x_max_ratio)
-        qty_x0   = int(w * self.qty_x_min_ratio)
-        qty_x1   = int(w * self.qty_x_max_ratio)
+        # 2. Determine Market Panel bounds (Search only within the list)
+        panel_x0 = int(w * self.panel_x_min_ratio)
+        panel_x1 = int(w * self.panel_x_max_ratio)
+        panel_w  = panel_x1 - panel_x0
+        result["debug"]["market_panel_x_min"] = panel_x0
+        result["debug"]["market_panel_x_max"] = panel_x1
+
+        # 3. Pre-compute column pixel coordinates (RELATIVE TO PANEL)
+        price_x0 = panel_x0 + int(panel_w * self.price_x_min_ratio)
+        price_x1 = panel_x0 + int(panel_w * self.price_x_max_ratio)
+        qty_x0   = panel_x0 + int(panel_w * self.qty_x_min_ratio)
+        qty_x1   = panel_x0 + int(panel_w * self.qty_x_max_ratio)
         result["debug"]["price_col_x_min"] = price_x0
         result["debug"]["price_col_x_max"] = price_x1
         result["debug"]["qty_col_x_min"]   = qty_x0
         result["debug"]["qty_col_x_max"]   = qty_x1
 
-        # 3. Find blue bands in section
+        # 4. Find blue bands in section (searching only inside panel width)
         candidate_bands = self._find_blue_row_bands(
-            img_array, section_y_min, section_y_max, 0, w
+            img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"]
         )
         result["debug"]["blue_bands_found"] = len(candidate_bands)
         result["debug"]["candidate_bands"]  = list(candidate_bands)
@@ -331,7 +358,7 @@ class EveMarketVisualDetector:
         return result
 
     def _find_blue_row_bands(self, img_array, y_start: int, y_end: int,
-                              x_start: int, x_end: int) -> list:
+                              x_start: int, x_end: int, debug: dict) -> list:
         """
         Find horizontal pixel bands matching EVE's own-order blue color.
         Returns list of (y_min, y_max) tuples in original image coordinates.
@@ -344,29 +371,59 @@ class EveMarketVisualDetector:
         g = region[:, :, 1].astype(int)
         b = region[:, :, 2].astype(int)
 
-        rmin, rmax = self._BLUE_MIN[0], self._BLUE_MAX[0]
-        gmin, gmax = self._BLUE_MIN[1], self._BLUE_MAX[1]
-        bmin, bmax = self._BLUE_MIN[2], self._BLUE_MAX[2]
-
-        blue_mask = (
-            (r >= rmin) & (r <= rmax) &
-            (g >= gmin) & (g <= gmax) &
-            (b >= bmin) & (b <= bmax) &
-            (b > r + 10) & (b > g + 5)
+        # RGB thresholds
+        rgb_match = (
+            (r >= self.blue_r_min) & (r <= self.blue_r_max) &
+            (g >= self.blue_g_min) & (g <= self.blue_g_max) &
+            (b >= self.blue_b_min) & (b <= self.blue_b_max)
         )
-        width     = x_end - x_start
-        threshold = max(1, int(width * self._BLUE_THRESHOLD))
-        blue_rows = _np.where(blue_mask.sum(axis=1) >= threshold)[0]
+        
+        # Relative blue dominance
+        rel_match = (
+            (b >= self.blue_b_min) &
+            (b > r + self.blue_b_over_r) &
+            (b > g + self.blue_b_over_g)
+        )
 
+        if self.blue_detection_mode == "rgb":
+            blue_mask = rgb_match
+        elif self.blue_detection_mode == "relative":
+            blue_mask = rel_match
+        else: # rgb_or_relative
+            blue_mask = rgb_match | rel_match
+
+        # Analyze blue density per row
+        row_blue_counts = blue_mask.sum(axis=1)
+        width = x_end - x_start
+        threshold = max(1, int(width * self.blue_row_threshold))
+        blue_rows = _np.where(row_blue_counts >= threshold)[0]
+
+        # Debug info
+        debug["sample_dark_blue_pixels_count"] = int(blue_mask.sum())
+        if blue_mask.any():
+            avg_b = int(_np.mean(b[blue_mask]))
+            avg_g = int(_np.mean(g[blue_mask]))
+            avg_r = int(_np.mean(r[blue_mask]))
+            debug["average_blue_candidate_rgb"] = [avg_r, avg_g, avg_b]
+            debug["max_blue_candidate_rgb"] = [int(r[blue_mask].max()), int(g[blue_mask].max()), int(b[blue_mask].max())]
+            debug["min_blue_candidate_rgb"] = [int(r[blue_mask].min()), int(g[blue_mask].min()), int(b[blue_mask].min())]
+
+        # Save top rows for calibration if nothing found
         if len(blue_rows) == 0:
+            top_idx = _np.argsort(row_blue_counts)[-5:][::-1]
+            debug["top_blue_candidate_rows"] = [
+                {"y": int(y_start + i), "blue_pixels": int(row_blue_counts[i])} 
+                for i in top_idx if row_blue_counts[i] > 0
+            ]
             return []
 
+        # Group rows into bands
         bands      = []
         band_start = int(blue_rows[0])
         prev       = int(blue_rows[0])
         for idx in blue_rows[1:]:
             idx = int(idx)
-            if idx - prev > 5:
+            if idx - prev > 5: # Gap of more than 5 pixels starts new band
                 bands.append((y_start + band_start, y_start + prev + 1))
                 band_start = idx
             prev = idx
@@ -377,13 +434,15 @@ class EveMarketVisualDetector:
                                   w: int) -> bool:
         """
         Detect own-order marker in the left zone of a row.
-
-        Checks for bright-blue pixels (the icon/check distinct from the
-        dim dark-blue row background).  Returns True if enough qualifying
-        pixels are found in the marker zone.
+        Coordinates are relative to the Market Panel.
         """
-        mx0 = int(w * self.marker_x_min_ratio)
-        mx1 = int(w * self.marker_x_max_ratio)
+        panel_x0 = int(w * self.panel_x_min_ratio)
+        panel_x1 = int(w * self.panel_x_max_ratio)
+        panel_w  = panel_x1 - panel_x0
+
+        mx0 = panel_x0 + int(panel_w * self.marker_x_min_ratio)
+        mx1 = panel_x0 + int(panel_w * self.marker_x_max_ratio)
+        
         if mx0 >= mx1:
             return False
         region = img_array[y_min:y_max, mx0:mx1]

@@ -345,7 +345,7 @@ class TestFindBlueRowBands(unittest.TestCase):
     def test_empty_array_returns_empty(self):
         det = _det()
         empty = self._np.zeros((0, 10, 3), dtype="uint8")
-        result = det._find_blue_row_bands(empty, 0, 0, 0, 10)
+        result = det._find_blue_row_bands(empty, 0, 0, 0, 10, {})
         self.assertEqual(result, [])
 
     def test_no_blue_pixels_returns_empty(self):
@@ -353,7 +353,7 @@ class TestFindBlueRowBands(unittest.TestCase):
         arr = self._np.zeros((50, 100, 3), dtype="uint8")
         # All red pixels
         arr[:, :, 0] = 200
-        result = det._find_blue_row_bands(arr, 0, 50, 0, 100)
+        result = det._find_blue_row_bands(arr, 0, 50, 0, 100, {})
         self.assertEqual(result, [])
 
     def test_blue_row_detected(self):
@@ -363,7 +363,7 @@ class TestFindBlueRowBands(unittest.TestCase):
         arr[10:21, :, 0] = 40   # R
         arr[10:21, :, 1] = 80   # G
         arr[10:21, :, 2] = 150  # B
-        result = det._find_blue_row_bands(arr, 0, 50, 0, 100)
+        result = det._find_blue_row_bands(arr, 0, 50, 0, 100, {})
         self.assertGreater(len(result), 0)
         band = result[0]
         self.assertLessEqual(band[0], 10)
@@ -378,7 +378,7 @@ class TestFindBlueRowBands(unittest.TestCase):
         arr[60:66, :, 0] = 40
         arr[60:66, :, 1] = 80
         arr[60:66, :, 2] = 150
-        result = det._find_blue_row_bands(arr, 0, 100, 0, 100)
+        result = det._find_blue_row_bands(arr, 0, 100, 0, 100, {})
         self.assertEqual(len(result), 2)
 
 
@@ -400,7 +400,7 @@ class TestSectionBasedDetection(unittest.TestCase):
         calls = []
 
         orig = det._find_blue_row_bands
-        def spy(arr, y0, y1, x0, x1):
+        def spy(arr, y0, y1, x0, x1, debug):
             calls.append((y0, y1))
             return []
         det._find_blue_row_bands = spy
@@ -439,6 +439,8 @@ class TestColumnRatios(unittest.TestCase):
 
     def test_column_coords_in_debug(self):
         det = _det({
+            "visual_ocr_market_panel_x_min_ratio": 0.0,
+            "visual_ocr_market_panel_x_max_ratio": 1.0, # Full width for simplicity
             "visual_ocr_price_col_x_min_ratio": 0.50,
             "visual_ocr_price_col_x_max_ratio": 0.70,
             "visual_ocr_qty_col_x_min_ratio":   0.30,
@@ -455,10 +457,10 @@ class TestColumnRatios(unittest.TestCase):
             result = det.detect_own_order_row(screenshot, order, window_rect)
 
         dbg = result["debug"]
-        self.assertEqual(dbg["price_col_x_min"], int(200 * 0.50))
-        self.assertEqual(dbg["price_col_x_max"], int(200 * 0.70))
-        self.assertEqual(dbg["qty_col_x_min"],   int(200 * 0.30))
-        self.assertEqual(dbg["qty_col_x_max"],   int(200 * 0.45))
+        self.assertEqual(dbg["price_col_x_min"], 100) # 0 + 200*0.5
+        self.assertEqual(dbg["price_col_x_max"], 140) # 0 + 200*0.7
+        self.assertEqual(dbg["qty_col_x_min"],   60)  # 0 + 200*0.3
+        self.assertEqual(dbg["qty_col_x_max"],   90)  # 0 + 200*0.45
 
 
 class TestMarkerRequired(unittest.TestCase):
@@ -528,6 +530,106 @@ class TestNoPytesseractReportsBlueBands(unittest.TestCase):
         self.assertEqual(result["candidates_count"], 2)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["error"], "ocr_backend_unavailable")
+
+
+class TestDarkBlueDetection(unittest.TestCase):
+    """Test detection of dark blue rows typical of EVE own orders."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_detects_dark_eve_blue_row(self):
+        # RGB (14, 23, 57) is very dark blue
+        det = _det({
+            "visual_ocr_blue_detection_mode": "rgb_or_relative",
+            "visual_ocr_blue_r_max": 80,
+            "visual_ocr_blue_b_min": 35,
+        })
+        arr = self._np.zeros((50, 100, 3), dtype="uint8")
+        # Paint a row with real EVE dark blue
+        arr[10:20, :, 0] = 14
+        arr[10:20, :, 1] = 23
+        arr[10:20, :, 2] = 57
+        
+        result = det._find_blue_row_bands(arr, 0, 50, 0, 100, {})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], (10, 20))
+
+    def test_relative_blue_detection_mode(self):
+        # Even if RGB range is slightly off, relative mode should catch it if B is dominant
+        det = _det({
+            "visual_ocr_blue_detection_mode": "relative",
+            "visual_ocr_blue_b_over_r": 5,
+            "visual_ocr_blue_b_over_g": 5,
+            "visual_ocr_blue_b_min": 30
+        })
+        arr = self._np.zeros((50, 100, 3), dtype="uint8")
+        # 10, 10, 40 -> B is 30 units over R/G
+        arr[5:10, :, 0] = 10
+        arr[5:10, :, 1] = 10
+        arr[5:10, :, 2] = 40
+        
+        result = det._find_blue_row_bands(arr, 0, 50, 0, 100, {})
+        self.assertEqual(len(result), 1)
+
+    def test_blue_detection_uses_market_panel_width(self):
+        # The blue row only occupies 30% of the screen (the market panel)
+        det = _det({
+            "visual_ocr_market_panel_x_min_ratio": 0.30,
+            "visual_ocr_market_panel_x_max_ratio": 0.60,
+            "visual_ocr_blue_row_threshold": 0.02
+        })
+        w, h = 1000, 500
+        arr = self._np.zeros((h, w, 3), dtype="uint8")
+        
+        # Panel is x=300 to x=600 (width=300)
+        # 2% of 300 is 6 pixels. Let's paint 20 pixels blue in the panel.
+        p0, p1 = 300, 600
+        arr[100:110, p0:p0+20, 0] = 20
+        arr[100:110, p0:p0+20, 1] = 20
+        arr[100:110, p0:p0+20, 2] = 80
+        
+        # Searching whole width (0 to 1000) would need 20 pixels (2% of 1000).
+        # But we search in panel (300 to 600) so we only need 6 pixels (2% of 300).
+        result = det._find_blue_row_bands(arr, 0, h, p0, p1, {})
+        self.assertEqual(len(result), 1)
+
+
+class TestPanelRelativeColumns(unittest.TestCase):
+    """Verify OCR columns are calculated relative to market panel."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_ocr_columns_are_panel_relative(self):
+        det = _det({
+            "visual_ocr_market_panel_x_min_ratio": 0.10,
+            "visual_ocr_market_panel_x_max_ratio": 0.90,
+            "visual_ocr_price_col_x_min_ratio": 0.50, # middle of the panel
+            "visual_ocr_price_col_x_max_ratio": 0.60,
+        })
+        # Window width 1000 -> Panel width 800 (from 100 to 900)
+        # Price col should start at 100 + (800 * 0.50) = 500
+        order = {"price": 100, "volume_remain": 1, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 1000, "height": 500}
+        screenshot = self._np.zeros((500, 1000, 3), dtype="uint8")
+
+        with patch.object(det, "_find_blue_row_bands", return_value=[]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+        
+        dbg = result["debug"]
+        self.assertEqual(dbg["market_panel_x_min"], 100)
+        self.assertEqual(dbg["market_panel_x_max"], 900)
+        self.assertEqual(dbg["price_col_x_min"], 500)
+        self.assertEqual(dbg["price_col_x_max"], 580) # 500 + 800*0.10
 
 
 if __name__ == "__main__":

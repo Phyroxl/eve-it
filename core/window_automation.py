@@ -202,6 +202,20 @@ class EVEWindowAutomation:
         self.visual_ocr_marker_x_min_ratio = float(config.get("visual_ocr_marker_x_min_ratio",       0.20))
         self.visual_ocr_marker_x_max_ratio = float(config.get("visual_ocr_marker_x_max_ratio",       0.32))
         self.visual_ocr_marker_required    = bool(config.get("visual_ocr_marker_required",            True))
+        # Phase 3C hardening: Blue detection calibration
+        self.visual_ocr_blue_r_min = int(config.get("visual_ocr_blue_r_min", 5))
+        self.visual_ocr_blue_r_max = int(config.get("visual_ocr_blue_r_max", 80))
+        self.visual_ocr_blue_g_min = int(config.get("visual_ocr_blue_g_min", 10))
+        self.visual_ocr_blue_g_max = int(config.get("visual_ocr_blue_g_max", 90))
+        self.visual_ocr_blue_b_min = int(config.get("visual_ocr_blue_b_min", 35))
+        self.visual_ocr_blue_b_max = int(config.get("visual_ocr_blue_b_max", 130))
+        self.visual_ocr_blue_b_over_r = int(config.get("visual_ocr_blue_b_over_r", 8))
+        self.visual_ocr_blue_b_over_g = int(config.get("visual_ocr_blue_b_over_g", 5))
+        self.visual_ocr_blue_row_threshold = float(config.get("visual_ocr_blue_row_threshold", 0.02))
+        self.visual_ocr_blue_detection_mode = config.get("visual_ocr_blue_detection_mode", "rgb_or_relative")
+        # Phase 3C hardening: Market Panel limits
+        self.visual_ocr_market_panel_x_min_ratio = float(config.get("visual_ocr_market_panel_x_min_ratio", 0.36))
+        self.visual_ocr_market_panel_x_max_ratio = float(config.get("visual_ocr_market_panel_x_max_ratio", 0.70))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -852,6 +866,18 @@ class EVEWindowAutomation:
             "visual_ocr_marker_x_min_ratio":        self.visual_ocr_marker_x_min_ratio,
             "visual_ocr_marker_x_max_ratio":        self.visual_ocr_marker_x_max_ratio,
             "visual_ocr_marker_required":           self.visual_ocr_marker_required,
+            "visual_ocr_blue_r_min":                self.visual_ocr_blue_r_min,
+            "visual_ocr_blue_r_max":                self.visual_ocr_blue_r_max,
+            "visual_ocr_blue_g_min":                self.visual_ocr_blue_g_min,
+            "visual_ocr_blue_g_max":                self.visual_ocr_blue_g_max,
+            "visual_ocr_blue_b_min":                self.visual_ocr_blue_b_min,
+            "visual_ocr_blue_b_max":                self.visual_ocr_blue_b_max,
+            "visual_ocr_blue_b_over_r":             self.visual_ocr_blue_b_over_r,
+            "visual_ocr_blue_b_over_g":             self.visual_ocr_blue_b_over_g,
+            "visual_ocr_blue_row_threshold":        self.visual_ocr_blue_row_threshold,
+            "visual_ocr_blue_detection_mode":       self.visual_ocr_blue_detection_mode,
+            "visual_ocr_market_panel_x_min_ratio":  self.visual_ocr_market_panel_x_min_ratio,
+            "visual_ocr_market_panel_x_max_ratio":  self.visual_ocr_market_panel_x_max_ratio,
         }
 
     def _save_debug_screenshot(self, screenshot, result: dict) -> None:
@@ -871,7 +897,7 @@ class EVEWindowAutomation:
         """Save annotated debug screenshot with detection overlay. Silent on failure."""
         try:
             import os
-            from PIL import Image, ImageDraw
+            from PIL import Image, ImageDraw, ImageFont
             if hasattr(screenshot, 'shape'):
                 import numpy as _np
                 img = Image.fromarray(screenshot.astype('uint8'))
@@ -884,26 +910,53 @@ class EVEWindowAutomation:
             dbg  = detection.get("debug", {})
             w, h = img.size
 
+            # 1. Draw Section rectangle (Yellow)
             sy_min = dbg.get("section_y_min")
             sy_max = dbg.get("section_y_max")
             if sy_min is not None and sy_max is not None:
                 draw.rectangle([0, sy_min, w - 1, sy_max], outline=(255, 255, 0), width=2)
+                draw.text((10, sy_min + 5), f"SECTION: {dbg.get('section_used', 'unknown').upper()}", fill=(255, 255, 0))
 
-            for band in dbg.get("candidate_bands", []):
-                draw.rectangle([0, band[0], w - 1, band[1]], outline=(100, 100, 255), width=1)
+            # 2. Draw Market Panel limits (Gray)
+            px_min = dbg.get("market_panel_x_min")
+            px_max = dbg.get("market_panel_x_max")
+            if px_min is not None and px_max is not None:
+                draw.line([px_min, 0, px_min, h - 1], fill=(128, 128, 128), width=1)
+                draw.line([px_max, 0, px_max, h - 1], fill=(128, 128, 128), width=1)
+                draw.text((px_min + 5, 10), "MARKET PANEL", fill=(128, 128, 128))
 
-            matched_band = dbg.get("matched_band")
-            if matched_band:
-                draw.rectangle([0, matched_band[0], w - 1, matched_band[1]],
-                               outline=(0, 255, 0), width=2)
-
-            for x0, x1, color in (
-                (dbg.get("price_col_x_min"), dbg.get("price_col_x_max"), (255, 128, 0)),
-                (dbg.get("qty_col_x_min"),   dbg.get("qty_col_x_max"),   (0, 200, 255)),
+            # 3. Draw Column zones (relative to panel)
+            for x0, x1, color, label in (
+                (dbg.get("price_col_x_min"), dbg.get("price_col_x_max"), (255, 128, 0), "PRICE"),
+                (dbg.get("qty_col_x_min"),   dbg.get("qty_col_x_max"),   (0, 200, 255), "QTY"),
             ):
                 if x0 is not None and x1 is not None:
-                    draw.line([x0, 0, x0, h - 1], fill=color, width=1)
-                    draw.line([x1, 0, x1, h - 1], fill=color, width=1)
+                    # Draw dotted vertical lines or shaded region
+                    draw.rectangle([x0, sy_min or 0, x1, sy_max or h-1], outline=color, width=1)
+                    draw.text((x0 + 2, (sy_min or 10) + 20), label, fill=color)
+
+            # 4. Candidate bands (Blue)
+            for band in dbg.get("candidate_bands", []):
+                draw.rectangle([px_min or 0, band[0], px_max or w-1, band[1]], outline=(100, 100, 255), width=1)
+
+            # 5. Matched band (Green)
+            matched_band = dbg.get("matched_band")
+            if matched_band:
+                draw.rectangle([px_min or 0, matched_band[0], px_max or w-1, matched_band[1]],
+                               outline=(0, 255, 0), width=3)
+                draw.text((px_min or 10, matched_band[0] - 15), "UNIQUE MATCH", fill=(0, 255, 0))
+
+            # Summary text
+            summary = [
+                f"Size: {w}x{h}",
+                f"Status: {detection.get('status')}",
+                f"Bands: {dbg.get('blue_bands_found', 0)}",
+                f"Blue Pixels: {dbg.get('sample_dark_blue_pixels_count', 0)}",
+                f"Price OCR: {detection.get('price_text')}",
+                f"Qty OCR: {detection.get('quantity_text')}",
+            ]
+            for i, txt in enumerate(summary):
+                draw.text((10, 10 + i*15), txt, fill=(255, 255, 255))
 
             os.makedirs(self.visual_ocr_debug_dir, exist_ok=True)
             ts   = int(time.time())

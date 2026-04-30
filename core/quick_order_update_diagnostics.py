@@ -243,6 +243,15 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Section   : {_b(automation.get('visual_ocr_section_used'))}")
     lines.append(f"  Visual OCR Sec Y Min : {_b(automation.get('visual_ocr_section_y_min'))}")
     lines.append(f"  Visual OCR Sec Y Max : {_b(automation.get('visual_ocr_section_y_max'))}")
+    dbg = automation.get("visual_ocr_debug") or {}
+    lines.append(f"  Visual OCR Panel X   : {dbg.get('market_panel_x_min', 'N/A')} to {dbg.get('market_panel_x_max', 'N/A')}")
+    lines.append(f"  Visual OCR Blue Pix  : {dbg.get('sample_dark_blue_pixels_count', 'N/A')}")
+    lines.append(f"  Visual OCR Avg Color : {dbg.get('average_blue_candidate_rgb', 'N/A')}")
+    top_rows = dbg.get("top_blue_candidate_rows")
+    if top_rows:
+        lines.append("  Visual OCR Top Rows  :")
+        for tr in top_rows:
+            lines.append(f"    y={tr.get('y')} pix={tr.get('blue_pixels')}")
     lines.append(f"  Visual OCR Own Marker: {_b(automation.get('visual_ocr_own_marker_matched'))}")
     lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
