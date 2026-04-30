@@ -205,6 +205,7 @@ def _format_automation_section(automation: dict) -> list:
 
     lines = []
     lines.append("[AUTOMATION]")
+    lines.append(f"  Automation Run ID    : {_b(automation.get('automation_run_id'))}")
     lines.append(f"  Enabled              : {_b(automation.get('enabled'))}")
     lines.append(f"  Dry Run              : {_b(automation.get('dry_run'))}")
     lines.append(f"  Status               : {_b(automation.get('status'))}")

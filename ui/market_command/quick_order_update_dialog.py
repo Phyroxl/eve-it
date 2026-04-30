@@ -71,6 +71,7 @@ class QuickOrderUpdateDialog(QDialog):
         self._window_candidates: list = []   # list of candidate dicts from list_candidate_windows
         self._automation_running = False
         self._automation_cancelled = False
+        self._last_automation_run_id = None
 
         # Load automation config once at init
         try:
@@ -520,8 +521,9 @@ class QuickOrderUpdateDialog(QDialog):
             self._report_edit.setPlainText(self._diag_report)
             return
 
-        # Re-entry guard
         if self._automation_running:
+            self._status_lbl.setText("Automatización ya en curso; espera a que finalice.")
+            self._status_lbl.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:800;")
             _log.warning("[QUICK UPDATE] automation already running — ignoring second click")
             return
         
@@ -529,25 +531,25 @@ class QuickOrderUpdateDialog(QDialog):
             _log.warning("[QUICK UPDATE] dialog was cancelled/closed — aborting")
             return
 
+        import uuid
+        run_id = uuid.uuid4().hex[:8]
+        self._last_automation_run_id = run_id
         self._automation_running = True
-        self._status_lbl.setText("Ejecutando automatización experimental...")
+
+        self._status_lbl.setText(f"Ejecutando [{run_id}]...")
         self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
 
         try:
             # Disable button to prevent re-clicks
-            sender = self.sender()
-            if isinstance(sender, QPushButton):
-                sender.setEnabled(False)
+            self.btn_phase2.setEnabled(False)
 
-            self._execute_automation_flow(cfg)
+            self._execute_automation_flow(cfg, run_id)
             
         finally:
             self._automation_running = False
-            sender = self.sender()
-            if isinstance(sender, QPushButton):
-                sender.setEnabled(True)
+            self.btn_phase2.setEnabled(True)
 
-    def _execute_automation_flow(self, cfg):
+    def _execute_automation_flow(self, cfg, run_id):
         """Internal flow moved from _on_automate for cleaner try/finally wrapping."""
         selected = self._selected_window()
         if not selected or selected.get("score", 0) <= 0:
@@ -638,7 +640,8 @@ class QuickOrderUpdateDialog(QDialog):
             auto.set_poll_callback(lambda: QApplication.processEvents())
 
             result = auto.execute_quick_order_update(
-                order_data, price_text, selected_window=selected, manual_region=manual_region
+                order_data, price_text, selected_window=selected, 
+                manual_region=manual_region, run_id=run_id
             )
             
             # 3. Handle Saved Profile Failure and Retry

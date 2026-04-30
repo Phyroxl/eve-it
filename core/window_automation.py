@@ -194,6 +194,8 @@ class EVEWindowAutomation:
         self.visual_ocr_require_own_marker    = bool(config.get("visual_ocr_require_own_order_marker",     True))
         self.visual_ocr_side_section_required = bool(config.get("visual_ocr_side_section_required",        True))
         self.visual_ocr_allow_unverified_paste = bool(config.get("visual_ocr_allow_unverified_paste",      False))
+        if not self.visual_ocr_allow_unverified_paste:
+            self.visual_ocr_allow_unverified_paste = bool(config.get("visual_ocr_paste_after_unverified_modify_click", False))
         self.visual_ocr_context_menu_delay    = int(config.get("visual_ocr_context_menu_delay_ms",         400))
         self.visual_ocr_modify_dialog_delay   = int(config.get("visual_ocr_modify_dialog_delay_ms",        700))
         self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          20))
@@ -306,7 +308,8 @@ class EVEWindowAutomation:
 
     def execute_quick_order_update(self, order_data: dict, recommended_price_text: str,
                                    selected_window: Optional[dict] = None,
-                                   manual_region: Optional[dict] = None) -> dict:
+                                   manual_region: Optional[dict] = None,
+                                   run_id: Optional[str] = None) -> dict:
         """
         Run automation sequence. Returns diagnostic dict.
         NEVER executes the final order-confirm action.
@@ -317,6 +320,7 @@ class EVEWindowAutomation:
             selected_window:         candidate dict from list_candidate_windows(), or None
         """
         result = self._base_result(recommended_price_text)
+        result["automation_run_id"] = run_id
         result["config"]   = self.config
         result["enabled"]  = self.enabled
         result["dry_run"]  = self.dry_run
@@ -1357,6 +1361,7 @@ class EVEWindowAutomation:
             "foreground_matches_selected":             False,
             "paste_block_reason":                      None,
             "automation_cancelled":                    False,
+            "automation_run_id":                       None,
         }
 
     def _release_modifiers(self) -> None:
