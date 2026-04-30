@@ -109,6 +109,9 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_context_menu_verify_region_w":   260,
     "visual_ocr_context_menu_verify_region_h":   240,
     "visual_ocr_context_menu_min_changed_pixels": 500,
+    "visual_ocr_modify_menu_hover_ms":           250,
+    "visual_ocr_modify_click_retry_if_menu_closed": True,
+    "visual_ocr_modify_click_max_retries":       1,
 }
 
 _RATIO_KEYS = (
@@ -137,6 +140,7 @@ _DELAY_KEYS = (
     "visual_ocr_right_click_retry_delay_ms",
     "visual_ocr_pre_right_click_hover_ms",
     "visual_ocr_pre_right_click_left_click_delay_ms",
+    "visual_ocr_modify_menu_hover_ms",
 )
 _MAX_DELAY_MS = 30_000
 
@@ -237,7 +241,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_marker_required", "visual_ocr_debug_save_crops",
                 "visual_ocr_manual_region_enabled", "visual_ocr_manual_region_prompt_each_time",
                 "visual_ocr_manual_region_save_profile",
-                "visual_ocr_paste_after_unverified_modify_click"):
+                "visual_ocr_paste_after_unverified_modify_click",
+                "visual_ocr_modify_click_retry_if_menu_closed"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -298,7 +303,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_manual_price_left_padding_px", "visual_ocr_manual_price_right_padding_px",
                 "visual_ocr_quantity_suffix_min_digits", "visual_ocr_modify_menu_offset_x",
                 "visual_ocr_modify_menu_offset_y", "visual_ocr_context_menu_verify_region_w",
-                "visual_ocr_context_menu_verify_region_h", "visual_ocr_context_menu_min_changed_pixels"):
+                "visual_ocr_context_menu_verify_region_h", "visual_ocr_context_menu_min_changed_pixels",
+                "visual_ocr_modify_click_max_retries"):
         if key in config:
             try:
                 result[key] = int(config[key])

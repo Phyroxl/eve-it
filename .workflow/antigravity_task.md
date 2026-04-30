@@ -2780,3 +2780,46 @@ Se han implementado mejoras crticas de seguridad en el motor de automatizacin pa
 - [ ] Verificar que no quedan teclas \Ctrl\ pegadas tras un aborto o bloqueo.
 - [ ] **Invariant**: \Final Confirm Action : NOT_EXECUTED_BY_DESIGN\ (Confirmado).
 
+
+---
+
+## SesiÃ³n 26 â€” 2026-04-30
+
+### STATUS: COMPLETADO âœ…
+
+### FASE COMPLETADA: EstabilizaciÃ³n y Hardening de Visual OCR (Context Menu Robustness)
+
+### RESUMEN
+Se ha realizado una intervenciÃ³n crÃ­tica para estabilizar la interacciÃ³n con el menÃº contextual de EVE Online durante la automatizaciÃ³n de Visual OCR, resolviendo cierres prematuros del menÃº y garantizando una ejecuciÃ³n determinista.
+
+**Mejoras clave:**
+1. **Ciclo de InteracciÃ³n Reforzado**: Refactorizado el flujo de click en "Modificar Pedido" a una secuencia estricta de **Move -> Wait (Hover) -> Verify -> Click**.
+2. **Pre-click Verification**: El sistema ahora realiza una captura de pantalla ultrarrÃ¡pida y comparaciÃ³n de pÃ­xeles justo antes de hacer click en "Modificar Pedido" para asegurar que el menÃº sigue abierto.
+3. **LÃ³gica de Reintento Inteligente**: Si el menÃº se cierra antes del click final, el sistema realiza un reintento controlado (configurable) re-abriendo el menÃº contextual antes de desistir.
+4. **Mouse Automation Robustness**: Estandarizados todos los movimientos de ratÃ³n con duraciones mÃ­nimas y pausas de estabilizaciÃ³n para evitar "racing conditions" con el motor de renderizado de EVE.
+5. **Nuevos ParÃ¡metros de ConfiguraciÃ³n**:
+    - isual_ocr_modify_menu_hover_ms (250ms por defecto): Tiempo de permanencia sobre la opciÃ³n antes de clickar.
+    - isual_ocr_modify_click_retry_if_menu_closed (True): HabilitaciÃ³n de reintentos.
+    - isual_ocr_modify_click_max_retries (1): LÃ­mite de reintentos de apertura de menÃº.
+6. **DiagnÃ³sticos Extendidos**: El reporte de automatizaciÃ³n ahora incluye telemetrÃ­a detallada sobre tiempos de hover, estado de re-verificaciÃ³n y conteo de reintentos.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/window_automation.py` | Implementada secuencia Move-Wait-Verify-Click, ayuda de verificaciÃ³n de menÃº y lÃ³gica de reintento. Actualizada inicializaciÃ³n de config. |
+| `core/quick_order_update_config.py` | Registrados y validados nuevos parÃ¡metros de timing y retry. |
+| `core/quick_order_update_diagnostics.py` | AÃ±adidos campos de telemetrÃ­a de estabilidad al reporte visual. |
+| `config/quick_order_update.json` | Habilitados nuevos defaults de estabilidad. |
+| `tests/test_visual_ocr_stability.py` | Nueva suite de pruebas para validar la robustez de la secuencia y los reintentos. |
+
+### CHECKS
+- [x] **Syntax**: `py_compile` (PASS) en todos los archivos modificados.
+- [x] **Tests**: `Ran 199 tests. OK.` (Incluyendo la nueva suite de estabilidad).
+- [x] **Safety**: Se mantiene el bloqueo de paste si la verificaciÃ³n del menÃº falla tras los reintentos.
+- [x] **Invariant**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` (Confirmado).
+
+### NOTES
+- El reintento de apertura de menÃº solo ocurre si el menÃº se cerrÃ³ *inesperadamente*. Si el click en "Modificar Pedido" se envÃ­a con Ã©xito, el flujo prosigue normalmente.
+- La duraciÃ³n de movimiento (0.1s) y el hover (250ms) estÃ¡n optimizados para el refresco visual estÃ¡ndar de EVE Online (60fps/DX11).
+
+*Estado: AutomatizaciÃ³n de Visual OCR ahora es determinista y resistente a latencias de UI.*

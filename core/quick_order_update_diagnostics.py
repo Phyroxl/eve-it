@@ -398,6 +398,12 @@ def _format_automation_section(automation: dict) -> list:
     menu_open = automation.get("visual_ocr_context_menu_open", False)
     lines.append(f"  Visual OCR Menu Open : {menu_open}")
 
+    # Stability diagnostics
+    lines.append(f"  Visual OCR Mod Hover : {automation.get('visual_ocr_modify_hover_ms', 0)} ms")
+    lines.append(f"  Visual OCR Menu Recheck: {automation.get('visual_ocr_menu_recheck_before_modify', False)}")
+    lines.append(f"  Visual OCR Menu Pre-Clk: {automation.get('visual_ocr_menu_open_before_modify_click', False)}")
+    lines.append(f"  Visual OCR Mod Retry : {automation.get('visual_ocr_modify_retry_count', 0)}")
+
     rc_x = automation.get("visual_ocr_rc_x")
     rc_y = automation.get("visual_ocr_rc_y")
     if rc_x is not None:

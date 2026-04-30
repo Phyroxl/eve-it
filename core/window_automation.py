@@ -220,6 +220,9 @@ class EVEWindowAutomation:
         self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_modify_menu_offset_y",          37))
         self.visual_ocr_debug_save           = bool(config.get("visual_ocr_debug_save_screenshot",         True))
         self.visual_ocr_debug_dir            = str(config.get("visual_ocr_debug_dir",                      "data/debug/visual_ocr"))
+        self.visual_ocr_modify_menu_hover_ms = int(config.get("visual_ocr_modify_menu_hover_ms",           250))
+        self.visual_ocr_modify_retry_menu    = bool(config.get("visual_ocr_modify_click_retry_if_menu_closed", True))
+        self.visual_ocr_modify_max_retries  = int(config.get("visual_ocr_modify_click_max_retries",       1))
         # Phase 3C hardening: ratio-based section / column / marker config
         self.visual_ocr_sell_y_min_ratio   = float(config.get("visual_ocr_sell_section_y_min_ratio",  0.22))
         self.visual_ocr_sell_y_max_ratio   = float(config.get("visual_ocr_sell_section_y_max_ratio",  0.58))
@@ -865,75 +868,73 @@ class EVEWindowAutomation:
         result["visual_ocr_rc_attempt_details"] = []
         result["visual_ocr_context_menu_open"] = False
 
-        for i, cand in enumerate(self.visual_ocr_rc_candidate_offsets):
-            if i >= self.visual_ocr_rc_max_attempts:
-                break
-            
+        for i in range(self.visual_ocr_rc_max_attempts):
             if self._is_aborted(): break
             
-            result["visual_ocr_rc_attempts"] += 1
-            off_x = cand.get("x_offset", 0)
-            off_y = cand.get("y_offset", 0)
-            name  = cand.get("name", f"offset_{i}")
-            
-            rc_x = row_x + off_x
-            rc_y = row_y + off_y
-            
-            # Pre-verification screenshot
-            before_img = None
-            if self.visual_ocr_verify_menu_open and _PIL_IMAGEGRAB_AVAILABLE:
-                try:
-                    verify_bbox = (rc_x, rc_y, rc_x + self.visual_ocr_menu_verify_region_w, rc_y + self.visual_ocr_menu_verify_region_h)
-                    before_img = _ImageGrab.grab(bbox=verify_bbox)
-                except Exception as exc:
-                    _log.debug(f"[AUTOMATION] context menu 'before' grab failed: {exc}")
+            # For each attempt, we try the list of candidates
+            for cand_idx, cand in enumerate(self.visual_ocr_rc_candidate_offsets):
+                if self._is_aborted(): break
+                
+                result["visual_ocr_rc_attempts"] += 1
+                off_x = cand.get("x_offset", 0)
+                off_y = cand.get("y_offset", 0)
+                name  = cand.get("name", f"offset_{cand_idx}")
+                
+                rc_x = row_x + off_x
+                rc_y = row_y + off_y
+                
+                # Pre-verification screenshot
+                before_img = None
+                if self.visual_ocr_verify_menu_open and _PIL_IMAGEGRAB_AVAILABLE:
+                    try:
+                        verify_bbox = (rc_x, rc_y, rc_x + self.visual_ocr_menu_verify_region_w, rc_y + self.visual_ocr_menu_verify_region_h)
+                        before_img = _ImageGrab.grab(bbox=verify_bbox)
+                    except Exception as exc:
+                        _log.debug(f"[AUTOMATION] context menu 'before' grab failed: {exc}")
 
-            # Hover / Pre-click
-            if self.visual_ocr_rc_hover_ms > 0:
-                self._mouse_move(rc_x, rc_y)
-                self._safe_sleep(self.visual_ocr_rc_hover_ms / 1000.0)
-                result["steps_executed"].append("waited_visual_ocr_rc_hover")
-            
-            if self.visual_ocr_rc_pre_click:
-                self._mouse_click(rc_x, rc_y, button="left")
-                self._safe_sleep(self.visual_ocr_rc_pre_click_delay / 1000.0)
-                result["steps_executed"].append("waited_visual_ocr_rc_pre_click")
+                # Hover / Pre-click
+                if self.visual_ocr_rc_hover_ms > 0:
+                    self._mouse_move(rc_x, rc_y)
+                    self._safe_sleep(self.visual_ocr_rc_hover_ms / 1000.0)
+                    result["steps_executed"].append("waited_visual_ocr_rc_hover")
+                
+                if self.visual_ocr_rc_pre_click:
+                    # Use lower-level _mouse_click to avoid double move/sleep if already hovered
+                    self._mouse_click(rc_x, rc_y, button="left")
+                    self._safe_sleep(self.visual_ocr_rc_pre_click_delay / 1000.0)
+                    result["steps_executed"].append("waited_visual_ocr_rc_pre_click")
 
-            # Right click
-            if not self._visual_ocr_right_click(rc_x, rc_y, result, errors):
-                continue 
-            
-            result["steps_executed"].append(f"visual_ocr_right_click_attempt_{i+1}: ({rc_x}, {rc_y}) {name}")
+                # Right click
+                if not self._visual_ocr_right_click(rc_x, rc_y, result, errors):
+                    continue 
+                
+                result["steps_executed"].append(f"visual_ocr_right_click_attempt_{result['visual_ocr_rc_attempts']}: ({rc_x}, {rc_y}) {name}")
 
-            # Wait for menu
-            self._safe_sleep(self.visual_ocr_context_menu_delay / 1000.0)
-            result["steps_executed"].append("waited_visual_ocr_context_menu_delay")
+                # Wait for menu
+                self._safe_sleep(self.visual_ocr_context_menu_delay / 1000.0)
+                result["steps_executed"].append("waited_visual_ocr_context_menu_delay")
 
-            # Verification screenshot
-            is_open = True
-            if self.visual_ocr_verify_menu_open and _PIL_IMAGEGRAB_AVAILABLE and before_img:
-                try:
-                    verify_bbox = (rc_x, rc_y, rc_x + self.visual_ocr_menu_verify_region_w, rc_y + self.visual_ocr_menu_verify_region_h)
-                    after_img = _ImageGrab.grab(bbox=verify_bbox)
-                    is_open = self._check_image_difference(before_img, after_img)
-                except Exception as exc:
-                    _log.debug(f"[AUTOMATION] context menu 'after' grab failed: {exc}")
+                # Verification
+                is_open = self._is_context_menu_open(rc_x, rc_y, before_img)
 
-            result["visual_ocr_rc_attempt_details"].append({
-                "index": i+1, "point": (rc_x, rc_y), "name": name, "menu_open": is_open
-            })
-            
-            if is_open:
-                success_rc = (rc_x, rc_y)
-                result["visual_ocr_context_menu_open"] = True
-                result["context_menu_click_sent"] = True
-                result["steps_executed"].append(f"visual_ocr_context_menu_detected_attempt_{i+1}")
+                result["visual_ocr_rc_attempt_details"].append({
+                    "index": result["visual_ocr_rc_attempts"], "point": (rc_x, rc_y), "name": name, "menu_open": is_open
+                })
+                
+                if is_open:
+                    success_rc = (rc_x, rc_y, before_img)
+                    result["visual_ocr_context_menu_open"] = True
+                    result["context_menu_click_sent"] = True
+                    result["steps_executed"].append(f"visual_ocr_context_menu_detected_attempt_{result['visual_ocr_rc_attempts']}")
+                    break
+                else:
+                    _log.warning(f"[AUTOMATION] visual_ocr: context menu not detected at ({rc_x}, {rc_y})")
+                    if result["visual_ocr_rc_attempts"] < (self.visual_ocr_rc_max_attempts * len(self.visual_ocr_rc_candidate_offsets)):
+                        self._safe_sleep(self.visual_ocr_rc_retry_delay / 1000.0)
+                        result["steps_executed"].append("waited_visual_ocr_rc_retry")
+
+            if success_rc:
                 break
-            else:
-                _log.warning(f"[AUTOMATION] visual_ocr: context menu not detected at ({rc_x}, {rc_y}), retrying...")
-                if i < self.visual_ocr_rc_max_attempts - 1:
-                    self._safe_sleep(self.visual_ocr_rc_retry_delay / 1000.0)
-                    result["steps_executed"].append("waited_visual_ocr_rc_retry")
 
         if not success_rc:
             result["steps_skipped"].append("visual_ocr_context_menu_not_detected")
@@ -943,11 +944,21 @@ class EVEWindowAutomation:
             self._apply_visual_ocr_paste_blocking(result)
             return
 
-        rc_x, rc_y = success_rc
+        rc_x, rc_y, before_img = success_rc
+        result["visual_ocr_rc_x"] = rc_x
         result["visual_ocr_rc_y"] = rc_y
         
         if self._is_aborted(): return
 
+        # ── Step 2: Click "Modificar pedido" with hover and re-check ─────────
+        
+        # Diagnostics
+        result["visual_ocr_modify_hover_ms"] = self.visual_ocr_modify_menu_hover_ms
+        result["visual_ocr_menu_recheck_before_modify"] = True
+        result["visual_ocr_menu_open_before_modify_click"] = False
+        result["visual_ocr_modify_retry_count"] = 0
+        
+        # Calculate menu position
         if self.visual_ocr_menu_click_mode == "relative_to_right_click":
             menu_x = rc_x + self.visual_ocr_menu_x_offset
             menu_y = rc_y + self.visual_ocr_menu_y_offset
@@ -958,12 +969,57 @@ class EVEWindowAutomation:
         result["visual_ocr_menu_x"] = menu_x
         result["visual_ocr_menu_y"] = menu_y
 
-        if not self._visual_ocr_left_click(menu_x, menu_y, result, errors):
+        success_modify_click = False
+        
+        for retry in range(self.visual_ocr_modify_max_retries + 1):
+            if self._is_aborted(): break
+            result["visual_ocr_modify_retry_count"] = retry
+            
+            # 1. Move to menu item
+            self._mouse_move(menu_x, menu_y)
+            result["steps_executed"].append(f"visual_ocr_modify_menu_move: ({menu_x}, {menu_y})")
+            
+            # 2. Hover wait
+            if self.visual_ocr_modify_menu_hover_ms > 0:
+                self._safe_sleep(self.visual_ocr_modify_menu_hover_ms / 1000.0)
+                result["steps_executed"].append("waited_visual_ocr_modify_menu_hover")
+            
+            # 3. RE-VERIFY context menu is still open
+            menu_still_open = self._is_context_menu_open(rc_x, rc_y, before_img)
+            result["visual_ocr_menu_open_before_modify_click"] = menu_still_open
+            
+            if menu_still_open:
+                # 4. Click
+                if self._visual_ocr_left_click(menu_x, menu_y, result, errors):
+                    success_modify_click = True
+                    result["modify_menu_click_sent"] = True
+                    result["steps_executed"].append(f"visual_ocr_modify_order_menu_click_sent: ({menu_x}, {menu_y})")
+                    break
+            else:
+                _log.warning(f"[AUTOMATION] visual_ocr: context menu closed before modify click (retry={retry})")
+                result["steps_skipped"].append(f"visual_ocr_modify_click_skipped_context_menu_closed_retry_{retry}")
+                
+                if retry < self.visual_ocr_modify_max_retries and self.visual_ocr_modify_retry_menu:
+                    # Attempt to re-open menu by repeating right click
+                    _log.info("[AUTOMATION] visual_ocr: attempting to re-open context menu...")
+                    if self._visual_ocr_right_click(rc_x, rc_y, result, errors):
+                        self._safe_sleep(self.visual_ocr_context_menu_delay / 1000.0)
+                        # before_img remains the same as reference
+                        continue
+                else:
+                    break
+
+        if not success_modify_click:
+            result["modify_menu_click_sent"] = False
+            result["_paste_blocked_modify_dialog"] = True
+            result["paste_block_reason"] = "context_menu_closed_before_modify_click"
+            result["steps_skipped"].append("paste_skipped_context_menu_closed_before_modify_click")
+            result["modify_order_warning"] = "context menu closed before modify order click"
+            _log.error("[AUTOMATION] visual_ocr: context menu closed before modify order click")
             self._apply_visual_ocr_paste_blocking(result)
             return
 
-        result["modify_menu_click_sent"] = True
-        result["steps_executed"].append(f"visual_ocr_modify_order_menu_click_sent: ({menu_x}, {menu_y})")
+        # ── Step 3: Post-click wait and verified state ──────────────────────
         
         self._safe_sleep(self.visual_ocr_modify_dialog_delay / 1000.0)
         result["steps_executed"].append("waited_visual_ocr_modify_dialog_delay")
@@ -995,6 +1051,26 @@ class EVEWindowAutomation:
         except Exception as exc:
             _log.debug(f"[AUTOMATION] _check_image_difference error: {exc}")
             return True # Fallback to true to avoid blocking if numpy fails
+
+    def _is_context_menu_open(self, rc_x: int, rc_y: int, before_img) -> bool:
+        """
+        Check if context menu is open by comparing current screen region
+        with a 'before' image captured just before right-click.
+        """
+        if not self.visual_ocr_verify_menu_open or not _PIL_IMAGEGRAB_AVAILABLE or before_img is None:
+            return True # Assume open if verification is disabled or impossible
+            
+        try:
+            verify_bbox = (
+                rc_x, rc_y, 
+                rc_x + self.visual_ocr_menu_verify_region_w, 
+                rc_y + self.visual_ocr_menu_verify_region_h
+            )
+            after_img = _ImageGrab.grab(bbox=verify_bbox)
+            return self._check_image_difference(before_img, after_img)
+        except Exception as exc:
+            _log.debug(f"[AUTOMATION] _is_context_menu_open check failed: {exc}")
+            return True # Fallback
 
     def _get_window_rect(self, handle: int) -> dict:
         """Return window bounding rect as {left, top, width, height} via ctypes."""
@@ -1059,13 +1135,8 @@ class EVEWindowAutomation:
                                  errors: list) -> bool:
         """Right-click at (x, y). Returns True on success."""
         try:
-            if _PYAUTOGUI_AVAILABLE:
-                _pyautogui.rightClick(x, y)
-            else:
-                import ctypes
-                ctypes.windll.user32.SetCursorPos(x, y)
-                ctypes.windll.user32.mouse_event(0x0008, 0, 0, 0, 0)
-                ctypes.windll.user32.mouse_event(0x0010, 0, 0, 0, 0)
+            # Uses robust _mouse_click which handles movement and delays
+            self._mouse_click(x, y, button="right")
             result["steps_executed"].append(f"visual_ocr_right_click: ({x}, {y})")
             _log.info(f"[AUTOMATION] visual_ocr: right-click at ({x}, {y})")
             return True
@@ -1078,13 +1149,8 @@ class EVEWindowAutomation:
                                 errors: list) -> bool:
         """Left-click at (x, y). Returns True on success."""
         try:
-            if _PYAUTOGUI_AVAILABLE:
-                _pyautogui.click(x, y)
-            else:
-                import ctypes
-                ctypes.windll.user32.SetCursorPos(x, y)
-                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+            # Uses robust _mouse_click which handles movement and delays
+            self._mouse_click(x, y, button="left")
             result["steps_executed"].append(f"visual_ocr_left_click: ({x}, {y})")
             _log.info(f"[AUTOMATION] visual_ocr: left-click at ({x}, {y})")
             return True
@@ -1428,6 +1494,10 @@ class EVEWindowAutomation:
             "safe_to_paste":                           False,
             "context_menu_click_sent":                 False,
             "modify_menu_click_sent":                  False,
+            "visual_ocr_modify_hover_ms":              0,
+            "visual_ocr_menu_recheck_before_modify":   False,
+            "visual_ocr_menu_open_before_modify_click": False,
+            "visual_ocr_modify_retry_count":           0,
             "foreground_win_handle":                   0,
             "foreground_win_title":                    "N/A",
         }
@@ -1478,10 +1548,11 @@ class EVEWindowAutomation:
             return "Error"
 
     def _mouse_move(self, x: int, y: int) -> None:
-        """Move mouse to (x, y)."""
+        """Move mouse to (x, y) with a short duration to be reliable."""
         try:
             if _PYAUTOGUI_AVAILABLE:
-                _pyautogui.moveTo(x, y)
+                # Use a very short duration (0.1s) to make movement visible/reliable in EVE
+                _pyautogui.moveTo(x, y, duration=0.1)
             else:
                 import ctypes
                 ctypes.windll.user32.SetCursorPos(x, y)
@@ -1489,13 +1560,19 @@ class EVEWindowAutomation:
             pass
 
     def _mouse_click(self, x: int, y: int, button: str = "left") -> None:
-        """Perform a mouse click at (x, y)."""
+        """Perform a mouse click at (x, y). Guaranteed to move first."""
         try:
+            # 1. Move to target
+            self._mouse_move(x, y)
+            
+            # 2. Short sleep after move to let UI settle
+            self._safe_sleep(0.05)
+            
             if _PYAUTOGUI_AVAILABLE:
                 if button == "left":
-                    _pyautogui.click(x, y)
+                    _pyautogui.click(x=x, y=y, button="left")
                 else:
-                    _pyautogui.rightClick(x, y)
+                    _pyautogui.rightClick(x=x, y=y)
             else:
                 import ctypes
                 ctypes.windll.user32.SetCursorPos(x, y)
