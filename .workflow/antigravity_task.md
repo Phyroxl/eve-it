@@ -2724,3 +2724,33 @@ Implementar una ventana modal de diagnóstico que se abre automáticamente al fina
 - **Sintaxis**: py_compile (PASS).
 - **Tests**: Nueva suite 	est_market_orders_cache.py (PASS) + Regresión completa (PASS).
 - **Rendimiento**: Reducción drástica del tiempo de escaneo repetido y mejora significativa en el primer fetch.
+
+## Sesin 65: Estabilizacin y Validacin de Visual OCR Quick Update
+
+### Contexto
+Se ha finalizado la implementacin y validacin del motor Visual OCR para la actualizacin rpida de pedidos (Quick Order Update). El sistema es capaz de localizar pedidos propios en el mercado de EVE Online, leer precios y cantidades mediante Tesseract OCR, y automatizar el pegado de nuevos precios.
+
+### Estado Validado (Wasp I / Vespa EC-600)
+- **Visual OCR Status**: unique_match (localizacin inequvoca).
+- **Validacin de Datos**: Coincidencia de precio y cantidad confirmada contra datos de ESI.
+- **Deteccin de Marcador Propio**: Identificacin correcta de la fila azul del usuario.
+- **Accin de Pegado**: Pegado exitoso del precio recomendado en el dilogo de modificacin de EVE.
+- **Seguridad Invariante**: Final Confirm Action : NOT_EXECUTED_BY_DESIGN (nunca confirma la orden automticamente).
+
+### Mejoras de UX y Robustez
+1.  **Calibracin Integrada**: El botn AUTOMATIZAR gestiona el flujo de calibracin de forma transparente. Solo pide calibracin si el perfil falta o es invlido para el side actual (SELL/BUY).
+2.  **Recuperacin por Desalineacin**: Si el perfil guardado falla (por cambios de layout o scroll), el sistema ofrece un dilogo de reintento con recalibracin rpida del side afectado.
+3.  **Selector Visual Enriquecido**: Uso de colores (Azul/Verde/Naranja) e instrucciones precisas para facilitar la seleccin manual de regiones y columnas.
+4.  **Perfiles Locales**: config/quick_order_update_regions.json es ahora local e ignorado por Git para proteger las calibraciones especficas de cada usuario. Se provee config/quick_order_update_regions.example.json como plantilla.
+
+### Verificacin
+- **Sintaxis**: py_compile verificado en core/window_automation.py, ui/market_command/quick_order_update_dialog.py y core/quick_order_update_config.py.
+- **Tests**: 100% PASS en 	ests/test_window_automation.py, 	ests/test_quick_order_update_diagnostics.py, 	ests/test_eve_market_visual_detector.py y 	ests/test_quick_order_update_regions_local.py.
+
+### Archivos Modificados / Nuevos
+- ui/market_command/quick_order_update_dialog.py
+- ui/market_command/visual_region_selector_dialog.py
+- core/quick_order_update_config.py
+- core/quick_order_update_diagnostics.py
+- config/quick_order_update_regions.example.json (Nuevo)
+- 	ests/test_quick_order_update_regions_local.py (Nuevo)
