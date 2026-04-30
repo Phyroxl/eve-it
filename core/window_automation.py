@@ -829,6 +829,7 @@ class EVEWindowAutomation:
         result["visual_ocr_price_x1"]         = detection.get("visual_ocr_price_x1")
         result["visual_ocr_qty_x0"]           = detection.get("visual_ocr_qty_x0")
         result["visual_ocr_qty_x1"]           = detection.get("visual_ocr_qty_x1")
+        result["visual_ocr_score"]            = detection.get("score")
         
         # Phase 3D: Backend diagnostics
         result["visual_ocr_backend"]           = "pytesseract"

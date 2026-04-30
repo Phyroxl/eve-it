@@ -112,6 +112,9 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_modify_menu_hover_ms":           250,
     "visual_ocr_modify_click_retry_if_menu_closed": True,
     "visual_ocr_modify_click_max_retries":       1,
+    "visual_ocr_allow_quantity_near_ocr":        True,
+    "visual_ocr_score_threshold":                150,
+    "visual_ocr_score_ambiguity_margin":         20,
 }
 
 _RATIO_KEYS = (

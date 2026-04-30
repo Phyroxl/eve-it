@@ -744,6 +744,8 @@ class QuickOrderUpdateDialog(QDialog):
         # Ensure config is in result for diagnostics
         regions = load_quick_order_update_regions()
         result["config"] = {
+            "_metadata":                                 cfg.get("_metadata"),
+            "visual_ocr_enabled":                        cfg.get("visual_ocr_enabled", False),
             "visual_ocr_manual_region_enabled":          cfg.get("visual_ocr_manual_region_enabled", True),
             "visual_ocr_manual_region_prompt_each_time": cfg.get("visual_ocr_manual_region_prompt_each_time", True),
             "visual_ocr_manual_region_save_profile":     cfg.get("visual_ocr_manual_region_save_profile", True),
@@ -755,6 +757,7 @@ class QuickOrderUpdateDialog(QDialog):
             "visual_ocr_saved_profile_failed":           result_metadata.get("visual_ocr_saved_profile_failed", False),
             "visual_ocr_suggested_action":               result_metadata.get("visual_ocr_suggested_action", "none"),
             "visual_ocr_retry_after_profile_fail":       result_metadata.get("visual_ocr_retry_after_profile_fail", False),
+            "never_confirm_final_order":                 cfg.get("never_confirm_final_order", True),
         }
         
         # Merge other metadata

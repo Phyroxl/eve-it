@@ -200,19 +200,21 @@ def replace_or_append_automation_section(report: str, automation_section: str) -
     preserving any sections that might follow it.
     """
     marker = "[AUTOMATION]"
-    if marker in report:
-        start_idx = report.index(marker)
-        # Look for the next section marker '[' after the start of this section
-        next_section_idx = report.find("[", start_idx + len(marker))
-        
-        head = report[:start_idx].rstrip()
-        tail = ""
-        if next_section_idx != -1:
-            tail = "\n\n" + report[next_section_idx:].lstrip()
-            
-        return head + "\n\n" + automation_section + tail
-        
-    return report.rstrip() + "\n\n" + automation_section
+    
+    # If report is empty or None, just return the section
+    if not report:
+        return automation_section
+
+    # Robust replacement: find ALL [AUTOMATION] blocks and remove them to avoid duplicates
+    # A block starts with [AUTOMATION] and ends before the next '['
+    import re
+    # This regex finds [AUTOMATION] and everything until the next [ or end of string
+    pattern = r"\[AUTOMATION\].*?(?=\n\[|$)"
+    # Use DOTALL to make . match newlines
+    new_report = re.sub(pattern, "", report, flags=re.DOTALL)
+    
+    # Clean up trailing whitespace and add the new section
+    return new_report.rstrip() + "\n\n" + automation_section
 
 
 def format_config_section(config: dict) -> str:
@@ -330,6 +332,7 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Quantity  : {_b(automation.get('visual_ocr_matched_quantity'))}")
     lines.append(f"  Visual OCR Row X     : {_b(automation.get('visual_ocr_row_x'))}")
     lines.append(f"  Visual OCR Row Y     : {_b(automation.get('visual_ocr_row_y'))}")
+    lines.append(f"  Visual OCR Row Score : {_b(automation.get('visual_ocr_score'))}")
     
     # Phase 3E: Manual region diagnostics
     # Read from config dict in automation data if available
@@ -442,7 +445,12 @@ def _format_automation_section(automation: dict) -> list:
     if ocr_attempts:
         lines.append(f"  Visual OCR OCR Attempts: {len(ocr_attempts)}")
         for i, att in enumerate(ocr_attempts[:3]):
-            lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}'")
+            lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}' score={att.get('score', 0)}")
+    
+    lines.append(f"  Visual OCR Qty Target: {automation.get('visual_ocr_quantity_target', 'N/A')}")
+    lines.append(f"  Visual OCR Qty Norm  : {automation.get('visual_ocr_quantity_normalized', 'N/A')}")
+    lines.append(f"  Visual OCR Qty Diff  : {automation.get('visual_ocr_quantity_diff', 'N/A')}")
+    lines.append(f"  Visual OCR Qty Reason: {automation.get('visual_ocr_quantity_reason', 'none')}")
     
     # Phase 3F: Safety Guards
     lines.append("-" * 36)

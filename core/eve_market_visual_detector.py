@@ -103,8 +103,14 @@ def normalize_price_text(text: str) -> float:
 
 
 def normalize_quantity_text(text: str) -> int:
-    """Extract digits from text and return as int."""
-    text = str(text).strip()
+    """
+    Extract digits from text and return as int. 
+    Handles common OCR artifacts like 'O' for '0' and removes non-numeric noise.
+    """
+    text = str(text).strip().upper()
+    # Handle common OCR confusion: O instead of 0
+    text = text.replace("O", "0")
+    
     # Remove everything except digits
     digits = "".join(c for c in text if c.isdigit())
     if not digits:
@@ -133,6 +139,11 @@ def _base_detection_result() -> dict:
         "price_text":           None,
         "quantity_text":        None,
         "visual_ocr_quantity_match_type": "none",
+        "visual_ocr_quantity_match_confidence": "none",
+        "visual_ocr_quantity_target":     None,
+        "visual_ocr_quantity_normalized": None,
+        "visual_ocr_quantity_diff":       None,
+        "visual_ocr_quantity_reason":     "none",
         "debug": {
             "blue_bands_found":  0,
             "section_used":      None,
@@ -150,6 +161,7 @@ def _base_detection_result() -> dict:
             "marker_rejected_bands": [],
             "ocr_attempts":      [],
             "matched_band":      None,
+            "best_rejected_row": None,
         },
     }
 
@@ -245,11 +257,15 @@ class EveMarketVisualDetector:
         self.tesseract_lang = config.get("visual_ocr_tesseract_lang", "eng")
         self.tesseract_psm  = int(config.get("visual_ocr_tesseract_psm", 7))
         
-        # Phase 3D hardening: tolerances and soft matching
         self.price_match_abs_tolerance = float(config.get("visual_ocr_price_match_abs_tolerance", 15.0))
         self.price_match_rel_tolerance = float(config.get("visual_ocr_price_match_rel_tolerance", 0.001))
         self.allow_qty_suffix_match    = bool(config.get("visual_ocr_allow_quantity_suffix_match", True))
         self.qty_suffix_min_digits     = int(config.get("visual_ocr_quantity_suffix_min_digits", 2))
+        self.allow_qty_near_ocr        = bool(config.get("visual_ocr_allow_quantity_near_ocr", True))
+        
+        # Scoring thresholds
+        self.score_threshold           = int(config.get("visual_ocr_score_threshold", 150))
+        self.score_ambiguity_margin    = int(config.get("visual_ocr_score_ambiguity_margin", 20))
         
         if _PYTESSERACT_AVAILABLE:
             if not self.tesseract_cmd:
@@ -457,7 +473,7 @@ class EveMarketVisualDetector:
                 result["candidates_count"] = len(candidate_bands)
                 return result
 
-        # 6. For each band: marker check + OCR validation
+        # 6. For each band: marker check + OCR validation + Scoring
         verified = []
         import time
         ts = int(time.time() * 1000)
@@ -485,20 +501,18 @@ class EveMarketVisualDetector:
             price_x0_padded = max(panel_x0, price_x0 - self.price_left_padding)
             price_x1_padded = min(panel_x1, price_x1 + self.price_right_padding)
 
-            price_ok   = True
-            qty_ok     = True
-            qty_match_type = "disabled" if not self.match_quantity else "none"
             price_text = ""
             qty_text   = ""
             ocr_price  = 0.0
             ocr_qty    = 0
 
+            # 6.1 Price Match
+            price_ok = True
             if self.match_price and target_price > 0:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
                 ocr_price  = normalize_price_text(price_text)
                 
-                # Apply tolerances
                 price_diff = abs(ocr_price - target_price)
                 max_tol = max(self.price_match_abs_tolerance, target_price * self.price_match_rel_tolerance)
                 price_ok = price_diff <= max_tol
@@ -506,30 +520,40 @@ class EveMarketVisualDetector:
                 if self.debug_save_crops and idx < self.debug_max_crops:
                     self._save_debug_crop(price_region, f"visual_ocr_{ts}_band{idx+1}_price.png")
 
+            # 6.2 Quantity Match with Confidence Tiers
+            qty_ok = True
+            qty_match_type = "disabled" if not self.match_quantity else "none"
+            qty_confidence = "none"
+            qty_reason = "not_matched"
+            
             if self.match_quantity and target_quantity > 0:
                 qty_region = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
                 qty_text = self._ocr_region(qty_region)
                 ocr_qty  = normalize_quantity_text(qty_text)
                 
-                if ocr_qty == target_quantity:
-                    qty_ok = True
-                    qty_match_type = "exact"
-                elif self.allow_qty_suffix_match and own_marker and price_ok:
-                    # Suffix match fallback (e.g. OCR sees '41' but target is '741')
-                    s_target = str(target_quantity)
-                    s_ocr = str(ocr_qty)
-                    if len(s_ocr) >= self.qty_suffix_min_digits and s_target.endswith(s_ocr):
-                        qty_ok = True
-                        qty_match_type = "suffix"
-                    else:
-                        qty_ok = False
-                else:
-                    qty_ok = False
+                match_res = self._match_quantity(ocr_qty, target_quantity, price_ok, own_marker)
+                qty_ok = match_res["matched"]
+                qty_match_type = match_res["confidence"]
+                qty_confidence = match_res["confidence"]
+                qty_reason = match_res["reason"]
                 
                 if self.debug_save_crops and idx < self.debug_max_crops:
                     self._save_debug_crop(qty_region, f"visual_ocr_{ts}_band{idx+1}_qty.png")
 
-            # Record attempt regardless of match
+            # 6.3 Scoring
+            score = 0
+            if own_marker: score += 100
+            else:          score -= 100
+            
+            if price_ok:   score += 80
+            else:          score -= 80
+            
+            if qty_match_type == "exact":    score += 50
+            elif qty_match_type == "suffix": score += 35
+            elif qty_match_type == "near_ocr": score += 25
+            else:                            score -= 30
+
+            # Record attempt
             attempt = {
                 "band": [y_min, y_max],
                 "ocr_band": [ocr_y0, ocr_y1],
@@ -542,24 +566,42 @@ class EveMarketVisualDetector:
                 "normalized_quantity": ocr_qty,
                 "target_quantity": target_quantity,
                 "quantity_match": qty_ok,
-                "quantity_match_type": qty_match_type
+                "quantity_match_type": qty_match_type,
+                "quantity_match_confidence": qty_confidence,
+                "quantity_reason": qty_reason,
+                "score": score
             }
             result["debug"]["ocr_attempts"].append(attempt)
 
-            # Track best rejected row for diagnostics
-            if not (price_ok and qty_ok):
+            # Accept as candidate if score is high enough or it's a marker match
+            # Even if slightly mismatched, we keep it as a candidate for scoring
+            y_c = (y_min + y_max) // 2
+            x_c = w // 2
+            
+            candidate = {
+                "row_center_x":       x_c + window_rect.get("left", 0),
+                "row_center_y":       y_c + window_rect.get("top",  0),
+                "matched_price":      price_ok,
+                "matched_quantity":   qty_ok,
+                "quantity_match_type": qty_match_type,
+                "quantity_match_confidence": qty_confidence,
+                "quantity_reason":    qty_reason,
+                "matched_own_marker": own_marker,
+                "price_text":         price_text,
+                "quantity_text":      qty_text,
+                "normalized_quantity": ocr_qty,
+                "target_quantity":    target_quantity,
+                "band":               (y_min, y_max),
+                "score":              score
+            }
+            
+            # A candidate MUST have marker match AND price match to be considered valid for unique_match
+            if own_marker and price_ok and (qty_ok or qty_match_type in ["suffix", "near_ocr"]):
+                verified.append(candidate)
+            else:
+                # Track best rejected row for diagnostics
                 current_best = result["debug"].get("best_rejected_row")
-                
-                is_better = False
-                if not current_best:
-                    is_better = True
-                else:
-                    curr_score = (10 if current_best["marker_matched"] else 0) + (20 if current_best["price_match"] else 0)
-                    new_score  = (10 if own_marker else 0) + (20 if price_ok else 0)
-                    if new_score > curr_score:
-                        is_better = True
-                
-                if is_better:
+                if not current_best or score > current_best.get("score", -999):
                     reason = "unknown"
                     if not own_marker: reason = "marker_mismatch"
                     elif not price_ok: reason = "price_mismatch"
@@ -570,39 +612,97 @@ class EveMarketVisualDetector:
                         "reject_reason": reason
                     }
 
-            if price_ok and qty_ok:
-                y_c = (y_min + y_max) // 2
-                x_c = w // 2
-                verified.append({
-                    "row_center_x":       x_c + window_rect.get("left", 0),
-                    "row_center_y":       y_c + window_rect.get("top",  0),
-                    "matched_price":      price_ok,
-                    "matched_quantity":   qty_ok,
-                    "quantity_match_type": qty_match_type,
-                    "matched_own_marker": own_marker,
-                    "price_text":         price_text,
-                    "quantity_text":      qty_text,
-                    "band":               (y_min, y_max),
-                })
-
         result["candidates_count"] = len(verified)
 
         if len(verified) == 0:
             result["status"] = "not_found"
+            # If we didn't find any verified row, check if we have a near-miss best rejected row
+            best_rej = result["debug"].get("best_rejected_row")
+            if best_rej and best_rej.get("marker_matched") and best_rej.get("price_match"):
+                # This was likely our row but rejected on quantity
+                result["visual_ocr_suggested_action"] = "improve_quantity_crop_or_tolerance"
         elif len(verified) > 1:
-            result["status"] = "ambiguous"
+            # Sort by score descending
+            verified.sort(key=lambda x: x["score"], reverse=True)
+            best = verified[0]
+            second = verified[1]
+            
+            # Check for ambiguity margin
+            if (best["score"] - second["score"]) >= self.score_ambiguity_margin:
+                # Best is significantly better
+                self._populate_match(result, best)
+            else:
+                result["status"] = "ambiguous"
         else:
-            row = verified[0]
-            result["status"]             = "unique_match"
-            result["row_center_x"]       = row["row_center_x"]
-            result["row_center_y"]       = row["row_center_y"]
-            result["matched_price"]      = row["matched_price"]
-            result["matched_quantity"]   = row["matched_quantity"]
-            result["visual_ocr_quantity_match_type"] = row.get("quantity_match_type", "none")
-            result["matched_own_marker"] = row["matched_own_marker"]
-            result["price_text"]         = row["price_text"]
-            result["quantity_text"]      = row["quantity_text"]
-            result["debug"]["matched_band"] = row["band"]
+            # Single candidate
+            best = verified[0]
+            if best["score"] >= self.score_threshold or (best["matched_own_marker"] and best["matched_price"]):
+                self._populate_match(result, best)
+            else:
+                result["status"] = "not_found"
+
+        return result
+
+    def _match_quantity(self, ocr_qty: int, target_qty: int, price_match: bool, marker_match: bool) -> dict:
+        """Evaluate quantity match and return confidence tier."""
+        res = {
+            "matched": False,
+            "confidence": "none",
+            "reason": "mismatch"
+        }
+        
+        if ocr_qty == target_qty:
+            res["matched"] = True
+            res["confidence"] = "exact"
+            res["reason"] = "exact_match"
+            return res
+            
+        # Suffix match
+        s_target = str(target_qty)
+        s_ocr = str(ocr_qty)
+        if self.allow_qty_suffix_match and len(s_ocr) >= self.qty_suffix_min_digits and s_target.endswith(s_ocr):
+            res["matched"] = True
+            res["confidence"] = "suffix"
+            res["reason"] = "suffix_match"
+            return res
+            
+        # Near OCR artifact (only if price + marker match)
+        if self.allow_qty_near_ocr and price_match and marker_match:
+            diff = abs(ocr_qty - target_qty)
+            allowed = False
+            
+            if target_qty <= 100:
+                if diff <= 10: allowed = True
+            elif target_qty <= 1000:
+                if diff <= max(10, int(target_qty * 0.03)): allowed = True
+            else:
+                if diff <= int(target_qty * 0.02): allowed = True
+                
+            if allowed:
+                res["matched"] = True
+                res["confidence"] = "near_ocr"
+                res["reason"] = "near_ocr_allowed_price_marker_match"
+                return res
+
+        return res
+
+    def _populate_match(self, result: dict, candidate: dict):
+        """Fill result dict with successful match data."""
+        result["status"]             = "unique_match"
+        result["row_center_x"]       = candidate["row_center_x"]
+        result["row_center_y"]       = candidate["row_center_y"]
+        result["matched_price"]      = candidate["matched_price"]
+        result["matched_quantity"]   = candidate["matched_quantity"]
+        result["visual_ocr_quantity_match_type"] = candidate["quantity_match_type"]
+        result["visual_ocr_quantity_match_confidence"] = candidate["quantity_match_confidence"]
+        result["visual_ocr_quantity_target"]     = candidate["target_quantity"]
+        result["visual_ocr_quantity_normalized"] = candidate["normalized_quantity"]
+        result["visual_ocr_quantity_diff"]       = abs(candidate["normalized_quantity"] - candidate["target_quantity"])
+        result["visual_ocr_quantity_reason"]     = candidate["quantity_reason"]
+        result["matched_own_marker"] = candidate["matched_own_marker"]
+        result["price_text"]         = candidate["price_text"]
+        result["quantity_text"]      = candidate["quantity_text"]
+        result["debug"]["matched_band"] = candidate["band"]
 
         return result
 
