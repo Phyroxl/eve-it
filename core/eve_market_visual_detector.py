@@ -132,6 +132,7 @@ def _base_detection_result() -> dict:
         "matched_side_section": False,
         "price_text":           None,
         "quantity_text":        None,
+        "visual_ocr_quantity_match_type": "none",
         "debug": {
             "blue_bands_found":  0,
             "section_used":      None,
@@ -486,7 +487,7 @@ class EveMarketVisualDetector:
 
             price_ok   = True
             qty_ok     = True
-            qty_match_type = "none"
+            qty_match_type = "disabled" if not self.match_quantity else "none"
             price_text = ""
             qty_text   = ""
             ocr_price  = 0.0
