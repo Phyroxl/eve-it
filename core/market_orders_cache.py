@@ -50,6 +50,11 @@ class MarketOrdersCache:
             return 0.0
         return time.time() - entry['timestamp']
 
+    def invalidate(self, region_id: int):
+        if region_id in self._cache:
+            del self._cache[region_id]
+            logger.info(f"[CACHE] Invalidated market order snapshot for region {region_id}")
+
     def clear(self):
         self._cache.clear()
         logger.info("[CACHE] Cleared all market order snapshots")

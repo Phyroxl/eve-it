@@ -32,6 +32,26 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         f"Source:      {diag.get('tax_source', '---')}",
         f"Location ID: {diag.get('location_id', '---')}",
         "",
+        "[MARKET SYNCHRONIZATION]",
+    ]
+    
+    mt = diag.get("market_timings", {})
+    if mt:
+        lines.extend([
+            f"Source:         {mt.get('source', '---').upper()}",
+            f"Force Refresh:  {mt.get('force_refresh', False)}",
+            f"Cache Hit:      {mt.get('cache_hit', False)}",
+            f"Cache Age:      {mt.get('cache_age_seconds', 0):.1f}s",
+            f"Orders Count:   {mt.get('orders_count', 0):,}",
+            f"Download Time:  {mt.get('total_elapsed', 0):.2f}s",
+            f"Pages Total:    {mt.get('pages_total', 0)}",
+            f"Pages Failed:   {mt.get('pages_failed', 0)}",
+        ])
+    else:
+        lines.append("No market sync data available for this session.")
+        
+    lines.extend([
+        "",
         "[ICON SUMMARY]",
         f"Total Requests:     {icon_diag.get('requests', 0)}",
         f"Sell Requests:      {diag.get('sell_icon_requests', 0)}",

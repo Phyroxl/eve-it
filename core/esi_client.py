@@ -129,13 +129,17 @@ class ESIClient:
                 retries -= 1
         return None, None
 
-    def market_orders(self, region_id: int):
+    def market_orders(self, region_id: int, force_refresh: bool = False):
         """
         Descarga todas las órdenes de mercado de una región usando paginación concurrente.
         Utiliza MarketOrdersCache para evitar descargas redundantes.
         """
         t_start = time.time()
         cache = MarketOrdersCache.instance()
+        
+        if force_refresh:
+            cache.invalidate(region_id)
+            
         cached = cache.get(region_id)
         
         if cached is not None:
@@ -143,6 +147,7 @@ class ESIClient:
             self.market_orders_timings[region_id] = {
                 "source": "memory_cache",
                 "cache_hit": True,
+                "force_refresh": force_refresh,
                 "cache_age_seconds": cache.get_age(region_id),
                 "first_page_elapsed": 0,
                 "remaining_pages_elapsed": 0,
@@ -164,11 +169,14 @@ class ESIClient:
             return []
         
         all_orders = list(first_page_data)
+        source_name = "esi_forced_refresh" if force_refresh else "esi"
+        
         if total_pages <= 1:
             cache.set(region_id, all_orders)
             self.market_orders_timings[region_id] = {
-                "source": "esi",
+                "source": source_name,
                 "cache_hit": False,
+                "force_refresh": force_refresh,
                 "cache_age_seconds": 0,
                 "first_page_elapsed": t_first,
                 "remaining_pages_elapsed": 0,
@@ -209,8 +217,9 @@ class ESIClient:
         
         # Store timings for diagnostics
         self.market_orders_timings[region_id] = {
-            "source": "esi",
+            "source": source_name,
             "cache_hit": False,
+            "force_refresh": force_refresh,
             "cache_age_seconds": 0,
             "first_page_elapsed": t_first,
             "remaining_pages_elapsed": t_batch,

@@ -59,7 +59,34 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_menu_click_y_offset":           85,
     "visual_ocr_debug_save_screenshot":         True,
     "visual_ocr_debug_dir":                     "data/debug/visual_ocr",
+    # Phase 3C hardening: section y-axis ratios
+    "visual_ocr_sell_section_y_min_ratio":      0.22,
+    "visual_ocr_sell_section_y_max_ratio":      0.58,
+    "visual_ocr_buy_section_y_min_ratio":       0.55,
+    "visual_ocr_buy_section_y_max_ratio":       0.88,
+    # Phase 3C hardening: column x-axis ratios
+    "visual_ocr_qty_col_x_min_ratio":           0.38,
+    "visual_ocr_qty_col_x_max_ratio":           0.52,
+    "visual_ocr_price_col_x_min_ratio":         0.48,
+    "visual_ocr_price_col_x_max_ratio":         0.68,
+    # Phase 3C hardening: marker detection ratios
+    "visual_ocr_marker_x_min_ratio":            0.20,
+    "visual_ocr_marker_x_max_ratio":            0.32,
+    "visual_ocr_marker_required":               True,
 }
+
+_RATIO_KEYS = (
+    "visual_ocr_sell_section_y_min_ratio",
+    "visual_ocr_sell_section_y_max_ratio",
+    "visual_ocr_buy_section_y_min_ratio",
+    "visual_ocr_buy_section_y_max_ratio",
+    "visual_ocr_qty_col_x_min_ratio",
+    "visual_ocr_qty_col_x_max_ratio",
+    "visual_ocr_price_col_x_min_ratio",
+    "visual_ocr_price_col_x_max_ratio",
+    "visual_ocr_marker_x_min_ratio",
+    "visual_ocr_marker_x_max_ratio",
+)
 
 _DELAY_KEYS = (
     "open_market_delay_ms",
@@ -142,7 +169,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_enabled", "visual_ocr_require_unique_match",
                 "visual_ocr_match_price", "visual_ocr_match_quantity",
                 "visual_ocr_require_own_order_marker", "visual_ocr_side_section_required",
-                "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot"):
+                "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot",
+                "visual_ocr_marker_required"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -214,5 +242,13 @@ def validate_quick_order_update_config(config: dict) -> dict:
         val = config["visual_ocr_debug_dir"]
         if isinstance(val, str) and val.strip():
             result["visual_ocr_debug_dir"] = val.strip()
+
+    # Ratio keys: clamp to [0.0, 1.0]
+    for key in _RATIO_KEYS:
+        if key in config:
+            try:
+                result[key] = max(0.0, min(1.0, float(config[key])))
+            except (TypeError, ValueError):
+                pass
 
     return result

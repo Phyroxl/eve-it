@@ -117,10 +117,8 @@ class SyncWorker(QThread):
             
             self.status_update.emit("CARGANDO PRECIOS DE MERCADO...", 60)
             type_ids = list(set(o['type_id'] for o in orders))
-            # FORZAR ACTUALIZACIÓN DE PRECIOS: Limpiar caché de market orders
-            cache_key = "market_orders_10000002"
-            client.cache.cache.pop(cache_key, None)
-            all_market_orders = client.market_orders(10000002)
+            # FORZAR ACTUALIZACIÓN DE PRECIOS: Usar force_refresh=True para invalidar MarketOrdersCache
+            all_market_orders = client.market_orders(10000002, force_refresh=True)
             
             self.status_update.emit("CALCULANDO WAC...", 80)
             CostBasisService.instance().refresh_from_esi(self.char_id, self.token)
@@ -1745,6 +1743,8 @@ class MarketMyOrdersView(QWidget):
                     "type_id": tid,
                     "item_name": ord_obj.item_name
                 })
+        
+        self._orders_diag["market_timings"] = ESIClient().market_orders_timings.get(10000002, {})
         
         return format_my_orders_diagnostic_report(self._orders_diag, icon_diag)
 
