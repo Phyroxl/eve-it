@@ -91,7 +91,7 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_price_match_rel_tolerance":      0.001,
     "visual_ocr_allow_quantity_suffix_match":    True,
     "visual_ocr_quantity_suffix_min_digits":     2,
-    "visual_ocr_modify_menu_offset_x":           100,
+    "visual_ocr_modify_menu_offset_x":           65,
     "visual_ocr_modify_menu_offset_y":           37,
     "visual_ocr_context_menu_delay_ms":          400,
     "visual_ocr_modify_dialog_delay_ms":         700,

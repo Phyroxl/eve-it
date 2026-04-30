@@ -198,7 +198,7 @@ class EVEWindowAutomation:
         self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          80))
         self.visual_ocr_rc_y_offset          = int(config.get("visual_ocr_right_click_y_offset",          0))
         self.visual_ocr_menu_click_mode      = str(config.get("visual_ocr_menu_click_mode",                "relative_to_right_click"))
-        self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_modify_menu_offset_x",          100))
+        self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_modify_menu_offset_x",          65))
         self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_modify_menu_offset_y",          37))
         self.visual_ocr_debug_save           = bool(config.get("visual_ocr_debug_save_screenshot",         True))
         self.visual_ocr_debug_dir            = str(config.get("visual_ocr_debug_dir",                      "data/debug/visual_ocr"))
