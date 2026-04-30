@@ -166,7 +166,7 @@ class QuickOrderUpdateDialog(QDialog):
         self.btn_detect_windows.clicked.connect(self._on_detect_windows)
         row.addWidget(self.btn_detect_windows)
 
-        self.btn_full_calibrate = QPushButton("CALIBRAR SELL+BUY")
+        self.btn_full_calibrate = QPushButton("RECALIBRAR SELL+BUY")
         self.btn_full_calibrate.setStyleSheet(self._BTN)
         self.btn_full_calibrate.clicked.connect(self._on_full_calibrate)
         row.addWidget(self.btn_full_calibrate)
@@ -498,12 +498,19 @@ class QuickOrderUpdateDialog(QDialog):
         # Guard: no selection + requires selection + no fallback allowed
         if selected is None and require and not allow_fb:
             msg = (
-                "No hay ventana objetivo seleccionada. "
-                "Pulsa DETECTAR y selecciona el cliente EVE Online antes de automatizar."
+                "AUTOMATIZACIÓN DESACTIVADA en config/quick_order_update.json.\n"
+                "Actívala primero para usar esta función."
             )
-            self._status_lbl.setText(msg)
+            self._status_lbl.setText("Automatización desactivada")
+            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+            self._diag_report += f"\n\n[AUTOMATION]\n  Status: blocked\n  Reason: disabled_in_config\n\n{msg}"
+            self._report_edit.setPlainText(self._diag_report)
+            return
+
+        selected = self._selected_window()
+        if not selected:
+            self._status_lbl.setText("Selecciona una ventana de EVE primero")
             self._status_lbl.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:800;")
-            _log.warning("[QUICK UPDATE] automation blocked — no window selected")
             return
 
         price_text = format_price_for_clipboard(
@@ -523,89 +530,58 @@ class QuickOrderUpdateDialog(QDialog):
         self._status_lbl.setText("Ejecutando automatización experimental...")
         self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
 
-        manual_region = None
+        result_metadata = {}
         
-        # Phase 3E: Manual region selection logic
+        # 1. Calibration logic
         strategy = cfg.get("modify_order_strategy")
-        if cfg.get("visual_ocr_manual_region_enabled", True) and strategy == "visual_ocr":
+        manual_region = None
+        calibration_required = False
+        calibration_cancelled = False
+        manual_region_source = "saved_profile"
+
+        if cfg.get("visual_ocr_enabled") and strategy == "visual_ocr":
             side = "buy" if order_data.get("is_buy_order") else "sell"
             regions = load_quick_order_update_regions()
-            saved = regions.get(side)
-            prompt = cfg.get("visual_ocr_manual_region_prompt_each_time", True) or not saved
+            manual_region = regions.get(side)
             
-            if prompt:
-                self._status_lbl.setText("Solicitando región manual para Visual OCR...")
-                QGuiApplication.processEvents() # Ensure UI updates
+            # Check if valid (not legacy, has all columns)
+            if not self._has_valid_calibration(manual_region) or cfg.get("visual_ocr_manual_region_prompt_each_time", False):
+                calibration_required = True
+                _log.info(f"[QUICK UPDATE] calibration missing or prompt=true for {side} — prompting user")
+                manual_region = self._prompt_single_side_calibration(side, selected, cfg)
                 
-                # We need a screenshot. Use a temporary EVEWindowAutomation to get it.
-                from core.window_automation import EVEWindowAutomation
-                auto_tmp = EVEWindowAutomation(cfg)
+                if not manual_region:
+                    _log.info("[QUICK UPDATE] visual OCR calibration cancelled by user")
+                    calibration_cancelled = True
+                    result = {
+                        "status": "partial",
+                        "visual_ocr_status": "calibration_cancelled",
+                        "errors": ["Visual OCR calibration cancelled by user"],
+                        "steps_skipped": ["visual_ocr_calibration_missing_or_cancelled", "final_confirm_NOT_EXECUTED_BY_DESIGN"],
+                        "selected_window_handle": selected["handle"] if selected else None,
+                    }
+                    # Update report immediately and exit
+                    self._inject_diagnostics_and_report(result, cfg, {
+                        "calibration_required": True,
+                        "calibration_cancelled": True,
+                        "manual_region_source": "n/a",
+                        "manual_region_selected_now": False
+                    })
+                    self._status_lbl.setText("Calibración cancelada. Abortando.")
+                    self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+                    return
                 
-                # Resolve window handle
-                handle = None
-                if selected and selected.get("handle"):
-                    handle = selected["handle"]
-                else:
-                    # Fallback to title search if allowed
-                    # (This is a bit simplified, but execute_quick_order_update will do it properly too)
-                    pass
-                
-                if not handle:
-                    # Try to find it now to take the screenshot
-                    from core.window_automation import list_candidate_windows
-                    cands = list_candidate_windows(cfg)
-                    if cands:
-                        handle = cands[0]["handle"] # Best guess
-                
-                if handle:
-                    rect = auto_tmp._get_window_rect(handle)
-                    pil_img = auto_tmp._capture_window_screenshot(rect, {"steps_executed":[]}, [])
-                    if pil_img:
-                        # Convert PIL to QImage for dialog
-                        from PySide6.QtGui import QImage
-                        import io
-                        buffer = io.BytesIO()
-                        pil_img.save(buffer, format="PNG")
-                        qimg = QImage.fromData(buffer.getvalue())
-                        
-                        selector = VisualRegionSelectorDialog(qimg, mode="single_side", side=side, parent=self)
-                        if selector.exec() == QDialog.Accepted:
-                            results = selector.get_results()
-                            manual_region = self._build_calibration_from_results(results, pil_img.size, prefix="")
-                            
-                            if manual_region:
-                                _log.info(f"[QUICK UPDATE] manual visual OCR calibration selected: {manual_region}")
-                                if cfg.get("visual_ocr_manual_region_save_profile", True):
-                                    regions[side] = manual_region
-                                    save_quick_order_update_regions(regions)
-                                    _log.info(f"[QUICK UPDATE] saved manual calibration for {side}")
-                                
-                                # Tag result as selected now for diagnostics
-                                automation_kwargs["manual_region"] = manual_region
-                                result_metadata["manual_region_selected_now"] = True
-                        else:
-                            # User cancelled selection
-                            _log.info("[QUICK UPDATE] manual visual OCR region selection cancelled by user")
-                            result = {
-                                "status": "partial",
-                                "errors": ["Manual region selection cancelled by user"],
-                                "steps_skipped": ["visual_ocr_manual_region_cancelled"],
-                            }
-                            self._update_automation_report(result)
-                            self._status_lbl.setText("Calibración cancelada. Abortando.")
-                            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
-                            return
-                    else:
-                        _log.error("[QUICK UPDATE] could not capture screenshot for manual region selection")
-                else:
-                    _log.error("[QUICK UPDATE] could not find window handle for manual region selection")
+                manual_region_source = "selected_now"
+                result_metadata["manual_region_selected_now"] = True
             else:
-                manual_region = saved
-                _log.info(f"[QUICK UPDATE] using saved manual region for {side}")
+                manual_region_source = "saved_profile"
+                result_metadata["manual_region_selected_now"] = False
 
-        if manual_region:
-            _log.info(f"[QUICK UPDATE] passing manual region to automation: {manual_region}")
+        result_metadata["calibration_required"] = calibration_required
+        result_metadata["calibration_cancelled"] = calibration_cancelled
+        result_metadata["manual_region_source"] = manual_region_source
 
+        # 2. Execution
         result = None
         try:
             from core.window_automation import EVEWindowAutomation
@@ -615,7 +591,6 @@ class QuickOrderUpdateDialog(QDialog):
             )
         except Exception as exc:
             _log.error(f"[QUICK UPDATE] automation crash: {exc}")
-            # Create a minimal error result to allow report generation
             result = {
                 "status": "error",
                 "errors": [f"Crash en automatización: {exc}"],
@@ -623,11 +598,15 @@ class QuickOrderUpdateDialog(QDialog):
                 "steps_skipped": ["automation_crashed"],
             }
         
+        self._inject_diagnostics_and_report(result, cfg, result_metadata)
+
+    def _inject_diagnostics_and_report(self, result: dict, cfg: dict, result_metadata: dict):
+        """Finalize result with metadata and update report."""
         # Inject candidate list metadata into result for diagnostics
         result["candidate_windows_count"] = len(self._window_candidates)
         result["candidate_windows"]       = self._window_candidates[:8]
         
-        # Phase 3E: Ensure config is in result for diagnostics
+        # Ensure config is in result for diagnostics
         regions = load_quick_order_update_regions()
         result["config"] = {
             "visual_ocr_manual_region_enabled":          cfg.get("visual_ocr_manual_region_enabled", True),
@@ -635,6 +614,9 @@ class QuickOrderUpdateDialog(QDialog):
             "visual_ocr_manual_region_save_profile":     cfg.get("visual_ocr_manual_region_save_profile", True),
             "saved_regions_sell":                        bool(regions.get("sell")),
             "saved_regions_buy":                         bool(regions.get("buy")),
+            "manual_region_source":                      result_metadata.get("manual_region_source", "saved_profile"),
+            "calibration_required":                      result_metadata.get("calibration_required", False),
+            "calibration_cancelled":                     result_metadata.get("calibration_cancelled", False),
         }
 
         self._update_automation_report(result)
@@ -792,3 +774,64 @@ class QuickOrderUpdateDialog(QDialog):
             }
             
         return calib
+
+    def _has_valid_calibration(self, calibration: Optional[dict]) -> bool:
+        """Check if a calibration dictionary contains all required regions and columns."""
+        if not calibration or not isinstance(calibration, dict):
+            return False
+            
+        # Check region (rows area)
+        reg = calibration.get("region")
+        if not reg or not isinstance(reg, dict):
+            return False
+        if "x_min_ratio" not in reg or "y_min_ratio" not in reg:
+            return False
+            
+        # Check columns (quantity and price)
+        qty = calibration.get("quantity_column")
+        prc = calibration.get("price_column")
+        if not qty or not isinstance(qty, dict):
+            return False
+        if not prc or not isinstance(prc, dict):
+            return False
+        if "x_min_ratio" not in qty or "x_min_ratio" not in prc:
+            return False
+            
+        return True
+
+    def _prompt_single_side_calibration(self, side: str, selected_window: dict, cfg: dict) -> Optional[dict]:
+        """Show the selector dialog for a single side and return the calibration dict."""
+        self._status_lbl.setText(f"Dibuja la región de las órdenes ({side.upper()})...")
+        self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
+        QGuiApplication.processEvents()
+        
+        try:
+            from core.window_automation import EVEWindowAutomation
+            auto_tmp = EVEWindowAutomation(cfg)
+            handle = selected_window["handle"]
+            rect = auto_tmp._get_window_rect(handle)
+            pil_img = auto_tmp._capture_window_screenshot(rect, {"steps_executed":[]}, [])
+            if not pil_img:
+                return None
+
+            from PySide6.QtGui import QImage
+            import io
+            buffer = io.BytesIO()
+            pil_img.save(buffer, format="PNG")
+            qimg = QImage.fromData(buffer.getvalue())
+
+            selector = VisualRegionSelectorDialog(qimg, mode="single_side", side=side, parent=self)
+            if selector.exec() == QDialog.Accepted:
+                results = selector.get_results()
+                manual_region = self._build_calibration_from_results(results, pil_img.size, prefix="")
+                
+                if manual_region and cfg.get("visual_ocr_manual_region_save_profile", True):
+                    regions = load_quick_order_update_regions()
+                    regions[side] = manual_region
+                    save_quick_order_update_regions(regions)
+                    _log.info(f"[QUICK UPDATE] saved manual calibration for {side}")
+                return manual_region
+        except Exception as exc:
+            _log.error(f"[QUICK UPDATE] error during manual calibration prompt: {exc}")
+            
+        return None

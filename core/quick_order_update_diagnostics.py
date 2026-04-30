@@ -252,9 +252,15 @@ def _format_automation_section(automation: dict) -> list:
     s_buy = m_reg_cfg.get("saved_regions_buy", False)
     lines.append(f"  Saved Regions Profile: SELL={_b(s_sell)} BUY={_b(s_buy)}")
 
+    # Calibration process status
+    c_req = m_reg_cfg.get("calibration_required", False)
+    c_can = m_reg_cfg.get("calibration_cancelled", False)
+    lines.append(f"  Calibration Required : {_b(c_req)}")
+    lines.append(f"  Calibration Cancelled: {_b(c_can)}")
+
     dbg = automation.get("visual_ocr_debug") or {}
     m_used = dbg.get("manual_region_used", False)
-    m_src  = "selected_now" if automation.get("manual_region_selected_now") else "saved_profile"
+    m_src  = m_reg_cfg.get("manual_region_source", "n/a")
     lines.append(f"  Manual Region Used   : {_b(m_used)} ({m_src if m_used else 'N/A'})")
     if m_used:
         lines.append(f"  Manual Region Ratios : {dbg.get('manual_region_ratios')}")
