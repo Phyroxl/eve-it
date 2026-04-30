@@ -451,19 +451,23 @@ class QuickOrderUpdateDialog(QDialog):
                 best_score = score
                 best_idx = i
 
-        # Auto-select best non-self candidate (if any exists)
+        # Auto-select best candidate if it's a real client (score > 0)
         best = candidates[best_idx]
-        if not best["is_self_app"]:
+        if not best["is_self_app"] and best["score"] > 0:
             self._window_combo.setCurrentIndex(best_idx)
             self._window_status_lbl.setText(
-                f"Detectadas {len(candidates)} ventana(s). "
-                f"Seleccionada automáticamente: {best['title'][:50]}"
+                f"Detectadas {len(candidates)} ventana(s). Seleccionada: {best['title'][:50]}"
             )
             self._window_status_lbl.setStyleSheet("color:#10b981; font-size:8px;")
+        elif not best["is_self_app"] and best["score"] <= 0:
+             # Only launchers or unknown windows found
+            self._window_status_lbl.setText(
+                "No se encontró un cliente EVE real. Abre EVE — Nombre y pulsa DETECTAR."
+            )
+            self._window_status_lbl.setStyleSheet("color:#f59e0b; font-size:8px;")
         else:
             self._window_status_lbl.setText(
-                f"Detectadas {len(candidates)} ventana(s). "
-                "Selecciona manualmente el cliente EVE Online."
+                f"Detectadas {len(candidates)} ventana(s). Selecciona cliente EVE manualmente."
             )
             self._window_status_lbl.setStyleSheet("color:#f59e0b; font-size:8px;")
 
@@ -508,9 +512,12 @@ class QuickOrderUpdateDialog(QDialog):
             return
 
         selected = self._selected_window()
-        if not selected:
-            self._status_lbl.setText("Selecciona una ventana de EVE primero")
-            self._status_lbl.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:800;")
+        if not selected or selected.get("score", 0) <= 0:
+            msg = "No se encontró un cliente EVE real. Abre EVE — NombreDelPersonaje y vuelve a detectar ventanas."
+            self._status_lbl.setText("Cliente EVE no detectado")
+            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+            self._diag_report += f"\n\n[AUTOMATION]\n  Status: blocked\n  Reason: no_real_client_selected\n\n{msg}"
+            self._report_edit.setPlainText(self._diag_report)
             return
 
         price_text = format_price_for_clipboard(

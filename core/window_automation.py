@@ -37,13 +37,19 @@ except ImportError:
 
 # ── Window scoring ──────────────────────────────────────────────────────────
 # These strings identify the *own* EVE iT application — must never be auto-selected
-_SELF_APP_MARKERS = ["EVE iT", "Market Command", "Quick Order Update"]
+_SELF_APP_MARKERS = ["EVE iT", "Market Command", "Quick Order Update", "Antigravity"]
+
+# Common EVE launcher titles to exclude from auto-selection
+_LAUNCHER_MARKERS = [
+    "Iniciador de EVE", "EVE Launcher", "Launcher", "iniciador", "launcher"
+]
 
 # Positive score rules for EVE Online client windows (first match wins)
 _EVE_SCORE_RULES = [
-    ("EVE -", 100),      # "EVE - Character Name" — most specific
-    ("EVE Online", 80),
-    ("EVE", 60),
+    ("EVE — ", 100),     # "EVE — Character Name" (En-dash)
+    ("EVE - ", 90),      # "EVE - Character Name" (Hyphen)
+    ("EVE Online", 40),
+    ("EVE", 20),
 ]
 
 
@@ -52,6 +58,12 @@ def _score_window(title: str) -> tuple:
     is_self = any(m in title for m in _SELF_APP_MARKERS)
     if is_self:
         return -100, True
+        
+    # Penalize launchers
+    is_launcher = any(m.lower() in title.lower() for m in _LAUNCHER_MARKERS)
+    if is_launcher:
+        return -50, False
+
     for pattern, pts in _EVE_SCORE_RULES:
         if pattern in title:
             return pts, False
@@ -269,6 +281,26 @@ class EVEWindowAutomation:
         result["modify_order_hotkey_configured"]          = bool(self.modify_order_hotkey)
         result["allow_unverified_modify_order_paste"]     = self.allow_unverified_modify_paste
         result["visual_ocr_enabled"]                      = self.visual_ocr_enabled
+        
+        # Collect candidate windows for diagnostics
+        all_candidates = list_candidate_windows(None)
+        result["candidate_windows_count"] = len(all_candidates)
+        result["candidate_windows"] = all_candidates
+        
+        # Collect rejected windows for diagnostics
+        rejected = []
+        for c in all_candidates:
+            if c["score"] <= 0:
+                reason = "low_score"
+                if c["is_self_app"]:
+                    reason = "own_app_excluded"
+                else:
+                    # check if it's a launcher
+                    low_title = c["title"].lower()
+                    if any(m.lower() in low_title for m in _LAUNCHER_MARKERS):
+                        reason = "launcher_excluded"
+                rejected.append({"title": c["title"], "reason": reason})
+        result["rejected_windows"] = rejected
         
         # Phase 3E: manual region config for diagnostics
         result["config"] = {

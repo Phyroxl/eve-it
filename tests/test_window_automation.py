@@ -269,12 +269,12 @@ class TestScoreWindow(unittest.TestCase):
     def test_eve_character_window_high_score(self):
         score, is_self = _score_window("EVE - Nina Herrera")
         self.assertFalse(is_self)
-        self.assertGreaterEqual(score, 100)
+        self.assertGreaterEqual(score, 90)
 
     def test_eve_online_window_good_score(self):
         score, is_self = _score_window("EVE Online")
         self.assertFalse(is_self)
-        self.assertGreaterEqual(score, 80)
+        self.assertGreaterEqual(score, 40)
 
     def test_unrelated_window_zero_score(self):
         score, is_self = _score_window("Microsoft Word")

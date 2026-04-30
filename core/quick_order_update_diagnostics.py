@@ -338,6 +338,12 @@ def _format_automation_section(automation: dict) -> list:
         lines.append(f"  Visual OCR Suggest   : {_b(automation.get('visual_ocr_suggested_path'))}")
 
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
+    
+    rej_wins = automation.get("rejected_windows") or []
+    if rej_wins:
+        lines.append("  Rejected Windows     :")
+        for rw in rej_wins:
+            lines.append(f"    - {rw.get('title')} — {rw.get('reason')}")
     cands = automation.get("candidate_windows") or []
     if cands:
         lines.append("  Candidate Windows:")
