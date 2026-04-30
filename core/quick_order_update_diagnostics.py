@@ -297,6 +297,23 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Rej Offset: {len(dbg.get('rejected_bands_by_offset') or [])}")
     lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
     
+    # Click diagnostics
+    rc_x = automation.get("visual_ocr_rc_x")
+    rc_y = automation.get("visual_ocr_rc_y")
+    if rc_x is not None:
+        lines.append(f"  Visual OCR Right Clk : ({rc_x}, {rc_y})")
+        
+    # We display the offsets even if not executed yet to show config
+    m_reg_cfg = automation.get("config") or {}
+    off_x = m_reg_cfg.get("visual_ocr_modify_menu_offset_x", "N/A")
+    off_y = m_reg_cfg.get("visual_ocr_modify_menu_offset_y", "N/A")
+    lines.append(f"  Visual OCR Mod Off   : ({off_x}, {off_y})")
+    
+    m_x = automation.get("visual_ocr_menu_x")
+    m_y = automation.get("visual_ocr_menu_y")
+    if m_x is not None:
+        lines.append(f"  Visual OCR Mod Clk   : ({m_x}, {m_y})")
+    
     # We used to calculate min_order_y here using 'data', but it's cleaner 
     # to have the detector provide it or just show N/A if missing.
     min_order_y = automation.get('visual_ocr_min_order_y', 'N/A')

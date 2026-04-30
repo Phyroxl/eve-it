@@ -193,13 +193,13 @@ class EVEWindowAutomation:
         self.visual_ocr_require_own_marker    = bool(config.get("visual_ocr_require_own_order_marker",     True))
         self.visual_ocr_side_section_required = bool(config.get("visual_ocr_side_section_required",        True))
         self.visual_ocr_allow_unverified_paste = bool(config.get("visual_ocr_allow_unverified_paste",      False))
-        self.visual_ocr_context_menu_delay    = int(config.get("visual_ocr_context_menu_delay_ms",         300))
+        self.visual_ocr_context_menu_delay    = int(config.get("visual_ocr_context_menu_delay_ms",         400))
         self.visual_ocr_modify_dialog_delay   = int(config.get("visual_ocr_modify_dialog_delay_ms",        700))
         self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          80))
         self.visual_ocr_rc_y_offset          = int(config.get("visual_ocr_right_click_y_offset",          0))
         self.visual_ocr_menu_click_mode      = str(config.get("visual_ocr_menu_click_mode",                "relative_to_right_click"))
-        self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_menu_click_x_offset",           60))
-        self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_menu_click_y_offset",           85))
+        self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_modify_menu_offset_x",          100))
+        self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_modify_menu_offset_y",          37))
         self.visual_ocr_debug_save           = bool(config.get("visual_ocr_debug_save_screenshot",         True))
         self.visual_ocr_debug_dir            = str(config.get("visual_ocr_debug_dir",                      "data/debug/visual_ocr"))
         # Phase 3C hardening: ratio-based section / column / marker config
@@ -307,6 +307,8 @@ class EVEWindowAutomation:
             "visual_ocr_manual_region_enabled":          self.visual_ocr_manual_region_enabled,
             "visual_ocr_manual_region_prompt_each_time": self.visual_ocr_manual_region_prompt_each,
             "visual_ocr_manual_region_save_profile":     self.visual_ocr_manual_region_save_profile,
+            "visual_ocr_modify_menu_offset_x":           self.visual_ocr_menu_x_offset,
+            "visual_ocr_modify_menu_offset_y":           self.visual_ocr_menu_y_offset,
         }
 
         if not self.enabled:
@@ -779,9 +781,14 @@ class EVEWindowAutomation:
 
         rc_x = row_x + self.visual_ocr_rc_x_offset
         rc_y = row_y + self.visual_ocr_rc_y_offset
+        result["visual_ocr_rc_x"] = rc_x
+        result["visual_ocr_rc_y"] = rc_y
+        
         if not self._visual_ocr_right_click(rc_x, rc_y, result, errors):
             self._apply_visual_ocr_paste_blocking(result)
             return
+
+        result["steps_executed"].append(f"visual_ocr_right_click_sent: ({rc_x}, {rc_y})")
 
         self._safe_sleep(
             self.visual_ocr_context_menu_delay, "visual_ocr_context_menu_delay", result, errors
@@ -794,20 +801,24 @@ class EVEWindowAutomation:
             menu_x = self.visual_ocr_menu_x_offset
             menu_y = self.visual_ocr_menu_y_offset
 
+        result["visual_ocr_menu_x"] = menu_x
+        result["visual_ocr_menu_y"] = menu_y
+
         if not self._visual_ocr_left_click(menu_x, menu_y, result, errors):
             self._apply_visual_ocr_paste_blocking(result)
             return
 
-        result["steps_executed"].append("visual_ocr_modify_order_menu_clicked")
+        result["steps_executed"].append(f"visual_ocr_modify_order_menu_click_sent: ({menu_x}, {menu_y})")
+        
         self._safe_sleep(
             self.visual_ocr_modify_dialog_delay, "visual_ocr_modify_dialog_delay", result, errors
         )
 
         result["modify_order_dialog_verified"] = False
         result["modify_order_warning"] = (
-            "visual_ocr: context menu clicked — cannot OS-verify dialog (EVE renders in-game)"
+            "context menu click sent — dialog cannot be OS-verified"
         )
-        _log.info("[AUTOMATION] visual_ocr: modify order menu clicked, waiting for in-game dialog")
+        _log.info(f"[AUTOMATION] visual_ocr: modify order menu click sent to ({menu_x}, {menu_y})")
 
         if not self.visual_ocr_allow_unverified_paste:
             result["steps_skipped"].append("paste_skipped_visual_ocr_dialog_not_verified")
@@ -1134,6 +1145,10 @@ class EVEWindowAutomation:
             "visual_ocr_matched_quantity":             False,
             "visual_ocr_row_x":                        None,
             "visual_ocr_row_y":                        None,
+            "visual_ocr_rc_x":                         None,
+            "visual_ocr_rc_y":                         None,
+            "visual_ocr_menu_x":                       None,
+            "visual_ocr_menu_y":                       None,
             "visual_ocr_window_rect":                  None,
             "visual_ocr_debug":                        {},
             "visual_ocr_debug_screenshot_path":        None,

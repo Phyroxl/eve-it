@@ -1011,7 +1011,8 @@ class TestVisualOCRStrategy(unittest.TestCase):
 
     def test_unique_match_menu_click_step_recorded(self):
         result = self._run(self._cfg())
-        self.assertIn("visual_ocr_modify_order_menu_clicked", result["steps_executed"])
+        any_click_sent = any(s.startswith("visual_ocr_modify_order_menu_click_sent") for s in result["steps_executed"])
+        self.assertTrue(any_click_sent, "visual_ocr_modify_order_menu_click_sent step not found")
 
     # -- paste blocking defaults (visual_ocr_allow_unverified_paste=False) -------
 
