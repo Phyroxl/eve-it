@@ -36,6 +36,7 @@ class ESIClient:
     GLOBAL_MIN_REQUEST_INTERVAL = 0.03
     _global_rate_lock = Lock()
     _global_last_request_time = 0.0
+    _market_orders_timings = {} # region_id -> timing_data (Shared across instances)
 
     def __init__(self):
         self.cache = ESICache()
@@ -43,7 +44,10 @@ class ESIClient:
         self.last_request_time = 0
         self.rate_limit_lock = Lock()
         self.rate_limit_hits = 0
-        self.market_orders_timings = {} # region_id -> timing_data
+
+    @property
+    def market_orders_timings(self):
+        return ESIClient._market_orders_timings
 
     def _rate_limit(self):
         with self.rate_limit_lock:
