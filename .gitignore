@@ -49,6 +49,9 @@ cache/
 data/
 *.local.json
 config/eve_client.json
+config/quick_order_update_regions.json
+config/quick_order_update_regions.*.json
+!config/quick_order_update_regions.example.json
 
 # User Scratch & Tools
 tools/
