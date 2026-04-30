@@ -843,7 +843,14 @@ class TestWindowSelectorUI(unittest.TestCase):
             
             # First execution returns a failure that triggers retry
             mock_execute.side_effect = [
-                {"status": "partial", "visual_ocr_status": "not_found", "price_pasted": False, "errors": [], "steps_skipped": []},
+                {
+                    "status": "partial", 
+                    "visual_ocr_status": "not_found", 
+                    "visual_ocr_suggested_action": "recalibrate_side",
+                    "price_pasted": False, 
+                    "errors": [], 
+                    "steps_skipped": []
+                },
                 {"status": "success", "price_pasted": True, "steps_executed": ["retry"]}
             ]
             

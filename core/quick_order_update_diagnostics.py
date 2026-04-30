@@ -140,8 +140,8 @@ def format_quick_update_report(data: dict) -> str:
     lines.append("[CONFIG DIAGNOSTICS]")
     if isinstance(cfg, dict):
         meta = cfg.get("_metadata") or {}
-        lines.append(f"  Config Path         : {meta.get('config_path', 'N/A')}")
-        lines.append(f"  Config Exists       : {meta.get('config_exists', 'N/A')}")
+        lines.append(f"  Config Path         : {meta.get('config_path', meta.get('path', 'N/A'))}")
+        lines.append(f"  Config Exists       : {meta.get('config_exists', meta.get('exists', 'N/A'))}")
         lines.append(f"  Fallback Used       : {meta.get('config_fallback_used', 'N/A')}")
         if meta.get("config_load_error"):
             lines.append(f"  Load Error          : {meta.get('config_load_error')}")
@@ -327,6 +327,7 @@ def _format_automation_section(automation: dict) -> list:
     # Phase 3C: visual_ocr
     lines.append(f"  Visual OCR Enabled   : {_b(automation.get('visual_ocr_enabled'))}")
     lines.append(f"  Visual OCR Status    : {_b(automation.get('visual_ocr_status'))}")
+    lines.append(f"  Visual OCR Mode      : {automation.get('visual_ocr_detection_mode', 'strict')}")
     lines.append(f"  Visual OCR Candidates: {_b(automation.get('visual_ocr_candidates_count'))}")
     lines.append(f"  Visual OCR Price     : {_b(automation.get('visual_ocr_matched_price'))}")
     lines.append(f"  Visual OCR Quantity  : {_b(automation.get('visual_ocr_matched_quantity'))}")
@@ -339,6 +340,8 @@ def _format_automation_section(automation: dict) -> list:
     m_reg_cfg = automation.get("config") or {}
     m_reg_enabled = m_reg_cfg.get("visual_ocr_manual_region_enabled", "N/A")
     lines.append(f"  Manual Region Enabled: {_b(m_reg_enabled)}")
+    lines.append(f"  Manual Region Width  : {m_reg_cfg.get('manual_region_width_px', 'N/A')} px")
+    lines.append(f"  Manual Region Height : {m_reg_cfg.get('manual_region_height_px', 'N/A')} px")
     
     # Saved profile status
     s_sell = m_reg_cfg.get("saved_regions_sell", False)
@@ -388,6 +391,8 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Raw Bands : {len(dbg.get('raw_candidate_bands') or [])}")
     lines.append(f"  Visual OCR Rej Height: {len(dbg.get('rejected_bands_by_height') or [])}")
     lines.append(f"  Visual OCR Rej Offset: {len(dbg.get('rejected_bands_by_offset') or [])}")
+    lines.append(f"  Visual OCR Rej Top   : {len(dbg.get('rejected_bands_by_top_edge') or [])}")
+    lines.append(f"  Visual OCR Rej Bot   : {len(dbg.get('rejected_bands_by_bottom_edge') or [])}")
     lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
     
     # Click diagnostics

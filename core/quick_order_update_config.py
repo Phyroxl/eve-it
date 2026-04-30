@@ -115,6 +115,9 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_allow_quantity_near_ocr":        True,
     "visual_ocr_score_threshold":                150,
     "visual_ocr_score_ambiguity_margin":         20,
+    "visual_ocr_manual_region_full_height_scan": True,
+    "visual_ocr_allow_edge_rows_in_manual_region": True,
+    "visual_ocr_edge_row_padding_px":           8,
 }
 
 _RATIO_KEYS = (

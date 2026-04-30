@@ -266,6 +266,11 @@ class EveMarketVisualDetector:
         # Scoring thresholds
         self.score_threshold           = int(config.get("visual_ocr_score_threshold", 150))
         self.score_ambiguity_margin    = int(config.get("visual_ocr_score_ambiguity_margin", 20))
+
+        # Robustness for manual regions
+        self.manual_full_height_scan = bool(config.get("visual_ocr_manual_region_full_height_scan", True))
+        self.allow_edge_rows       = bool(config.get("visual_ocr_allow_edge_rows_in_manual_region", True))
+        self.edge_row_padding      = int(config.get("visual_ocr_edge_row_padding_px", 8))
         
         if _PYTESSERACT_AVAILABLE:
             if not self.tesseract_cmd:
@@ -424,56 +429,128 @@ class EveMarketVisualDetector:
             img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"]
         )
         result["debug"]["raw_candidate_bands"] = list(candidate_bands)
-        
-        # 5. Filter bands by height and offset
-        filtered = []
-        for (y0, y1) in candidate_bands:
-            height = y1 - y0
-            if height < self.min_row_height or height > self.max_row_height:
-                result["debug"]["rejected_bands_by_height"].append({"band": [y0, y1], "height": height})
-                continue
-            
-            if not manual_region and y0 < (section_y_min + self.min_order_row_y_offset):
-                result["debug"]["rejected_bands_by_offset"].append({"band": [y0, y1], "y_min": y0, "limit": section_y_min + self.min_order_row_y_offset})
-                continue
-                
-            filtered.append((y0, y1))
-            
-        result["debug"]["filtered_candidate_bands"] = list(filtered)
-        result["debug"]["blue_bands_found"]        = len(filtered)
-        result["debug"]["candidate_bands"]         = list(filtered)
 
-        if not filtered:
-            result["status"]          = "not_found"
-            result["candidates_count"] = 0
-            return result
-
-        # 4. OCR availability check AFTER band detection (keeps blue_bands_found accurate)
-        need_ocr = (
-            (self.match_price    and target_price    > 0) or
-            (self.match_quantity and target_quantity > 0)
-        )
-        
-        # Enhanced backend diagnostics
+        # Enhanced backend diagnostics (always provided)
         result["debug"]["pytesseract_module_available"] = _PYTESSERACT_AVAILABLE
         result["debug"]["tesseract_executable_ready"]    = self._is_tesseract_available()
         result["debug"]["tesseract_cmd_used"]           = self.tesseract_cmd or "N/A"
         result["debug"]["tesseract_suggested_path"]     = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        
+        # Phase 3G: Pass-based detection
+        # Pass 1: Strict (normal height and offset constraints)
+        verified = self._run_detection_pass(
+            img_array, candidate_bands, target_price, target_quantity,
+            (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
+            section_y_min, section_y_max,
+            result, window_rect, manual_region=(manual_region is not None),
+            is_fallback=False
+        )
+        result["debug"]["detection_mode"] = "strict"
+        
+        # Pass 2: Fallback (if enabled and strict pass failed to find a unique match)
+        if not verified and self.manual_full_height_scan and manual_region:
+            result["debug"]["fallback_mode_used"] = True
+            verified = self._run_detection_pass(
+                img_array, candidate_bands, target_price, target_quantity,
+                (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
+                section_y_min, section_y_max,
+                result, window_rect, manual_region=True,
+                is_fallback=True
+            )
+            if verified:
+                result["debug"]["detection_mode"] = "fallback_full_region"
+        
+        result["candidates_count"] = len(verified)
 
-        if need_ocr:
-            if not _PYTESSERACT_AVAILABLE:
-                result["status"]           = "error"
-                result["error"]            = "ocr_backend_unavailable_module_missing"
-                result["candidates_count"] = len(candidate_bands)
-                return result
+        if not verified:
+            result["status"] = "not_found"
+            # Suggested action logic
+            if not candidate_bands:
+                result["visual_ocr_suggested_action"] = "recalibrate_side"
+            else:
+                best_rej = result["debug"].get("best_rejected_row")
+                if best_rej and best_rej.get("marker_matched") and best_rej.get("price_match"):
+                    result["visual_ocr_suggested_action"] = "improve_quantity_crop_or_scroll"
+                else:
+                    result["visual_ocr_suggested_action"] = "recalibrate_side"
+            return result
+
+        if len(verified) > 1:
+            # Sort by score descending
+            verified.sort(key=lambda x: x["score"], reverse=True)
+            best = verified[0]
+            second = verified[1]
             
-            if not result["debug"]["tesseract_executable_ready"]:
-                result["status"]           = "error"
-                result["error"]            = "ocr_backend_unavailable_tesseract_executable_missing"
-                result["candidates_count"] = len(candidate_bands)
-                return result
+            # Check for ambiguity margin
+            if (best["score"] - second["score"]) >= self.score_ambiguity_margin:
+                # Best is significantly better
+                self._populate_match(result, best)
+            else:
+                result["status"] = "ambiguous"
+        else:
+            # Single candidate
+            best = verified[0]
+            if best["score"] >= (self.score_threshold - 50) or (best["matched_own_marker"] and best["matched_price"]):
+                self._populate_match(result, best)
+            else:
+                result["status"] = "not_found"
 
-        # 6. For each band: marker check + OCR validation + Scoring
+        return result
+
+    def _run_detection_pass(self, img_array, candidate_bands, target_price, target_quantity,
+                             panel_bounds, col_coords, section_y_min, section_y_max,
+                             result, window_rect, manual_region=False, is_fallback=False) -> list:
+        """
+        Run a single detection pass (strict or fallback) over candidate bands.
+        Returns list of verified candidates.
+        """
+        panel_x0, panel_x1, panel_w = panel_bounds
+        price_x0, price_x1, qty_x0, qty_x1 = col_coords
+        h, w = img_array.shape[:2]
+        
+        # Filter bands by height and offset for this pass
+        filtered = []
+        for (y0, y1) in candidate_bands:
+            height = y1 - y0
+            
+            # Robustness: if manual region is active, be more tolerant of edge rows
+            is_edge = False
+            if manual_region and self.allow_edge_rows:
+                if y0 <= (section_y_min + self.edge_row_padding):
+                    is_edge = True
+                    result["debug"].setdefault("rejected_bands_by_top_edge", []).append((y0, y1))
+                if y1 >= (section_y_max - self.edge_row_padding):
+                    is_edge = True
+                    result["debug"].setdefault("rejected_bands_by_bottom_edge", []).append((y0, y1))
+
+            if not is_edge:
+                # Normal height constraints
+                min_h = self.min_row_height if not is_fallback else (self.min_row_height - 2)
+                max_h = self.max_row_height if not is_fallback else (self.max_row_height + 4)
+                
+                if height < min_h or height > max_h:
+                    result["debug"]["rejected_bands_by_height"].append({"band": [y0, y1], "height": height})
+                    continue
+            
+            # Offset check only for non-manual auto-detection in non-fallback mode
+            if not manual_region and not is_fallback:
+                if y0 < (section_y_min + self.min_order_row_y_offset):
+                    result["debug"]["rejected_bands_by_offset"].append({"band": [y0, y1], "y_min": y0, "limit": section_y_min + self.min_order_row_y_offset})
+                    continue
+                
+            filtered.append((y0, y1))
+            
+        result["debug"]["blue_bands_found"] = len(filtered)
+        if not filtered:
+            return []
+
+        # OCR availability check
+        need_ocr = (self.match_price and target_price > 0) or (self.match_quantity and target_quantity > 0)
+        if need_ocr:
+            if not _PYTESSERACT_AVAILABLE or not self._is_tesseract_available():
+                # We expect caller to have checked this, but for safety:
+                return []
+
         verified = []
         import time
         ts = int(time.time() * 1000)
@@ -489,7 +566,7 @@ class EveMarketVisualDetector:
                 })
                 continue
 
-            # Apply vertical padding for OCR if band is tall enough
+            # Apply vertical padding for OCR
             ocr_y0, ocr_y1 = y_min, y_max
             if (y_max - y_min) > (2 * self.row_crop_y_padding + 4):
                 ocr_y0 += self.row_crop_y_padding
@@ -505,9 +582,10 @@ class EveMarketVisualDetector:
             qty_text   = ""
             ocr_price  = 0.0
             ocr_qty    = 0
+            price_ok   = True
+            qty_ok     = True
 
-            # 6.1 Price Match
-            price_ok = True
+            # Price Match
             if self.match_price and target_price > 0:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
@@ -518,10 +596,9 @@ class EveMarketVisualDetector:
                 price_ok = price_diff <= max_tol
                 
                 if self.debug_save_crops and idx < self.debug_max_crops:
-                    self._save_debug_crop(price_region, f"visual_ocr_{ts}_band{idx+1}_price.png")
+                    self._save_debug_crop(price_region, f"visual_ocr_{ts}_p{idx+1}_fb{is_fallback}.png")
 
-            # 6.2 Quantity Match with Confidence Tiers
-            qty_ok = True
+            # Quantity Match
             qty_match_type = "disabled" if not self.match_quantity else "none"
             qty_confidence = "none"
             qty_reason = "not_matched"
@@ -538,9 +615,9 @@ class EveMarketVisualDetector:
                 qty_reason = match_res["reason"]
                 
                 if self.debug_save_crops and idx < self.debug_max_crops:
-                    self._save_debug_crop(qty_region, f"visual_ocr_{ts}_band{idx+1}_qty.png")
+                    self._save_debug_crop(qty_region, f"visual_ocr_{ts}_q{idx+1}_fb{is_fallback}.png")
 
-            # 6.3 Scoring
+            # Scoring
             score = 0
             if own_marker: score += 100
             else:          score -= 100
@@ -556,31 +633,25 @@ class EveMarketVisualDetector:
             # Record attempt
             attempt = {
                 "band": [y_min, y_max],
-                "ocr_band": [ocr_y0, ocr_y1],
                 "marker_matched": own_marker,
+                "price_match": price_ok,
+                "quantity_match": qty_ok,
+                "score": score,
+                "is_fallback": is_fallback,
                 "price_text": price_text,
+                "quantity_text": qty_text,
                 "normalized_price": ocr_price,
                 "target_price": target_price,
-                "price_match": price_ok,
-                "quantity_text": qty_text,
                 "normalized_quantity": ocr_qty,
                 "target_quantity": target_quantity,
-                "quantity_match": qty_ok,
                 "quantity_match_type": qty_match_type,
-                "quantity_match_confidence": qty_confidence,
-                "quantity_reason": qty_reason,
-                "score": score
+                "quantity_reason": qty_reason
             }
-            result["debug"]["ocr_attempts"].append(attempt)
+            result["debug"].setdefault("ocr_attempts", []).append(attempt)
 
-            # Accept as candidate if score is high enough or it's a marker match
-            # Even if slightly mismatched, we keep it as a candidate for scoring
-            y_c = (y_min + y_max) // 2
-            x_c = w // 2
-            
             candidate = {
-                "row_center_x":       x_c + window_rect.get("left", 0),
-                "row_center_y":       y_c + window_rect.get("top",  0),
+                "row_center_x":       (panel_x0 + panel_x1) // 2 + window_rect.get("left", 0),
+                "row_center_y":       (y_min + y_max) // 2 + window_rect.get("top",  0),
                 "matched_price":      price_ok,
                 "matched_quantity":   qty_ok,
                 "quantity_match_type": qty_match_type,
@@ -595,11 +666,14 @@ class EveMarketVisualDetector:
                 "score":              score
             }
             
-            # A candidate MUST have marker match AND price match to be considered valid for unique_match
-            if own_marker and price_ok and (qty_ok or qty_match_type in ["suffix", "near_ocr"]):
-                verified.append(candidate)
-            else:
-                # Track best rejected row for diagnostics
+            # Acceptance criteria for verified candidates
+            if own_marker and price_ok:
+                # If quantity matched or we are in fallback and it's near-miss
+                if qty_ok or (is_fallback and qty_match_type in ["suffix", "near_ocr"]):
+                    verified.append(candidate)
+                
+            # Track best rejected row for diagnostics
+            if not verified or candidate not in verified:
                 current_best = result["debug"].get("best_rejected_row")
                 if not current_best or score > current_best.get("score", -999):
                     reason = "unknown"
@@ -612,34 +686,7 @@ class EveMarketVisualDetector:
                         "reject_reason": reason
                     }
 
-        result["candidates_count"] = len(verified)
-
-        if len(verified) == 0:
-            result["status"] = "not_found"
-            # If we didn't find any verified row, check if we have a near-miss best rejected row
-            best_rej = result["debug"].get("best_rejected_row")
-            if best_rej and best_rej.get("marker_matched") and best_rej.get("price_match"):
-                # This was likely our row but rejected on quantity
-                result["visual_ocr_suggested_action"] = "improve_quantity_crop_or_tolerance"
-        elif len(verified) > 1:
-            # Sort by score descending
-            verified.sort(key=lambda x: x["score"], reverse=True)
-            best = verified[0]
-            second = verified[1]
-            
-            # Check for ambiguity margin
-            if (best["score"] - second["score"]) >= self.score_ambiguity_margin:
-                # Best is significantly better
-                self._populate_match(result, best)
-            else:
-                result["status"] = "ambiguous"
-        else:
-            # Single candidate
-            best = verified[0]
-            if best["score"] >= self.score_threshold or (best["matched_own_marker"] and best["matched_price"]):
-                self._populate_match(result, best)
-            else:
-                result["status"] = "not_found"
+        return verified
 
         return result
 

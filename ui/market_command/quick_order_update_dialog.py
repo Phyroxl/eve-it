@@ -696,33 +696,35 @@ class QuickOrderUpdateDialog(QDialog):
             if manual_region_source == "saved_profile" and strategy == "visual_ocr":
                 v_status = result.get("visual_ocr_status")
                 if v_status in ["not_found", "ambiguous", "error"] and not result.get("price_pasted"):
-                    _log.warning(f"[QUICK UPDATE] saved profile failed (status={v_status}) — prompting for retry")
+                    suggested = result.get("visual_ocr_suggested_action", "none")
+                    _log.warning(f"[QUICK UPDATE] saved profile failed (status={v_status}, suggested={suggested})")
                     
                     result_metadata["visual_ocr_saved_profile_failed"] = True
-                    result_metadata["visual_ocr_suggested_action"] = "recalibrate_side"
+                    result_metadata["visual_ocr_suggested_action"] = suggested
                     
-                    if self._prompt_recalibration_retry(side):
-                        _log.info(f"[QUICK UPDATE] user accepted recalibration retry for {side}")
-                        
-                        # Prompt for NEW calibration
-                        new_manual_region = self._prompt_single_side_calibration(side, selected, cfg, result_metadata)
-                        if new_manual_region:
-                            _log.info(f"[QUICK UPDATE] retrying automation with new manual calibration")
-                            result_metadata["manual_region_selected_now"] = True
-                            result_metadata["manual_region_source"] = "selected_now_retry"
-                            result_metadata["visual_ocr_retry_after_profile_fail"] = True
+                    if suggested == "recalibrate_side":
+                        if self._prompt_recalibration_retry(side):
+                            _log.info(f"[QUICK UPDATE] user accepted recalibration retry for {side}")
                             
-                            # Re-run execution ONCE - PRESERVE run_id
-                            result = auto.execute_quick_order_update(
-                                order_data, price_text, selected_window=selected,
-                                manual_region=new_manual_region, run_id=run_id
-                            )
+                            # Prompt for NEW calibration
+                            new_manual_region = self._prompt_single_side_calibration(side, selected, cfg, result_metadata)
+                            if new_manual_region:
+                                _log.info(f"[QUICK UPDATE] retrying automation with new manual calibration")
+                                result_metadata["manual_region_selected_now"] = True
+                                result_metadata["manual_region_source"] = "selected_now_retry"
+                                result_metadata["visual_ocr_retry_after_profile_fail"] = True
+                                
+                                # Re-run execution ONCE - PRESERVE run_id
+                                result = auto.execute_quick_order_update(
+                                    order_data, price_text, selected_window=selected,
+                                    manual_region=new_manual_region, run_id=run_id
+                                )
+                            else:
+                                _log.info("[QUICK UPDATE] user cancelled recalibration during retry")
+                                result_metadata["calibration_cancelled"] = True
                         else:
-                            _log.info("[QUICK UPDATE] user cancelled recalibration during retry")
-                            result_metadata["calibration_cancelled"] = True
-                    else:
-                        _log.info("[QUICK UPDATE] user declined recalibration retry")
-                        result_metadata["steps_skipped_extra"] = ["user_declined_recalibration"]
+                            _log.info("[QUICK UPDATE] user declined recalibration retry")
+                            result_metadata["steps_skipped_extra"] = ["user_declined_recalibration"]
 
         except Exception as exc:
             _log.error(f"[QUICK UPDATE] automation crash: {exc}")
@@ -758,6 +760,8 @@ class QuickOrderUpdateDialog(QDialog):
             "visual_ocr_suggested_action":               result_metadata.get("visual_ocr_suggested_action", "none"),
             "visual_ocr_retry_after_profile_fail":       result_metadata.get("visual_ocr_retry_after_profile_fail", False),
             "never_confirm_final_order":                 cfg.get("never_confirm_final_order", True),
+            "manual_region_width_px":                   result_metadata.get("manual_region_width_px", "N/A"),
+            "manual_region_height_px":                  result_metadata.get("manual_region_height_px", "N/A"),
         }
         
         # Merge other metadata

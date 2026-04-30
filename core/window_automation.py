@@ -830,6 +830,8 @@ class EVEWindowAutomation:
         result["visual_ocr_qty_x0"]           = detection.get("visual_ocr_qty_x0")
         result["visual_ocr_qty_x1"]           = detection.get("visual_ocr_qty_x1")
         result["visual_ocr_score"]            = detection.get("score")
+        result["visual_ocr_detection_mode"]   = dbg.get("detection_mode", "strict")
+        result["visual_ocr_suggested_action"] = detection.get("visual_ocr_suggested_action", "none")
         
         # Phase 3D: Backend diagnostics
         result["visual_ocr_backend"]           = "pytesseract"
