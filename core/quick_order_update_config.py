@@ -97,6 +97,21 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_modify_dialog_delay_ms":         700,
     "visual_ocr_right_click_x_offset":           20,
     "visual_ocr_right_click_y_offset":           0,
+    "visual_ocr_right_click_max_attempts":       3,
+    "visual_ocr_right_click_retry_delay_ms":     250,
+    "visual_ocr_pre_right_click_hover_ms":       150,
+    "visual_ocr_pre_right_click_left_click":     True,
+    "visual_ocr_pre_right_click_left_click_delay_ms": 150,
+    "visual_ocr_right_click_candidate_offsets":  [
+        {"name": "qty_left",   "x_offset": 20,  "y_offset": 0},
+        {"name": "qty_mid",    "x_offset": 45,  "y_offset": 0},
+        {"name": "price_left", "x_offset": 80,  "y_offset": 0},
+        {"name": "row_mid",    "x_offset": 120, "y_offset": 0}
+    ],
+    "visual_ocr_verify_context_menu_open":       True,
+    "visual_ocr_context_menu_verify_region_w":   260,
+    "visual_ocr_context_menu_verify_region_h":   240,
+    "visual_ocr_context_menu_min_changed_pixels": 500,
 }
 
 _RATIO_KEYS = (

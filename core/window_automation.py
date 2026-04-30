@@ -8,9 +8,9 @@ SAFETY INVARIANTS (never violated):
   - pywinauto and pyautogui are optional — app does not break without them
   - No hardcoded pixel coordinates in this phase
 """
-
-import logging
+import os
 import time
+import logging
 from typing import Optional
 
 _log = logging.getLogger('eve.market.window_automation')
@@ -153,6 +153,7 @@ class EVEWindowAutomation:
     """
 
     def __init__(self, config: dict):
+        self.config               = config
         self.enabled              = bool(config.get("enabled",                              False))
         self.dry_run              = bool(config.get("dry_run",                              True))
         self.confirm_required     = bool(config.get("confirm_required",                     True))
@@ -197,6 +198,21 @@ class EVEWindowAutomation:
         self.visual_ocr_modify_dialog_delay   = int(config.get("visual_ocr_modify_dialog_delay_ms",        700))
         self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          20))
         self.visual_ocr_rc_y_offset          = int(config.get("visual_ocr_right_click_y_offset",          0))
+        self.visual_ocr_rc_max_attempts      = int(config.get("visual_ocr_right_click_max_attempts",       3))
+        self.visual_ocr_rc_retry_delay       = int(config.get("visual_ocr_right_click_retry_delay_ms",     250))
+        self.visual_ocr_rc_hover_ms          = int(config.get("visual_ocr_pre_right_click_hover_ms",       150))
+        self.visual_ocr_rc_pre_click         = bool(config.get("visual_ocr_pre_right_click_left_click",    True))
+        self.visual_ocr_rc_pre_click_delay   = int(config.get("visual_ocr_pre_right_click_left_click_delay_ms", 150))
+        self.visual_ocr_rc_candidate_offsets = list(config.get("visual_ocr_right_click_candidate_offsets", [
+            {"name": "qty_left",   "x_offset": 20,  "y_offset": 0},
+            {"name": "qty_mid",    "x_offset": 45,  "y_offset": 0},
+            {"name": "price_left", "x_offset": 80,  "y_offset": 0},
+            {"name": "row_mid",    "x_offset": 120, "y_offset": 0}
+        ]))
+        self.visual_ocr_verify_menu_open     = bool(config.get("visual_ocr_verify_context_menu_open",      True))
+        self.visual_ocr_menu_verify_region_w = int(config.get("visual_ocr_context_menu_verify_region_w",    260))
+        self.visual_ocr_menu_verify_region_h = int(config.get("visual_ocr_context_menu_verify_region_h",    240))
+        self.visual_ocr_menu_min_pixels      = int(config.get("visual_ocr_context_menu_min_changed_pixels", 500))
         self.visual_ocr_menu_click_mode      = str(config.get("visual_ocr_menu_click_mode",                "relative_to_right_click"))
         self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_modify_menu_offset_x",          65))
         self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_modify_menu_offset_y",          37))
@@ -244,6 +260,47 @@ class EVEWindowAutomation:
         self.visual_ocr_manual_region_enabled      = bool(config.get("visual_ocr_manual_region_enabled", True))
         self.visual_ocr_manual_region_prompt_each  = bool(config.get("visual_ocr_manual_region_prompt_each_time", True))
         self.visual_ocr_manual_region_save_profile = bool(config.get("visual_ocr_manual_region_save_profile", True))
+        
+        # Phase 3F: safety guards
+        self._abort_check_callback = None
+        self._paste_guard_consumed = False
+        self._process_pid = os.getpid()
+        self._poll_callback = None
+
+    def set_abort_flag(self, check_fn: callable):
+        """
+        Sets a function to be called to check if the automation should be aborted.
+        Usually passed from a UI to signal the user closed the window.
+        """
+        self._abort_check_callback = check_fn
+
+    def set_poll_callback(self, poll_fn: callable):
+        """
+        Sets a function to be called periodically during sleeps to keep UI alive (e.g. processEvents).
+        """
+        self._poll_callback = poll_fn
+
+    def _is_aborted(self) -> bool:
+        """Check if external cancellation occurred."""
+        if self._abort_check_callback and self._abort_check_callback():
+            return True
+        return False
+
+    def _safe_sleep(self, seconds: float):
+        """Sleeps in small chunks while checking for abort and polling."""
+        if seconds <= 0:
+            if self._poll_callback: self._poll_callback()
+            return
+            
+        end_time = time.time() + seconds
+        while time.time() < end_time:
+            if self._is_aborted():
+                break
+            if self._poll_callback:
+                self._poll_callback()
+            
+            # Sleep in 50ms chunks
+            time.sleep(min(0.05, end_time - time.time()))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -260,6 +317,7 @@ class EVEWindowAutomation:
             selected_window:         candidate dict from list_candidate_windows(), or None
         """
         result = self._base_result(recommended_price_text)
+        result["config"]   = self.config
         result["enabled"]  = self.enabled
         result["dry_run"]  = self.dry_run
         result["delays"]   = {
@@ -368,7 +426,8 @@ class EVEWindowAutomation:
         errors = result["errors"]
 
         # 1. Wait open-market delay
-        self._safe_sleep(self.open_market_delay, "open_market_delay", result, errors)
+        self._safe_sleep(self.open_market_delay / 1000.0)
+        result["steps_executed"].append("waited_open_market_delay")
 
         # 2. Copy price to clipboard
         try:
@@ -403,7 +462,8 @@ class EVEWindowAutomation:
         if win is not None:
             if self._focus_window(win, result, errors):
                 result["focused"] = True
-                self._safe_sleep(self.focus_delay, "focus_delay", result, errors)
+                self._safe_sleep(self.focus_delay / 1000.0)
+                result["steps_executed"].append("waited_focus_delay")
 
         # 4.5. Prepare Modify Order Dialog (optional, disabled by default)
         if result["focused"]:
@@ -522,14 +582,6 @@ class EVEWindowAutomation:
                 "No clipboard backend available (neither Qt nor pyperclip)"
             )
 
-    def _safe_sleep(self, ms: int, label: str, result: dict, errors: list) -> None:
-        try:
-            if ms > 0:
-                time.sleep(ms / 1000.0)
-            result["steps_executed"].append(f"waited_{label}")
-        except Exception as exc:
-            errors.append(f"{label}_sleep_error: {exc}")
-
     def _prepare_modify_order_dialog(self, result: dict, errors: list,
                                       order_data: Optional[dict] = None,
                                       win=None,
@@ -558,7 +610,8 @@ class EVEWindowAutomation:
                 "user must manually open Modify Order before automating"
             )
             _log.info("[AUTOMATION] modify_order: manual_focus_guard — dialog not verified")
-            self._safe_sleep(self.modify_order_delay, "modify_order_delay", result, errors)
+            self._safe_sleep(self.modify_order_delay / 1000.0)
+            result["steps_executed"].append("waited_modify_order_delay")
             # Paste blocking for manual_focus_guard
             if self.require_modify_dialog_ready:
                 result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
@@ -633,9 +686,8 @@ class EVEWindowAutomation:
             return
 
         # Wait for the dialog to potentially appear
-        self._safe_sleep(
-            self.modify_post_hotkey_delay, "modify_order_post_hotkey_delay", result, errors
-        )
+        self._safe_sleep(self.modify_post_hotkey_delay / 1000.0)
+        result["steps_executed"].append("waited_modify_post_hotkey_delay")
 
         # Attempt to verify the dialog via OS window title search
         result["steps_executed"].append("modify_order_dialog_verification_attempted")
@@ -779,20 +831,95 @@ class EVEWindowAutomation:
         result["steps_executed"].append(f"visual_ocr_unique_match_found: ({row_x}, {row_y})")
         _log.info(f"[AUTOMATION] visual_ocr: unique match at ({row_x}, {row_y})")
 
-        rc_x = row_x + self.visual_ocr_rc_x_offset
-        rc_y = row_y + self.visual_ocr_rc_y_offset
-        result["visual_ocr_rc_x"] = rc_x
-        result["visual_ocr_rc_y"] = rc_y
-        
-        if not self._visual_ocr_right_click(rc_x, rc_y, result, errors):
+        if self._is_aborted(): return
+
+        # Robust context menu opening with retries
+        success_rc = None
+        result["visual_ocr_rc_attempts"] = 0
+        result["visual_ocr_rc_attempt_details"] = []
+        result["visual_ocr_context_menu_open"] = False
+
+        for i, cand in enumerate(self.visual_ocr_rc_candidate_offsets):
+            if i >= self.visual_ocr_rc_max_attempts:
+                break
+            
+            if self._is_aborted(): break
+            
+            result["visual_ocr_rc_attempts"] += 1
+            off_x = cand.get("x_offset", 0)
+            off_y = cand.get("y_offset", 0)
+            name  = cand.get("name", f"offset_{i}")
+            
+            rc_x = row_x + off_x
+            rc_y = row_y + off_y
+            
+            # Pre-verification screenshot
+            before_img = None
+            if self.visual_ocr_verify_menu_open and _PIL_IMAGEGRAB_AVAILABLE:
+                try:
+                    verify_bbox = (rc_x, rc_y, rc_x + self.visual_ocr_menu_verify_region_w, rc_y + self.visual_ocr_menu_verify_region_h)
+                    before_img = _ImageGrab.grab(bbox=verify_bbox)
+                except Exception as exc:
+                    _log.debug(f"[AUTOMATION] context menu 'before' grab failed: {exc}")
+
+            # Hover / Pre-click
+            if self.visual_ocr_rc_hover_ms > 0:
+                self._mouse_move(rc_x, rc_y)
+                self._safe_sleep(self.visual_ocr_rc_hover_ms / 1000.0)
+                result["steps_executed"].append("waited_visual_ocr_rc_hover")
+            
+            if self.visual_ocr_rc_pre_click:
+                self._mouse_click(rc_x, rc_y, button="left")
+                self._safe_sleep(self.visual_ocr_rc_pre_click_delay / 1000.0)
+                result["steps_executed"].append("waited_visual_ocr_rc_pre_click")
+
+            # Right click
+            if not self._visual_ocr_right_click(rc_x, rc_y, result, errors):
+                continue 
+            
+            result["steps_executed"].append(f"visual_ocr_right_click_attempt_{i+1}: ({rc_x}, {rc_y}) {name}")
+
+            # Wait for menu
+            self._safe_sleep(self.visual_ocr_context_menu_delay / 1000.0)
+            result["steps_executed"].append("waited_visual_ocr_context_menu_delay")
+
+            # Verification screenshot
+            is_open = True
+            if self.visual_ocr_verify_menu_open and _PIL_IMAGEGRAB_AVAILABLE and before_img:
+                try:
+                    verify_bbox = (rc_x, rc_y, rc_x + self.visual_ocr_menu_verify_region_w, rc_y + self.visual_ocr_menu_verify_region_h)
+                    after_img = _ImageGrab.grab(bbox=verify_bbox)
+                    is_open = self._check_image_difference(before_img, after_img)
+                except Exception as exc:
+                    _log.debug(f"[AUTOMATION] context menu 'after' grab failed: {exc}")
+
+            result["visual_ocr_rc_attempt_details"].append({
+                "index": i+1, "point": (rc_x, rc_y), "name": name, "menu_open": is_open
+            })
+            
+            if is_open:
+                success_rc = (rc_x, rc_y)
+                result["visual_ocr_context_menu_open"] = True
+                result["steps_executed"].append(f"visual_ocr_context_menu_detected_attempt_{i+1}")
+                break
+            else:
+                _log.warning(f"[AUTOMATION] visual_ocr: context menu not detected at ({rc_x}, {rc_y}), retrying...")
+                if i < self.visual_ocr_rc_max_attempts - 1:
+                    self._safe_sleep(self.visual_ocr_rc_retry_delay / 1000.0)
+                    result["steps_executed"].append("waited_visual_ocr_rc_retry")
+
+        if not success_rc:
+            result["steps_skipped"].append("visual_ocr_context_menu_not_detected")
+            result["steps_skipped"].append("paste_skipped_context_menu_not_open")
+            result["modify_order_warning"] = "visual_ocr: context menu did not open after retries"
+            _log.error("[AUTOMATION] visual_ocr: context menu did not open after retries")
             self._apply_visual_ocr_paste_blocking(result)
             return
 
-        result["steps_executed"].append(f"visual_ocr_right_click_sent: ({rc_x}, {rc_y})")
-
-        self._safe_sleep(
-            self.visual_ocr_context_menu_delay, "visual_ocr_context_menu_delay", result, errors
-        )
+        rc_x, rc_y = success_rc
+        result["visual_ocr_rc_y"] = rc_y
+        
+        if self._is_aborted(): return
 
         if self.visual_ocr_menu_click_mode == "relative_to_right_click":
             menu_x = rc_x + self.visual_ocr_menu_x_offset
@@ -810,9 +937,8 @@ class EVEWindowAutomation:
 
         result["steps_executed"].append(f"visual_ocr_modify_order_menu_click_sent: ({menu_x}, {menu_y})")
         
-        self._safe_sleep(
-            self.visual_ocr_modify_dialog_delay, "visual_ocr_modify_dialog_delay", result, errors
-        )
+        self._safe_sleep(self.visual_ocr_modify_dialog_delay / 1000.0)
+        result["steps_executed"].append("waited_visual_ocr_modify_dialog_delay")
 
         result["modify_order_dialog_verified"] = False
         result["modify_order_warning"] = (
@@ -824,6 +950,23 @@ class EVEWindowAutomation:
             result["steps_skipped"].append("paste_skipped_visual_ocr_dialog_not_verified")
             result["_paste_blocked_modify_dialog"] = True
             _log.warning("[AUTOMATION] visual_ocr: paste blocked — visual_ocr_allow_unverified_paste=false")
+
+    def _check_image_difference(self, img1, img2) -> bool:
+        """Check if two images differ significantly (heuristic for context menu)."""
+        import numpy as np
+        try:
+            arr1 = np.array(img1)
+            arr2 = np.array(img2)
+            if arr1.shape != arr2.shape:
+                return True
+            # Simple absolute difference on grayscale-ish average
+            diff = np.abs(arr1.astype("int16") - arr2.astype("int16"))
+            # Count pixels where average channel difference > 15
+            changed_pixels = np.count_nonzero(np.mean(diff, axis=2) > 15)
+            return int(changed_pixels) > self.visual_ocr_menu_min_pixels
+        except Exception as exc:
+            _log.debug(f"[AUTOMATION] _check_image_difference error: {exc}")
+            return True # Fallback to true to avoid blocking if numpy fails
 
     def _get_window_rect(self, handle: int) -> dict:
         """Return window bounding rect as {left, top, width, height} via ctypes."""
@@ -1060,6 +1203,11 @@ class EVEWindowAutomation:
             _log.debug(f"[AUTOMATION] visual_ocr: debug overlay save failed: {exc}")
 
     def _handle_experimental_paste(self, result: dict, price_text: str, errors: list) -> None:
+        if self._is_aborted():
+            result["automation_cancelled"] = True
+            result["steps_skipped"].append("paste_skipped_automation_cancelled")
+            return
+
         if not self.exp_paste_enabled:
             result["steps_skipped"].append("experimental_paste_disabled")
             return
@@ -1068,8 +1216,27 @@ class EVEWindowAutomation:
             result["steps_skipped"].append("paste_into_focused_window_disabled")
             return
 
+        # Phase 3F Guards
+        if self._paste_guard_consumed:
+            result["paste_block_reason"] = "guard_consumed"
+            result["steps_skipped"].append("paste_skipped_guard_consumed")
+            return
+
+        selected_handle = result.get("selected_window_handle")
+        foreground_handle = self._get_foreground_window_handle()
+        
+        if selected_handle and foreground_handle != selected_handle:
+            result["foreground_matches_selected"] = False
+            result["paste_block_reason"] = "foreground_window_mismatch"
+            result["steps_skipped"].append("paste_skipped_foreground_mismatch")
+            _log.warning(f"[AUTOMATION] paste blocked: foreground={foreground_handle} != selected={selected_handle}")
+            return
+        
+        result["foreground_matches_selected"] = True
+        result["paste_attempted"] = True
+
         # 1. Pre-paste delay
-        self._safe_sleep(self.pre_paste_delay, "pre_paste_delay", result, errors)
+        self._safe_sleep(self.pre_paste_delay / 1000.0)
 
         try:
             from pywinauto import keyboard
@@ -1078,31 +1245,43 @@ class EVEWindowAutomation:
             return
 
         try:
+            # Re-verify before actual keys
+            if self._is_aborted(): return
+
             # 2. Clear field
             if self.clear_before_paste:
                 keyboard.send_keys("^a")
                 result["steps_executed"].append("sent_ctrl_a")
-                time.sleep(0.1)
+                self._safe_sleep(0.1)
+
+            if self._is_aborted(): return
 
             # 3. Paste
             if self.paste_method == "ctrl+v":
                 keyboard.send_keys("^v")
                 result["steps_executed"].append("sent_ctrl_v")
                 result["price_pasted"] = True
+                self._paste_guard_consumed = True
+                result["paste_guard_consumed"] = True
             elif self.paste_method == "typewrite":
                 keyboard.send_keys(price_text)
                 result["steps_executed"].append("typewrite_price")
                 result["price_pasted"] = True
+                self._paste_guard_consumed = True
+                result["paste_guard_consumed"] = True
             
             _log.info(f"[AUTOMATION] price pasted via {self.paste_method}")
 
         except Exception as exc:
             errors.append(f"paste_error: {exc}")
             _log.error(f"[AUTOMATION] paste error: {exc}")
+        finally:
+            self._release_modifiers()
 
     @staticmethod
     def _base_result(price_text: str) -> dict:
         return {
+            "config":                   {},
             "status":                   "disabled",
             "enabled":                  False,
             "dry_run":                  True,
@@ -1167,4 +1346,70 @@ class EVEWindowAutomation:
             "visual_ocr_tesseract_ready":              False,
             "visual_ocr_pytesseract_available":        False,
             "visual_ocr_suggested_path":               "N/A",
+            # Phase 3E: robust context menu
+            "visual_ocr_rc_attempts":                  0,
+            "visual_ocr_rc_attempt_details":           [],
+            "visual_ocr_context_menu_open":            False,
+            # Phase 3F: safety diagnostics
+            "process_pid":                             os.getpid(),
+            "paste_attempted":                         False,
+            "paste_guard_consumed":                    False,
+            "foreground_matches_selected":             False,
+            "paste_block_reason":                      None,
+            "automation_cancelled":                    False,
         }
+
+    def _release_modifiers(self) -> None:
+        """Safely release common modifier keys to prevent stuck state."""
+        try:
+            if _PYAUTOGUI_AVAILABLE:
+                _pyautogui.keyUp("ctrl")
+                _pyautogui.keyUp("shift")
+                _pyautogui.keyUp("alt")
+            else:
+                import ctypes
+                # keyup: 0x0002
+                ctypes.windll.user32.keybd_event(0x11, 0, 0x0002, 0) # ctrl
+                ctypes.windll.user32.keybd_event(0x10, 0, 0x0002, 0) # shift
+                ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0) # alt
+        except:
+            pass
+
+    def _get_foreground_window_handle(self) -> int:
+        """Get handle of the window currently in the foreground."""
+        try:
+            import ctypes
+            return ctypes.windll.user32.GetForegroundWindow()
+        except:
+            return 0
+
+    def _mouse_move(self, x: int, y: int) -> None:
+        """Move mouse to (x, y)."""
+        try:
+            if _PYAUTOGUI_AVAILABLE:
+                _pyautogui.moveTo(x, y)
+            else:
+                import ctypes
+                ctypes.windll.user32.SetCursorPos(x, y)
+        except:
+            pass
+
+    def _mouse_click(self, x: int, y: int, button: str = "left") -> None:
+        """Perform a mouse click at (x, y)."""
+        try:
+            if _PYAUTOGUI_AVAILABLE:
+                if button == "left":
+                    _pyautogui.click(x, y)
+                else:
+                    _pyautogui.rightClick(x, y)
+            else:
+                import ctypes
+                ctypes.windll.user32.SetCursorPos(x, y)
+                if button == "left":
+                    ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0) # left down
+                    ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0) # left up
+                else:
+                    ctypes.windll.user32.mouse_event(0x0008, 0, 0, 0, 0) # right down
+                    ctypes.windll.user32.mouse_event(0x0010, 0, 0, 0, 0) # right up
+        except:
+            pass

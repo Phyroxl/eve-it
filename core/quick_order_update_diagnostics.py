@@ -298,15 +298,25 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
     
     # Click diagnostics
+    rc_attempts = automation.get("visual_ocr_rc_attempts", 0)
+    if rc_attempts > 0:
+        lines.append(f"  Visual OCR RC Attempts: {rc_attempts}")
+        details = automation.get("visual_ocr_rc_attempt_details") or []
+        for det in details:
+            lines.append(f"    #{det.get('index')} point={det.get('point')} name={det.get('name')} menu_open={det.get('menu_open')}")
+    
+    menu_open = automation.get("visual_ocr_context_menu_open", False)
+    lines.append(f"  Visual OCR Menu Open : {menu_open}")
+
     rc_x = automation.get("visual_ocr_rc_x")
     rc_y = automation.get("visual_ocr_rc_y")
     if rc_x is not None:
         lines.append(f"  Visual OCR Right Clk : ({rc_x}, {rc_y})")
         
-    # We display the offsets even if not executed yet to show config
-    m_reg_cfg = automation.get("config") or {}
-    off_x = m_reg_cfg.get("visual_ocr_modify_menu_offset_x", "N/A")
-    off_y = m_reg_cfg.get("visual_ocr_modify_menu_offset_y", "N/A")
+    # Corrected offsets display
+    cfg_data = automation.get("config") or {}
+    off_x = cfg_data.get("visual_ocr_modify_menu_offset_x", "N/A")
+    off_y = cfg_data.get("visual_ocr_modify_menu_offset_y", "N/A")
     lines.append(f"  Visual OCR Mod Off   : ({off_x}, {off_y})")
     
     m_x = automation.get("visual_ocr_menu_x")
@@ -337,6 +347,18 @@ def _format_automation_section(automation: dict) -> list:
         lines.append(f"  Visual OCR OCR Attempts: {len(ocr_attempts)}")
         for i, att in enumerate(ocr_attempts[:3]):
             lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}'")
+    
+    # Phase 3F: Safety Guards
+    lines.append("-" * 36)
+    lines.append("SAFETY GUARDS")
+    lines.append("-" * 36)
+    lines.append(f"  Process PID          : {automation.get('process_pid', 'N/A')}")
+    lines.append(f"  Automation Cancelled : {_b(automation.get('automation_cancelled'))}")
+    lines.append(f"  Paste Attempted      : {_b(automation.get('paste_attempted'))}")
+    lines.append(f"  Paste Guard Consumed : {_b(automation.get('paste_guard_consumed'))}")
+    lines.append(f"  Foreground Matches   : {_b(automation.get('foreground_matches_selected'))}")
+    lines.append(f"  Paste Block Reason   : {automation.get('paste_block_reason', 'none')}")
+    lines.append("-" * 36)
     
     best_rej = dbg.get("best_rejected_row")
     if best_rej and automation.get("status") != "unique_match":

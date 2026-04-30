@@ -32,7 +32,7 @@ from core.window_automation import (
 _REQUIRED_KEYS = {
     "status", "enabled", "dry_run", "steps_executed", "steps_skipped",
     "errors", "window_found", "window_title", "focused", "clipboard_set",
-    "recommended_price_text", "delays",
+    "recommended_price_text", "delays", "config",
     "window_source", "selected_window_handle", "selected_window_title",
     "candidate_windows_count", "candidate_windows",
     "experimental_paste_enabled", "paste_into_focused_window",
@@ -54,6 +54,9 @@ _REQUIRED_KEYS = {
     "visual_ocr_section_y_min", "visual_ocr_section_y_max",
     "visual_ocr_own_marker_matched", "visual_ocr_price_text",
     "visual_ocr_quantity_text", "visual_ocr_debug_overlay_path",
+    # Phase 3E: robust context menu
+    "visual_ocr_rc_attempts", "visual_ocr_rc_attempt_details",
+    "visual_ocr_context_menu_open",
 }
 
 _CFG_DISABLED = {
@@ -658,6 +661,8 @@ class TestHotkeyExperimentalStrategy(unittest.TestCase):
              patch("core.window_automation.EVEWindowAutomation._focus_window",
                    return_value=True), \
              patch("pywinauto.keyboard.send_keys"), \
+             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle",
+                   return_value=99999), \
              patch("core.window_automation.EVEWindowAutomation._verify_modify_order_dialog",
                    return_value=verify_result):
             auto = EVEWindowAutomation(cfg)
@@ -798,8 +803,14 @@ class TestVisualOCRStrategy(unittest.TestCase):
             "visual_ocr_allow_unverified_paste": False,
             "visual_ocr_context_menu_delay_ms": 0,
             "visual_ocr_modify_dialog_delay_ms": 0,
-            "visual_ocr_right_click_x_offset": 20,
-            "visual_ocr_right_click_y_offset": 0,
+            "visual_ocr_right_click_max_attempts": 3,
+            "visual_ocr_right_click_retry_delay_ms": 0,
+            "visual_ocr_pre_right_click_hover_ms": 0,
+            "visual_ocr_pre_right_click_left_click": False,
+            "visual_ocr_right_click_candidate_offsets": [
+                {"name": "qty_left", "x_offset": 20, "y_offset": 0}
+            ],
+            "visual_ocr_verify_context_menu_open": True,
             "visual_ocr_menu_click_mode": "relative_to_right_click",
             "visual_ocr_modify_menu_offset_x": 65,
             "visual_ocr_modify_menu_offset_y": 37,
@@ -899,6 +910,13 @@ class TestVisualOCRStrategy(unittest.TestCase):
                    return_value=True), \
              patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click",
                    return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._check_image_difference",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle",
+                   return_value=99999), \
+             patch("core.window_automation.EVEWindowAutomation._mouse_move"), \
+             patch("core.window_automation.EVEWindowAutomation._mouse_click"), \
+             patch("PIL.ImageGrab.grab", return_value=MagicMock()), \
              patch("pywinauto.keyboard.send_keys"):
             auto = EVEWindowAutomation(cfg)
             order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
@@ -1003,6 +1021,11 @@ class TestVisualOCRStrategy(unittest.TestCase):
                    mock_right_click), \
              patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click",
                    return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._check_image_difference",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._mouse_move"), \
+             patch("core.window_automation.EVEWindowAutomation._mouse_click"), \
+             patch("PIL.ImageGrab.grab", return_value=MagicMock()), \
              patch("pywinauto.keyboard.send_keys"):
             auto = EVEWindowAutomation(self._cfg())
             order = {"price": 1595.9, "volume_remain": 10}
