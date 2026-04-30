@@ -90,7 +90,7 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         f"Buy Item Column:  {diag.get('buy_item_col', 'Unknown')}",
         f"Sell Header:      {diag.get('sell_header', 'Unknown')}",
         f"Buy Header:       {diag.get('buy_header', 'Unknown')}",
-    ]
+    ])
     
     # Failed/Missing Items
     missed = diag.get('missing_type_id_items', [])
