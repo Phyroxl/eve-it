@@ -230,6 +230,12 @@ class EveMarketVisualDetector:
         self.row_crop_y_padding     = int(config.get("visual_ocr_row_crop_y_padding", 2))
         self.min_order_row_y_offset = int(config.get("visual_ocr_min_order_row_y_offset_from_section", 45))
         
+        # Horizontal padding for OCR crops
+        self.qty_left_padding   = int(config.get("visual_ocr_manual_qty_left_padding_px", 20))
+        self.qty_right_padding  = int(config.get("visual_ocr_manual_qty_right_padding_px", 8))
+        self.price_left_padding = int(config.get("visual_ocr_manual_price_left_padding_px", 8))
+        self.price_right_padding = int(config.get("visual_ocr_manual_price_right_padding_px", 8))
+        
         # Debug crops
         self.debug_save_crops       = bool(config.get("visual_ocr_debug_save_crops", True))
         self.debug_max_crops        = int(config.get("visual_ocr_debug_max_crops", 5))
@@ -462,11 +468,17 @@ class EveMarketVisualDetector:
                 })
                 continue
 
-            # Apply padding for OCR if band is tall enough
+            # Apply vertical padding for OCR if band is tall enough
             ocr_y0, ocr_y1 = y_min, y_max
             if (y_max - y_min) > (2 * self.row_crop_y_padding + 4):
                 ocr_y0 += self.row_crop_y_padding
                 ocr_y1 -= self.row_crop_y_padding
+
+            # Apply horizontal padding for OCR crops
+            qty_x0_padded = max(panel_x0, qty_x0 - self.qty_left_padding)
+            qty_x1_padded = min(panel_x1, qty_x1 + self.qty_right_padding)
+            price_x0_padded = max(panel_x0, price_x0 - self.price_left_padding)
+            price_x1_padded = min(panel_x1, price_x1 + self.price_right_padding)
 
             price_ok   = True
             qty_ok     = True
@@ -474,7 +486,7 @@ class EveMarketVisualDetector:
             qty_text   = ""
 
             if self.match_price and target_price > 0:
-                price_region = img_array[ocr_y0:ocr_y1, price_x0:price_x1]
+                price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
                 ocr_price  = normalize_price_text(price_text)
                 price_ok   = abs(ocr_price - target_price) < (target_price * 0.001 + 1.0)
@@ -483,7 +495,7 @@ class EveMarketVisualDetector:
                     self._save_debug_crop(price_region, f"visual_ocr_{ts}_band{idx+1}_price.png")
 
             if self.match_quantity and target_quantity > 0:
-                qty_region = img_array[ocr_y0:ocr_y1, qty_x0:qty_x1]
+                qty_region = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
                 qty_text = self._ocr_region(qty_region)
                 ocr_qty  = normalize_quantity_text(qty_text)
                 qty_ok   = (ocr_qty == target_quantity)
@@ -492,7 +504,7 @@ class EveMarketVisualDetector:
                     self._save_debug_crop(qty_region, f"visual_ocr_{ts}_band{idx+1}_qty.png")
 
             # Record attempt regardless of match
-            result["debug"]["ocr_attempts"].append({
+            attempt = {
                 "band": [y_min, y_max],
                 "ocr_band": [ocr_y0, ocr_y1],
                 "marker_matched": own_marker,
@@ -500,7 +512,40 @@ class EveMarketVisualDetector:
                 "quantity_text": qty_text,
                 "price_match": price_ok,
                 "quantity_match": qty_ok
-            })
+            }
+            result["debug"]["ocr_attempts"].append(attempt)
+
+            # Track best rejected row for diagnostics
+            if not (price_ok and qty_ok):
+                current_best = result["debug"].get("best_rejected_row")
+                
+                # Scoring for "best" rejected: 
+                # marker=True and price_ok=True is better than just marker=True
+                # better than nothing.
+                is_better = False
+                if not current_best:
+                    is_better = True
+                else:
+                    curr_score = (10 if current_best["marker_matched"] else 0) + (20 if current_best["price_match"] else 0)
+                    new_score  = (10 if own_marker else 0) + (20 if price_ok else 0)
+                    if new_score > curr_score:
+                        is_better = True
+                
+                if is_better:
+                    reason = "unknown"
+                    if not own_marker: reason = "marker_mismatch"
+                    elif not price_ok: reason = "price_mismatch"
+                    elif not qty_ok:   reason = "quantity_mismatch"
+                    
+                    result["debug"]["best_rejected_row"] = {
+                        "band": [y_min, y_max],
+                        "marker_matched": own_marker,
+                        "price_text": price_text,
+                        "quantity_text": qty_text,
+                        "price_match": price_ok,
+                        "quantity_match": qty_ok,
+                        "reject_reason": reason
+                    }
 
             if price_ok and qty_ok:
                 y_c = (y_min + y_max) // 2

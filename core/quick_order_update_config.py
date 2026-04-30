@@ -83,6 +83,10 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_manual_region_enabled":          True,
     "visual_ocr_manual_region_prompt_each_time": False,
     "visual_ocr_manual_region_save_profile":     True,
+    "visual_ocr_manual_qty_left_padding_px":     20,
+    "visual_ocr_manual_qty_right_padding_px":    8,
+    "visual_ocr_manual_price_left_padding_px":   8,
+    "visual_ocr_manual_price_right_padding_px":  8,
 }
 
 _RATIO_KEYS = (

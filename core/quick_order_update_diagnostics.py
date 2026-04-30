@@ -320,6 +320,14 @@ def _format_automation_section(automation: dict) -> list:
         for i, att in enumerate(ocr_attempts[:3]):
             lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}'")
     
+    best_rej = dbg.get("best_rejected_row")
+    if best_rej and automation.get("status") != "unique_match":
+        lines.append("  Visual OCR Best Rej. :")
+        lines.append(f"    band={best_rej.get('band')} marker={best_rej.get('marker_matched')}")
+        lines.append(f"    p='{best_rej.get('price_text')}' q='{best_rej.get('quantity_text')}'")
+        lines.append(f"    p_match={best_rej.get('price_match')} q_match={best_rej.get('quantity_match')}")
+        lines.append(f"    reason={best_rej.get('reject_reason')}")
+    
     rej = dbg.get("marker_rejected_bands") or []
     if rej:
         lines.append(f"  Visual OCR Marker Rejected: {len(rej)}")

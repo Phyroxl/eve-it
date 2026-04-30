@@ -42,15 +42,19 @@ class VisualRegionSelectorDialog(QDialog):
             ", desde la primera hasta la última fila visible. "
             "Asegúrate de incluir la fila azul de tu orden."
         )
+        instr_qty = (
+            "Selecciona la columna CANTIDAD completa, incluyendo TODOS los dígitos. "
+            "Ej: si ves 741/745, selecciona desde el 7 hasta el último dígito visible."
+        )
         instr_col = "Selecciona solo el ancho horizontal de la columna. La altura no importa."
         
         if self.mode == "sell_buy_full":
             self.steps = [
                 {"id": "sell_region", "label": "PASO 1/6: SELECCIONA REGIÓN SELL (Vendedores)", "instr": instr_reg.format("VENDEDORES"), "color": QColor("#3b82f6")},
-                {"id": "sell_quantity", "label": "PASO 2/6: COLUMNA CANTIDAD (SELL)", "instr": instr_col, "color": QColor("#10b981")},
+                {"id": "sell_quantity", "label": "PASO 2/6: COLUMNA CANTIDAD (SELL)", "instr": instr_qty, "color": QColor("#10b981")},
                 {"id": "sell_price", "label": "PASO 3/6: COLUMNA PRECIO (SELL)", "instr": instr_col, "color": QColor("#f59e0b")},
                 {"id": "buy_region", "label": "PASO 4/6: SELECCIONA REGIÓN BUY (Compradores)", "instr": instr_reg.format("COMPRADORES"), "color": QColor("#3b82f6")},
-                {"id": "buy_quantity", "label": "PASO 5/6: COLUMNA CANTIDAD (BUY)", "instr": instr_col, "color": QColor("#10b981")},
+                {"id": "buy_quantity", "label": "PASO 5/6: COLUMNA CANTIDAD (BUY)", "instr": instr_qty, "color": QColor("#10b981")},
                 {"id": "buy_price", "label": "PASO 6/6: COLUMNA PRECIO (BUY)", "instr": instr_col, "color": QColor("#f59e0b")},
             ]
         else:
@@ -58,7 +62,7 @@ class VisualRegionSelectorDialog(QDialog):
             s_es = "VENDEDORES" if side == "sell" else "COMPRADORES"
             self.steps = [
                 {"id": "region", "label": f"PASO 1/3: SELECCIONA REGIÓN {s}", "instr": instr_reg.format(s_es), "color": QColor("#3b82f6")},
-                {"id": "quantity", "label": f"PASO 2/3: COLUMNA CANTIDAD ({s})", "instr": instr_col, "color": QColor("#10b981")},
+                {"id": "quantity", "label": f"PASO 2/3: COLUMNA CANTIDAD ({s})", "instr": instr_qty, "color": QColor("#10b981")},
                 {"id": "price", "label": f"PASO 3/3: COLUMNA PRECIO ({s})", "instr": instr_col, "color": QColor("#f59e0b")}
             ]
             
