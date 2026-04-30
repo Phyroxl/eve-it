@@ -334,6 +334,26 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         
         comp_price = comp_buy if is_buy else comp_sell
         
+        # DEBUG STATE INFO
+        state_debug = {
+            "order_id": eo['order_id'],
+            "type_id": t_id,
+            "item_name": item_name,
+            "side": "BUY" if is_buy else "SELL",
+            "location_id": loc_id,
+            "my_price": price,
+            "best_buy": bb,
+            "best_sell": bs,
+            "competitor_price": comp_price,
+            "competitive": competitive,
+            "state": state,
+            "difference_to_best": difference,
+            "market_orders_loc_buy_count": len(grouped_market.get(m_key, {}).get('buy', [])),
+            "market_orders_loc_sell_count": len(grouped_market.get(m_key, {}).get('sell', [])),
+            "own_orders_excluded_count": my_buys.get(price, 0) if is_buy else my_sells.get(price, 0),
+            "comp_raw_list_len": len(comp_buys) if is_buy else len(comp_sells)
+        }
+
         analysis = OpenOrderAnalysis(
             is_buy=is_buy, 
             state=state, 
@@ -353,6 +373,7 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         o._tax_source = tax_source
         o._b_fee_pct = b_fee_val
         o._s_tax_pct = s_tax_val
+        o._state_debug = state_debug
         parsed_orders.append(o)
     return parsed_orders
 

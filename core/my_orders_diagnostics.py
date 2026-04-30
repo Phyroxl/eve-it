@@ -40,6 +40,9 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         lines.extend([
             f"Source:         {mt.get('source', '---').upper()}",
             f"Force Refresh:  {mt.get('force_refresh', False)}",
+            f"Type IDs Count: {mt.get('type_ids_count', '---')}",
+            f"Types Fetched:  {mt.get('type_ids_fetched', '---')}",
+            f"Types Failed:   {mt.get('type_ids_failed', '---')}",
             f"Cache Hit:      {mt.get('cache_hit', False)}",
             f"Cache Age:      {mt.get('cache_age_seconds', 0):.1f}s",
             f"Orders Count:   {mt.get('orders_count', 0):,}",
@@ -50,6 +53,38 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
     else:
         lines.append("No market sync data available for this session.")
         
+    lines.extend([
+        "",
+        "[ORDER STATE DEBUG — WATCHLIST]",
+    ])
+    
+    watchlist = []
+    all_orders = diag.get("all_orders", [])
+    for o in all_orders:
+        name = o.item_name.lower()
+        state = o.analysis.state.lower()
+        # Watchlist: Wasp I o cualquier orden superada
+        if "wasp i" in name or "superada" in state:
+            watchlist.append(o)
+            
+    if not watchlist:
+        lines.append("No critical orders found in watchlist.")
+    else:
+        for o in watchlist[:15]:
+            d = getattr(o, "_state_debug", {})
+            lines.extend([
+                f"Item:       {o.item_name} ({'BUY' if o.is_buy_order else 'SELL'})",
+                f"Price:      {o.price:,.2f} ISK",
+                f"Location:   {o.location_id}",
+                f"Best Abs:   {o.analysis.best_buy if o.is_buy_order else o.analysis.best_sell:,.2f} ISK",
+                f"Comp Price: {o.analysis.competitor_price:,.2f} ISK",
+                f"State:      {o.analysis.state.upper()}",
+                f"Competitive:{o.analysis.competitive}",
+                f"Difference: {o.analysis.difference_to_best:,.2f} ISK",
+                f"Counts:     LocBuy={d.get('market_orders_loc_buy_count', 0)}, LocSell={d.get('market_orders_loc_sell_count', 0)}, OwnExcluded={d.get('own_orders_excluded_count', 0)}",
+                "----------------------------------------------"
+            ])
+
     lines.extend([
         "",
         "[ICON SUMMARY]",

@@ -117,8 +117,16 @@ class SyncWorker(QThread):
             
             self.status_update.emit("CARGANDO PRECIOS DE MERCADO...", 60)
             type_ids = list(set(o['type_id'] for o in orders))
-            # FORZAR ACTUALIZACIÓN DE PRECIOS: Usar force_refresh=True para invalidar MarketOrdersCache
-            all_market_orders = client.market_orders(10000002, force_refresh=True)
+            
+            # MODO OPTIMIZADO: Solo descargar los type_ids de mis órdenes (Snapshot fresco)
+            all_market_orders = client.market_orders_for_types(10000002, type_ids)
+            
+            # Fallback si falla el filtrado por tipo
+            if not all_market_orders and type_ids:
+                _log.warning("[MY ORDERS] Filtered market fetch failed or empty, falling back to full regional refresh")
+                all_market_orders = client.market_orders(10000002, force_refresh=True)
+                if 10000002 in client.market_orders_timings:
+                    client.market_orders_timings[10000002]["source"] = "esi_type_filtered_failed_full_fallback"
             
             self.status_update.emit("CALCULANDO WAC...", 80)
             CostBasisService.instance().refresh_from_esi(self.char_id, self.token)
@@ -1745,6 +1753,7 @@ class MarketMyOrdersView(QWidget):
                 })
         
         self._orders_diag["market_timings"] = ESIClient().market_orders_timings.get(10000002, {})
+        self._orders_diag["all_orders"] = self.all_orders
         
         return format_my_orders_diagnostic_report(self._orders_diag, icon_diag)
 

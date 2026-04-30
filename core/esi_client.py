@@ -237,6 +237,54 @@ class ESIClient:
             cache.set(region_id, all_orders)
         return all_orders
 
+    def market_orders_for_types(self, region_id: int, type_ids: list[int], max_workers: int = 6) -> list:
+        """
+        Fetch fresh market orders only for the requested type_ids using get_market_orders_for_type().
+        No MarketOrdersCache regional involvement.
+        Suitable for My Orders refresh where we only need the character's active order type_ids.
+        """
+        t_start = time.time()
+        dedup_type_ids = sorted(list(set(type_ids)))
+        all_orders = []
+        type_ids_fetched = 0
+        type_ids_failed = 0
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        logger.info(f"[MARKET ORDERS FILTERED] Region {region_id}: Fetching {len(dedup_type_ids)} types using {max_workers} workers...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tid = {executor.submit(self.get_market_orders_for_type, region_id, tid): tid for tid in dedup_type_ids}
+            for future in as_completed(future_to_tid):
+                tid = future_to_tid[future]
+                try:
+                    data = future.result()
+                    if data is not None:
+                        all_orders.extend(data)
+                        type_ids_fetched += 1
+                    else:
+                        type_ids_failed += 1
+                except Exception as e:
+                    type_ids_failed += 1
+                    logger.error(f"[MARKET ORDERS FILTERED] Type {tid} exception: {e}")
+        
+        total_elapsed = time.time() - t_start
+        
+        # Store timings for diagnostics
+        self.market_orders_timings[region_id] = {
+            "source": "esi_type_filtered_refresh",
+            "cache_hit": False,
+            "force_refresh": True,
+            "type_ids_count": len(dedup_type_ids),
+            "type_ids_fetched": type_ids_fetched,
+            "type_ids_failed": type_ids_failed,
+            "orders_count": len(all_orders),
+            "total_elapsed": total_elapsed
+        }
+        
+        logger.info(f"[MARKET ORDERS FILTERED] Finished in {total_elapsed:.2f}s. Types: {len(dedup_type_ids)}, Orders: {len(all_orders)}, Failed: {type_ids_failed}")
+        return all_orders
+
     def get_market_orders_for_type(self, region_id: int, type_id: int) -> list:
         """
         Fetch current market orders for a specific type in a region.
