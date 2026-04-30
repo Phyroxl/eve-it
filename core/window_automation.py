@@ -195,7 +195,7 @@ class EVEWindowAutomation:
         self.visual_ocr_allow_unverified_paste = bool(config.get("visual_ocr_allow_unverified_paste",      False))
         self.visual_ocr_context_menu_delay    = int(config.get("visual_ocr_context_menu_delay_ms",         400))
         self.visual_ocr_modify_dialog_delay   = int(config.get("visual_ocr_modify_dialog_delay_ms",        700))
-        self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          80))
+        self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          20))
         self.visual_ocr_rc_y_offset          = int(config.get("visual_ocr_right_click_y_offset",          0))
         self.visual_ocr_menu_click_mode      = str(config.get("visual_ocr_menu_click_mode",                "relative_to_right_click"))
         self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_modify_menu_offset_x",          65))

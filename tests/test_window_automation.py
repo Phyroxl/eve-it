@@ -798,7 +798,7 @@ class TestVisualOCRStrategy(unittest.TestCase):
             "visual_ocr_allow_unverified_paste": False,
             "visual_ocr_context_menu_delay_ms": 0,
             "visual_ocr_modify_dialog_delay_ms": 0,
-            "visual_ocr_right_click_x_offset": 80,
+            "visual_ocr_right_click_x_offset": 20,
             "visual_ocr_right_click_y_offset": 0,
             "visual_ocr_menu_click_mode": "relative_to_right_click",
             "visual_ocr_modify_menu_offset_x": 65,

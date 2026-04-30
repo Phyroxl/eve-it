@@ -95,6 +95,8 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_modify_menu_offset_y":           37,
     "visual_ocr_context_menu_delay_ms":          400,
     "visual_ocr_modify_dialog_delay_ms":         700,
+    "visual_ocr_right_click_x_offset":           20,
+    "visual_ocr_right_click_y_offset":           0,
 }
 
 _RATIO_KEYS = (

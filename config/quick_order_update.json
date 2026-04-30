@@ -52,12 +52,13 @@
   "visual_ocr_marker_x_min_ratio": 0.00,
   "visual_ocr_marker_x_max_ratio": 0.18,
   "visual_ocr_marker_required": false,
-  "visual_ocr_require_own_order_marker": false,
-  "visual_ocr_tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
-  "visual_ocr_tesseract_lang": "eng",
-  "visual_ocr_tesseract_psm": 7,
+  "visual_ocr_right_click_x_offset": 20,
+  "visual_ocr_right_click_y_offset": 0,
   "visual_ocr_modify_menu_offset_x": 65,
   "visual_ocr_modify_menu_offset_y": 37,
   "visual_ocr_context_menu_delay_ms": 400,
-  "visual_ocr_modify_dialog_delay_ms": 700
+  "visual_ocr_modify_dialog_delay_ms": 700,
+  "visual_ocr_tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+  "visual_ocr_tesseract_lang": "eng",
+  "visual_ocr_tesseract_psm": 7
 }
