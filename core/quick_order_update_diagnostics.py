@@ -258,6 +258,14 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Calibration Required : {_b(c_req)}")
     lines.append(f"  Calibration Cancelled: {_b(c_can)}")
 
+    # Saved profile failure and retry status
+    s_fail = m_reg_cfg.get("visual_ocr_saved_profile_failed", False)
+    s_sug  = m_reg_cfg.get("visual_ocr_suggested_action", "none")
+    s_ret  = m_reg_cfg.get("visual_ocr_retry_after_profile_fail", False)
+    lines.append(f"  Saved Profile Failed : {_b(s_fail)}")
+    lines.append(f"  Suggested Action     : {s_sug}")
+    lines.append(f"  Retry After Failure  : {_b(s_ret)}")
+
     dbg = automation.get("visual_ocr_debug") or {}
     m_used = dbg.get("manual_region_used", False)
     m_src  = m_reg_cfg.get("manual_region_source", "n/a")

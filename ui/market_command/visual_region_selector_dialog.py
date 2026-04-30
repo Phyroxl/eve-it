@@ -30,22 +30,22 @@ class VisualRegionSelectorDialog(QDialog):
         self.original_image = screenshot
         self.pixmap = QPixmap.fromImage(screenshot)
         
-        # Steps definition
+        # Steps definition with clearer instructions
         if self.mode == "sell_buy_full":
             self.steps = [
-                {"id": "sell_region", "label": "PASO 1/6: SELECCIONA REGIÓN DE ÓRDENES SELL (Vendedores)"},
-                {"id": "sell_quantity", "label": "PASO 2/6: SELECCIONA ANCHO COLUMNA 'CANTIDAD' (SELL)"},
-                {"id": "sell_price", "label": "PASO 3/6: SELECCIONA ANCHO COLUMNA 'PRECIO' (SELL)"},
-                {"id": "buy_region", "label": "PASO 4/6: SELECCIONA REGIÓN DE ÓRDENES BUY (Compradores)"},
-                {"id": "buy_quantity", "label": "PASO 5/6: SELECCIONA ANCHO COLUMNA 'CANTIDAD' (BUY)"},
-                {"id": "buy_price", "label": "PASO 6/6: SELECCIONA ANCHO COLUMNA 'PRECIO' (BUY)"},
+                {"id": "sell_region", "label": "PASO 1/6: SELECCIONA REGIÓN SELL (Vendedores)", "instr": "Selecciona SOLO el área de las filas, incluyendo tu orden azul.", "color": QColor("#3b82f6")},
+                {"id": "sell_quantity", "label": "PASO 2/6: COLUMNA CANTIDAD (SELL)", "instr": "Selecciona SOLO el ancho de la columna 'Cantidad'.", "color": QColor("#10b981")},
+                {"id": "sell_price", "label": "PASO 3/6: COLUMNA PRECIO (SELL)", "instr": "Selecciona SOLO el ancho de la columna 'Precio'.", "color": QColor("#f59e0b")},
+                {"id": "buy_region", "label": "PASO 4/6: SELECCIONA REGIÓN BUY (Compradores)", "instr": "Selecciona SOLO el área de las filas, incluyendo tu orden azul.", "color": QColor("#3b82f6")},
+                {"id": "buy_quantity", "label": "PASO 5/6: COLUMNA CANTIDAD (BUY)", "instr": "Selecciona SOLO el ancho de la columna 'Cantidad'.", "color": QColor("#10b981")},
+                {"id": "buy_price", "label": "PASO 6/6: COLUMNA PRECIO (BUY)", "instr": "Selecciona SOLO el ancho de la columna 'Precio'.", "color": QColor("#f59e0b")},
             ]
         else:
             s = side.upper()
             self.steps = [
-                {"id": "region", "label": f"PASO 1/3: SELECCIONA REGIÓN DE ÓRDENES {s}"},
-                {"id": "quantity", "label": f"PASO 2/3: SELECCIONA ANCHO COLUMNA 'CANTIDAD' ({s})"},
-                {"id": "price", "label": f"PASO 3/3: SELECCIONA ANCHO COLUMNA 'PRECIO' ({s})"}
+                {"id": "region", "label": f"PASO 1/3: SELECCIONA REGIÓN {s}", "instr": "Selecciona SOLO el área de las filas, incluyendo tu orden azul.", "color": QColor("#3b82f6")},
+                {"id": "quantity", "label": f"PASO 2/3: COLUMNA CANTIDAD ({s})", "instr": "Selecciona SOLO el ancho de la columna 'Cantidad'.", "color": QColor("#10b981")},
+                {"id": "price", "label": f"PASO 3/3: COLUMNA PRECIO ({s})", "instr": "Selecciona SOLO el ancho de la columna 'Precio'.", "color": QColor("#f59e0b")}
             ]
             
         self.current_step_idx = 0
@@ -64,11 +64,11 @@ class VisualRegionSelectorDialog(QDialog):
         root.setContentsMargins(10, 10, 10, 10)
         
         self.hdr = QLabel("")
-        self.hdr.setStyleSheet("color:#3b82f6; font-size:12px; font-weight:900;")
+        self.hdr.setStyleSheet("color:#f1f5f9; font-size:13px; font-weight:900;")
         self.hdr.setAlignment(Qt.AlignCenter)
         root.addWidget(self.hdr)
         
-        self.sub_hdr = QLabel("Haz clic y arrastra para dibujar un rectángulo sobre la zona indicada.")
+        self.sub_hdr = QLabel("")
         self.sub_hdr.setStyleSheet("color:#64748b; font-size:10px;")
         self.sub_hdr.setAlignment(Qt.AlignCenter)
         root.addWidget(self.sub_hdr)
@@ -122,7 +122,11 @@ class VisualRegionSelectorDialog(QDialog):
 
     def _update_step_ui(self):
         step = self.steps[self.current_step_idx]
+        color_hex = step["color"].name()
         self.hdr.setText(step["label"])
+        self.hdr.setStyleSheet(f"color:{color_hex}; font-size:13px; font-weight:900;")
+        self.sub_hdr.setText(step["instr"])
+        
         self.btn_next.setText("CONFIRMAR Y FINALIZAR" if self.current_step_idx == len(self.steps) - 1 else "CONFIRMAR Y CONTINUAR")
         self.btn_next.setEnabled(not self.selected_rect.isNull())
         self.lbl_coords.setText("Dibujando..." if self.is_drawing else ("Seleccionado" if not self.selected_rect.isNull() else "Esperando selección..."))
@@ -174,24 +178,43 @@ class VisualRegionSelectorDialog(QDialog):
         painter = QPainter(self.image_label)
         painter.drawPixmap(0, 0, self.pixmap)
         
-        # 1. Draw previous results in grey
-        for sid, coords in self.results.items():
+        # 1. Draw previous results
+        for idx, (sid, coords) in enumerate(self.results.items()):
+            # Find color for this step
+            step_color = QColor(100, 100, 100) # Default
+            for s in self.steps:
+                if s["id"] == sid:
+                    step_color = s["color"]
+                    break
+            
             x0, y0, x1, y1 = coords
             rect = QRect(QPoint(x0, y0), QPoint(x1, y1))
-            painter.setPen(QPen(QColor(100, 100, 100, 150), 1, Qt.DashLine))
-            painter.setBrush(QColor(100, 100, 100, 30))
+            
+            # Semi-transparent border and fill
+            p_color = QColor(step_color)
+            p_color.setAlpha(150)
+            painter.setPen(QPen(p_color, 1, Qt.DashLine))
+            
+            f_color = QColor(step_color)
+            f_color.setAlpha(30)
+            painter.setBrush(f_color)
             painter.drawRect(rect)
+            
             # Label the previous step
+            painter.setPen(QPen(step_color))
             painter.drawText(rect.topLeft() + QPoint(5, 15), sid)
         
         # 2. Draw current selection
         if self.is_drawing or not self.selected_rect.isNull():
             rect = QRect(self.start_point, self.end_point).normalized() if self.is_drawing else self.selected_rect
             
-            color = QColor("#3b82f6")
-            pen = QPen(color, 2, Qt.SolidLine)
+            curr_color = self.steps[self.current_step_idx]["color"]
+            pen = QPen(curr_color, 2, Qt.SolidLine)
             painter.setPen(pen)
-            painter.setBrush(QColor(59, 130, 246, 50)) 
+            
+            fill_color = QColor(curr_color)
+            fill_color.setAlpha(60)
+            painter.setBrush(fill_color) 
             painter.drawRect(rect)
             
             # Add label for current step

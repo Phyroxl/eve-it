@@ -9,7 +9,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QGridLayout, QTextEdit, QComboBox,
+    QFrame, QGridLayout, QTextEdit, QComboBox, QMessageBox,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QImage
@@ -589,6 +589,38 @@ class QuickOrderUpdateDialog(QDialog):
             result = auto.execute_quick_order_update(
                 order_data, price_text, selected_window=selected, manual_region=manual_region
             )
+            
+            # 3. Handle Saved Profile Failure and Retry
+            if manual_region_source == "saved_profile" and strategy == "visual_ocr":
+                v_status = result.get("visual_ocr_status")
+                if v_status in ["not_found", "ambiguous", "error"] and not result.get("price_pasted"):
+                    _log.warning(f"[QUICK UPDATE] saved profile failed (status={v_status}) — prompting for retry")
+                    
+                    result_metadata["visual_ocr_saved_profile_failed"] = True
+                    result_metadata["visual_ocr_suggested_action"] = "recalibrate_side"
+                    
+                    if self._prompt_recalibration_retry(side):
+                        _log.info(f"[QUICK UPDATE] user accepted recalibration retry for {side}")
+                        
+                        # Prompt for NEW calibration
+                        new_manual_region = self._prompt_single_side_calibration(side, selected, cfg)
+                        if new_manual_region:
+                            _log.info(f"[QUICK UPDATE] retrying automation with new manual calibration")
+                            result_metadata["manual_region_selected_now"] = True
+                            result_metadata["manual_region_source"] = "selected_now_retry"
+                            result_metadata["visual_ocr_retry_after_profile_fail"] = True
+                            
+                            # Re-run execution ONCE
+                            result = auto.execute_quick_order_update(
+                                order_data, price_text, selected_window=selected, manual_region=new_manual_region
+                            )
+                        else:
+                            _log.info("[QUICK UPDATE] user cancelled recalibration during retry")
+                            result_metadata["calibration_cancelled"] = True
+                    else:
+                        _log.info("[QUICK UPDATE] user declined recalibration retry")
+                        result_metadata["steps_skipped_extra"] = ["user_declined_recalibration"]
+
         except Exception as exc:
             _log.error(f"[QUICK UPDATE] automation crash: {exc}")
             result = {
@@ -617,7 +649,20 @@ class QuickOrderUpdateDialog(QDialog):
             "manual_region_source":                      result_metadata.get("manual_region_source", "saved_profile"),
             "calibration_required":                      result_metadata.get("calibration_required", False),
             "calibration_cancelled":                     result_metadata.get("calibration_cancelled", False),
+            "visual_ocr_saved_profile_failed":           result_metadata.get("visual_ocr_saved_profile_failed", False),
+            "visual_ocr_suggested_action":               result_metadata.get("visual_ocr_suggested_action", "none"),
+            "visual_ocr_retry_after_profile_fail":       result_metadata.get("visual_ocr_retry_after_profile_fail", False),
         }
+        
+        # Merge other metadata
+        for k, v in result_metadata.items():
+            if k not in result:
+                result[k] = v
+        
+        # Merge extra skipped steps
+        if "steps_skipped_extra" in result_metadata:
+            if "steps_skipped" not in result: result["steps_skipped"] = []
+            result["steps_skipped"].extend(result_metadata["steps_skipped_extra"])
 
         self._update_automation_report(result)
 
@@ -625,6 +670,7 @@ class QuickOrderUpdateDialog(QDialog):
         errors  = result.get("errors", [])
 
         if status == "dry_run":
+            selected = self._selected_window()
             sel_title = (selected.get("title", "?")[:40] if selected else "fallback por título")
             msg   = f"Dry-run completado. Ventana: {sel_title}. Ver reporte."
             color = "#10b981"
@@ -835,3 +881,19 @@ class QuickOrderUpdateDialog(QDialog):
             _log.error(f"[QUICK UPDATE] error during manual calibration prompt: {exc}")
             
         return None
+
+    def _prompt_recalibration_retry(self, side: str) -> bool:
+        """Ask the user if they want to recalibrate and retry after a profile failure."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Perfil Visual OCR Desalineado")
+        box.setText(
+            f"El perfil Visual OCR guardado para {side.upper()} no pudo localizar tu orden.\n\n"
+            "Esto suele pasar por cambios de resolución, scroll o movimiento de ventanas.\n\n"
+            "¿Quieres recalibrar este lado ahora y reintentar automáticamente?"
+        )
+        box.setIcon(QMessageBox.Warning)
+        btn_retry = box.addButton("Recalibrar y reintentar", QMessageBox.AcceptRole)
+        box.addButton("Cancelar", QMessageBox.RejectRole)
+        
+        box.exec()
+        return box.clickedButton() == btn_retry
