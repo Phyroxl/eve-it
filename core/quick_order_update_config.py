@@ -81,7 +81,7 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_debug_save_crops":              True,
     "visual_ocr_debug_max_crops":               5,
     "visual_ocr_manual_region_enabled":          True,
-    "visual_ocr_manual_region_prompt_each_time": True,
+    "visual_ocr_manual_region_prompt_each_time": False,
     "visual_ocr_manual_region_save_profile":     True,
 }
 

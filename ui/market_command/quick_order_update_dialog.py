@@ -545,7 +545,7 @@ class QuickOrderUpdateDialog(QDialog):
             manual_region = regions.get(side)
             
             # Check if valid (not legacy, has all columns)
-            if not self._has_valid_calibration(manual_region) or cfg.get("visual_ocr_manual_region_prompt_each_time", False):
+            if not self._has_valid_calibration(manual_region):
                 calibration_required = True
                 _log.info(f"[QUICK UPDATE] calibration missing or prompt=true for {side} — prompting user")
                 manual_region = self._prompt_single_side_calibration(side, selected, cfg)

@@ -47,7 +47,7 @@
   "visual_ocr_debug_save_crops": true,
   "visual_ocr_debug_max_crops": 5,
   "visual_ocr_manual_region_enabled": true,
-  "visual_ocr_manual_region_prompt_each_time": true,
+  "visual_ocr_manual_region_prompt_each_time": false,
   "visual_ocr_manual_region_save_profile": true,
   "visual_ocr_marker_x_min_ratio": 0.00,
   "visual_ocr_marker_x_max_ratio": 0.18,
