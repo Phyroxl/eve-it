@@ -225,6 +225,7 @@ class EVEWindowAutomation:
         self.visual_ocr_max_row_height         = int(config.get("visual_ocr_max_row_height", 28))
         self.visual_ocr_row_crop_y_padding     = int(config.get("visual_ocr_row_crop_y_padding", 2))
         self.visual_ocr_min_order_row_y_offset = int(config.get("visual_ocr_min_order_row_y_offset_from_section", 45))
+        self.visual_ocr_debug_save_crops       = bool(config.get("visual_ocr_debug_save_crops", True))
         self.visual_ocr_debug_max_crops        = int(config.get("visual_ocr_debug_max_crops", 5))
         
         # Phase 3E: manual region selection
@@ -268,6 +269,13 @@ class EVEWindowAutomation:
         result["modify_order_hotkey_configured"]          = bool(self.modify_order_hotkey)
         result["allow_unverified_modify_order_paste"]     = self.allow_unverified_modify_paste
         result["visual_ocr_enabled"]                      = self.visual_ocr_enabled
+        
+        # Phase 3E: manual region config for diagnostics
+        result["config"] = {
+            "visual_ocr_manual_region_enabled":          self.visual_ocr_manual_region_enabled,
+            "visual_ocr_manual_region_prompt_each_time": self.visual_ocr_manual_region_prompt_each,
+            "visual_ocr_manual_region_save_profile":     self.visual_ocr_manual_region_save_profile,
+        }
 
         if not self.enabled:
             result["status"] = "disabled"

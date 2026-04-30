@@ -802,5 +802,23 @@ class TestRowFiltering(unittest.TestCase):
         self.assertEqual(len(dbg["rejected_bands_by_offset"]), 1)
 
 
+    def test_manual_region_override(self):
+        det = EveMarketVisualDetector({"visual_ocr_marker_required": False})
+        import numpy as np
+        screenshot = np.zeros((100, 100, 3), dtype="uint8")
+        order = {"price": 100, "volume_remain": 1}
+        window_rect = {"width": 100, "height": 100}
+        manual = {"x_min_ratio": 0.1, "y_min_ratio": 0.1, "x_max_ratio": 0.9, "y_max_ratio": 0.9}
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[]):
+            result = det.detect_own_order_row(screenshot, order, window_rect, manual_region=manual)
+        
+        self.assertTrue(result["debug"]["manual_region_used"])
+        self.assertEqual(result["debug"]["section_used"], "manual_override")
+        self.assertEqual(result["debug"]["manual_region_ratios"], [0.1, 0.1, 0.9, 0.9])
+
 if __name__ == "__main__":
     unittest.main()

@@ -575,18 +575,33 @@ class QuickOrderUpdateDialog(QDialog):
                                     "x_max_ratio": x1 / sw,
                                     "y_max_ratio": y1 / sh
                                 }
+                                _log.info(f"[QUICK UPDATE] manual visual OCR region selected: {manual_region}")
                                 if cfg.get("visual_ocr_manual_region_save_profile", True):
                                     regions[side] = manual_region
                                     save_quick_order_update_regions(regions)
                                     _log.info(f"[QUICK UPDATE] saved manual region for {side}")
                         else:
                             # User cancelled selection
+                            _log.info("[QUICK UPDATE] manual visual OCR region selection cancelled by user")
+                            result = {
+                                "status": "partial",
+                                "errors": ["Manual region selection cancelled by user"],
+                                "steps_skipped": ["visual_ocr_manual_region_cancelled"],
+                            }
+                            self._update_automation_report(result)
                             self._status_lbl.setText("Calibración cancelada. Abortando.")
                             self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
                             return
+                    else:
+                        _log.error("[QUICK UPDATE] could not capture screenshot for manual region selection")
+                else:
+                    _log.error("[QUICK UPDATE] could not find window handle for manual region selection")
             else:
                 manual_region = saved
                 _log.info(f"[QUICK UPDATE] using saved manual region for {side}")
+
+        if manual_region:
+            _log.info(f"[QUICK UPDATE] passing manual region to automation: {manual_region}")
 
         result = None
         try:
@@ -608,24 +623,16 @@ class QuickOrderUpdateDialog(QDialog):
         # Inject candidate list metadata into result for diagnostics
         result["candidate_windows_count"] = len(self._window_candidates)
         result["candidate_windows"]       = self._window_candidates[:8]
+        
+        # Phase 3E: Ensure config is in result for diagnostics
+        if "config" not in result:
+            result["config"] = {
+                "visual_ocr_manual_region_enabled":          cfg.get("visual_ocr_manual_region_enabled", True),
+                "visual_ocr_manual_region_prompt_each_time": cfg.get("visual_ocr_manual_region_prompt_each_time", True),
+                "visual_ocr_manual_region_save_profile":     cfg.get("visual_ocr_manual_region_save_profile", True),
+            }
 
-        # Update the report panel — replace existing [AUTOMATION] if present
-        try:
-            from core.quick_order_update_diagnostics import (
-                format_automation_section, replace_or_append_automation_section,
-            )
-            auto_section   = format_automation_section(result)
-            updated_report = replace_or_append_automation_section(
-                self._diag_report, auto_section
-            )
-            self._diag_report = updated_report
-            self._report_edit.setPlainText(updated_report)
-        except Exception as exc:
-            _log.warning(f"[QUICK UPDATE] could not update diag report: {exc}")
-            # Fallback: if even formatting fails, just append raw error to report if possible
-            if "[AUTOMATION]" not in self._diag_report:
-                self._diag_report += f"\n\n[AUTOMATION]\n  Status: error\n  Error: formatting_failed {exc}"
-                self._report_edit.setPlainText(self._diag_report)
+        self._update_automation_report(result)
 
         status  = result.get("status", "unknown")
         errors  = result.get("errors", [])
@@ -662,3 +669,22 @@ class QuickOrderUpdateDialog(QDialog):
             f"[QUICK UPDATE] automation status={status} "
             f"window_source={result.get('window_source')} errors={len(errors)}"
         )
+
+    def _update_automation_report(self, result: dict):
+        """Update the report panel with the [AUTOMATION] section from result."""
+        try:
+            from core.quick_order_update_diagnostics import (
+                format_automation_section, replace_or_append_automation_section,
+            )
+            auto_section = format_automation_section(result)
+            updated_report = replace_or_append_automation_section(
+                self._diag_report, auto_section
+            )
+            self._diag_report = updated_report
+            self._report_edit.setPlainText(updated_report)
+        except Exception as exc:
+            _log.warning(f"[QUICK UPDATE] could not update diag report: {exc}")
+            # Fallback: if even formatting fails, just append raw error to report if possible
+            if "[AUTOMATION]" not in self._diag_report:
+                self._diag_report += f"\n\n[AUTOMATION]\n  Status: error\n  Error: formatting_failed {exc}"
+                self._report_edit.setPlainText(self._diag_report)

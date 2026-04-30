@@ -242,7 +242,9 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Row Y     : {_b(automation.get('visual_ocr_row_y'))}")
     
     # Phase 3E: Manual region diagnostics
-    m_reg_enabled = automation.get("config", {}).get("visual_ocr_manual_region_enabled", "N/A")
+    # Read from config dict in automation data if available
+    m_reg_cfg = automation.get("config") or {}
+    m_reg_enabled = m_reg_cfg.get("visual_ocr_manual_region_enabled", "N/A")
     lines.append(f"  Manual Region Enabled: {_b(m_reg_enabled)}")
     
     dbg = automation.get("visual_ocr_debug") or {}

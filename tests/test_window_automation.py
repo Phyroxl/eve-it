@@ -1115,5 +1115,26 @@ class TestVisualOCRStrategy(unittest.TestCase):
         self.assertFalse(result["price_pasted"])
 
 
+    def test_visual_ocr_debug_save_crops_exists(self):
+        # Regression test for missing attribute bug
+        auto = EVEWindowAutomation(self._cfg())
+        self.assertTrue(hasattr(auto, "visual_ocr_debug_save_crops"))
+        self.assertIsInstance(auto.visual_ocr_debug_save_crops, bool)
+
+    def test_execute_accepts_manual_region(self):
+        # Verify execute_quick_order_update accepts manual_region without error
+        auto = EVEWindowAutomation(self._cfg())
+        manual = {"x_min_ratio": 0.1, "y_min_ratio": 0.2, "x_max_ratio": 0.3, "y_max_ratio": 0.4}
+        # Should not raise TypeError: execute_quick_order_update() got an unexpected keyword argument 'manual_region'
+        result = auto.execute_quick_order_update({}, "100", manual_region=manual)
+        self.assertIn("config", result)
+
+    def test_manual_region_config_in_result(self):
+        auto = EVEWindowAutomation(self._cfg())
+        result = auto.execute_quick_order_update({}, "100")
+        self.assertIn("visual_ocr_manual_region_enabled", result["config"])
+        self.assertIn("visual_ocr_manual_region_prompt_each_time", result["config"])
+        self.assertIn("visual_ocr_manual_region_save_profile", result["config"])
+
 if __name__ == "__main__":
     unittest.main()

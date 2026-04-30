@@ -297,5 +297,26 @@ class TestVisualOCRSectionRendering(unittest.TestCase):
         self.assertIn("unique_match", section)
 
 
+    def test_manual_region_enabled_shown(self):
+        auto = _base_automation()
+        auto["config"] = {"visual_ocr_manual_region_enabled": True}
+        section = format_automation_section(auto)
+        self.assertIn("Manual Region Enabled: True", section)
+
+    def test_manual_region_used_shown(self):
+        auto = _base_automation()
+        auto["visual_ocr_debug"] = {"manual_region_used": True}
+        section = format_automation_section(auto)
+        self.assertIn("Manual Region Used   : True", section)
+
+    def test_manual_region_ratios_shown(self):
+        auto = _base_automation()
+        auto["visual_ocr_debug"] = {
+            "manual_region_used": True,
+            "manual_region_ratios": [0.1, 0.2, 0.3, 0.4]
+        }
+        section = format_automation_section(auto)
+        self.assertIn("Manual Region Ratios : [0.1, 0.2, 0.3, 0.4]", section)
+
 if __name__ == "__main__":
     unittest.main()
