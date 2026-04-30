@@ -1,9 +1,19 @@
 {
   "sell": {
-    "x_min_ratio": 0.3837809917355372,
-    "y_min_ratio": 0.21755725190839695,
-    "x_max_ratio": 0.6900826446280992,
-    "y_max_ratio": 0.6412213740458015
+    "region": {
+      "x_min_ratio": 0.384297520661157,
+      "y_min_ratio": 0.21946564885496184,
+      "x_max_ratio": 0.6875,
+      "y_max_ratio": 0.6402671755725191
+    },
+    "quantity_column": {
+      "x_min_ratio": 0.14310051107325383,
+      "x_max_ratio": 0.42759795570698467
+    },
+    "price_column": {
+      "x_min_ratio": 0.4293015332197615,
+      "x_max_ratio": 0.7189097103918228
+    }
   },
   "buy": null
 }
