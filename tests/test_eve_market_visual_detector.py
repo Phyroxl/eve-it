@@ -195,7 +195,7 @@ class TestDetectorBackendUnavailable(unittest.TestCase):
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]):
             result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
         self.assertEqual(result["status"], "error")
-        self.assertEqual(result["error"], "ocr_backend_unavailable")
+        self.assertEqual(result["error"], "ocr_backend_unavailable_module_missing")
         self.assertEqual(result["candidates_count"], 1)
         self.assertEqual(result["debug"]["blue_bands_found"], 1)
 
@@ -234,6 +234,7 @@ class TestDetectorUniqueMatch(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=bands), \
              patch.object(det, "_ocr_region", side_effect=_ocr_side_effect):
             return det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
@@ -259,6 +260,7 @@ class TestDetectorUniqueMatch(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 30)]), \
              patch.object(det, "_ocr_region", return_value="1595.90"):
             result = det.detect_own_order_row(screenshot, _ORDER, window_rect)
@@ -296,6 +298,7 @@ class TestDetectorAmbiguous(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25), (50, 65)]), \
              patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)):
             result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
@@ -313,6 +316,7 @@ class TestDetectorMatchPriceDisabled(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
              patch.object(det, "_ocr_region", return_value="10"):
             result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
@@ -326,6 +330,7 @@ class TestDetectorMatchPriceDisabled(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
              patch.object(det, "_ocr_region", return_value="1595.90"):
             result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
@@ -482,6 +487,7 @@ class TestMarkerRequired(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
              patch.object(det, "_ocr_region", return_value="1595.90"), \
              patch.object(det, "_detect_own_order_marker", return_value=False):
@@ -498,6 +504,7 @@ class TestMarkerRequired(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
              patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)), \
              patch.object(det, "_detect_own_order_marker", return_value=False):
@@ -529,7 +536,7 @@ class TestNoPytesseractReportsBlueBands(unittest.TestCase):
         self.assertEqual(result["debug"]["blue_bands_found"], 2)
         self.assertEqual(result["candidates_count"], 2)
         self.assertEqual(result["status"], "error")
-        self.assertEqual(result["error"], "ocr_backend_unavailable")
+        self.assertEqual(result["error"], "ocr_backend_unavailable_module_missing")
 
 
 class TestDarkBlueDetection(unittest.TestCase):
@@ -630,6 +637,55 @@ class TestPanelRelativeColumns(unittest.TestCase):
         self.assertEqual(dbg["market_panel_x_max"], 900)
         self.assertEqual(dbg["price_col_x_min"], 500)
         self.assertEqual(dbg["price_col_x_max"], 580) # 500 + 800*0.10
+
+
+class TestTesseractBackend(unittest.TestCase):
+    """Test Tesseract backend configuration and availability logic."""
+
+    def test_autodetect_windows_path(self):
+        # We need to mock os.path.exists for the autodetect function
+        from core.eve_market_visual_detector import _autodetect_tesseract_cmd
+        with patch("os.path.exists", side_effect=lambda p: "Tesseract-OCR" in p):
+            path = _autodetect_tesseract_cmd()
+            self.assertIn("Tesseract-OCR", path)
+            self.assertIn("tesseract.exe", path)
+
+    def test_tesseract_cmd_from_config(self):
+        det = _det({"visual_ocr_tesseract_cmd": "C:\\Custom\\tesseract.exe"})
+        self.assertEqual(det.tesseract_cmd, "C:\\Custom\\tesseract.exe")
+
+    def test_module_missing_error(self):
+        det = _det()
+        order = {"price": 100, "volume_remain": 1, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = _make_screenshot()
+
+        with patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", False), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+            self.assertEqual(result["error"], "ocr_backend_unavailable_module_missing")
+
+    def test_executable_missing_error(self):
+        det = _det()
+        order = {"price": 100, "volume_remain": 1, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = _make_screenshot()
+
+        with patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=False), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+            self.assertEqual(result["error"], "ocr_backend_unavailable_tesseract_executable_missing")
+
+    def test_tesseract_ready_detection(self):
+        det = _det()
+        with patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector.subprocess.run", return_value=MagicMock(returncode=0)):
+            self.assertTrue(det._is_tesseract_available())
+        
+        with patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector.subprocess.run", side_effect=FileNotFoundError):
+            self.assertFalse(det._is_tesseract_available())
 
 
 if __name__ == "__main__":

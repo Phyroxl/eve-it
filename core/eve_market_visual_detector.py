@@ -43,6 +43,20 @@ except ImportError:
     _np = None
     _NUMPY_AVAILABLE = False
 
+import os
+import subprocess
+
+def _autodetect_tesseract_cmd() -> str:
+    """Search for tesseract.exe in common Windows installation paths."""
+    paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return ""
+
 
 # ---------------------------------------------------------------------------
 # Pure utility functions (no image dependencies)
@@ -204,6 +218,41 @@ class EveMarketVisualDetector:
         self.blue_row_threshold = float(config.get("visual_ocr_blue_row_threshold", 0.02))
         self.blue_detection_mode = config.get("visual_ocr_blue_detection_mode", "rgb_or_relative")
 
+        # Tesseract Configuration
+        self.tesseract_cmd  = config.get("visual_ocr_tesseract_cmd", "")
+        self.tesseract_lang = config.get("visual_ocr_tesseract_lang", "eng")
+        self.tesseract_psm  = int(config.get("visual_ocr_tesseract_psm", 7))
+        
+        if _PYTESSERACT_AVAILABLE:
+            if not self.tesseract_cmd:
+                self.tesseract_cmd = _autodetect_tesseract_cmd()
+            
+            if self.tesseract_cmd:
+                _pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+
+    def _is_tesseract_available(self) -> bool:
+        """Check if Tesseract executable is actually callable."""
+        if not _PYTESSERACT_AVAILABLE:
+            return False
+        
+        cmd = self.tesseract_cmd or "tesseract"
+        try:
+            # Run tesseract --version to see if it responds
+            # Using startupinfo to avoid console window flickering on Windows
+            si = None
+            if os.name == 'nt':
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            subprocess.run([cmd, "--version"], 
+                           stdout=subprocess.DEVNULL, 
+                           stderr=subprocess.DEVNULL,
+                           startupinfo=si,
+                           check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError, Exception):
+            return False
+
     def detect_own_order_row(self, screenshot, order_data: dict,
                              window_rect: dict) -> dict:
         """
@@ -295,11 +344,25 @@ class EveMarketVisualDetector:
             (self.match_price    and target_price    > 0) or
             (self.match_quantity and target_quantity > 0)
         )
-        if need_ocr and not _PYTESSERACT_AVAILABLE:
-            result["status"]           = "error"
-            result["error"]            = "ocr_backend_unavailable"
-            result["candidates_count"] = len(candidate_bands)
-            return result
+        
+        # Enhanced backend diagnostics
+        result["debug"]["pytesseract_module_available"] = _PYTESSERACT_AVAILABLE
+        result["debug"]["tesseract_executable_ready"]    = self._is_tesseract_available()
+        result["debug"]["tesseract_cmd_used"]           = self.tesseract_cmd or "N/A"
+        result["debug"]["tesseract_suggested_path"]     = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+        if need_ocr:
+            if not _PYTESSERACT_AVAILABLE:
+                result["status"]           = "error"
+                result["error"]            = "ocr_backend_unavailable_module_missing"
+                result["candidates_count"] = len(candidate_bands)
+                return result
+            
+            if not result["debug"]["tesseract_executable_ready"]:
+                result["status"]           = "error"
+                result["error"]            = "ocr_backend_unavailable_tesseract_executable_missing"
+                result["candidates_count"] = len(candidate_bands)
+                return result
 
         # 5. For each band: marker check + OCR validation
         verified = []
@@ -466,7 +529,8 @@ class EveMarketVisualDetector:
             return ""
         try:
             img  = _PILImage.fromarray(img_array.astype("uint8"))
-            text = _pytesseract.image_to_string(img, config="--psm 7")
+            config = f"--psm {self.tesseract_psm}"
+            text = _pytesseract.image_to_string(img, lang=self.tesseract_lang, config=config)
             return text.strip()
         except Exception as exc:
             _log.warning(f"[VISUAL_OCR] OCR region error: {exc}")

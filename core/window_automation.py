@@ -216,6 +216,10 @@ class EVEWindowAutomation:
         # Phase 3C hardening: Market Panel limits
         self.visual_ocr_market_panel_x_min_ratio = float(config.get("visual_ocr_market_panel_x_min_ratio", 0.36))
         self.visual_ocr_market_panel_x_max_ratio = float(config.get("visual_ocr_market_panel_x_max_ratio", 0.70))
+        # Phase 3D: Tesseract backend config
+        self.visual_ocr_tesseract_cmd  = str(config.get("visual_ocr_tesseract_cmd",  ""))
+        self.visual_ocr_tesseract_lang = str(config.get("visual_ocr_tesseract_lang", "eng"))
+        self.visual_ocr_tesseract_psm  = int(config.get("visual_ocr_tesseract_psm",  7))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -684,6 +688,13 @@ class EVEWindowAutomation:
         result["visual_ocr_own_marker_matched"] = detection.get("matched_own_marker", False)
         result["visual_ocr_price_text"]       = detection.get("price_text")
         result["visual_ocr_quantity_text"]    = detection.get("quantity_text")
+        
+        # Phase 3D: Backend diagnostics
+        result["visual_ocr_backend"]           = "pytesseract"
+        result["visual_ocr_tesseract_cmd"]     = dbg.get("tesseract_cmd_used")
+        result["visual_ocr_tesseract_ready"]   = dbg.get("tesseract_executable_ready")
+        result["visual_ocr_pytesseract_available"] = dbg.get("pytesseract_module_available")
+        result["visual_ocr_suggested_path"]    = dbg.get("tesseract_suggested_path")
 
         if detection.get("error"):
             errors.append(f"visual_ocr_detection: {detection['error']}")
@@ -878,6 +889,10 @@ class EVEWindowAutomation:
             "visual_ocr_blue_detection_mode":       self.visual_ocr_blue_detection_mode,
             "visual_ocr_market_panel_x_min_ratio":  self.visual_ocr_market_panel_x_min_ratio,
             "visual_ocr_market_panel_x_max_ratio":  self.visual_ocr_market_panel_x_max_ratio,
+            # Phase 3D: Tesseract backend config
+            "visual_ocr_tesseract_cmd":             self.visual_ocr_tesseract_cmd,
+            "visual_ocr_tesseract_lang":            self.visual_ocr_tesseract_lang,
+            "visual_ocr_tesseract_psm":             self.visual_ocr_tesseract_psm,
         }
 
     def _save_debug_screenshot(self, screenshot, result: dict) -> None:
@@ -1065,4 +1080,10 @@ class EVEWindowAutomation:
             "visual_ocr_price_text":                   None,
             "visual_ocr_quantity_text":                None,
             "visual_ocr_debug_overlay_path":           None,
+            # Phase 3D: backend diagnostics
+            "visual_ocr_backend":                      "N/A",
+            "visual_ocr_tesseract_cmd":                "N/A",
+            "visual_ocr_tesseract_ready":              False,
+            "visual_ocr_pytesseract_available":        False,
+            "visual_ocr_suggested_path":               "N/A",
         }

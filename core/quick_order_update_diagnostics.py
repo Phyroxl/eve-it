@@ -261,6 +261,16 @@ def _format_automation_section(automation: dict) -> list:
     overlay_path = automation.get("visual_ocr_debug_overlay_path")
     if overlay_path:
         lines.append(f"  Visual OCR Overlay   : {overlay_path}")
+    
+    # Phase 3D: Backend details
+    lines.append(f"  Visual OCR Backend   : {_b(automation.get('visual_ocr_backend'))}")
+    lines.append(f"  Visual OCR Tesseract : {_b(automation.get('visual_ocr_tesseract_cmd'))}")
+    ready = automation.get('visual_ocr_tesseract_ready')
+    lines.append(f"  Visual OCR Tess Ready: {_b(ready)}")
+    if not ready:
+        lines.append(f"  Visual OCR PyTess    : {_b(automation.get('visual_ocr_pytesseract_available'))}")
+        lines.append(f"  Visual OCR Suggest   : {_b(automation.get('visual_ocr_suggested_path'))}")
+
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
     cands = automation.get("candidate_windows") or []
     if cands:
