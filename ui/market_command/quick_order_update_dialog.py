@@ -555,7 +555,7 @@ class QuickOrderUpdateDialog(QDialog):
             if not self._has_valid_calibration(manual_region):
                 calibration_required = True
                 _log.info(f"[QUICK UPDATE] calibration missing or prompt=true for {side} — prompting user")
-                manual_region = self._prompt_single_side_calibration(side, selected, cfg)
+                manual_region = self._prompt_single_side_calibration(side, selected, cfg, result_metadata)
                 
                 if not manual_region:
                     _log.info("[QUICK UPDATE] visual OCR calibration cancelled by user")
@@ -610,7 +610,7 @@ class QuickOrderUpdateDialog(QDialog):
                         _log.info(f"[QUICK UPDATE] user accepted recalibration retry for {side}")
                         
                         # Prompt for NEW calibration
-                        new_manual_region = self._prompt_single_side_calibration(side, selected, cfg)
+                        new_manual_region = self._prompt_single_side_calibration(side, selected, cfg, result_metadata)
                         if new_manual_region:
                             _log.info(f"[QUICK UPDATE] retrying automation with new manual calibration")
                             result_metadata["manual_region_selected_now"] = True
@@ -665,6 +665,13 @@ class QuickOrderUpdateDialog(QDialog):
         for k, v in result_metadata.items():
             if k not in result:
                 result[k] = v
+        
+        # Ensure manual dimensions are in visual_ocr_debug for diagnostics
+        if "manual_region_width_px" in result_metadata:
+            if "visual_ocr_debug" not in result: result["visual_ocr_debug"] = {}
+            result["visual_ocr_debug"]["manual_region_width_px"] = result_metadata["manual_region_width_px"]
+            result["visual_ocr_debug"]["manual_region_height_px"] = result_metadata["manual_region_height_px"]
+            result["visual_ocr_debug"]["manual_region_used"] = True
         
         # Merge extra skipped steps
         if "steps_skipped_extra" in result_metadata:
@@ -852,7 +859,7 @@ class QuickOrderUpdateDialog(QDialog):
             
         return True
 
-    def _prompt_single_side_calibration(self, side: str, selected_window: dict, cfg: dict) -> Optional[dict]:
+    def _prompt_single_side_calibration(self, side: str, selected_window: dict, cfg: dict, metadata: Optional[dict] = None) -> Optional[dict]:
         """Show the selector dialog for a single side and return the calibration dict."""
         self._status_lbl.setText(f"Dibuja la región de las órdenes ({side.upper()})...")
         self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
@@ -876,6 +883,15 @@ class QuickOrderUpdateDialog(QDialog):
             selector = VisualRegionSelectorDialog(qimg, mode="single_side", side=side, parent=self)
             if selector.exec() == QDialog.Accepted:
                 results = selector.get_results()
+                
+                # Store pixel dimensions in metadata if provided
+                if metadata is not None:
+                    reg_id = "region"
+                    if reg_id in results:
+                        x0, y0, x1, y1 = results[reg_id]
+                        metadata["manual_region_width_px"] = x1 - x0
+                        metadata["manual_region_height_px"] = y1 - y0
+
                 manual_region = self._build_calibration_from_results(results, pil_img.size, prefix="")
                 
                 if manual_region and cfg.get("visual_ocr_manual_region_save_profile", True):

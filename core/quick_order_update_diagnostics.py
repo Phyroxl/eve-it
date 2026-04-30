@@ -276,6 +276,14 @@ def _format_automation_section(automation: dict) -> list:
             lines.append(f"  Manual Qty Col Ratios: {dbg.get('manual_qty_col_ratios')}")
         if "manual_price_col_ratios" in dbg:
             lines.append(f"  Manual Price Col Ratios: {dbg.get('manual_price_col_ratios')}")
+            
+        m_w = dbg.get("manual_region_width_px")
+        m_h = dbg.get("manual_region_height_px")
+        if m_w is not None and m_h is not None:
+            lines.append(f"  Manual Region Width Px: {m_w}")
+            lines.append(f"  Manual Region Height Px: {m_h}")
+            if m_h < 180:
+                lines.append("  Manual Region Warning: region_too_short")
 
     lines.append(f"  Visual OCR Price X   : {automation.get('visual_ocr_price_x0')} to {automation.get('visual_ocr_price_x1')}")
     lines.append(f"  Visual OCR Qty X     : {automation.get('visual_ocr_qty_x0')} to {automation.get('visual_ocr_qty_x1')}")

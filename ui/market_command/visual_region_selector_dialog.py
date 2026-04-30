@@ -6,12 +6,18 @@ import logging
 from typing import Optional, Tuple, Dict, List
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QScrollArea, QWidget
+    QFrame, QScrollArea, QWidget, QMessageBox
 )
 from PySide6.QtCore import Qt, QRect, QPoint
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QImage
 
 _log = logging.getLogger('eve.market.ui')
+
+# Validation constants
+MIN_REGION_WIDTH_PX = 350
+MIN_REGION_HEIGHT_PX = 180
+MIN_COLUMN_WIDTH_PX = 40
+MAX_COLUMN_WIDTH_PX = 300
 
 class VisualRegionSelectorDialog(QDialog):
     """
@@ -31,21 +37,29 @@ class VisualRegionSelectorDialog(QDialog):
         self.pixmap = QPixmap.fromImage(screenshot)
         
         # Steps definition with clearer instructions
+        instr_reg = (
+            "Selecciona TODO el bloque visible de filas de {}"
+            ", desde la primera hasta la última fila visible. "
+            "Asegúrate de incluir la fila azul de tu orden."
+        )
+        instr_col = "Selecciona solo el ancho horizontal de la columna. La altura no importa."
+        
         if self.mode == "sell_buy_full":
             self.steps = [
-                {"id": "sell_region", "label": "PASO 1/6: SELECCIONA REGIÓN SELL (Vendedores)", "instr": "Selecciona SOLO el área de las filas, incluyendo tu orden azul.", "color": QColor("#3b82f6")},
-                {"id": "sell_quantity", "label": "PASO 2/6: COLUMNA CANTIDAD (SELL)", "instr": "Selecciona SOLO el ancho de la columna 'Cantidad'.", "color": QColor("#10b981")},
-                {"id": "sell_price", "label": "PASO 3/6: COLUMNA PRECIO (SELL)", "instr": "Selecciona SOLO el ancho de la columna 'Precio'.", "color": QColor("#f59e0b")},
-                {"id": "buy_region", "label": "PASO 4/6: SELECCIONA REGIÓN BUY (Compradores)", "instr": "Selecciona SOLO el área de las filas, incluyendo tu orden azul.", "color": QColor("#3b82f6")},
-                {"id": "buy_quantity", "label": "PASO 5/6: COLUMNA CANTIDAD (BUY)", "instr": "Selecciona SOLO el ancho de la columna 'Cantidad'.", "color": QColor("#10b981")},
-                {"id": "buy_price", "label": "PASO 6/6: COLUMNA PRECIO (BUY)", "instr": "Selecciona SOLO el ancho de la columna 'Precio'.", "color": QColor("#f59e0b")},
+                {"id": "sell_region", "label": "PASO 1/6: SELECCIONA REGIÓN SELL (Vendedores)", "instr": instr_reg.format("VENDEDORES"), "color": QColor("#3b82f6")},
+                {"id": "sell_quantity", "label": "PASO 2/6: COLUMNA CANTIDAD (SELL)", "instr": instr_col, "color": QColor("#10b981")},
+                {"id": "sell_price", "label": "PASO 3/6: COLUMNA PRECIO (SELL)", "instr": instr_col, "color": QColor("#f59e0b")},
+                {"id": "buy_region", "label": "PASO 4/6: SELECCIONA REGIÓN BUY (Compradores)", "instr": instr_reg.format("COMPRADORES"), "color": QColor("#3b82f6")},
+                {"id": "buy_quantity", "label": "PASO 5/6: COLUMNA CANTIDAD (BUY)", "instr": instr_col, "color": QColor("#10b981")},
+                {"id": "buy_price", "label": "PASO 6/6: COLUMNA PRECIO (BUY)", "instr": instr_col, "color": QColor("#f59e0b")},
             ]
         else:
             s = side.upper()
+            s_es = "VENDEDORES" if side == "sell" else "COMPRADORES"
             self.steps = [
-                {"id": "region", "label": f"PASO 1/3: SELECCIONA REGIÓN {s}", "instr": "Selecciona SOLO el área de las filas, incluyendo tu orden azul.", "color": QColor("#3b82f6")},
-                {"id": "quantity", "label": f"PASO 2/3: COLUMNA CANTIDAD ({s})", "instr": "Selecciona SOLO el ancho de la columna 'Cantidad'.", "color": QColor("#10b981")},
-                {"id": "price", "label": f"PASO 3/3: COLUMNA PRECIO ({s})", "instr": "Selecciona SOLO el ancho de la columna 'Precio'.", "color": QColor("#f59e0b")}
+                {"id": "region", "label": f"PASO 1/3: SELECCIONA REGIÓN {s}", "instr": instr_reg.format(s_es), "color": QColor("#3b82f6")},
+                {"id": "quantity", "label": f"PASO 2/3: COLUMNA CANTIDAD ({s})", "instr": instr_col, "color": QColor("#10b981")},
+                {"id": "price", "label": f"PASO 3/3: COLUMNA PRECIO ({s})", "instr": instr_col, "color": QColor("#f59e0b")}
             ]
             
         self.current_step_idx = 0
@@ -69,8 +83,9 @@ class VisualRegionSelectorDialog(QDialog):
         root.addWidget(self.hdr)
         
         self.sub_hdr = QLabel("")
-        self.sub_hdr.setStyleSheet("color:#64748b; font-size:10px;")
+        self.sub_hdr.setStyleSheet("color:#94a3b8; font-size:10px;")
         self.sub_hdr.setAlignment(Qt.AlignCenter)
+        self.sub_hdr.setWordWrap(True)
         root.addWidget(self.sub_hdr)
         
         # Scroll area for the image
@@ -132,8 +147,41 @@ class VisualRegionSelectorDialog(QDialog):
         self.lbl_coords.setText("Dibujando..." if self.is_drawing else ("Seleccionado" if not self.selected_rect.isNull() else "Esperando selección..."))
 
     def _on_next(self):
-        step_id = self.steps[self.current_step_idx]["id"]
         r = self.selected_rect
+        w = r.width()
+        h = r.height()
+        
+        # Validation
+        step_id = self.steps[self.current_step_idx]["id"]
+        if "region" in step_id:
+            if w < MIN_REGION_WIDTH_PX or h < MIN_REGION_HEIGHT_PX:
+                QMessageBox.warning(
+                    self, "REGIÓN DEMASIADO PEQUEÑA",
+                    f"La región seleccionada ({w}x{h} px) es demasiado pequeña.\n\n"
+                    f"Mínimo requerido: {MIN_REGION_WIDTH_PX}x{MIN_REGION_HEIGHT_PX} px.\n\n"
+                    "Selecciona TODO el bloque visible de filas, desde la primera hasta la última, "
+                    "incluyendo tu orden azul."
+                )
+                return
+        elif "quantity" in step_id or "price" in step_id:
+            if w < MIN_COLUMN_WIDTH_PX:
+                QMessageBox.warning(
+                    self, "COLUMNA DEMASIADO ESTRECHA",
+                    f"La columna ({w} px) es demasiado estrecha.\n\n"
+                    f"Mínimo requerido: {MIN_COLUMN_WIDTH_PX} px.\n\n"
+                    "Selecciona solo el ancho horizontal de la columna."
+                )
+                return
+            if w > MAX_COLUMN_WIDTH_PX:
+                QMessageBox.warning(
+                    self, "COLUMNA DEMASIADO ANCHA",
+                    f"La columna ({w} px) es demasiado ancha.\n\n"
+                    f"Máximo permitido: {MAX_COLUMN_WIDTH_PX} px.\n\n"
+                    "Selecciona solo el ancho horizontal de la columna, no toda la tabla."
+                )
+                return
+
+        # Save result
         self.results[step_id] = (r.left(), r.top(), r.right(), r.bottom())
         
         if self.current_step_idx < len(self.steps) - 1:
@@ -162,7 +210,7 @@ class VisualRegionSelectorDialog(QDialog):
             self.is_drawing = False
             self.selected_rect = QRect(self.start_point, self.end_point).normalized()
             
-            # Simple validation: must be more than a click
+            # Basic non-zero validation
             if self.selected_rect.width() > 5 and self.selected_rect.height() > 5:
                 self.btn_next.setEnabled(True)
                 r = self.selected_rect
