@@ -313,6 +313,7 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Own Marker: {_b(automation.get('visual_ocr_own_marker_matched'))}")
     lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
+    lines.append(f"  Visual OCR Qty Type  : {automation.get('visual_ocr_quantity_match_type', 'none')}")
     
     ocr_attempts = dbg.get("ocr_attempts") or []
     if ocr_attempts:
@@ -324,9 +325,18 @@ def _format_automation_section(automation: dict) -> list:
     if best_rej and automation.get("status") != "unique_match":
         lines.append("  Visual OCR Best Rej. :")
         lines.append(f"    band={best_rej.get('band')} marker={best_rej.get('marker_matched')}")
-        lines.append(f"    p='{best_rej.get('price_text')}' q='{best_rej.get('quantity_text')}'")
-        lines.append(f"    p_match={best_rej.get('price_match')} q_match={best_rej.get('quantity_match')}")
-        lines.append(f"    reason={best_rej.get('reject_reason')}")
+        
+        p_norm   = best_rej.get('normalized_price', 0.0)
+        p_target = best_rej.get('target_price', 0.0)
+        p_diff   = abs(p_norm - p_target)
+        lines.append(f"    p='{best_rej.get('price_text')}' norm={p_norm} target={p_target} diff={p_diff:.1f}")
+        
+        q_norm   = best_rej.get('normalized_quantity', 0)
+        q_target = best_rej.get('target_quantity', 0)
+        q_type   = best_rej.get('quantity_match_type', 'none')
+        lines.append(f"    q='{best_rej.get('quantity_text')}' norm={q_norm} target={q_target} type={q_type}")
+        
+        lines.append(f"    p_match={best_rej.get('price_match')} q_match={best_rej.get('quantity_match')} reason={best_rej.get('reject_reason')}")
     
     rej = dbg.get("marker_rejected_bands") or []
     if rej:

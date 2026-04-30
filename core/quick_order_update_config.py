@@ -87,6 +87,10 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_manual_qty_right_padding_px":    8,
     "visual_ocr_manual_price_left_padding_px":   8,
     "visual_ocr_manual_price_right_padding_px":  8,
+    "visual_ocr_price_match_abs_tolerance":      15.0,
+    "visual_ocr_price_match_rel_tolerance":      0.001,
+    "visual_ocr_allow_quantity_suffix_match":    True,
+    "visual_ocr_quantity_suffix_min_digits":     2,
 }
 
 _RATIO_KEYS = (

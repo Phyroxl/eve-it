@@ -64,39 +64,37 @@ def _autodetect_tesseract_cmd() -> str:
 
 def normalize_price_text(text: str) -> float:
     """
-    Parse EVE market price text to float.
-
-    Handles:
-      European  : 249.900.000,00 ISK  → 249900000.0
-      English   : 249,900,000.00 ISK  → 249900000.0
-      Plain     : 249900000           → 249900000.0
-      No suffix : 249900000.0         → 249900000.0
+    Robustly parse EVE market price text to float.
+    Handles noise, European (. thousands, , decimal) and English (, thousands, . decimal).
     """
+    # 1. Remove non-numeric noise except for . and ,
     text = str(text).strip().upper()
-    for suffix in (" ISK", "ISK"):
-        if text.endswith(suffix):
-            text = text[: -len(suffix)].strip()
-    text = text.strip()
+    text = "".join(c for c in text if c.isdigit() or c in ".,")
     if not text:
         return 0.0
 
-    if "," in text and "." in text:
-        last_dot   = text.rfind(".")
-        last_comma = text.rfind(",")
-        if last_comma > last_dot:
-            # European: dots=thousands, comma=decimal
+    # Handle dual separators
+    if "." in text and "," in text:
+        if text.find(".") < text.find(","):
+            # European: 194.308,00 -> dots=thousands, comma=decimal
             text = text.replace(".", "").replace(",", ".")
         else:
-            # English: commas=thousands, dot=decimal
+            # English: 194,308.00 -> commas=thousands, dot=decimal
             text = text.replace(",", "")
+    elif "." in text:
+        # If exactly 3 digits after the dot, assume thousands separator (EVE style)
+        parts = text.split(".")
+        if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+            text = text.replace(".", "")
+        # Else keep as decimal dot
     elif "," in text:
+        # If exactly 3 digits after the comma, assume thousands separator
         parts = text.split(",")
-        if len(parts) == 2 and len(parts[1]) <= 2 and parts[1].isdigit():
-            text = text.replace(",", ".")   # decimal comma
+        if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+            text = text.replace(",", "")
         else:
-            text = text.replace(",", "")    # thousands commas
-    elif "." in text and text.count(".") > 1:
-        text = text.replace(".", "")        # European thousands-only dots
+            # Decimal comma (European)
+            text = text.replace(",", ".")
 
     try:
         return float(text)
@@ -105,16 +103,16 @@ def normalize_price_text(text: str) -> float:
 
 
 def normalize_quantity_text(text: str) -> int:
-    """Parse EVE market quantity text to int. Tolerates whitespace and suffixes."""
+    """Extract digits from text and return as int."""
     text = str(text).strip()
-    m = re.match(r"^([\d\s.,]+)", text)
-    if m:
-        num = re.sub(r"[\s.,]", "", m.group(1))
-        try:
-            return int(num)
-        except ValueError:
-            return 0
-    return 0
+    # Remove everything except digits
+    digits = "".join(c for c in text if c.isdigit())
+    if not digits:
+        return 0
+    try:
+        return int(digits)
+    except ValueError:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +243,12 @@ class EveMarketVisualDetector:
         self.tesseract_cmd  = config.get("visual_ocr_tesseract_cmd", "")
         self.tesseract_lang = config.get("visual_ocr_tesseract_lang", "eng")
         self.tesseract_psm  = int(config.get("visual_ocr_tesseract_psm", 7))
+        
+        # Phase 3D hardening: tolerances and soft matching
+        self.price_match_abs_tolerance = float(config.get("visual_ocr_price_match_abs_tolerance", 15.0))
+        self.price_match_rel_tolerance = float(config.get("visual_ocr_price_match_rel_tolerance", 0.001))
+        self.allow_qty_suffix_match    = bool(config.get("visual_ocr_allow_quantity_suffix_match", True))
+        self.qty_suffix_min_digits     = int(config.get("visual_ocr_quantity_suffix_min_digits", 2))
         
         if _PYTESSERACT_AVAILABLE:
             if not self.tesseract_cmd:
@@ -482,14 +486,21 @@ class EveMarketVisualDetector:
 
             price_ok   = True
             qty_ok     = True
+            qty_match_type = "none"
             price_text = ""
             qty_text   = ""
+            ocr_price  = 0.0
+            ocr_qty    = 0
 
             if self.match_price and target_price > 0:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
                 ocr_price  = normalize_price_text(price_text)
-                price_ok   = abs(ocr_price - target_price) < (target_price * 0.001 + 1.0)
+                
+                # Apply tolerances
+                price_diff = abs(ocr_price - target_price)
+                max_tol = max(self.price_match_abs_tolerance, target_price * self.price_match_rel_tolerance)
+                price_ok = price_diff <= max_tol
                 
                 if self.debug_save_crops and idx < self.debug_max_crops:
                     self._save_debug_crop(price_region, f"visual_ocr_{ts}_band{idx+1}_price.png")
@@ -498,7 +509,21 @@ class EveMarketVisualDetector:
                 qty_region = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
                 qty_text = self._ocr_region(qty_region)
                 ocr_qty  = normalize_quantity_text(qty_text)
-                qty_ok   = (ocr_qty == target_quantity)
+                
+                if ocr_qty == target_quantity:
+                    qty_ok = True
+                    qty_match_type = "exact"
+                elif self.allow_qty_suffix_match and own_marker and price_ok:
+                    # Suffix match fallback (e.g. OCR sees '41' but target is '741')
+                    s_target = str(target_quantity)
+                    s_ocr = str(ocr_qty)
+                    if len(s_ocr) >= self.qty_suffix_min_digits and s_target.endswith(s_ocr):
+                        qty_ok = True
+                        qty_match_type = "suffix"
+                    else:
+                        qty_ok = False
+                else:
+                    qty_ok = False
                 
                 if self.debug_save_crops and idx < self.debug_max_crops:
                     self._save_debug_crop(qty_region, f"visual_ocr_{ts}_band{idx+1}_qty.png")
@@ -509,9 +534,14 @@ class EveMarketVisualDetector:
                 "ocr_band": [ocr_y0, ocr_y1],
                 "marker_matched": own_marker,
                 "price_text": price_text,
-                "quantity_text": qty_text,
+                "normalized_price": ocr_price,
+                "target_price": target_price,
                 "price_match": price_ok,
-                "quantity_match": qty_ok
+                "quantity_text": qty_text,
+                "normalized_quantity": ocr_qty,
+                "target_quantity": target_quantity,
+                "quantity_match": qty_ok,
+                "quantity_match_type": qty_match_type
             }
             result["debug"]["ocr_attempts"].append(attempt)
 
@@ -519,9 +549,6 @@ class EveMarketVisualDetector:
             if not (price_ok and qty_ok):
                 current_best = result["debug"].get("best_rejected_row")
                 
-                # Scoring for "best" rejected: 
-                # marker=True and price_ok=True is better than just marker=True
-                # better than nothing.
                 is_better = False
                 if not current_best:
                     is_better = True
@@ -538,12 +565,7 @@ class EveMarketVisualDetector:
                     elif not qty_ok:   reason = "quantity_mismatch"
                     
                     result["debug"]["best_rejected_row"] = {
-                        "band": [y_min, y_max],
-                        "marker_matched": own_marker,
-                        "price_text": price_text,
-                        "quantity_text": qty_text,
-                        "price_match": price_ok,
-                        "quantity_match": qty_ok,
+                        **attempt,
                         "reject_reason": reason
                     }
 
@@ -555,6 +577,7 @@ class EveMarketVisualDetector:
                     "row_center_y":       y_c + window_rect.get("top",  0),
                     "matched_price":      price_ok,
                     "matched_quantity":   qty_ok,
+                    "quantity_match_type": qty_match_type,
                     "matched_own_marker": own_marker,
                     "price_text":         price_text,
                     "quantity_text":      qty_text,
@@ -574,6 +597,7 @@ class EveMarketVisualDetector:
             result["row_center_y"]       = row["row_center_y"]
             result["matched_price"]      = row["matched_price"]
             result["matched_quantity"]   = row["matched_quantity"]
+            result["visual_ocr_quantity_match_type"] = row.get("quantity_match_type", "none")
             result["matched_own_marker"] = row["matched_own_marker"]
             result["price_text"]         = row["price_text"]
             result["quantity_text"]      = row["quantity_text"]
