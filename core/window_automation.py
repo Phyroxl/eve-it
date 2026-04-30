@@ -28,6 +28,13 @@ try:
 except ImportError:
     _PYAUTOGUI_AVAILABLE = False
 
+try:
+    from PIL import ImageGrab as _ImageGrab
+    _PIL_IMAGEGRAB_AVAILABLE = True
+except ImportError:
+    _ImageGrab = None
+    _PIL_IMAGEGRAB_AVAILABLE = False
+
 # ── Window scoring ──────────────────────────────────────────────────────────
 # These strings identify the *own* EVE iT application — must never be auto-selected
 _SELF_APP_MARKERS = ["EVE iT", "Market Command", "Quick Order Update"]
@@ -166,6 +173,23 @@ class EVEWindowAutomation:
         self.modify_verify_title           = str(config.get("modify_order_verify_window_title_contains", "Modify Order"))
         self.modify_post_hotkey_delay      = int(config.get("modify_order_post_hotkey_delay_ms",         500))
         self.allow_unverified_modify_paste = bool(config.get("allow_unverified_modify_order_paste",      False))
+        # Phase 3C: visual_ocr strategy
+        self.visual_ocr_enabled               = bool(config.get("visual_ocr_enabled",                     False))
+        self.visual_ocr_require_unique_match  = bool(config.get("visual_ocr_require_unique_match",         True))
+        self.visual_ocr_match_price           = bool(config.get("visual_ocr_match_price",                  True))
+        self.visual_ocr_match_quantity        = bool(config.get("visual_ocr_match_quantity",               True))
+        self.visual_ocr_require_own_marker    = bool(config.get("visual_ocr_require_own_order_marker",     True))
+        self.visual_ocr_side_section_required = bool(config.get("visual_ocr_side_section_required",        True))
+        self.visual_ocr_allow_unverified_paste = bool(config.get("visual_ocr_allow_unverified_paste",      False))
+        self.visual_ocr_context_menu_delay    = int(config.get("visual_ocr_context_menu_delay_ms",         300))
+        self.visual_ocr_modify_dialog_delay   = int(config.get("visual_ocr_modify_dialog_delay_ms",        700))
+        self.visual_ocr_rc_x_offset          = int(config.get("visual_ocr_right_click_x_offset",          80))
+        self.visual_ocr_rc_y_offset          = int(config.get("visual_ocr_right_click_y_offset",          0))
+        self.visual_ocr_menu_click_mode      = str(config.get("visual_ocr_menu_click_mode",                "relative_to_right_click"))
+        self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_menu_click_x_offset",           60))
+        self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_menu_click_y_offset",           85))
+        self.visual_ocr_debug_save           = bool(config.get("visual_ocr_debug_save_screenshot",         True))
+        self.visual_ocr_debug_dir            = str(config.get("visual_ocr_debug_dir",                      "data/debug/visual_ocr"))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -201,6 +225,7 @@ class EVEWindowAutomation:
         result["paste_without_modify_dialog_verification"] = self.paste_without_modify_verify
         result["modify_order_hotkey_configured"]          = bool(self.modify_order_hotkey)
         result["allow_unverified_modify_order_paste"]     = self.allow_unverified_modify_paste
+        result["visual_ocr_enabled"]                      = self.visual_ocr_enabled
 
         if not self.enabled:
             result["status"] = "disabled"
@@ -215,7 +240,7 @@ class EVEWindowAutomation:
         if self.dry_run:
             return self._run_dry(result, recommended_price_text, selected_window)
 
-        return self._execute_real(result, recommended_price_text, selected_window)
+        return self._execute_real(result, recommended_price_text, selected_window, order_data)
 
     # ── private helpers ─────────────────────────────────────────────────────
 
@@ -253,7 +278,8 @@ class EVEWindowAutomation:
         return result
 
     def _execute_real(self, result: dict, price_text: str,
-                      selected_window: Optional[dict]) -> dict:
+                      selected_window: Optional[dict],
+                      order_data: Optional[dict] = None) -> dict:
         errors = result["errors"]
 
         # 1. Wait open-market delay
@@ -296,7 +322,7 @@ class EVEWindowAutomation:
 
         # 4.5. Prepare Modify Order Dialog (optional, disabled by default)
         if result["focused"]:
-            self._prepare_modify_order_dialog(result, errors)
+            self._prepare_modify_order_dialog(result, errors, order_data, win)
 
         # 5. Experimental Paste (optional, disabled by default)
         if result["window_found"] and result["focused"]:
@@ -419,7 +445,9 @@ class EVEWindowAutomation:
         except Exception as exc:
             errors.append(f"{label}_sleep_error: {exc}")
 
-    def _prepare_modify_order_dialog(self, result: dict, errors: list) -> None:
+    def _prepare_modify_order_dialog(self, result: dict, errors: list,
+                                      order_data: Optional[dict] = None,
+                                      win=None) -> None:
         """
         Phase 3 — optionally prepare the Modify Order dialog before pasting.
 
@@ -458,6 +486,10 @@ class EVEWindowAutomation:
         elif self.modify_order_strategy == "hotkey_experimental":
             # Phase 3B: delegates to dedicated method (handles own sleep + paste blocking)
             self._run_hotkey_experimental(result, errors)
+
+        elif self.modify_order_strategy == "visual_ocr":
+            # Phase 3C: detect own-order row via pixel color + OCR, right-click, menu click
+            self._run_visual_ocr(result, order_data or {}, win, errors)
 
         else:
             result["steps_executed"].append(
@@ -573,6 +605,233 @@ class EVEWindowAutomation:
             result["_paste_blocked_modify_dialog"] = True
             _log.warning("[AUTOMATION] paste blocked — allow_unverified_modify_order_paste=false")
 
+    # ── Phase 3C: visual_ocr methods ─────────────────────────────────────────
+
+    def _run_visual_ocr(self, result: dict, order_data: dict, win,
+                        errors: list) -> None:
+        """
+        Phase 3C — detect own-order row via blue-row pixel detection + OCR,
+        right-click on the row, click "Modificar pedido" in the context menu,
+        wait for the dialog, then optionally allow paste.
+
+        NEVER confirms the final order modification.
+        """
+        if not self.visual_ocr_enabled:
+            result["steps_skipped"].append("visual_ocr_disabled_in_config")
+            result["modify_order_warning"] = "visual_ocr_enabled=false — visual OCR step skipped"
+            return
+
+        handle = result.get("selected_window_handle")
+        if not handle:
+            errors.append("visual_ocr: no window handle — cannot take screenshot")
+            result["visual_ocr_status"] = "error_no_handle"
+            self._apply_visual_ocr_paste_blocking(result)
+            return
+
+        window_rect = self._get_window_rect(handle)
+        result["visual_ocr_window_rect"] = window_rect
+
+        screenshot = self._capture_window_screenshot(window_rect, result, errors)
+        if screenshot is None:
+            result["visual_ocr_status"] = "error_screenshot_failed"
+            self._apply_visual_ocr_paste_blocking(result)
+            return
+
+        if self.visual_ocr_debug_save:
+            self._save_debug_screenshot(screenshot, result)
+
+        detection = self._run_visual_ocr_detect(screenshot, order_data, window_rect)
+        result["visual_ocr_status"]          = detection.get("status")
+        result["visual_ocr_candidates_count"] = detection.get("candidates_count", 0)
+        result["visual_ocr_matched_price"]    = detection.get("matched_price", False)
+        result["visual_ocr_matched_quantity"] = detection.get("matched_quantity", False)
+        result["visual_ocr_debug"]            = detection.get("debug", {})
+
+        if detection.get("error"):
+            errors.append(f"visual_ocr_detection: {detection['error']}")
+
+        if detection.get("status") != "unique_match":
+            result["visual_ocr_row_x"] = None
+            result["visual_ocr_row_y"] = None
+            result["steps_skipped"].append(
+                f"visual_ocr_no_unique_match: {detection.get('status')}"
+            )
+            result["modify_order_warning"] = (
+                f"visual_ocr: detection status={detection.get('status')} "
+                f"candidates={detection.get('candidates_count', 0)}"
+            )
+            self._apply_visual_ocr_paste_blocking(result)
+            return
+
+        row_x = detection["row_center_x"]
+        row_y = detection["row_center_y"]
+        result["visual_ocr_row_x"] = row_x
+        result["visual_ocr_row_y"] = row_y
+        result["steps_executed"].append(f"visual_ocr_unique_match_found: ({row_x}, {row_y})")
+        _log.info(f"[AUTOMATION] visual_ocr: unique match at ({row_x}, {row_y})")
+
+        rc_x = row_x + self.visual_ocr_rc_x_offset
+        rc_y = row_y + self.visual_ocr_rc_y_offset
+        if not self._visual_ocr_right_click(rc_x, rc_y, result, errors):
+            self._apply_visual_ocr_paste_blocking(result)
+            return
+
+        self._safe_sleep(
+            self.visual_ocr_context_menu_delay, "visual_ocr_context_menu_delay", result, errors
+        )
+
+        if self.visual_ocr_menu_click_mode == "relative_to_right_click":
+            menu_x = rc_x + self.visual_ocr_menu_x_offset
+            menu_y = rc_y + self.visual_ocr_menu_y_offset
+        else:
+            menu_x = self.visual_ocr_menu_x_offset
+            menu_y = self.visual_ocr_menu_y_offset
+
+        if not self._visual_ocr_left_click(menu_x, menu_y, result, errors):
+            self._apply_visual_ocr_paste_blocking(result)
+            return
+
+        result["steps_executed"].append("visual_ocr_modify_order_menu_clicked")
+        self._safe_sleep(
+            self.visual_ocr_modify_dialog_delay, "visual_ocr_modify_dialog_delay", result, errors
+        )
+
+        result["modify_order_dialog_verified"] = False
+        result["modify_order_warning"] = (
+            "visual_ocr: context menu clicked — cannot OS-verify dialog (EVE renders in-game)"
+        )
+        _log.info("[AUTOMATION] visual_ocr: modify order menu clicked, waiting for in-game dialog")
+
+        if not self.visual_ocr_allow_unverified_paste:
+            result["steps_skipped"].append("paste_skipped_visual_ocr_dialog_not_verified")
+            result["_paste_blocked_modify_dialog"] = True
+            _log.warning("[AUTOMATION] visual_ocr: paste blocked — visual_ocr_allow_unverified_paste=false")
+
+    def _get_window_rect(self, handle: int) -> dict:
+        """Return window bounding rect as {left, top, width, height} via ctypes."""
+        try:
+            import ctypes
+            import ctypes.wintypes
+            rect = ctypes.wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(handle, ctypes.byref(rect))
+            return {
+                "left":   rect.left,
+                "top":    rect.top,
+                "width":  max(1, rect.right - rect.left),
+                "height": max(1, rect.bottom - rect.top),
+            }
+        except Exception as exc:
+            _log.warning(f"[AUTOMATION] _get_window_rect error: {exc}")
+            return {"left": 0, "top": 0, "width": 800, "height": 600}
+
+    def _capture_window_screenshot(self, window_rect: dict, result: dict,
+                                   errors: list):
+        """Capture PIL screenshot of the window region. Returns PIL Image or None."""
+        left   = window_rect.get("left",   0)
+        top    = window_rect.get("top",    0)
+        right  = left + window_rect.get("width",  800)
+        bottom = top  + window_rect.get("height", 600)
+        bbox   = (left, top, right, bottom)
+
+        if _PIL_IMAGEGRAB_AVAILABLE:
+            try:
+                screenshot = _ImageGrab.grab(bbox=bbox)
+                result["steps_executed"].append("visual_ocr_screenshot_captured_pil")
+                return screenshot
+            except Exception as exc:
+                _log.debug(f"[AUTOMATION] PIL ImageGrab failed: {exc}")
+
+        if _PYAUTOGUI_AVAILABLE:
+            try:
+                screenshot = _pyautogui.screenshot(
+                    region=(left, top, window_rect.get("width", 800), window_rect.get("height", 600))
+                )
+                result["steps_executed"].append("visual_ocr_screenshot_captured_pyautogui")
+                return screenshot
+            except Exception as exc:
+                errors.append(f"visual_ocr_screenshot_pyautogui_error: {exc}")
+
+        errors.append("visual_ocr_screenshot_failed: no screenshot backend available (PIL/pyautogui)")
+        return None
+
+    def _run_visual_ocr_detect(self, screenshot, order_data: dict,
+                                window_rect: dict) -> dict:
+        """Run EveMarketVisualDetector. Separated for testability."""
+        try:
+            from core.eve_market_visual_detector import EveMarketVisualDetector
+            detector = EveMarketVisualDetector(self._build_visual_ocr_config())
+            return detector.detect_own_order_row(screenshot, order_data, window_rect)
+        except Exception as exc:
+            _log.error(f"[AUTOMATION] _run_visual_ocr_detect error: {exc}")
+            return {"status": "error", "error": str(exc), "candidates_count": 0,
+                    "matched_price": False, "matched_quantity": False, "debug": {}}
+
+    def _visual_ocr_right_click(self, x: int, y: int, result: dict,
+                                 errors: list) -> bool:
+        """Right-click at (x, y). Returns True on success."""
+        try:
+            if _PYAUTOGUI_AVAILABLE:
+                _pyautogui.rightClick(x, y)
+            else:
+                import ctypes
+                ctypes.windll.user32.SetCursorPos(x, y)
+                ctypes.windll.user32.mouse_event(0x0008, 0, 0, 0, 0)
+                ctypes.windll.user32.mouse_event(0x0010, 0, 0, 0, 0)
+            result["steps_executed"].append(f"visual_ocr_right_click: ({x}, {y})")
+            _log.info(f"[AUTOMATION] visual_ocr: right-click at ({x}, {y})")
+            return True
+        except Exception as exc:
+            errors.append(f"visual_ocr_right_click_error: {exc}")
+            result["steps_skipped"].append("visual_ocr_right_click_failed")
+            return False
+
+    def _visual_ocr_left_click(self, x: int, y: int, result: dict,
+                                errors: list) -> bool:
+        """Left-click at (x, y). Returns True on success."""
+        try:
+            if _PYAUTOGUI_AVAILABLE:
+                _pyautogui.click(x, y)
+            else:
+                import ctypes
+                ctypes.windll.user32.SetCursorPos(x, y)
+                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+            result["steps_executed"].append(f"visual_ocr_left_click: ({x}, {y})")
+            _log.info(f"[AUTOMATION] visual_ocr: left-click at ({x}, {y})")
+            return True
+        except Exception as exc:
+            errors.append(f"visual_ocr_left_click_error: {exc}")
+            result["steps_skipped"].append("visual_ocr_left_click_failed")
+            return False
+
+    def _apply_visual_ocr_paste_blocking(self, result: dict) -> None:
+        """Block paste when the visual_ocr strategy failed to complete its steps."""
+        result["steps_skipped"].append("paste_skipped_visual_ocr_step_failed")
+        result["_paste_blocked_modify_dialog"] = True
+        _log.warning("[AUTOMATION] visual_ocr: paste blocked — strategy did not complete")
+
+    def _build_visual_ocr_config(self) -> dict:
+        return {
+            "visual_ocr_require_unique_match":     self.visual_ocr_require_unique_match,
+            "visual_ocr_match_price":              self.visual_ocr_match_price,
+            "visual_ocr_match_quantity":           self.visual_ocr_match_quantity,
+            "visual_ocr_require_own_order_marker": self.visual_ocr_require_own_marker,
+            "visual_ocr_side_section_required":    self.visual_ocr_side_section_required,
+        }
+
+    def _save_debug_screenshot(self, screenshot, result: dict) -> None:
+        """Save debug screenshot. Silent on failure."""
+        try:
+            import os
+            os.makedirs(self.visual_ocr_debug_dir, exist_ok=True)
+            ts   = int(time.time())
+            path = os.path.join(self.visual_ocr_debug_dir, f"visual_ocr_{ts}.png")
+            screenshot.save(path)
+            result["visual_ocr_debug_screenshot_path"] = path
+            _log.debug(f"[AUTOMATION] visual_ocr: debug screenshot saved to {path}")
+        except Exception as exc:
+            _log.debug(f"[AUTOMATION] visual_ocr: debug screenshot save failed: {exc}")
+
     def _handle_experimental_paste(self, result: dict, price_text: str, errors: list) -> None:
         if not self.exp_paste_enabled:
             result["steps_skipped"].append("experimental_paste_disabled")
@@ -651,4 +910,15 @@ class EVEWindowAutomation:
             # Phase 3B: hotkey_experimental
             "modify_order_hotkey_configured":          False,
             "allow_unverified_modify_order_paste":     False,
+            # Phase 3C: visual_ocr
+            "visual_ocr_enabled":                      False,
+            "visual_ocr_status":                       None,
+            "visual_ocr_candidates_count":             0,
+            "visual_ocr_matched_price":                False,
+            "visual_ocr_matched_quantity":             False,
+            "visual_ocr_row_x":                        None,
+            "visual_ocr_row_y":                        None,
+            "visual_ocr_window_rect":                  None,
+            "visual_ocr_debug":                        {},
+            "visual_ocr_debug_screenshot_path":        None,
         }

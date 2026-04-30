@@ -45,6 +45,10 @@ _REQUIRED_KEYS = {
     "modify_order_warning",
     # Phase 3B: hotkey_experimental
     "modify_order_hotkey_configured", "allow_unverified_modify_order_paste",
+    # Phase 3C: visual_ocr
+    "visual_ocr_enabled", "visual_ocr_status", "visual_ocr_candidates_count",
+    "visual_ocr_matched_price", "visual_ocr_matched_quantity",
+    "visual_ocr_row_x", "visual_ocr_row_y",
 }
 
 _CFG_DISABLED = {
@@ -749,6 +753,264 @@ class TestHotkeyExperimentalStrategy(unittest.TestCase):
     def test_hotkey_configured_flag_false_when_empty(self):
         result = self._run(self._cfg(modify_order_hotkey=""))
         self.assertFalse(result["modify_order_hotkey_configured"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 3C: visual_ocr strategy tests
+# ---------------------------------------------------------------------------
+class TestVisualOCRStrategy(unittest.TestCase):
+    """Tests for Phase 3C — visual_ocr modify-order strategy."""
+
+    _SELECTED = {
+        "handle": 99999, "title": "EVE - Test",
+        "class_name": "EVEWindow", "visible": True,
+        "is_self_app": False, "score": 100,
+    }
+
+    def _cfg(self, **overrides):
+        base = {
+            "enabled": True, "dry_run": False, "use_pywinauto": True,
+            "require_window_selection": False,
+            "allow_title_fallback_without_selection": True,
+            "experimental_paste_enabled": True,
+            "paste_into_focused_window": True,
+            "clear_price_field_before_paste": False,
+            "paste_method": "ctrl+v",
+            "pre_paste_delay_ms": 0,
+            "open_market_delay_ms": 0,
+            "focus_client_delay_ms": 0,
+            "paste_price_delay_ms": 0,
+            "post_action_delay_ms": 0,
+            "modify_order_delay_ms": 0,
+            "modify_order_step_enabled": True,
+            "modify_order_strategy": "visual_ocr",
+            "visual_ocr_enabled": True,
+            "visual_ocr_require_unique_match": True,
+            "visual_ocr_match_price": True,
+            "visual_ocr_match_quantity": True,
+            "visual_ocr_require_own_order_marker": True,
+            "visual_ocr_side_section_required": True,
+            "visual_ocr_allow_unverified_paste": False,
+            "visual_ocr_context_menu_delay_ms": 0,
+            "visual_ocr_modify_dialog_delay_ms": 0,
+            "visual_ocr_right_click_x_offset": 80,
+            "visual_ocr_right_click_y_offset": 0,
+            "visual_ocr_menu_click_mode": "relative_to_right_click",
+            "visual_ocr_menu_click_x_offset": 60,
+            "visual_ocr_menu_click_y_offset": 85,
+            "visual_ocr_debug_save_screenshot": False,
+            "visual_ocr_debug_dir": "data/debug/visual_ocr",
+            "never_confirm_final_order": True,
+        }
+        base.update(overrides)
+        return base
+
+    def _detection_unique(self):
+        return {
+            "status": "unique_match", "error": None,
+            "candidates_count": 1, "row_center_x": 200, "row_center_y": 150,
+            "matched_price": True, "matched_quantity": True,
+            "matched_own_marker": True, "matched_side_section": True,
+            "debug": {},
+        }
+
+    def _detection_not_found(self):
+        return {
+            "status": "not_found", "error": None,
+            "candidates_count": 0, "row_center_x": None, "row_center_y": None,
+            "matched_price": False, "matched_quantity": False,
+            "matched_own_marker": False, "matched_side_section": False,
+            "debug": {},
+        }
+
+    def _run(self, cfg, detection=None, screenshot=None):
+        """Run automation with all OS interactions mocked."""
+        import numpy as np
+        mock_win = MagicMock()
+        if screenshot is None:
+            screenshot = np.zeros((200, 400, 3), dtype="uint8")
+        if detection is None:
+            detection = self._detection_unique()
+
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", True), \
+             patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", True), \
+             patch("core.window_automation.EVEWindowAutomation._connect_by_handle",
+                   return_value=mock_win), \
+             patch("core.window_automation.EVEWindowAutomation._focus_window",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._get_window_rect",
+                   return_value={"left": 0, "top": 0, "width": 400, "height": 200}), \
+             patch("core.window_automation.EVEWindowAutomation._capture_window_screenshot",
+                   return_value=screenshot), \
+             patch("core.window_automation.EVEWindowAutomation._run_visual_ocr_detect",
+                   return_value=detection), \
+             patch("core.window_automation.EVEWindowAutomation._visual_ocr_right_click",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click",
+                   return_value=True), \
+             patch("pywinauto.keyboard.send_keys"):
+            auto = EVEWindowAutomation(cfg)
+            order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+            return auto.execute_quick_order_update(
+                order, "1595.90", selected_window=self._SELECTED
+            )
+
+    # -- visual_ocr_enabled=False skips entirely ---------------------------------
+
+    def test_visual_ocr_disabled_in_cfg_skips(self):
+        result = self._run(self._cfg(visual_ocr_enabled=False))
+        self.assertIn("visual_ocr_disabled_in_config", result["steps_skipped"])
+
+    # -- screenshot backend missing ----------------------------------------------
+
+    def test_screenshot_failed_blocks_paste(self):
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", True), \
+             patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", False), \
+             patch("core.window_automation._PYAUTOGUI_AVAILABLE", False), \
+             patch("core.window_automation.EVEWindowAutomation._connect_by_handle",
+                   return_value=MagicMock()), \
+             patch("core.window_automation.EVEWindowAutomation._focus_window",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._get_window_rect",
+                   return_value={"left": 0, "top": 0, "width": 400, "height": 200}):
+            auto = EVEWindowAutomation(self._cfg())
+            order = {"price": 1595.9, "volume_remain": 10}
+            result = auto.execute_quick_order_update(
+                order, "1595.90", selected_window=self._SELECTED
+            )
+        self.assertEqual(result["visual_ocr_status"], "error_screenshot_failed")
+        self.assertFalse(result["price_pasted"])
+
+    # -- not_found detection blocks paste ----------------------------------------
+
+    def test_not_found_blocks_paste(self):
+        result = self._run(self._cfg(), detection=self._detection_not_found())
+        skipped = " ".join(result["steps_skipped"])
+        self.assertIn("visual_ocr_no_unique_match", skipped)
+        self.assertIn("paste_skipped_visual_ocr_step_failed", skipped)
+        self.assertFalse(result["price_pasted"])
+
+    def test_not_found_status_in_result(self):
+        result = self._run(self._cfg(), detection=self._detection_not_found())
+        self.assertEqual(result["visual_ocr_status"], "not_found")
+
+    # -- unique_match: clicks executed -------------------------------------------
+
+    def test_unique_match_records_row_coords(self):
+        result = self._run(self._cfg())
+        self.assertEqual(result["visual_ocr_row_x"], 200)
+        self.assertEqual(result["visual_ocr_row_y"], 150)
+
+    def test_unique_match_records_match_status(self):
+        result = self._run(self._cfg())
+        self.assertEqual(result["visual_ocr_status"], "unique_match")
+
+    def test_unique_match_right_click_called(self):
+        import numpy as np
+        mock_win = MagicMock()
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+        mock_right_click = MagicMock(return_value=True)
+
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", True), \
+             patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", True), \
+             patch("core.window_automation.EVEWindowAutomation._connect_by_handle",
+                   return_value=mock_win), \
+             patch("core.window_automation.EVEWindowAutomation._focus_window",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._get_window_rect",
+                   return_value={"left": 0, "top": 0, "width": 400, "height": 200}), \
+             patch("core.window_automation.EVEWindowAutomation._capture_window_screenshot",
+                   return_value=screenshot), \
+             patch("core.window_automation.EVEWindowAutomation._run_visual_ocr_detect",
+                   return_value=self._detection_unique()), \
+             patch("core.window_automation.EVEWindowAutomation._visual_ocr_right_click",
+                   mock_right_click), \
+             patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click",
+                   return_value=True), \
+             patch("pywinauto.keyboard.send_keys"):
+            auto = EVEWindowAutomation(self._cfg())
+            order = {"price": 1595.9, "volume_remain": 10}
+            auto.execute_quick_order_update(order, "1595.90", selected_window=self._SELECTED)
+        mock_right_click.assert_called_once()
+
+    def test_unique_match_menu_click_step_recorded(self):
+        result = self._run(self._cfg())
+        self.assertIn("visual_ocr_modify_order_menu_clicked", result["steps_executed"])
+
+    # -- paste blocking defaults (visual_ocr_allow_unverified_paste=False) -------
+
+    def test_paste_blocked_by_default_after_click(self):
+        result = self._run(self._cfg(visual_ocr_allow_unverified_paste=False))
+        skipped = result["steps_skipped"]
+        self.assertIn("paste_skipped_visual_ocr_dialog_not_verified", skipped)
+        self.assertFalse(result["price_pasted"])
+
+    def test_paste_allowed_when_unverified_paste_enabled(self):
+        result = self._run(self._cfg(visual_ocr_allow_unverified_paste=True))
+        self.assertNotIn("paste_skipped_visual_ocr_dialog_not_verified",
+                         result["steps_skipped"])
+
+    # -- final confirm NEVER executed --------------------------------------------
+
+    def test_final_confirm_never_executed_unique_match(self):
+        result = self._run(self._cfg())
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+        for step in result["steps_executed"]:
+            self.assertNotIn("confirm", step.lower(),
+                             f"confirm must never be in steps_executed: {step}")
+
+    def test_final_confirm_never_executed_not_found(self):
+        result = self._run(self._cfg(), detection=self._detection_not_found())
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+
+    # -- all required keys present -----------------------------------------------
+
+    def test_all_required_keys_present_visual_ocr(self):
+        result = self._run(self._cfg())
+        for key in _REQUIRED_KEYS:
+            self.assertIn(key, result, f"key '{key}' missing from result")
+
+    # -- visual_ocr_enabled flag reflected in result -----------------------------
+
+    def test_visual_ocr_enabled_true_in_result(self):
+        result = self._run(self._cfg())
+        self.assertTrue(result["visual_ocr_enabled"])
+
+    def test_visual_ocr_enabled_false_in_result_when_disabled(self):
+        auto = EVEWindowAutomation(self._cfg(visual_ocr_enabled=False))
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", False):
+            result = auto.execute_quick_order_update({}, "100")
+        self.assertFalse(result["visual_ocr_enabled"])
+
+    # -- right_click_fail blocks paste -------------------------------------------
+
+    def test_right_click_fail_blocks_paste(self):
+        import numpy as np
+        mock_win = MagicMock()
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", True), \
+             patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", True), \
+             patch("core.window_automation.EVEWindowAutomation._connect_by_handle",
+                   return_value=mock_win), \
+             patch("core.window_automation.EVEWindowAutomation._focus_window",
+                   return_value=True), \
+             patch("core.window_automation.EVEWindowAutomation._get_window_rect",
+                   return_value={"left": 0, "top": 0, "width": 400, "height": 200}), \
+             patch("core.window_automation.EVEWindowAutomation._capture_window_screenshot",
+                   return_value=screenshot), \
+             patch("core.window_automation.EVEWindowAutomation._run_visual_ocr_detect",
+                   return_value=self._detection_unique()), \
+             patch("core.window_automation.EVEWindowAutomation._visual_ocr_right_click",
+                   return_value=False), \
+             patch("pywinauto.keyboard.send_keys"):
+            auto = EVEWindowAutomation(self._cfg())
+            order = {"price": 1595.9, "volume_remain": 10}
+            result = auto.execute_quick_order_update(
+                order, "1595.90", selected_window=self._SELECTED
+            )
+        self.assertIn("paste_skipped_visual_ocr_step_failed", result["steps_skipped"])
+        self.assertFalse(result["price_pasted"])
 
 
 if __name__ == "__main__":

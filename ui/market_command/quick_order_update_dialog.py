@@ -499,10 +499,14 @@ class QuickOrderUpdateDialog(QDialog):
             self.recommendation.get("recommended_price", 0)
         )
         order_data = {
-            "order_id":  self.order.order_id,
-            "type_id":   self.order.type_id,
-            "item_name": self.order.item_name,
-            "price":     self.order.price,
+            "order_id":      self.order.order_id,
+            "type_id":       self.order.type_id,
+            "item_name":     self.order.item_name,
+            "price":         self.order.price,
+            "volume_remain": getattr(self.order, "volume_remain", 0),
+            "volume_total":  getattr(self.order, "volume_total", 0),
+            "is_buy_order":  getattr(self.order, "is_buy_order", False),
+            "location_id":   getattr(self.order, "location_id", None),
         }
 
         self._status_lbl.setText("Ejecutando automatización experimental...")

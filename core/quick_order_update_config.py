@@ -42,6 +42,23 @@ _DEFAULT_CONFIG: dict = {
     "modify_order_verify_window_title_contains": "Modify Order",
     "modify_order_post_hotkey_delay_ms":        500,
     "allow_unverified_modify_order_paste":      False,
+    # Phase 3C: visual_ocr strategy (disabled by default)
+    "visual_ocr_enabled":                       False,
+    "visual_ocr_require_unique_match":          True,
+    "visual_ocr_match_price":                   True,
+    "visual_ocr_match_quantity":                True,
+    "visual_ocr_require_own_order_marker":      True,
+    "visual_ocr_side_section_required":         True,
+    "visual_ocr_allow_unverified_paste":        False,
+    "visual_ocr_context_menu_delay_ms":         300,
+    "visual_ocr_modify_dialog_delay_ms":        700,
+    "visual_ocr_right_click_x_offset":          80,
+    "visual_ocr_right_click_y_offset":          0,
+    "visual_ocr_menu_click_mode":               "relative_to_right_click",
+    "visual_ocr_menu_click_x_offset":           60,
+    "visual_ocr_menu_click_y_offset":           85,
+    "visual_ocr_debug_save_screenshot":         True,
+    "visual_ocr_debug_dir":                     "data/debug/visual_ocr",
 }
 
 _DELAY_KEYS = (
@@ -52,6 +69,8 @@ _DELAY_KEYS = (
     "pre_paste_delay_ms",
     "modify_order_delay_ms",
     "modify_order_post_hotkey_delay_ms",
+    "visual_ocr_context_menu_delay_ms",
+    "visual_ocr_modify_dialog_delay_ms",
 )
 _MAX_DELAY_MS = 30_000
 
@@ -119,7 +138,11 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "clear_price_field_before_paste",
                 "modify_order_step_enabled", "require_modify_dialog_ready",
                 "paste_without_modify_dialog_verification",
-                "allow_unverified_modify_order_paste"):
+                "allow_unverified_modify_order_paste",
+                "visual_ocr_enabled", "visual_ocr_require_unique_match",
+                "visual_ocr_match_price", "visual_ocr_match_quantity",
+                "visual_ocr_require_own_order_marker", "visual_ocr_side_section_required",
+                "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -137,7 +160,7 @@ def validate_quick_order_update_config(config: dict) -> dict:
     # Validate modify_order_strategy
     if "modify_order_strategy" in config:
         val = str(config["modify_order_strategy"]).lower()
-        if val in ("manual_focus_guard", "hotkey_experimental"):
+        if val in ("manual_focus_guard", "hotkey_experimental", "visual_ocr"):
             result["modify_order_strategy"] = val
         else:
             result["modify_order_strategy"] = "manual_focus_guard"
@@ -170,5 +193,26 @@ def validate_quick_order_update_config(config: dict) -> dict:
         val = config["client_window_title_contains"]
         if isinstance(val, str) and val.strip():
             result["client_window_title_contains"] = val.strip()
+
+    # visual_ocr integer offset fields (no clamping — can be negative for offsets)
+    for key in ("visual_ocr_right_click_x_offset", "visual_ocr_right_click_y_offset",
+                "visual_ocr_menu_click_x_offset", "visual_ocr_menu_click_y_offset"):
+        if key in config:
+            try:
+                result[key] = int(config[key])
+            except (TypeError, ValueError):
+                pass
+
+    # visual_ocr_menu_click_mode: must be a recognised mode
+    if "visual_ocr_menu_click_mode" in config:
+        val = str(config["visual_ocr_menu_click_mode"]).lower()
+        if val in ("relative_to_right_click", "absolute"):
+            result["visual_ocr_menu_click_mode"] = val
+
+    # visual_ocr_debug_dir: any non-empty string
+    if "visual_ocr_debug_dir" in config:
+        val = config["visual_ocr_debug_dir"]
+        if isinstance(val, str) and val.strip():
+            result["visual_ocr_debug_dir"] = val.strip()
 
     return result

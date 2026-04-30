@@ -231,6 +231,17 @@ def _format_automation_section(automation: dict) -> list:
     if modify_warn:
         lines.append(f"  Modify Order Warning : {modify_warn}")
     lines.append(f"  Never Confirm Order  : {_b(automation.get('never_confirm_final_order'))}")
+    # Phase 3C: visual_ocr
+    lines.append(f"  Visual OCR Enabled   : {_b(automation.get('visual_ocr_enabled'))}")
+    lines.append(f"  Visual OCR Status    : {_b(automation.get('visual_ocr_status'))}")
+    lines.append(f"  Visual OCR Candidates: {_b(automation.get('visual_ocr_candidates_count'))}")
+    lines.append(f"  Visual OCR Price     : {_b(automation.get('visual_ocr_matched_price'))}")
+    lines.append(f"  Visual OCR Quantity  : {_b(automation.get('visual_ocr_matched_quantity'))}")
+    lines.append(f"  Visual OCR Row X     : {_b(automation.get('visual_ocr_row_x'))}")
+    lines.append(f"  Visual OCR Row Y     : {_b(automation.get('visual_ocr_row_y'))}")
+    dbg_path = automation.get("visual_ocr_debug_screenshot_path")
+    if dbg_path:
+        lines.append(f"  Visual OCR Debug Img : {dbg_path}")
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
     cands = automation.get("candidate_windows") or []
     if cands:

@@ -1,0 +1,360 @@
+"""
+Tests for core/eve_market_visual_detector.py.
+
+Covers:
+  1. normalize_price_text — European, English, plain, ISK suffix
+  2. normalize_quantity_text — plain, with whitespace/suffix
+  3. EveMarketVisualDetector — detection with mocked _find_blue_row_bands / _ocr_region
+  4. detect_own_order_row returns error when OCR backend unavailable
+  5. unique_match / ambiguous / not_found paths
+"""
+import os
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from core.eve_market_visual_detector import (
+    normalize_price_text,
+    normalize_quantity_text,
+    EveMarketVisualDetector,
+    _base_detection_result,
+)
+
+
+# ---------------------------------------------------------------------------
+# normalize_price_text
+# ---------------------------------------------------------------------------
+
+class TestNormalizePriceText(unittest.TestCase):
+
+    def test_plain_integer(self):
+        self.assertAlmostEqual(normalize_price_text("249900000"), 249900000.0)
+
+    def test_plain_float(self):
+        self.assertAlmostEqual(normalize_price_text("249900000.50"), 249900000.5)
+
+    def test_english_thousands_dot_decimal(self):
+        self.assertAlmostEqual(normalize_price_text("249,900,000.00"), 249900000.0)
+
+    def test_european_dots_thousands_comma_decimal(self):
+        self.assertAlmostEqual(normalize_price_text("249.900.000,00"), 249900000.0)
+
+    def test_isk_suffix_english(self):
+        self.assertAlmostEqual(normalize_price_text("1,595.90 ISK"), 1595.9)
+
+    def test_isk_suffix_european(self):
+        self.assertAlmostEqual(normalize_price_text("1.595,90 ISK"), 1595.9)
+
+    def test_isk_no_space(self):
+        self.assertAlmostEqual(normalize_price_text("1595.90ISK"), 1595.9)
+
+    def test_case_insensitive_suffix(self):
+        self.assertAlmostEqual(normalize_price_text("5000 isk"), 5000.0)
+
+    def test_empty_string(self):
+        self.assertEqual(normalize_price_text(""), 0.0)
+
+    def test_only_isk(self):
+        self.assertEqual(normalize_price_text("ISK"), 0.0)
+
+    def test_invalid_text(self):
+        self.assertEqual(normalize_price_text("no_number"), 0.0)
+
+    def test_european_single_decimal_comma(self):
+        # "1,5" — comma with ≤2 digits after → decimal comma
+        self.assertAlmostEqual(normalize_price_text("1,5"), 1.5)
+
+    def test_english_large_no_decimal(self):
+        self.assertAlmostEqual(normalize_price_text("10,000,000"), 10000000.0)
+
+    def test_european_dots_only_thousands(self):
+        # Multiple dots with no comma → European thousands
+        self.assertAlmostEqual(normalize_price_text("1.000.000"), 1000000.0)
+
+
+# ---------------------------------------------------------------------------
+# normalize_quantity_text
+# ---------------------------------------------------------------------------
+
+class TestNormalizeQuantityText(unittest.TestCase):
+
+    def test_plain_integer(self):
+        self.assertEqual(normalize_quantity_text("42"), 42)
+
+    def test_with_suffix(self):
+        self.assertEqual(normalize_quantity_text("100 units"), 100)
+
+    def test_with_commas(self):
+        self.assertEqual(normalize_quantity_text("10,000"), 10000)
+
+    def test_with_dots(self):
+        self.assertEqual(normalize_quantity_text("10.000"), 10000)
+
+    def test_with_spaces(self):
+        self.assertEqual(normalize_quantity_text("1 000"), 1000)
+
+    def test_empty(self):
+        self.assertEqual(normalize_quantity_text(""), 0)
+
+    def test_non_numeric(self):
+        self.assertEqual(normalize_quantity_text("abc"), 0)
+
+    def test_leading_whitespace(self):
+        self.assertEqual(normalize_quantity_text("  500"), 500)
+
+
+# ---------------------------------------------------------------------------
+# _base_detection_result
+# ---------------------------------------------------------------------------
+
+class TestBaseDetectionResult(unittest.TestCase):
+
+    def test_has_required_keys(self):
+        r = _base_detection_result()
+        for key in ("status", "error", "candidates_count", "row_center_x",
+                    "row_center_y", "matched_price", "matched_quantity",
+                    "matched_own_marker", "matched_side_section", "debug"):
+            self.assertIn(key, r)
+
+    def test_default_status_error(self):
+        self.assertEqual(_base_detection_result()["status"], "error")
+
+
+# ---------------------------------------------------------------------------
+# EveMarketVisualDetector — unit tests with mocked internals
+# ---------------------------------------------------------------------------
+
+def _det(overrides=None):
+    cfg = {
+        "visual_ocr_require_unique_match":     True,
+        "visual_ocr_match_price":              True,
+        "visual_ocr_match_quantity":           True,
+        "visual_ocr_require_own_order_marker": True,
+        "visual_ocr_side_section_required":    True,
+    }
+    if overrides:
+        cfg.update(overrides)
+    return EveMarketVisualDetector(cfg)
+
+
+def _make_screenshot():
+    """Return a minimal 100×50 numpy array screenshot stub."""
+    try:
+        import numpy as np
+        return np.zeros((50, 100, 3), dtype="uint8")
+    except ImportError:
+        return None
+
+
+_ORDER = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+_WINDOW_RECT = {"left": 0, "top": 0, "width": 100, "height": 50}
+
+
+class TestDetectorBackendUnavailable(unittest.TestCase):
+    """When PIL/numpy/pytesseract are not available, returns error."""
+
+    def test_returns_error_when_pil_unavailable(self):
+        det = _det()
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", False), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", False), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", False):
+            result = det.detect_own_order_row(MagicMock(), _ORDER, _WINDOW_RECT)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"], "ocr_backend_unavailable")
+
+    def test_returns_error_when_pytesseract_unavailable(self):
+        det = _det()
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", False):
+            result = det.detect_own_order_row(MagicMock(), _ORDER, _WINDOW_RECT)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"], "ocr_backend_unavailable")
+
+
+class TestDetectorNotFound(unittest.TestCase):
+
+    def test_no_blue_bands_returns_not_found(self):
+        import numpy as np
+        det = _det()
+        screenshot = np.zeros((50, 100, 3), dtype="uint8")
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[]), \
+             patch.object(det, "_ocr_region", return_value=""):
+            result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["candidates_count"], 0)
+
+
+class TestDetectorUniqueMatch(unittest.TestCase):
+
+    def _run_with_bands(self, bands, price_texts, qty_texts):
+        import numpy as np
+        det = _det()
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+
+        ocr_calls = iter(price_texts + qty_texts)
+
+        def _ocr_side_effect(arr):
+            try:
+                return next(ocr_calls)
+            except StopIteration:
+                return ""
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=bands), \
+             patch.object(det, "_ocr_region", side_effect=_ocr_side_effect):
+            return det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
+
+    def test_unique_match_price_and_qty(self):
+        result = self._run_with_bands(
+            bands=[(10, 25)],
+            price_texts=["1595.90 ISK"],
+            qty_texts=["10"],
+        )
+        self.assertEqual(result["status"], "unique_match")
+        self.assertTrue(result["matched_price"])
+        self.assertTrue(result["matched_quantity"])
+        self.assertIsNotNone(result["row_center_x"])
+        self.assertIsNotNone(result["row_center_y"])
+
+    def test_unique_match_includes_window_offset(self):
+        window_rect = {"left": 100, "top": 200, "width": 400, "height": 200}
+        import numpy as np
+        det = _det()
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 30)]), \
+             patch.object(det, "_ocr_region", return_value="1595.90"):
+            result = det.detect_own_order_row(screenshot, _ORDER, window_rect)
+        if result["status"] == "unique_match":
+            self.assertGreaterEqual(result["row_center_x"], 100)
+            self.assertGreaterEqual(result["row_center_y"], 200)
+
+    def test_not_found_when_price_mismatch(self):
+        result = self._run_with_bands(
+            bands=[(10, 25)],
+            price_texts=["9999999.00 ISK"],
+            qty_texts=["10"],
+        )
+        self.assertEqual(result["status"], "not_found")
+
+    def test_not_found_when_qty_mismatch(self):
+        result = self._run_with_bands(
+            bands=[(10, 25)],
+            price_texts=["1595.90 ISK"],
+            qty_texts=["999"],
+        )
+        self.assertEqual(result["status"], "not_found")
+
+
+class TestDetectorAmbiguous(unittest.TestCase):
+
+    def test_two_matching_bands_returns_ambiguous(self):
+        import numpy as np
+        det = _det()
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+
+        # OCR returns price then qty per band × 2 bands
+        ocr_values = iter(["1595.90", "10", "1595.90", "10"])
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25), (50, 65)]), \
+             patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)):
+            result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["candidates_count"], 2)
+
+
+class TestDetectorMatchPriceDisabled(unittest.TestCase):
+
+    def test_price_match_disabled_ignores_price(self):
+        import numpy as np
+        det = _det({"visual_ocr_match_price": False})
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
+             patch.object(det, "_ocr_region", return_value="10"):
+            result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
+        self.assertEqual(result["status"], "unique_match")
+
+    def test_qty_match_disabled_ignores_qty(self):
+        import numpy as np
+        det = _det({"visual_ocr_match_quantity": False})
+        screenshot = np.zeros((200, 400, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
+             patch.object(det, "_ocr_region", return_value="1595.90"):
+            result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
+        self.assertEqual(result["status"], "unique_match")
+
+
+class TestFindBlueRowBands(unittest.TestCase):
+    """Unit test _find_blue_row_bands directly without mocking."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_empty_array_returns_empty(self):
+        det = _det()
+        empty = self._np.zeros((0, 10, 3), dtype="uint8")
+        result = det._find_blue_row_bands(empty, 0, 0, 0, 10)
+        self.assertEqual(result, [])
+
+    def test_no_blue_pixels_returns_empty(self):
+        det = _det()
+        arr = self._np.zeros((50, 100, 3), dtype="uint8")
+        # All red pixels
+        arr[:, :, 0] = 200
+        result = det._find_blue_row_bands(arr, 0, 50, 0, 100)
+        self.assertEqual(result, [])
+
+    def test_blue_row_detected(self):
+        det = _det()
+        arr = self._np.zeros((50, 100, 3), dtype="uint8")
+        # Paint rows 10-20 with EVE blue color
+        arr[10:21, :, 0] = 40   # R
+        arr[10:21, :, 1] = 80   # G
+        arr[10:21, :, 2] = 150  # B
+        result = det._find_blue_row_bands(arr, 0, 50, 0, 100)
+        self.assertGreater(len(result), 0)
+        band = result[0]
+        self.assertLessEqual(band[0], 10)
+        self.assertGreaterEqual(band[1], 20)
+
+    def test_two_separate_blue_rows_detected(self):
+        det = _det()
+        arr = self._np.zeros((100, 100, 3), dtype="uint8")
+        arr[10:16, :, 0] = 40
+        arr[10:16, :, 1] = 80
+        arr[10:16, :, 2] = 150
+        arr[60:66, :, 0] = 40
+        arr[60:66, :, 1] = 80
+        arr[60:66, :, 2] = 150
+        result = det._find_blue_row_bands(arr, 0, 100, 0, 100)
+        self.assertEqual(len(result), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -171,5 +171,64 @@ class TestAutomationSectionRendering(unittest.TestCase):
         self.assertNotIn("Modify Order Warning", section)
 
 
+class TestVisualOCRSectionRendering(unittest.TestCase):
+
+    def test_visual_ocr_enabled_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Enabled", section)
+
+    def test_visual_ocr_status_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Status", section)
+
+    def test_visual_ocr_candidates_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Candidates", section)
+
+    def test_visual_ocr_price_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Price", section)
+
+    def test_visual_ocr_quantity_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Quantity", section)
+
+    def test_visual_ocr_row_x_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Row X", section)
+
+    def test_visual_ocr_row_y_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Visual OCR Row Y", section)
+
+    def test_visual_ocr_debug_img_shown_when_set(self):
+        auto = _base_automation()
+        auto["visual_ocr_debug_screenshot_path"] = "/tmp/test_screenshot.png"
+        section = format_automation_section(auto)
+        self.assertIn("Visual OCR Debug Img", section)
+        self.assertIn("/tmp/test_screenshot.png", section)
+
+    def test_visual_ocr_debug_img_absent_when_none(self):
+        auto = _base_automation()
+        auto.pop("visual_ocr_debug_screenshot_path", None)
+        section = format_automation_section(auto)
+        self.assertNotIn("Visual OCR Debug Img", section)
+
+    def test_visual_ocr_enabled_false_value(self):
+        auto = _base_automation()
+        auto["visual_ocr_enabled"] = False
+        section = format_automation_section(auto)
+        lines = section.split("\n")
+        enabled_lines = [l for l in lines if "Visual OCR Enabled" in l]
+        self.assertTrue(enabled_lines)
+        self.assertIn("False", enabled_lines[0])
+
+    def test_visual_ocr_status_value_shown(self):
+        auto = _base_automation()
+        auto["visual_ocr_status"] = "unique_match"
+        section = format_automation_section(auto)
+        self.assertIn("unique_match", section)
+
+
 if __name__ == "__main__":
     unittest.main()

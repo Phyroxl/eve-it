@@ -291,5 +291,106 @@ class TestModifyOrderDefaults(unittest.TestCase):
         self.assertLessEqual(cfg_high["modify_order_post_hotkey_delay_ms"], _MAX_DELAY_MS)
 
 
+class TestVisualOCRConfigDefaults(unittest.TestCase):
+    """Phase 3C visual_ocr config defaults and validation."""
+
+    def test_visual_ocr_enabled_defaults_false(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertFalse(cfg["visual_ocr_enabled"])
+
+    def test_visual_ocr_require_unique_match_defaults_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_require_unique_match"])
+
+    def test_visual_ocr_match_price_defaults_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_match_price"])
+
+    def test_visual_ocr_match_quantity_defaults_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_match_quantity"])
+
+    def test_visual_ocr_require_own_marker_defaults_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_require_own_order_marker"])
+
+    def test_visual_ocr_side_section_required_defaults_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_side_section_required"])
+
+    def test_visual_ocr_allow_unverified_paste_defaults_false(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertFalse(cfg["visual_ocr_allow_unverified_paste"])
+
+    def test_visual_ocr_context_menu_delay_default_300(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_context_menu_delay_ms"], 300)
+
+    def test_visual_ocr_modify_dialog_delay_default_700(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_modify_dialog_delay_ms"], 700)
+
+    def test_visual_ocr_right_click_x_offset_default_80(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_right_click_x_offset"], 80)
+
+    def test_visual_ocr_right_click_y_offset_default_0(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_right_click_y_offset"], 0)
+
+    def test_visual_ocr_menu_click_mode_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_menu_click_mode"], "relative_to_right_click")
+
+    def test_visual_ocr_menu_click_x_offset_default_60(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_menu_click_x_offset"], 60)
+
+    def test_visual_ocr_menu_click_y_offset_default_85(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_menu_click_y_offset"], 85)
+
+    def test_visual_ocr_debug_save_screenshot_default_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_debug_save_screenshot"])
+
+    def test_visual_ocr_debug_dir_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["visual_ocr_debug_dir"], "data/debug/visual_ocr")
+
+    def test_visual_ocr_strategy_accepted(self):
+        cfg = validate_quick_order_update_config({"modify_order_strategy": "visual_ocr"})
+        self.assertEqual(cfg["modify_order_strategy"], "visual_ocr")
+
+    def test_visual_ocr_context_menu_delay_negative_clamped(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_context_menu_delay_ms": -100})
+        self.assertEqual(cfg["visual_ocr_context_menu_delay_ms"], 0)
+
+    def test_visual_ocr_modify_dialog_delay_huge_clamped(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_modify_dialog_delay_ms": 999999})
+        self.assertLessEqual(cfg["visual_ocr_modify_dialog_delay_ms"], _MAX_DELAY_MS)
+
+    def test_visual_ocr_menu_click_mode_absolute_accepted(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_menu_click_mode": "absolute"})
+        self.assertEqual(cfg["visual_ocr_menu_click_mode"], "absolute")
+
+    def test_visual_ocr_menu_click_mode_unknown_keeps_default(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_menu_click_mode": "random_mode"})
+        self.assertEqual(cfg["visual_ocr_menu_click_mode"], "relative_to_right_click")
+
+    def test_visual_ocr_negative_offset_kept(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_right_click_x_offset": -20})
+        self.assertEqual(cfg["visual_ocr_right_click_x_offset"], -20)
+
+    def test_visual_ocr_debug_dir_empty_keeps_default(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_debug_dir": "   "})
+        self.assertEqual(cfg["visual_ocr_debug_dir"], "data/debug/visual_ocr")
+
+    def test_all_default_config_keys_present_with_visual_ocr(self):
+        cfg = validate_quick_order_update_config({})
+        for key in _DEFAULT_CONFIG:
+            self.assertIn(key, cfg, f"key '{key}' missing from validated config")
+
+
 if __name__ == "__main__":
     unittest.main()
