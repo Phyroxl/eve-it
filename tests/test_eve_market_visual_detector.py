@@ -490,9 +490,10 @@ class TestMarkerRequired(unittest.TestCase):
              patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
              patch.object(det, "_ocr_region", return_value="1595.90"), \
-             patch.object(det, "_detect_own_order_marker", return_value=False):
+             patch.object(det, "_detect_own_order_marker", return_value=(False, 0, [0,0,0])):
             result = det.detect_own_order_row(screenshot, order, window_rect)
         self.assertEqual(result["status"], "not_found")
+        self.assertEqual(len(result["debug"]["marker_rejected_bands"]), 1)
 
     def test_marker_not_required_passes_without_marker(self):
         det = _det({"visual_ocr_marker_required": False})
@@ -507,9 +508,58 @@ class TestMarkerRequired(unittest.TestCase):
              patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
              patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)), \
-             patch.object(det, "_detect_own_order_marker", return_value=False):
+             patch.object(det, "_detect_own_order_marker", return_value=(False, 0, [0,0,0])):
             result = det.detect_own_order_row(screenshot, order, window_rect)
         self.assertEqual(result["status"], "unique_match")
+        self.assertEqual(len(result["debug"]["ocr_attempts"]), 1)
+
+    def test_ocr_attempts_are_recorded(self):
+        det = _det({"visual_ocr_marker_required": False})
+        order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+        
+        # Two bands, first one matches price only, second matches both
+        ocr_values = iter(["1595.90", "5", "1595.90", "10"])
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25), (40, 55)]), \
+             patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)), \
+             patch.object(det, "_detect_own_order_marker", return_value=(True, 10, [0,0,255])):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+            
+        self.assertEqual(len(result["debug"]["ocr_attempts"]), 2)
+        att1 = result["debug"]["ocr_attempts"][0]
+        self.assertEqual(att1["price_match"], True)
+        self.assertEqual(att1["quantity_match"], False)
+        
+        att2 = result["debug"]["ocr_attempts"][1]
+        self.assertEqual(att2["price_match"], True)
+        self.assertEqual(att2["quantity_match"], True)
+
+    def test_multiple_price_quantity_matches_returns_ambiguous(self):
+        det = _det({"visual_ocr_marker_required": False})
+        order = {"price": 100, "volume_remain": 10, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+        
+        # Both bands match perfectly
+        ocr_values = iter(["100", "10", "100", "10"])
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25), (40, 55)]), \
+             patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)), \
+             patch.object(det, "_detect_own_order_marker", return_value=(True, 10, [0,0,255])):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+            
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["candidates_count"], 2)
 
 
 class TestNoPytesseractReportsBlueBands(unittest.TestCase):

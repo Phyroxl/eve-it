@@ -255,6 +255,22 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Own Marker: {_b(automation.get('visual_ocr_own_marker_matched'))}")
     lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
+    
+    ocr_attempts = dbg.get("ocr_attempts") or []
+    if ocr_attempts:
+        lines.append(f"  Visual OCR OCR Attempts: {len(ocr_attempts)}")
+        for i, att in enumerate(ocr_attempts[:3]):
+            lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}'")
+    
+    rej = dbg.get("marker_rejected_bands") or []
+    if rej:
+        lines.append(f"  Visual OCR Marker Rejected: {len(rej)}")
+        for r in rej[:3]:
+            lines.append(f"    band={r.get('band')} pix={r.get('marker_pixels')} rgb={r.get('marker_avg_rgb')}")
+
+    if ocr_attempts:
+        lines.append(f"  Visual OCR First Price Text: {ocr_attempts[0].get('price_text', 'N/A')}")
+        lines.append(f"  Visual OCR First Qty Text: {ocr_attempts[0].get('quantity_text', 'N/A')}")
     dbg_path = automation.get("visual_ocr_debug_screenshot_path")
     if dbg_path:
         lines.append(f"  Visual OCR Debug Img : {dbg_path}")

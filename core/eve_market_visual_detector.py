@@ -144,6 +144,8 @@ def _base_detection_result() -> dict:
             "qty_col_x_min":     None,
             "qty_col_x_max":     None,
             "candidate_bands":   [],
+            "marker_rejected_bands": [],
+            "ocr_attempts":      [],
             "matched_band":      None,
         },
     }
@@ -367,8 +369,14 @@ class EveMarketVisualDetector:
         # 5. For each band: marker check + OCR validation
         verified = []
         for (y_min, y_max) in candidate_bands:
-            own_marker = self._detect_own_order_marker(img_array, y_min, y_max, w)
+            own_marker, m_pix, m_rgb = self._detect_own_order_marker(img_array, y_min, y_max, w)
+            
             if self.marker_required and not own_marker:
+                result["debug"]["marker_rejected_bands"].append({
+                    "band": [y_min, y_max],
+                    "marker_pixels": m_pix,
+                    "marker_avg_rgb": m_rgb
+                })
                 continue
 
             price_ok   = True
@@ -385,6 +393,16 @@ class EveMarketVisualDetector:
                 qty_text = self._ocr_region(img_array[y_min:y_max, qty_x0:qty_x1])
                 ocr_qty  = normalize_quantity_text(qty_text)
                 qty_ok   = (ocr_qty == target_quantity)
+
+            # Record attempt regardless of match
+            result["debug"]["ocr_attempts"].append({
+                "band": [y_min, y_max],
+                "marker_matched": own_marker,
+                "price_text": price_text,
+                "quantity_text": qty_text,
+                "price_match": price_ok,
+                "quantity_match": qty_ok
+            })
 
             if price_ok and qty_ok:
                 y_c = (y_min + y_max) // 2
@@ -494,10 +512,11 @@ class EveMarketVisualDetector:
         return bands
 
     def _detect_own_order_marker(self, img_array, y_min: int, y_max: int,
-                                  w: int) -> bool:
+                                  w: int) -> tuple:
         """
         Detect own-order marker in the left zone of a row.
         Coordinates are relative to the Market Panel.
+        Returns (is_matched: bool, pixel_count: int, avg_rgb: list)
         """
         panel_x0 = int(w * self.panel_x_min_ratio)
         panel_x1 = int(w * self.panel_x_max_ratio)
@@ -507,10 +526,10 @@ class EveMarketVisualDetector:
         mx1 = panel_x0 + int(panel_w * self.marker_x_max_ratio)
         
         if mx0 >= mx1:
-            return False
+            return False, 0, [0, 0, 0]
         region = img_array[y_min:y_max, mx0:mx1]
         if region.size == 0 or region.shape[0] == 0 or region.shape[1] == 0:
-            return False
+            return False, 0, [0, 0, 0]
 
         r = region[:, :, 0].astype(int)
         g = region[:, :, 1].astype(int)
@@ -521,7 +540,16 @@ class EveMarketVisualDetector:
             (b > r + self._MARKER_B_OVER_R) &
             (b > g + self._MARKER_B_OVER_G)
         )
-        return int(marker_mask.sum()) >= self._MARKER_MIN_COUNT
+        pixels = int(marker_mask.sum())
+        matched = pixels >= self._MARKER_MIN_COUNT
+        
+        avg_rgb = [0, 0, 0]
+        if matched and pixels > 0:
+            avg_rgb = [int(_np.mean(r[marker_mask])), int(_np.mean(g[marker_mask])), int(_np.mean(b[marker_mask]))]
+        elif pixels > 0:
+            avg_rgb = [int(_np.mean(r[marker_mask])), int(_np.mean(g[marker_mask])), int(_np.mean(b[marker_mask]))]
+            
+        return matched, pixels, avg_rgb
 
     def _ocr_region(self, img_array) -> str:
         """Run pytesseract OCR on a numpy array region. Returns '' if unavailable."""
