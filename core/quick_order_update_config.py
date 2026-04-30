@@ -50,6 +50,7 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_require_own_order_marker":      True,
     "visual_ocr_side_section_required":         True,
     "visual_ocr_allow_unverified_paste":        False,
+    "visual_ocr_paste_after_unverified_modify_click": True,
     "visual_ocr_context_menu_delay_ms":         300,
     "visual_ocr_modify_dialog_delay_ms":        700,
     "visual_ocr_right_click_x_offset":          80,
@@ -214,7 +215,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot",
                 "visual_ocr_marker_required", "visual_ocr_debug_save_crops",
                 "visual_ocr_manual_region_enabled", "visual_ocr_manual_region_prompt_each_time",
-                "visual_ocr_manual_region_save_profile"):
+                "visual_ocr_manual_region_save_profile",
+                "visual_ocr_paste_after_unverified_modify_click"):
         if key in config:
             result[key] = bool(config[key])
 

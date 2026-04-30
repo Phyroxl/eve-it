@@ -14,6 +14,7 @@ class TestAutomationSafetyGuards(unittest.TestCase):
             "paste_method": "ctrl+v",
             "pre_paste_delay_ms": 0,
             "focus_client_delay_ms": 0,
+            "modify_order_strategy": "manual_focus_guard"
         }
         self.selected = {"handle": 12345, "title": "EVE - Test"}
         self.order = {"price": 100.0}
@@ -29,7 +30,7 @@ class TestAutomationSafetyGuards(unittest.TestCase):
             
             self.assertFalse(result.get("price_pasted"))
             self.assertEqual(result.get("paste_block_reason"), "foreground_window_mismatch")
-            self.assertIn("paste_skipped_foreground_mismatch", result["steps_skipped"])
+            self.assertIn("paste_skipped_foreground_window_mismatch", result["steps_skipped"])
 
     def test_paste_allowed_if_foreground_matches(self):
         auto = EVEWindowAutomation(self.cfg)
@@ -50,13 +51,17 @@ class TestAutomationSafetyGuards(unittest.TestCase):
         # We need to manually call _handle_experimental_paste twice to verify guard
         result = auto._base_result("100.00")
         result["selected_window_handle"] = 12345
+        result["window_found"] = True
+        result["focused"] = True
         
         with patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=12345), \
+             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_title", return_value="EVE - Test"), \
              patch("pywinauto.keyboard.send_keys"):
             
             # First attempt
             auto._handle_experimental_paste(result, "100.00", [])
             self.assertTrue(result["price_pasted"])
+            self.assertTrue(result["paste_guard_consumed"])
             self.assertTrue(auto._paste_guard_consumed)
             
             # Reset result flags but NOT the auto state
@@ -66,7 +71,7 @@ class TestAutomationSafetyGuards(unittest.TestCase):
             # Second attempt
             auto._handle_experimental_paste(result, "100.00", [])
             self.assertFalse(result["price_pasted"])
-            self.assertEqual(result["paste_block_reason"], "guard_consumed")
+            self.assertEqual(result["paste_block_reason"], "paste_guard_already_consumed")
 
     def test_abort_flag_stops_execution_before_paste(self):
         auto = EVEWindowAutomation(self.cfg)
@@ -88,12 +93,15 @@ class TestAutomationSafetyGuards(unittest.TestCase):
     def test_release_modifiers_called_on_finally(self):
         auto = EVEWindowAutomation(self.cfg)
         
-        with patch("pywinauto.keyboard.send_keys", side_with=Exception("Crash!")), \
+        with patch("pywinauto.keyboard.send_keys", side_effect=Exception("Crash!")), \
              patch("core.window_automation.EVEWindowAutomation._release_modifiers") as mock_release, \
-             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=12345):
+             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=12345), \
+             patch("core.window_automation.EVEWindowAutomation._get_foreground_window_title", return_value="EVE - Test"):
             
             result = auto._base_result("100.00")
             result["selected_window_handle"] = 12345
+            result["window_found"] = True
+            result["focused"] = True
             
             try:
                 auto._handle_experimental_paste(result, "100.00", [])
@@ -102,6 +110,39 @@ class TestAutomationSafetyGuards(unittest.TestCase):
             
             # Modifier release should be called in finally block
             mock_release.assert_called()
+
+    def test_paste_blocked_if_visual_ocr_not_unique(self):
+        cfg = self.cfg.copy()
+        cfg["modify_order_strategy"] = "visual_ocr"
+        auto = EVEWindowAutomation(cfg)
+        
+        result = auto._base_result("100.00")
+        result["selected_window_handle"] = 12345
+        result["window_found"] = True
+        result["focused"] = True
+        result["visual_ocr_status"] = "ambiguous" # Not unique_match
+        
+        with patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=12345):
+            auto._handle_experimental_paste(result, "100.00", [])
+            self.assertFalse(result["price_pasted"])
+            self.assertEqual(result["paste_block_reason"], "visual_ocr_not_unique_match")
+
+    def test_paste_blocked_if_no_context_menu_click(self):
+        cfg = self.cfg.copy()
+        cfg["modify_order_strategy"] = "visual_ocr"
+        auto = EVEWindowAutomation(cfg)
+        
+        result = auto._base_result("100.00")
+        result["selected_window_handle"] = 12345
+        result["window_found"] = True
+        result["focused"] = True
+        result["visual_ocr_status"] = "unique_match"
+        result["context_menu_click_sent"] = False
+        
+        with patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=12345):
+            auto._handle_experimental_paste(result, "100.00", [])
+            self.assertFalse(result["price_pasted"])
+            self.assertEqual(result["paste_block_reason"], "context_menu_click_not_sent")
 
 if __name__ == "__main__":
     unittest.main()

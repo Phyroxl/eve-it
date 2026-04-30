@@ -318,5 +318,48 @@ class TestVisualOCRSectionRendering(unittest.TestCase):
         section = format_automation_section(auto)
         self.assertIn("Manual Region Ratios : [0.1, 0.2, 0.3, 0.4]", section)
 
+class TestSafetyGuardDiagnostics(unittest.TestCase):
+    """Phase 3F: Safety Guards in diagnostic report."""
+
+    def test_safety_guards_header_present(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("SAFETY GUARDS", section)
+
+    def test_automation_run_id_shown(self):
+        auto = _base_automation(automation_run_id="f7a2b9c1")
+        section = format_automation_section(auto)
+        self.assertIn("Automation Run ID", section)
+        self.assertIn("f7a2b9c1", section)
+
+    def test_safe_to_paste_shown(self):
+        auto = _base_automation(safe_to_paste=True)
+        section = format_automation_section(auto)
+        self.assertIn("Safe To Paste", section)
+        self.assertIn("True", section)
+
+    def test_paste_block_reason_shown(self):
+        auto = _base_automation(paste_block_reason="foreground_window_mismatch")
+        section = format_automation_section(auto)
+        self.assertIn("Paste Block Reason", section)
+        self.assertIn("foreground_window_mismatch", section)
+
+    def test_foreground_win_details_shown(self):
+        auto = _base_automation(
+            foreground_win_handle=12345,
+            foreground_win_title="EVE - Test"
+        )
+        section = format_automation_section(auto)
+        self.assertIn("Foreground Win Handle: 12345", section)
+        self.assertIn("Foreground Win Title : EVE - Test", section)
+
+    def test_menu_sent_flags_shown(self):
+        auto = _base_automation(
+            context_menu_click_sent=True,
+            modify_menu_click_sent=False
+        )
+        section = format_automation_section(auto)
+        self.assertIn("Context Menu Sent    : True", section)
+        self.assertIn("Modify Menu Sent     : False", section)
+
 if __name__ == "__main__":
     unittest.main()

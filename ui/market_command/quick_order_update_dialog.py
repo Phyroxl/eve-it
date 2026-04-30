@@ -71,6 +71,7 @@ class QuickOrderUpdateDialog(QDialog):
         self._window_candidates: list = []   # list of candidate dicts from list_candidate_windows
         self._automation_running = False
         self._automation_cancelled = False
+        self._active_automation_run_id = None
         self._last_automation_run_id = None
 
         # Load automation config once at init
@@ -89,10 +90,12 @@ class QuickOrderUpdateDialog(QDialog):
         self._setup_ui()
 
     def closeEvent(self, event):
-        """Set cancellation flag when dialog is closed."""
+        """Signal abort to any running automation before closing."""
         self._automation_cancelled = True
         self._automation_running = False
-        _log.info(f"[QUICK UPDATE] dialog closed — automation_cancelled=True")
+        self._active_automation_run_id = None
+        self._release_modifiers_safe()
+        _log.info("[QUICK UPDATE] dialog closed — automation signals cleared")
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
@@ -524,6 +527,8 @@ class QuickOrderUpdateDialog(QDialog):
         if self._automation_running:
             self._status_lbl.setText("Automatización ya en curso; espera a que finalice.")
             self._status_lbl.setStyleSheet("color:#f59e0b; font-size:9px; font-weight:800;")
+            self._diag_report += f"\n\n[AUTOMATION]\n  Status: blocked\n  Reason: blocked_reentry\n  Automation Running Guard: blocked_reentry\n"
+            self._report_edit.setPlainText(self._diag_report)
             _log.warning("[QUICK UPDATE] automation already running — ignoring second click")
             return
         
@@ -533,6 +538,7 @@ class QuickOrderUpdateDialog(QDialog):
 
         import uuid
         run_id = uuid.uuid4().hex[:8]
+        self._active_automation_run_id = run_id
         self._last_automation_run_id = run_id
         self._automation_running = True
 
@@ -547,7 +553,20 @@ class QuickOrderUpdateDialog(QDialog):
             
         finally:
             self._automation_running = False
-            self.btn_phase2.setEnabled(True)
+            self._active_automation_run_id = None
+            # Re-enable button ONLY if dialog is not closing
+            if not self._automation_cancelled:
+                self.btn_phase2.setEnabled(True)
+                # Final release just in case
+                self._release_modifiers_safe()
+
+    def _release_modifiers_safe(self):
+        """Emergency release of modifier keys via the automation engine."""
+        try:
+            from core.window_automation import EVEWindowAutomation
+            EVEWindowAutomation({})._release_modifiers()
+        except:
+            pass
 
     def _execute_automation_flow(self, cfg, run_id):
         """Internal flow moved from _on_automate for cleaner try/finally wrapping."""
@@ -643,6 +662,12 @@ class QuickOrderUpdateDialog(QDialog):
                 order_data, price_text, selected_window=selected, 
                 manual_region=manual_region, run_id=run_id
             )
+            
+            # Additional verification: ensure we are still the active run
+            if self._active_automation_run_id != run_id:
+                result["safe_to_paste"] = False
+                result["paste_block_reason"] = "run_id_mismatch"
+                result["errors"].append(f"run_id mismatch: expected {run_id}, got {self._active_automation_run_id}")
             
             # 3. Handle Saved Profile Failure and Retry
             if manual_region_source == "saved_profile" and strategy == "visual_ocr":

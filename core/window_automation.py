@@ -904,6 +904,7 @@ class EVEWindowAutomation:
             if is_open:
                 success_rc = (rc_x, rc_y)
                 result["visual_ocr_context_menu_open"] = True
+                result["context_menu_click_sent"] = True
                 result["steps_executed"].append(f"visual_ocr_context_menu_detected_attempt_{i+1}")
                 break
             else:
@@ -939,6 +940,7 @@ class EVEWindowAutomation:
             self._apply_visual_ocr_paste_blocking(result)
             return
 
+        result["modify_menu_click_sent"] = True
         result["steps_executed"].append(f"visual_ocr_modify_order_menu_click_sent: ({menu_x}, {menu_y})")
         
         self._safe_sleep(self.visual_ocr_modify_dialog_delay / 1000.0)
@@ -1222,24 +1224,59 @@ class EVEWindowAutomation:
 
         # Phase 3F Guards
         if self._paste_guard_consumed:
-            result["paste_block_reason"] = "guard_consumed"
+            result["safe_to_paste"] = False
+            result["paste_block_reason"] = "paste_guard_already_consumed"
             result["steps_skipped"].append("paste_skipped_guard_consumed")
             return
 
+        # 1. Gather foreground state
         selected_handle = result.get("selected_window_handle")
         foreground_handle = self._get_foreground_window_handle()
+        foreground_title = self._get_foreground_window_title()
         
-        if selected_handle and foreground_handle != selected_handle:
-            result["foreground_matches_selected"] = False
-            result["paste_block_reason"] = "foreground_window_mismatch"
-            result["steps_skipped"].append("paste_skipped_foreground_mismatch")
-            _log.warning(f"[AUTOMATION] paste blocked: foreground={foreground_handle} != selected={selected_handle}")
+        result["foreground_win_handle"] = foreground_handle
+        result["foreground_win_title"]  = foreground_title
+        
+        # 2. Comprehensive Safe-to-Paste Gate
+        is_visual_ocr = (self.modify_order_strategy == "visual_ocr")
+        
+        conditions = {
+            "automation_cancelled":           not self._is_aborted(),
+            "selected_window_handle_missing": bool(selected_handle),
+            "window_not_found":               result.get("window_found", False),
+            "focus_failed":                   result.get("focused", False),
+            "foreground_window_mismatch":     (selected_handle and foreground_handle == selected_handle),
+            "visual_ocr_not_unique_match":    (not is_visual_ocr or result.get("visual_ocr_status") == "unique_match"),
+            "context_menu_click_not_sent":    (not is_visual_ocr or result.get("context_menu_click_sent", False)),
+            "modify_menu_click_not_sent":     (not is_visual_ocr or result.get("modify_menu_click_sent", False)),
+            "paste_guard_already_consumed":   not self._paste_guard_consumed,
+            "final_confirm_invariant_failed": self.never_confirm == True
+        }
+
+        # Check all conditions
+        safe = True
+        for reason, passed in conditions.items():
+            if not passed:
+                result["safe_to_paste"] = False
+                result["paste_block_reason"] = reason
+                result["steps_skipped"].append(f"paste_skipped_{reason}")
+                _log.warning(f"[AUTOMATION] paste blocked: reason={reason}")
+                safe = False
+                break
+        
+        if not safe:
+            self._release_modifiers()
             return
         
+        result["safe_to_paste"] = True
         result["foreground_matches_selected"] = True
+        
+        # 3. Paste once guard: set CONSUMED before sending any keys
+        self._paste_guard_consumed = True
+        result["paste_guard_consumed"] = True
         result["paste_attempted"] = True
 
-        # 1. Pre-paste delay
+        # 4. Pre-paste delay
         self._safe_sleep(self.pre_paste_delay / 1000.0)
 
         try:
@@ -1362,23 +1399,37 @@ class EVEWindowAutomation:
             "paste_block_reason":                      None,
             "automation_cancelled":                    False,
             "automation_run_id":                       None,
+            "automation_running_guard":                "N/A",
+            "safe_to_paste":                           False,
+            "context_menu_click_sent":                 False,
+            "modify_menu_click_sent":                  False,
+            "foreground_win_handle":                   0,
+            "foreground_win_title":                    "N/A",
         }
 
     def _release_modifiers(self) -> None:
         """Safely release common modifier keys to prevent stuck state."""
+        _log.debug("[AUTOMATION] releasing modifier keys (ctrl, shift, alt)...")
         try:
+            import ctypes
+            # Virtual-Key Codes:
+            # VK_CONTROL = 0x11, VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3
+            # VK_SHIFT   = 0x10, VK_LSHIFT   = 0xA0, VK_RSHIFT   = 0xA1
+            # VK_MENU    = 0x12, VK_LMENU    = 0xA4, VK_RMENU    = 0xA5
+            # KEYEVENTF_KEYUP = 0x0002
+
+            # Release BOTH left and right variants for maximum safety
+            vks = [0xA2, 0xA3, 0xA0, 0xA1, 0xA4, 0xA5]
+            for vk in vks:
+                ctypes.windll.user32.keybd_event(vk, 0, 0x0002, 0)
+            
             if _PYAUTOGUI_AVAILABLE:
+                # Also try pyautogui just in case its internal state is stuck
                 _pyautogui.keyUp("ctrl")
                 _pyautogui.keyUp("shift")
                 _pyautogui.keyUp("alt")
-            else:
-                import ctypes
-                # keyup: 0x0002
-                ctypes.windll.user32.keybd_event(0x11, 0, 0x0002, 0) # ctrl
-                ctypes.windll.user32.keybd_event(0x10, 0, 0x0002, 0) # shift
-                ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0) # alt
-        except:
-            pass
+        except Exception as e:
+            _log.debug(f"[AUTOMATION] release_modifiers error: {e}")
 
     def _get_foreground_window_handle(self) -> int:
         """Get handle of the window currently in the foreground."""
@@ -1387,6 +1438,19 @@ class EVEWindowAutomation:
             return ctypes.windll.user32.GetForegroundWindow()
         except:
             return 0
+
+    def _get_foreground_window_title(self) -> str:
+        """Get title of the window currently in the foreground."""
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length == 0: return "N/A"
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            return buff.value
+        except:
+            return "Error"
 
     def _mouse_move(self, x: int, y: int) -> None:
         """Move mouse to (x, y)."""
