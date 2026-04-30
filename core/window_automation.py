@@ -216,10 +216,17 @@ class EVEWindowAutomation:
         # Phase 3C hardening: Market Panel limits
         self.visual_ocr_market_panel_x_min_ratio = float(config.get("visual_ocr_market_panel_x_min_ratio", 0.36))
         self.visual_ocr_market_panel_x_max_ratio = float(config.get("visual_ocr_market_panel_x_max_ratio", 0.70))
-        # Phase 3D: Tesseract backend config
         self.visual_ocr_tesseract_cmd  = str(config.get("visual_ocr_tesseract_cmd",  ""))
         self.visual_ocr_tesseract_lang = str(config.get("visual_ocr_tesseract_lang", "eng"))
         self.visual_ocr_tesseract_psm  = int(config.get("visual_ocr_tesseract_psm",  7))
+        
+        # Phase 3C hardening: row height and padding
+        self.visual_ocr_min_row_height         = int(config.get("visual_ocr_min_row_height", 8))
+        self.visual_ocr_max_row_height         = int(config.get("visual_ocr_max_row_height", 28))
+        self.visual_ocr_row_crop_y_padding     = int(config.get("visual_ocr_row_crop_y_padding", 2))
+        self.visual_ocr_min_order_row_y_offset = int(config.get("visual_ocr_min_order_row_y_offset_from_section", 45))
+        self.visual_ocr_debug_save_crops       = bool(config.get("visual_ocr_debug_save_crops", True))
+        self.visual_ocr_debug_max_crops        = int(config.get("visual_ocr_debug_max_crops", 5))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -893,6 +900,14 @@ class EVEWindowAutomation:
             "visual_ocr_tesseract_cmd":             self.visual_ocr_tesseract_cmd,
             "visual_ocr_tesseract_lang":            self.visual_ocr_tesseract_lang,
             "visual_ocr_tesseract_psm":             self.visual_ocr_tesseract_psm,
+            # Phase 3C hardening: row height and padding
+            "visual_ocr_min_row_height":                self.visual_ocr_min_row_height,
+            "visual_ocr_max_row_height":                self.visual_ocr_max_row_height,
+            "visual_ocr_row_crop_y_padding":            self.visual_ocr_row_crop_y_padding,
+            "visual_ocr_min_order_row_y_offset_from_section": self.visual_ocr_min_order_row_y_offset,
+            "visual_ocr_debug_save_crops":              self.visual_ocr_debug_save_crops,
+            "visual_ocr_debug_max_crops":               self.visual_ocr_debug_max_crops,
+            "visual_ocr_debug_dir":                     self.visual_ocr_debug_dir,
         }
 
     def _save_debug_screenshot(self, screenshot, result: dict) -> None:

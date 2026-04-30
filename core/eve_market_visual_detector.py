@@ -143,6 +143,10 @@ def _base_detection_result() -> dict:
             "price_col_x_max":   None,
             "qty_col_x_min":     None,
             "qty_col_x_max":     None,
+            "raw_candidate_bands": [],
+            "filtered_candidate_bands": [],
+            "rejected_bands_by_height": [],
+            "rejected_bands_by_offset": [],
             "candidate_bands":   [],
             "marker_rejected_bands": [],
             "ocr_attempts":      [],
@@ -219,6 +223,17 @@ class EveMarketVisualDetector:
         self.blue_b_over_g = int(config.get("visual_ocr_blue_b_over_g", 5))
         self.blue_row_threshold = float(config.get("visual_ocr_blue_row_threshold", 0.02))
         self.blue_detection_mode = config.get("visual_ocr_blue_detection_mode", "rgb_or_relative")
+        
+        # Row height filtering and padding
+        self.min_row_height         = int(config.get("visual_ocr_min_row_height", 8))
+        self.max_row_height         = int(config.get("visual_ocr_max_row_height", 28))
+        self.row_crop_y_padding     = int(config.get("visual_ocr_row_crop_y_padding", 2))
+        self.min_order_row_y_offset = int(config.get("visual_ocr_min_order_row_y_offset_from_section", 45))
+        
+        # Debug crops
+        self.debug_save_crops       = bool(config.get("visual_ocr_debug_save_crops", True))
+        self.debug_max_crops        = int(config.get("visual_ocr_debug_max_crops", 5))
+        self.debug_dir              = config.get("visual_ocr_debug_dir", "data/debug/visual_ocr")
 
         # Tesseract Configuration
         self.tesseract_cmd  = config.get("visual_ocr_tesseract_cmd", "")
@@ -329,14 +344,30 @@ class EveMarketVisualDetector:
         result["debug"]["qty_col_x_min"]   = qty_x0
         result["debug"]["qty_col_x_max"]   = qty_x1
 
-        # 4. Find blue bands in section (searching only inside panel width)
         candidate_bands = self._find_blue_row_bands(
             img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"]
         )
-        result["debug"]["blue_bands_found"] = len(candidate_bands)
-        result["debug"]["candidate_bands"]  = list(candidate_bands)
+        result["debug"]["raw_candidate_bands"] = list(candidate_bands)
+        
+        # 5. Filter bands by height and offset
+        filtered = []
+        for (y0, y1) in candidate_bands:
+            height = y1 - y0
+            if height < self.min_row_height or height > self.max_row_height:
+                result["debug"]["rejected_bands_by_height"].append({"band": [y0, y1], "height": height})
+                continue
+            
+            if y0 < (section_y_min + self.min_order_row_y_offset):
+                result["debug"]["rejected_bands_by_offset"].append({"band": [y0, y1], "y_min": y0, "limit": section_y_min + self.min_order_row_y_offset})
+                continue
+                
+            filtered.append((y0, y1))
+            
+        result["debug"]["filtered_candidate_bands"] = list(filtered)
+        result["debug"]["blue_bands_found"]        = len(filtered)
+        result["debug"]["candidate_bands"]         = list(filtered)
 
-        if not candidate_bands:
+        if not filtered:
             result["status"]          = "not_found"
             result["candidates_count"] = 0
             return result
@@ -366,9 +397,12 @@ class EveMarketVisualDetector:
                 result["candidates_count"] = len(candidate_bands)
                 return result
 
-        # 5. For each band: marker check + OCR validation
+        # 6. For each band: marker check + OCR validation
         verified = []
-        for (y_min, y_max) in candidate_bands:
+        import time
+        ts = int(time.time() * 1000)
+        
+        for idx, (y_min, y_max) in enumerate(filtered):
             own_marker, m_pix, m_rgb = self._detect_own_order_marker(img_array, y_min, y_max, w)
             
             if self.marker_required and not own_marker:
@@ -379,24 +413,39 @@ class EveMarketVisualDetector:
                 })
                 continue
 
+            # Apply padding for OCR if band is tall enough
+            ocr_y0, ocr_y1 = y_min, y_max
+            if (y_max - y_min) > (2 * self.row_crop_y_padding + 4):
+                ocr_y0 += self.row_crop_y_padding
+                ocr_y1 -= self.row_crop_y_padding
+
             price_ok   = True
             qty_ok     = True
             price_text = ""
             qty_text   = ""
 
             if self.match_price and target_price > 0:
-                price_text = self._ocr_region(img_array[y_min:y_max, price_x0:price_x1])
+                price_region = img_array[ocr_y0:ocr_y1, price_x0:price_x1]
+                price_text = self._ocr_region(price_region)
                 ocr_price  = normalize_price_text(price_text)
                 price_ok   = abs(ocr_price - target_price) < (target_price * 0.001 + 1.0)
+                
+                if self.debug_save_crops and idx < self.debug_max_crops:
+                    self._save_debug_crop(price_region, f"visual_ocr_{ts}_band{idx+1}_price.png")
 
             if self.match_quantity and target_quantity > 0:
-                qty_text = self._ocr_region(img_array[y_min:y_max, qty_x0:qty_x1])
+                qty_region = img_array[ocr_y0:ocr_y1, qty_x0:qty_x1]
+                qty_text = self._ocr_region(qty_region)
                 ocr_qty  = normalize_quantity_text(qty_text)
                 qty_ok   = (ocr_qty == target_quantity)
+                
+                if self.debug_save_crops and idx < self.debug_max_crops:
+                    self._save_debug_crop(qty_region, f"visual_ocr_{ts}_band{idx+1}_qty.png")
 
             # Record attempt regardless of match
             result["debug"]["ocr_attempts"].append({
                 "band": [y_min, y_max],
+                "ocr_band": [ocr_y0, ocr_y1],
                 "marker_matched": own_marker,
                 "price_text": price_text,
                 "quantity_text": qty_text,
@@ -563,6 +612,19 @@ class EveMarketVisualDetector:
         except Exception as exc:
             _log.warning(f"[VISUAL_OCR] OCR region error: {exc}")
             return ""
+
+    def _save_debug_crop(self, img_array, filename: str):
+        """Save a debug crop to disk if possible."""
+        if not _PIL_AVAILABLE:
+            return
+        try:
+            crops_dir = os.path.join(self.debug_dir, "crops")
+            os.makedirs(crops_dir, exist_ok=True)
+            path = os.path.join(crops_dir, filename)
+            img = _PILImage.fromarray(img_array.astype("uint8"))
+            img.save(path)
+        except Exception as exc:
+            _log.debug(f"[VISUAL_OCR] Could not save debug crop {filename}: {exc}")
 
 
 # ---------------------------------------------------------------------------

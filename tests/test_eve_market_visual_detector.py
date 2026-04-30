@@ -142,10 +142,10 @@ def _det(overrides=None):
         "visual_ocr_require_own_order_marker":  True,
         "visual_ocr_side_section_required":     True,
         # Hardening ratio defaults
-        "visual_ocr_sell_section_y_min_ratio":  0.22,
-        "visual_ocr_sell_section_y_max_ratio":  0.58,
-        "visual_ocr_buy_section_y_min_ratio":   0.55,
-        "visual_ocr_buy_section_y_max_ratio":   0.88,
+        "visual_ocr_sell_section_y_min_ratio":  0.0,
+        "visual_ocr_sell_section_y_max_ratio":  1.0,
+        "visual_ocr_buy_section_y_min_ratio":   0.0,
+        "visual_ocr_buy_section_y_max_ratio":   1.0,
         "visual_ocr_price_col_x_min_ratio":     0.48,
         "visual_ocr_price_col_x_max_ratio":     0.68,
         "visual_ocr_qty_col_x_min_ratio":       0.38,
@@ -154,6 +154,9 @@ def _det(overrides=None):
         "visual_ocr_marker_x_max_ratio":        0.32,
         # Disable marker requirement by default so existing tests pass without marker data
         "visual_ocr_marker_required":           False,
+        "visual_ocr_min_order_row_y_offset_from_section": 0,
+        "visual_ocr_min_row_height": 1,
+        "visual_ocr_max_row_height": 9999,
     }
     if overrides:
         cfg.update(overrides)
@@ -736,6 +739,67 @@ class TestTesseractBackend(unittest.TestCase):
         with patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
              patch("core.eve_market_visual_detector.subprocess.run", side_effect=FileNotFoundError):
             self.assertFalse(det._is_tesseract_available())
+
+
+class TestRowFiltering(unittest.TestCase):
+    """Verify that rows are filtered by height and header offset."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_filter_by_height(self):
+        det = _det({
+            "visual_ocr_min_row_height": 10,
+            "visual_ocr_max_row_height": 20,
+        })
+        order = {"price": 100, "volume_remain": 1, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+
+        # Mock find_blue_row_bands to return 3 bands:
+        # 1. Too short (5px)
+        # 2. OK (15px)
+        # 3. Too tall (30px)
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 15), (30, 45), (60, 90)]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+        
+        dbg = result["debug"]
+        self.assertEqual(len(dbg["raw_candidate_bands"]), 3)
+        self.assertEqual(len(dbg["filtered_candidate_bands"]), 1)
+        self.assertEqual(dbg["filtered_candidate_bands"][0], (30, 45))
+        self.assertEqual(len(dbg["rejected_bands_by_height"]), 2)
+
+    def test_filter_by_header_offset(self):
+        det = _det({
+            "visual_ocr_sell_section_y_min_ratio": 0.0,
+            "visual_ocr_min_order_row_y_offset_from_section": 50,
+        })
+        order = {"price": 100, "volume_remain": 1, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+
+        # Mock find_blue_row_bands to return 2 bands:
+        # 1. At y=20 (too close to top, offset is 50)
+        # 2. At y=80 (OK)
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(20, 35), (80, 95)]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+            
+        dbg = result["debug"]
+        self.assertEqual(len(dbg["filtered_candidate_bands"]), 1)
+        self.assertEqual(dbg["filtered_candidate_bands"][0], (80, 95))
+        self.assertEqual(len(dbg["rejected_bands_by_offset"]), 1)
 
 
 if __name__ == "__main__":

@@ -70,9 +70,15 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_price_col_x_min_ratio":         0.48,
     "visual_ocr_price_col_x_max_ratio":         0.68,
     # Phase 3C hardening: marker detection ratios
-    "visual_ocr_marker_x_min_ratio":            0.20,
     "visual_ocr_marker_x_max_ratio":            0.32,
     "visual_ocr_marker_required":               True,
+    # Phase 3C hardening: row height and padding
+    "visual_ocr_min_row_height":                8,
+    "visual_ocr_max_row_height":                28,
+    "visual_ocr_row_crop_y_padding":            2,
+    "visual_ocr_min_order_row_y_offset_from_section": 45,
+    "visual_ocr_debug_save_crops":              True,
+    "visual_ocr_debug_max_crops":               5,
 }
 
 _RATIO_KEYS = (
@@ -170,7 +176,7 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_match_price", "visual_ocr_match_quantity",
                 "visual_ocr_require_own_order_marker", "visual_ocr_side_section_required",
                 "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot",
-                "visual_ocr_marker_required"):
+                "visual_ocr_marker_required", "visual_ocr_debug_save_crops"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -222,9 +228,11 @@ def validate_quick_order_update_config(config: dict) -> dict:
         if isinstance(val, str) and val.strip():
             result["client_window_title_contains"] = val.strip()
 
-    # visual_ocr integer offset fields (no clamping — can be negative for offsets)
     for key in ("visual_ocr_right_click_x_offset", "visual_ocr_right_click_y_offset",
-                "visual_ocr_menu_click_x_offset", "visual_ocr_menu_click_y_offset"):
+                "visual_ocr_menu_click_x_offset", "visual_ocr_menu_click_y_offset",
+                "visual_ocr_min_row_height", "visual_ocr_max_row_height",
+                "visual_ocr_row_crop_y_padding", "visual_ocr_min_order_row_y_offset_from_section",
+                "visual_ocr_debug_max_crops"):
         if key in config:
             try:
                 result[key] = int(config[key])

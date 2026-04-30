@@ -244,6 +244,19 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Sec Y Min : {_b(automation.get('visual_ocr_section_y_min'))}")
     lines.append(f"  Visual OCR Sec Y Max : {_b(automation.get('visual_ocr_section_y_max'))}")
     dbg = automation.get("visual_ocr_debug") or {}
+    lines.append(f"  Visual OCR Raw Bands : {len(dbg.get('raw_candidate_bands') or [])}")
+    lines.append(f"  Visual OCR Rej Height: {len(dbg.get('rejected_bands_by_height') or [])}")
+    lines.append(f"  Visual OCR Rej Offset: {len(dbg.get('rejected_bands_by_offset') or [])}")
+    lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
+    
+    min_order_y = "N/A"
+    sec_y_min = automation.get('visual_ocr_section_y_min')
+    if sec_y_min is not None:
+        cfg = data.get("config") or {}
+        offset = cfg.get("visual_ocr_min_order_row_y_offset_from_section", 45)
+        min_order_y = sec_y_min + offset
+    lines.append(f"  Visual OCR Min Ord Y : {min_order_y}")
+
     lines.append(f"  Visual OCR Panel X   : {dbg.get('market_panel_x_min', 'N/A')} to {dbg.get('market_panel_x_max', 'N/A')}")
     lines.append(f"  Visual OCR Blue Pix  : {dbg.get('sample_dark_blue_pixels_count', 'N/A')}")
     lines.append(f"  Visual OCR Avg Color : {dbg.get('average_blue_candidate_rgb', 'N/A')}")
