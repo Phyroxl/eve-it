@@ -210,5 +210,54 @@ class TestValidateConfig(unittest.TestCase):
         self.assertEqual(cfg_high["pre_paste_delay_ms"], 30000)
 
 
+class TestModifyOrderDefaults(unittest.TestCase):
+    """Phase 3 modify-order config defaults and validation."""
+
+    def test_modify_order_step_enabled_defaults_false(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertFalse(cfg["modify_order_step_enabled"])
+
+    def test_modify_order_strategy_defaults_manual_focus_guard(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["modify_order_strategy"], "manual_focus_guard")
+
+    def test_require_modify_dialog_ready_defaults_false(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertFalse(cfg["require_modify_dialog_ready"])
+
+    def test_paste_without_modify_dialog_verification_defaults_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["paste_without_modify_dialog_verification"])
+
+    def test_modify_order_delay_ms_default_800(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["modify_order_delay_ms"], 800)
+
+    def test_never_confirm_final_order_forced_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["never_confirm_final_order"])
+
+    def test_modify_order_strategy_hotkey_experimental_accepted(self):
+        cfg = validate_quick_order_update_config({"modify_order_strategy": "hotkey_experimental"})
+        self.assertEqual(cfg["modify_order_strategy"], "hotkey_experimental")
+
+    def test_modify_order_strategy_unknown_falls_back_to_manual_focus_guard(self):
+        cfg = validate_quick_order_update_config({"modify_order_strategy": "blind_click"})
+        self.assertEqual(cfg["modify_order_strategy"], "manual_focus_guard")
+
+    def test_modify_order_delay_negative_clamped_to_zero(self):
+        cfg = validate_quick_order_update_config({"modify_order_delay_ms": -500})
+        self.assertEqual(cfg["modify_order_delay_ms"], 0)
+
+    def test_modify_order_delay_huge_clamped_to_max(self):
+        cfg = validate_quick_order_update_config({"modify_order_delay_ms": 999_999})
+        self.assertLessEqual(cfg["modify_order_delay_ms"], _MAX_DELAY_MS)
+
+    def test_all_default_config_keys_present(self):
+        cfg = validate_quick_order_update_config({})
+        for key in _DEFAULT_CONFIG:
+            self.assertIn(key, cfg, f"key '{key}' missing from validated config")
+
+
 if __name__ == "__main__":
     unittest.main()

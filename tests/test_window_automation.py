@@ -38,6 +38,11 @@ _REQUIRED_KEYS = {
     "experimental_paste_enabled", "paste_into_focused_window",
     "clear_price_field_before_paste", "paste_method",
     "price_pasted", "never_confirm_final_order",
+    # Phase 3: Modify Order
+    "modify_order_step_enabled", "modify_order_strategy",
+    "modify_order_prepare_attempted", "modify_order_dialog_verified",
+    "require_modify_dialog_ready", "paste_without_modify_dialog_verification",
+    "modify_order_warning",
 }
 
 _CFG_DISABLED = {
@@ -451,6 +456,145 @@ class TestExperimentalPaste(unittest.TestCase):
             self.assertNotIn("click", sl)
         
         self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Modify Order preparation tests
+# ---------------------------------------------------------------------------
+class TestModifyOrderPhase(unittest.TestCase):
+    """Tests for Phase 3 — prepare_modify_order_dialog."""
+
+    _SELECTED = {
+        "handle": 99999, "title": "EVE - Test",
+        "class_name": "EVEWindow", "visible": True,
+        "is_self_app": False, "score": 100,
+    }
+
+    def _cfg(self, **overrides):
+        base = {
+            "enabled": True, "dry_run": False, "use_pywinauto": True,
+            "require_window_selection": False,
+            "allow_title_fallback_without_selection": True,
+            "experimental_paste_enabled": True,
+            "paste_into_focused_window": True,
+            "clear_price_field_before_paste": False,
+            "paste_method": "ctrl+v",
+            "pre_paste_delay_ms": 0,
+            "open_market_delay_ms": 0,
+            "focus_client_delay_ms": 0,
+            "paste_price_delay_ms": 0,
+            "post_action_delay_ms": 0,
+            "modify_order_delay_ms": 0,
+            "modify_order_step_enabled": False,
+            "modify_order_strategy": "manual_focus_guard",
+            "require_modify_dialog_ready": False,
+            "paste_without_modify_dialog_verification": True,
+            "never_confirm_final_order": True,
+        }
+        base.update(overrides)
+        return base
+
+    def _run(self, cfg):
+        mock_win = MagicMock()
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", True), \
+             patch("core.window_automation.EVEWindowAutomation._connect_by_handle",
+                   return_value=mock_win), \
+             patch("core.window_automation.EVEWindowAutomation._focus_window",
+                   return_value=True), \
+             patch("pywinauto.keyboard.send_keys"):
+            auto = EVEWindowAutomation(cfg)
+            return auto.execute_quick_order_update({}, "100", selected_window=self._SELECTED)
+
+    # -- step disabled (default safe behavior) --------------------------------
+
+    def test_disabled_records_safe_skip(self):
+        result = self._run(self._cfg(modify_order_step_enabled=False))
+        self.assertIn("modify_order_prepare_skipped_safe_default",
+                      result["steps_skipped"])
+
+    def test_disabled_prepare_attempted_false(self):
+        result = self._run(self._cfg(modify_order_step_enabled=False))
+        self.assertFalse(result["modify_order_prepare_attempted"])
+
+    def test_disabled_does_not_block_paste(self):
+        result = self._run(self._cfg(modify_order_step_enabled=False))
+        self.assertNotIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+
+    # -- manual_focus_guard strategy ------------------------------------------
+
+    def test_manual_focus_guard_records_attempted(self):
+        result = self._run(self._cfg(modify_order_step_enabled=True))
+        self.assertTrue(result["modify_order_prepare_attempted"])
+        self.assertIn("modify_order_prepare_attempted_manual_focus_guard",
+                      " ".join(result["steps_executed"]))
+
+    def test_manual_focus_guard_dialog_not_verified(self):
+        result = self._run(self._cfg(modify_order_step_enabled=True))
+        self.assertFalse(result["modify_order_dialog_verified"])
+
+    def test_paste_allowed_when_paste_without_verify_true(self):
+        result = self._run(self._cfg(
+            modify_order_step_enabled=True,
+            paste_without_modify_dialog_verification=True,
+        ))
+        self.assertNotIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+
+    def test_paste_blocked_when_paste_without_verify_false(self):
+        result = self._run(self._cfg(
+            modify_order_step_enabled=True,
+            paste_without_modify_dialog_verification=False,
+        ))
+        self.assertIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+        self.assertFalse(result["price_pasted"])
+
+    # -- require_modify_dialog_ready ------------------------------------------
+
+    def test_require_ready_blocks_paste(self):
+        result = self._run(self._cfg(
+            modify_order_step_enabled=True,
+            require_modify_dialog_ready=True,
+        ))
+        self.assertIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+
+    def test_require_ready_overrides_paste_without_verify_true(self):
+        result = self._run(self._cfg(
+            modify_order_step_enabled=True,
+            require_modify_dialog_ready=True,
+            paste_without_modify_dialog_verification=True,
+        ))
+        self.assertIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+
+    # -- final confirm always absent ------------------------------------------
+
+    def test_final_confirm_never_executed_step_disabled(self):
+        result = self._run(self._cfg(modify_order_step_enabled=False))
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+        for step in result["steps_executed"]:
+            self.assertNotIn("confirm", step.lower())
+
+    def test_final_confirm_never_executed_step_enabled(self):
+        result = self._run(self._cfg(modify_order_step_enabled=True))
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+        for step in result["steps_executed"]:
+            self.assertNotIn("confirm", step.lower())
+
+    def test_final_confirm_never_executed_require_ready(self):
+        result = self._run(self._cfg(
+            modify_order_step_enabled=True, require_modify_dialog_ready=True,
+        ))
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+
+    # -- all new keys present -------------------------------------------------
+
+    def test_new_phase3_keys_in_result(self):
+        auto = EVEWindowAutomation(self._cfg())
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", False):
+            result = auto.execute_quick_order_update({}, "100")
+        for key in ("modify_order_step_enabled", "modify_order_strategy",
+                    "modify_order_prepare_attempted", "modify_order_dialog_verified",
+                    "require_modify_dialog_ready", "paste_without_modify_dialog_verification",
+                    "modify_order_warning"):
+            self.assertIn(key, result, f"Phase 3 key '{key}' missing from result")
 
 
 if __name__ == "__main__":

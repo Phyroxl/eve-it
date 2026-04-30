@@ -220,6 +220,10 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Clear Price Field    : {_b(automation.get('clear_price_field_before_paste'))}")
     lines.append(f"  Paste Method         : {_b(automation.get('paste_method'))}")
     lines.append(f"  Price Pasted         : {_b(automation.get('price_pasted'))}")
+    lines.append(f"  Modify Order Step    : {_b(automation.get('modify_order_step_enabled'))}")
+    lines.append(f"  Modify Order Strategy: {_b(automation.get('modify_order_strategy'))}")
+    lines.append(f"  Modify Dialog Verified: {_b(automation.get('modify_order_dialog_verified'))}")
+    lines.append(f"  Paste Without Verify : {_b(automation.get('paste_without_modify_dialog_verification'))}")
     lines.append(f"  Never Confirm Order  : {_b(automation.get('never_confirm_final_order'))}")
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
     cands = automation.get("candidate_windows") or []

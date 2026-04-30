@@ -31,6 +31,12 @@ _DEFAULT_CONFIG: dict = {
     "paste_method":                         "ctrl+v",
     "pre_paste_delay_ms":                   300,
     "never_confirm_final_order":            True,
+    # Phase 3: Modify Order preparation (safe defaults — disabled)
+    "modify_order_step_enabled":                False,
+    "modify_order_strategy":                    "manual_focus_guard",
+    "modify_order_delay_ms":                    800,
+    "require_modify_dialog_ready":              False,
+    "paste_without_modify_dialog_verification": True,
 }
 
 _DELAY_KEYS = (
@@ -39,6 +45,7 @@ _DELAY_KEYS = (
     "paste_price_delay_ms",
     "post_action_delay_ms",
     "pre_paste_delay_ms",
+    "modify_order_delay_ms",
 )
 _MAX_DELAY_MS = 30_000
 
@@ -103,7 +110,9 @@ def validate_quick_order_update_config(config: dict) -> dict:
             result[key] = bool(config[key])
 
     for key in ("experimental_paste_enabled", "paste_into_focused_window",
-                "clear_price_field_before_paste"):
+                "clear_price_field_before_paste",
+                "modify_order_step_enabled", "require_modify_dialog_ready",
+                "paste_without_modify_dialog_verification"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -117,6 +126,14 @@ def validate_quick_order_update_config(config: dict) -> dict:
             result["paste_method"] = val
         else:
             result["paste_method"] = "ctrl+v"
+
+    # Validate modify_order_strategy
+    if "modify_order_strategy" in config:
+        val = str(config["modify_order_strategy"]).lower()
+        if val in ("manual_focus_guard", "hotkey_experimental"):
+            result["modify_order_strategy"] = val
+        else:
+            result["modify_order_strategy"] = "manual_focus_guard"
 
     for key in _DELAY_KEYS:
         if key in config:

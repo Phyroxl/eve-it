@@ -155,6 +155,12 @@ class EVEWindowAutomation:
         self.paste_method         = str(config.get("paste_method",                          "ctrl+v"))
         self.pre_paste_delay      = int(config.get("pre_paste_delay_ms",                    300))
         self.never_confirm        = bool(config.get("never_confirm_final_order",            True))
+        # Phase 3: Modify Order preparation
+        self.modify_order_step_enabled   = bool(config.get("modify_order_step_enabled",                False))
+        self.modify_order_strategy       = str(config.get("modify_order_strategy",                     "manual_focus_guard"))
+        self.modify_order_delay          = int(config.get("modify_order_delay_ms",                     800))
+        self.require_modify_dialog_ready = bool(config.get("require_modify_dialog_ready",              False))
+        self.paste_without_modify_verify = bool(config.get("paste_without_modify_dialog_verification", True))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -179,11 +185,15 @@ class EVEWindowAutomation:
             "pre_paste_delay_ms":    self.pre_paste_delay,
             "post_action_delay_ms":  self.post_delay,
         }
-        result["experimental_paste_enabled"]     = self.exp_paste_enabled
-        result["paste_into_focused_window"]      = self.paste_into_focused
-        result["clear_price_field_before_paste"] = self.clear_before_paste
-        result["paste_method"]                   = self.paste_method
-        result["never_confirm_final_order"]      = self.never_confirm
+        result["experimental_paste_enabled"]               = self.exp_paste_enabled
+        result["paste_into_focused_window"]               = self.paste_into_focused
+        result["clear_price_field_before_paste"]          = self.clear_before_paste
+        result["paste_method"]                            = self.paste_method
+        result["never_confirm_final_order"]               = self.never_confirm
+        result["modify_order_step_enabled"]               = self.modify_order_step_enabled
+        result["modify_order_strategy"]                   = self.modify_order_strategy
+        result["require_modify_dialog_ready"]             = self.require_modify_dialog_ready
+        result["paste_without_modify_dialog_verification"] = self.paste_without_modify_verify
 
         if not self.enabled:
             result["status"] = "disabled"
@@ -219,11 +229,15 @@ class EVEWindowAutomation:
             "would_wait_open_market_delay",
             "would_focus_eve_window",
             "would_copy_price_to_clipboard",
+            "would_prepare_modify_order_if_enabled",
             "would_wait_pre_paste_delay",
             "would_send_ctrl_a_if_enabled",
             "would_paste_price_if_enabled",
             "would_wait_paste_delay",
         ]
+        result["modify_order_prepare_attempted"] = False
+        result["modify_order_dialog_verified"]   = False
+        result["modify_order_warning"] = "dry_run — modify order step not executed"
         result["steps_skipped"].append("no_confirm_final_action (by_design)")
         _log.info(
             f"[AUTOMATION] dry_run — would process price={price_text} "
@@ -273,9 +287,15 @@ class EVEWindowAutomation:
                 result["focused"] = True
                 self._safe_sleep(self.focus_delay, "focus_delay", result, errors)
 
+        # 4.5. Prepare Modify Order Dialog (optional, disabled by default)
+        if result["focused"]:
+            self._prepare_modify_order_dialog(result, errors)
+
         # 5. Experimental Paste (optional, disabled by default)
         if result["window_found"] and result["focused"]:
-            self._handle_experimental_paste(result, price_text, errors)
+            if not result.get("_paste_blocked_modify_dialog"):
+                self._handle_experimental_paste(result, price_text, errors)
+            # else: paste_skipped_modify_dialog_not_verified already recorded
         else:
             result["steps_skipped"].append("paste_skipped_no_focus")
 
@@ -392,6 +412,58 @@ class EVEWindowAutomation:
         except Exception as exc:
             errors.append(f"{label}_sleep_error: {exc}")
 
+    def _prepare_modify_order_dialog(self, result: dict, errors: list) -> None:
+        """
+        Phase 3 — optionally prepare the Modify Order dialog before pasting.
+
+        Default config (modify_order_step_enabled=False) is a safe no-op that
+        records a skip entry and never takes any OS action.  All strategies
+        leave the final confirm entirely to the user.
+        """
+        if not self.modify_order_step_enabled:
+            result["steps_skipped"].append("modify_order_prepare_skipped_safe_default")
+            result["modify_order_warning"] = (
+                "modify_order_step_enabled=false — safe default, no modify dialog action taken"
+            )
+            return
+
+        result["modify_order_prepare_attempted"] = True
+
+        if self.modify_order_strategy == "manual_focus_guard":
+            result["steps_executed"].append("modify_order_prepare_attempted_manual_focus_guard")
+            result["modify_order_dialog_verified"] = False
+            result["modify_order_warning"] = (
+                "manual_focus_guard: no blind clicks — "
+                "user must manually open Modify Order before automating"
+            )
+            _log.info("[AUTOMATION] modify_order: manual_focus_guard — dialog not verified")
+        else:
+            result["steps_executed"].append(
+                f"modify_order_prepare_attempted_unknown_strategy: {self.modify_order_strategy}"
+            )
+            result["modify_order_dialog_verified"] = False
+            result["modify_order_warning"] = (
+                f"unknown strategy '{self.modify_order_strategy}' — dialog not verified"
+            )
+
+        self._safe_sleep(self.modify_order_delay, "modify_order_delay", result, errors)
+
+        # Determine paste blocking
+        if self.require_modify_dialog_ready and not result["modify_order_dialog_verified"]:
+            result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
+            result["_paste_blocked_modify_dialog"] = True
+            _log.warning(
+                "[AUTOMATION] paste blocked — "
+                "require_modify_dialog_ready=true and dialog not verified"
+            )
+        elif not self.paste_without_modify_verify and not result["modify_order_dialog_verified"]:
+            result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
+            result["_paste_blocked_modify_dialog"] = True
+            _log.warning(
+                "[AUTOMATION] paste blocked — "
+                "paste_without_modify_dialog_verification=false and dialog not verified"
+            )
+
     def _handle_experimental_paste(self, result: dict, price_text: str, errors: list) -> None:
         if not self.exp_paste_enabled:
             result["steps_skipped"].append("experimental_paste_disabled")
@@ -459,4 +531,12 @@ class EVEWindowAutomation:
             "selected_window_title":    None,
             "candidate_windows_count":  0,
             "candidate_windows":        [],
+            # Phase 3: Modify Order
+            "modify_order_step_enabled":               False,
+            "modify_order_strategy":                   "manual_focus_guard",
+            "modify_order_prepare_attempted":          False,
+            "modify_order_dialog_verified":            False,
+            "require_modify_dialog_ready":             False,
+            "paste_without_modify_dialog_verification": True,
+            "modify_order_warning":                    None,
         }
