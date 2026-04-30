@@ -271,7 +271,8 @@ class EveMarketVisualDetector:
             return False
 
     def detect_own_order_row(self, screenshot, order_data: dict,
-                             window_rect: dict) -> dict:
+                             window_rect: dict,
+                             manual_region: Optional[dict] = None) -> dict:
         """
         Main entry point.
 
@@ -289,7 +290,7 @@ class EveMarketVisualDetector:
             return result
 
         try:
-            return self._run_detection(screenshot, order_data, window_rect, result)
+            return self._run_detection(screenshot, order_data, window_rect, result, manual_region=manual_region)
         except Exception as exc:
             _log.error(f"[VISUAL_OCR] detection error: {exc}")
             result["status"] = "error"
@@ -299,7 +300,8 @@ class EveMarketVisualDetector:
     # ── internal methods (patchable) ─────────────────────────────────────────
 
     def _run_detection(self, screenshot, order_data: dict,
-                       window_rect: dict, result: dict) -> dict:
+                       window_rect: dict, result: dict,
+                       manual_region: Optional[dict] = None) -> dict:
         img       = _ensure_pil_image(screenshot)
         img_array = _np.array(img)
 
@@ -309,15 +311,27 @@ class EveMarketVisualDetector:
 
         h, w = img_array.shape[:2]
 
-        # 1. Determine section bounds based on order side
-        if is_buy_order:
-            y_min_ratio  = self.buy_y_min_ratio
-            y_max_ratio  = self.buy_y_max_ratio
-            section_name = "buy"
+        # 1. Determine section and panel bounds (Manual Override vs Automatic)
+        if manual_region:
+            y_min_ratio = manual_region.get("y_min_ratio", 0.0)
+            y_max_ratio = manual_region.get("y_max_ratio", 1.0)
+            x_min_ratio = manual_region.get("x_min_ratio", 0.0)
+            x_max_ratio = manual_region.get("x_max_ratio", 1.0)
+            section_name = "manual_override"
+            result["debug"]["manual_region_used"] = True
+            result["debug"]["manual_region_ratios"] = [x_min_ratio, y_min_ratio, x_max_ratio, y_max_ratio]
         else:
-            y_min_ratio  = self.sell_y_min_ratio
-            y_max_ratio  = self.sell_y_max_ratio
-            section_name = "sell"
+            if is_buy_order:
+                y_min_ratio  = self.buy_y_min_ratio
+                y_max_ratio  = self.buy_y_max_ratio
+                section_name = "buy"
+            else:
+                y_min_ratio  = self.sell_y_min_ratio
+                y_max_ratio  = self.sell_y_max_ratio
+                section_name = "sell"
+            x_min_ratio = self.panel_x_min_ratio
+            x_max_ratio = self.panel_x_max_ratio
+            result["debug"]["manual_region_used"] = False
 
         section_y_min = max(0, min(int(h * y_min_ratio), h - 1))
         section_y_max = max(section_y_min + 1, min(int(h * y_max_ratio), h))
@@ -325,19 +339,21 @@ class EveMarketVisualDetector:
         result["debug"]["section_used"]  = section_name
         result["visual_ocr_section_y_min"] = section_y_min
         result["visual_ocr_section_y_max"] = section_y_max
-        result["visual_ocr_min_order_y"]   = section_y_min + self.min_order_row_y_offset
+        result["visual_ocr_min_order_y"]   = section_y_min + (0 if manual_region else self.min_order_row_y_offset)
         result["debug"]["section_y_min"] = section_y_min
         result["debug"]["section_y_max"] = section_y_max
         result["matched_side_section"]   = True
 
-        # 2. Determine Market Panel bounds (Search only within the list)
-        panel_x0 = int(w * self.panel_x_min_ratio)
-        panel_x1 = int(w * self.panel_x_max_ratio)
+        # Determine Market Panel bounds
+        panel_x0 = int(w * x_min_ratio)
+        panel_x1 = int(w * x_max_ratio)
         panel_w  = panel_x1 - panel_x0
         result["debug"]["market_panel_x_min"] = panel_x0
         result["debug"]["market_panel_x_max"] = panel_x1
 
         # 3. Pre-compute column pixel coordinates (RELATIVE TO PANEL)
+        # Note: If manual_region is used, panel IS the search area. 
+        # Ratios like price_x_min_ratio still apply relative to this panel.
         price_x0 = panel_x0 + int(panel_w * self.price_x_min_ratio)
         price_x1 = panel_x0 + int(panel_w * self.price_x_max_ratio)
         qty_x0   = panel_x0 + int(panel_w * self.qty_x_min_ratio)
@@ -360,7 +376,7 @@ class EveMarketVisualDetector:
                 result["debug"]["rejected_bands_by_height"].append({"band": [y0, y1], "height": height})
                 continue
             
-            if y0 < (section_y_min + self.min_order_row_y_offset):
+            if not manual_region and y0 < (section_y_min + self.min_order_row_y_offset):
                 result["debug"]["rejected_bands_by_offset"].append({"band": [y0, y1], "y_min": y0, "limit": section_y_min + self.min_order_row_y_offset})
                 continue
                 

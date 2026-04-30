@@ -12,7 +12,14 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QTextEdit, QComboBox,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QImage
+
+from ui.market_command.visual_region_selector_dialog import VisualRegionSelectorDialog
+from core.quick_order_update_config import (
+    load_quick_order_update_config, 
+    load_quick_order_update_regions, 
+    save_quick_order_update_regions
+)
 
 _log = logging.getLogger('eve.market.quick_update')
 
@@ -65,7 +72,6 @@ class QuickOrderUpdateDialog(QDialog):
 
         # Load automation config once at init
         try:
-            from core.quick_order_update_config import load_quick_order_update_config
             self._automation_cfg = load_quick_order_update_config()
         except Exception:
             self._automation_cfg = {
@@ -512,12 +518,82 @@ class QuickOrderUpdateDialog(QDialog):
         self._status_lbl.setText("Ejecutando automatización experimental...")
         self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
 
+        manual_region = None
+        
+        # Phase 3E: Manual region selection logic
+        strategy = cfg.get("modify_order_strategy")
+        if cfg.get("visual_ocr_manual_region_enabled", True) and strategy == "visual_ocr":
+            side = "buy" if order_data.get("is_buy_order") else "sell"
+            regions = load_quick_order_update_regions()
+            saved = regions.get(side)
+            prompt = cfg.get("visual_ocr_manual_region_prompt_each_time", True) or not saved
+            
+            if prompt:
+                self._status_lbl.setText("Solicitando región manual para Visual OCR...")
+                QGuiApplication.processEvents() # Ensure UI updates
+                
+                # We need a screenshot. Use a temporary EVEWindowAutomation to get it.
+                from core.window_automation import EVEWindowAutomation
+                auto_tmp = EVEWindowAutomation(cfg)
+                
+                # Resolve window handle
+                handle = None
+                if selected and selected.get("handle"):
+                    handle = selected["handle"]
+                else:
+                    # Fallback to title search if allowed
+                    # (This is a bit simplified, but execute_quick_order_update will do it properly too)
+                    pass
+                
+                if not handle:
+                    # Try to find it now to take the screenshot
+                    from core.window_automation import list_candidate_windows
+                    cands = list_candidate_windows(cfg)
+                    if cands:
+                        handle = cands[0]["handle"] # Best guess
+                
+                if handle:
+                    rect = auto_tmp._get_window_rect(handle)
+                    pil_img = auto_tmp._capture_window_screenshot(rect, {"steps_executed":[]}, [])
+                    if pil_img:
+                        # Convert PIL to QImage for dialog
+                        from PySide6.QtGui import QImage
+                        import io
+                        buffer = io.BytesIO()
+                        pil_img.save(buffer, format="PNG")
+                        qimg = QImage.fromData(buffer.getvalue())
+                        
+                        selector = VisualRegionSelectorDialog(qimg, self)
+                        if selector.exec() == QDialog.Accepted:
+                            coords = selector.get_region() # (x0, y0, x1, y1)
+                            if coords:
+                                x0, y0, x1, y1 = coords
+                                sw, sh = pil_img.size
+                                manual_region = {
+                                    "x_min_ratio": x0 / sw,
+                                    "y_min_ratio": y0 / sh,
+                                    "x_max_ratio": x1 / sw,
+                                    "y_max_ratio": y1 / sh
+                                }
+                                if cfg.get("visual_ocr_manual_region_save_profile", True):
+                                    regions[side] = manual_region
+                                    save_quick_order_update_regions(regions)
+                                    _log.info(f"[QUICK UPDATE] saved manual region for {side}")
+                        else:
+                            # User cancelled selection
+                            self._status_lbl.setText("Calibración cancelada. Abortando.")
+                            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+                            return
+            else:
+                manual_region = saved
+                _log.info(f"[QUICK UPDATE] using saved manual region for {side}")
+
         result = None
         try:
             from core.window_automation import EVEWindowAutomation
             auto   = EVEWindowAutomation(cfg)
             result = auto.execute_quick_order_update(
-                order_data, price_text, selected_window=selected
+                order_data, price_text, selected_window=selected, manual_region=manual_region
             )
         except Exception as exc:
             _log.error(f"[QUICK UPDATE] automation crash: {exc}")

@@ -225,13 +225,18 @@ class EVEWindowAutomation:
         self.visual_ocr_max_row_height         = int(config.get("visual_ocr_max_row_height", 28))
         self.visual_ocr_row_crop_y_padding     = int(config.get("visual_ocr_row_crop_y_padding", 2))
         self.visual_ocr_min_order_row_y_offset = int(config.get("visual_ocr_min_order_row_y_offset_from_section", 45))
-        self.visual_ocr_debug_save_crops       = bool(config.get("visual_ocr_debug_save_crops", True))
         self.visual_ocr_debug_max_crops        = int(config.get("visual_ocr_debug_max_crops", 5))
+        
+        # Phase 3E: manual region selection
+        self.visual_ocr_manual_region_enabled      = bool(config.get("visual_ocr_manual_region_enabled", True))
+        self.visual_ocr_manual_region_prompt_each  = bool(config.get("visual_ocr_manual_region_prompt_each_time", True))
+        self.visual_ocr_manual_region_save_profile = bool(config.get("visual_ocr_manual_region_save_profile", True))
 
     # ── public API ──────────────────────────────────────────────────────────
 
     def execute_quick_order_update(self, order_data: dict, recommended_price_text: str,
-                                   selected_window: Optional[dict] = None) -> dict:
+                                   selected_window: Optional[dict] = None,
+                                   manual_region: Optional[dict] = None) -> dict:
         """
         Run automation sequence. Returns diagnostic dict.
         NEVER executes the final order-confirm action.
@@ -277,7 +282,7 @@ class EVEWindowAutomation:
         if self.dry_run:
             return self._run_dry(result, recommended_price_text, selected_window)
 
-        return self._execute_real(result, recommended_price_text, selected_window, order_data)
+        return self._execute_real(result, recommended_price_text, selected_window, order_data, manual_region=manual_region)
 
     # ── private helpers ─────────────────────────────────────────────────────
 
@@ -316,7 +321,8 @@ class EVEWindowAutomation:
 
     def _execute_real(self, result: dict, price_text: str,
                       selected_window: Optional[dict],
-                      order_data: Optional[dict] = None) -> dict:
+                      order_data: Optional[dict] = None,
+                      manual_region: Optional[dict] = None) -> dict:
         errors = result["errors"]
 
         # 1. Wait open-market delay
@@ -359,7 +365,7 @@ class EVEWindowAutomation:
 
         # 4.5. Prepare Modify Order Dialog (optional, disabled by default)
         if result["focused"]:
-            self._prepare_modify_order_dialog(result, errors, order_data, win)
+            self._prepare_modify_order_dialog(result, errors, order_data, win, manual_region=manual_region)
 
         # 5. Experimental Paste (optional, disabled by default)
         if result["window_found"] and result["focused"]:
@@ -484,7 +490,8 @@ class EVEWindowAutomation:
 
     def _prepare_modify_order_dialog(self, result: dict, errors: list,
                                       order_data: Optional[dict] = None,
-                                      win=None) -> None:
+                                      win=None,
+                                      manual_region: Optional[dict] = None) -> None:
         """
         Phase 3 — optionally prepare the Modify Order dialog before pasting.
 
@@ -526,7 +533,7 @@ class EVEWindowAutomation:
 
         elif self.modify_order_strategy == "visual_ocr":
             # Phase 3C: detect own-order row via pixel color + OCR, right-click, menu click
-            self._run_visual_ocr(result, order_data or {}, win, errors)
+            self._run_visual_ocr(result, order_data or {}, win, errors, manual_region=manual_region)
 
         else:
             result["steps_executed"].append(
@@ -645,7 +652,7 @@ class EVEWindowAutomation:
     # ── Phase 3C: visual_ocr methods ─────────────────────────────────────────
 
     def _run_visual_ocr(self, result: dict, order_data: dict, win,
-                        errors: list) -> None:
+                        errors: list, manual_region: Optional[dict] = None) -> None:
         """
         Phase 3C — detect own-order row via blue-row pixel detection + OCR,
         right-click on the row, click "Modificar pedido" in the context menu,
@@ -679,7 +686,7 @@ class EVEWindowAutomation:
         if self.visual_ocr_debug_save:
             self._save_debug_screenshot(screenshot, result)
 
-        detection = self._run_visual_ocr_detect(screenshot, order_data, window_rect)
+        detection = self._run_visual_ocr_detect(screenshot, order_data, window_rect, manual_region=manual_region)
         if self.visual_ocr_debug_save:
             self._save_debug_overlay(screenshot, detection, result)
         result["visual_ocr_status"]           = detection.get("status")
@@ -811,12 +818,12 @@ class EVEWindowAutomation:
         return None
 
     def _run_visual_ocr_detect(self, screenshot, order_data: dict,
-                                window_rect: dict) -> dict:
+                                window_rect: dict, manual_region: Optional[dict] = None) -> dict:
         """Run EveMarketVisualDetector. Separated for testability."""
         try:
             from core.eve_market_visual_detector import EveMarketVisualDetector
             detector = EveMarketVisualDetector(self._build_visual_ocr_config())
-            return detector.detect_own_order_row(screenshot, order_data, window_rect)
+            return detector.detect_own_order_row(screenshot, order_data, window_rect, manual_region=manual_region)
         except Exception as exc:
             _log.error(f"[AUTOMATION] _run_visual_ocr_detect error: {exc}")
             return {"status": "error", "error": str(exc), "candidates_count": 0,

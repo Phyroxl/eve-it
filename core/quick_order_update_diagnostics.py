@@ -240,6 +240,16 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Quantity  : {_b(automation.get('visual_ocr_matched_quantity'))}")
     lines.append(f"  Visual OCR Row X     : {_b(automation.get('visual_ocr_row_x'))}")
     lines.append(f"  Visual OCR Row Y     : {_b(automation.get('visual_ocr_row_y'))}")
+    
+    # Phase 3E: Manual region diagnostics
+    m_reg_enabled = automation.get("config", {}).get("visual_ocr_manual_region_enabled", "N/A")
+    lines.append(f"  Manual Region Enabled: {_b(m_reg_enabled)}")
+    
+    dbg = automation.get("visual_ocr_debug") or {}
+    m_used = dbg.get("manual_region_used", False)
+    lines.append(f"  Manual Region Used   : {_b(m_used)}")
+    if m_used:
+        lines.append(f"  Manual Region Ratios : {dbg.get('manual_region_ratios')}")
     lines.append(f"  Visual OCR Blue Bands: {_b(automation.get('visual_ocr_blue_bands_found'))}")
     lines.append(f"  Visual OCR Section   : {_b(automation.get('visual_ocr_section_used'))}")
     lines.append(f"  Visual OCR Sec Y Min : {_b(automation.get('visual_ocr_section_y_min'))}")

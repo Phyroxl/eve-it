@@ -70,6 +70,7 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_price_col_x_min_ratio":         0.48,
     "visual_ocr_price_col_x_max_ratio":         0.68,
     # Phase 3C hardening: marker detection ratios
+    "visual_ocr_marker_x_min_ratio":            0.20,
     "visual_ocr_marker_x_max_ratio":            0.32,
     "visual_ocr_marker_required":               True,
     # Phase 3C hardening: row height and padding
@@ -79,6 +80,9 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_min_order_row_y_offset_from_section": 45,
     "visual_ocr_debug_save_crops":              True,
     "visual_ocr_debug_max_crops":               5,
+    "visual_ocr_manual_region_enabled":          True,
+    "visual_ocr_manual_region_prompt_each_time": True,
+    "visual_ocr_manual_region_save_profile":     True,
 }
 
 _RATIO_KEYS = (
@@ -109,6 +113,9 @@ _MAX_DELAY_MS = 30_000
 
 _CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "config", "quick_order_update.json")
+)
+_REGIONS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "config", "quick_order_update_regions.json")
 )
 
 
@@ -176,7 +183,9 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_match_price", "visual_ocr_match_quantity",
                 "visual_ocr_require_own_order_marker", "visual_ocr_side_section_required",
                 "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot",
-                "visual_ocr_marker_required", "visual_ocr_debug_save_crops"):
+                "visual_ocr_marker_required", "visual_ocr_debug_save_crops",
+                "visual_ocr_manual_region_enabled", "visual_ocr_manual_region_prompt_each_time",
+                "visual_ocr_manual_region_save_profile"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -260,3 +269,29 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 pass
 
     return result
+
+
+def load_quick_order_update_regions() -> dict:
+    """Load manual OCR regions from separate file."""
+    path = _REGIONS_PATH
+    if not os.path.exists(path):
+        return {"sell": None, "buy": None}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        _log.error(f"[QU CONFIG] error reading regions: {exc}")
+        return {"sell": None, "buy": None}
+
+
+def save_quick_order_update_regions(regions: dict) -> bool:
+    """Save manual OCR regions to separate file."""
+    path = _REGIONS_PATH
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(regions, f, indent=2)
+        return True
+    except Exception as exc:
+        _log.error(f"[QU CONFIG] error saving regions: {exc}")
+        return False
