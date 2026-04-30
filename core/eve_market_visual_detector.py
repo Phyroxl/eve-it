@@ -313,13 +313,29 @@ class EveMarketVisualDetector:
 
         # 1. Determine section and panel bounds (Manual Override vs Automatic)
         if manual_region:
-            y_min_ratio = manual_region.get("y_min_ratio", 0.0)
-            y_max_ratio = manual_region.get("y_max_ratio", 1.0)
-            x_min_ratio = manual_region.get("x_min_ratio", 0.0)
-            x_max_ratio = manual_region.get("x_max_ratio", 1.0)
+            # Handle both legacy (just ratios) and new (region/columns) format
+            reg = manual_region.get("region") if isinstance(manual_region.get("region"), dict) else manual_region
+            y_min_ratio = reg.get("y_min_ratio", 0.0)
+            y_max_ratio = reg.get("y_max_ratio", 1.0)
+            x_min_ratio = reg.get("x_min_ratio", 0.0)
+            x_max_ratio = reg.get("x_max_ratio", 1.0)
             section_name = "manual_override"
+            
+            # Column overrides (relative to panel)
+            qty_col_cfg = manual_region.get("quantity_column")
+            price_col_cfg = manual_region.get("price_column")
+            
+            self._qty_x_min_override = qty_col_cfg.get("x_min_ratio") if qty_col_cfg else None
+            self._qty_x_max_override = qty_col_cfg.get("x_max_ratio") if qty_col_cfg else None
+            self._price_x_min_override = price_col_cfg.get("x_min_ratio") if price_col_cfg else None
+            self._price_x_max_override = price_col_cfg.get("x_max_ratio") if price_col_cfg else None
+
             result["debug"]["manual_region_used"] = True
             result["debug"]["manual_region_ratios"] = [x_min_ratio, y_min_ratio, x_max_ratio, y_max_ratio]
+            if qty_col_cfg:
+                result["debug"]["manual_qty_col_ratios"] = [self._qty_x_min_override, self._qty_x_max_override]
+            if price_col_cfg:
+                result["debug"]["manual_price_col_ratios"] = [self._price_x_min_override, self._price_x_max_override]
         else:
             if is_buy_order:
                 y_min_ratio  = self.buy_y_min_ratio
@@ -332,6 +348,10 @@ class EveMarketVisualDetector:
             x_min_ratio = self.panel_x_min_ratio
             x_max_ratio = self.panel_x_max_ratio
             result["debug"]["manual_region_used"] = False
+            self._qty_x_min_override = None
+            self._qty_x_max_override = None
+            self._price_x_min_override = None
+            self._price_x_max_override = None
 
         section_y_min = max(0, min(int(h * y_min_ratio), h - 1))
         section_y_max = max(section_y_min + 1, min(int(h * y_max_ratio), h))
@@ -354,10 +374,20 @@ class EveMarketVisualDetector:
         # 3. Pre-compute column pixel coordinates (RELATIVE TO PANEL)
         # Note: If manual_region is used, panel IS the search area. 
         # Ratios like price_x_min_ratio still apply relative to this panel.
-        price_x0 = panel_x0 + int(panel_w * self.price_x_min_ratio)
-        price_x1 = panel_x0 + int(panel_w * self.price_x_max_ratio)
-        qty_x0   = panel_x0 + int(panel_w * self.qty_x_min_ratio)
-        qty_x1   = panel_x0 + int(panel_w * self.qty_x_max_ratio)
+        p_x_min = self._price_x_min_override if self._price_x_min_override is not None else self.price_x_min_ratio
+        p_x_max = self._price_x_max_override if self._price_x_max_override is not None else self.price_x_max_ratio
+        q_x_min = self._qty_x_min_override   if self._qty_x_min_override is not None   else self.qty_x_min_ratio
+        q_x_max = self._qty_x_max_override   if self._qty_x_max_override is not None   else self.qty_x_max_ratio
+
+        price_x0 = panel_x0 + int(panel_w * p_x_min)
+        price_x1 = panel_x0 + int(panel_w * p_x_max)
+        qty_x0   = panel_x0 + int(panel_w * q_x_min)
+        qty_x1   = panel_x0 + int(panel_w * q_x_max)
+        
+        result["visual_ocr_price_x0"] = price_x0
+        result["visual_ocr_price_x1"] = price_x1
+        result["visual_ocr_qty_x0"]   = qty_x0
+        result["visual_ocr_qty_x1"]   = qty_x1
         result["debug"]["price_col_x_min"] = price_x0
         result["debug"]["price_col_x_max"] = price_x1
         result["debug"]["qty_col_x_min"]   = qty_x0

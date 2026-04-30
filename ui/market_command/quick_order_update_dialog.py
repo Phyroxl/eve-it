@@ -565,21 +565,48 @@ class QuickOrderUpdateDialog(QDialog):
                         
                         selector = VisualRegionSelectorDialog(qimg, self)
                         if selector.exec() == QDialog.Accepted:
-                            coords = selector.get_region() # (x0, y0, x1, y1)
-                            if coords:
-                                x0, y0, x1, y1 = coords
+                            results = selector.get_results() # dict of step_id -> (x0, y0, x1, y1)
+                            
+                            reg_coords = results.get("region")
+                            if reg_coords:
+                                rx0, ry0, rx1, ry1 = reg_coords
                                 sw, sh = pil_img.size
+                                rw = rx1 - rx0
+                                rh = ry1 - ry0
+                                
                                 manual_region = {
-                                    "x_min_ratio": x0 / sw,
-                                    "y_min_ratio": y0 / sh,
-                                    "x_max_ratio": x1 / sw,
-                                    "y_max_ratio": y1 / sh
+                                    "region": {
+                                        "x_min_ratio": rx0 / sw,
+                                        "y_min_ratio": ry0 / sh,
+                                        "x_max_ratio": rx1 / sw,
+                                        "y_max_ratio": ry1 / sh
+                                    },
+                                    "quantity_column": None,
+                                    "price_column": None
                                 }
-                                _log.info(f"[QUICK UPDATE] manual visual OCR region selected: {manual_region}")
+                                
+                                # Column ratios are relative to the region width
+                                q_coords = results.get("quantity")
+                                if q_coords and rw > 0:
+                                    qx0, _, qx1, _ = q_coords
+                                    manual_region["quantity_column"] = {
+                                        "x_min_ratio": (qx0 - rx0) / rw,
+                                        "x_max_ratio": (qx1 - rx0) / rw
+                                    }
+                                    
+                                p_coords = results.get("price")
+                                if p_coords and rw > 0:
+                                    px0, _, px1, _ = p_coords
+                                    manual_region["price_column"] = {
+                                        "x_min_ratio": (px0 - rx0) / rw,
+                                        "x_max_ratio": (px1 - rx0) / rw
+                                    }
+
+                                _log.info(f"[QUICK UPDATE] manual visual OCR calibration selected: {manual_region}")
                                 if cfg.get("visual_ocr_manual_region_save_profile", True):
                                     regions[side] = manual_region
                                     save_quick_order_update_regions(regions)
-                                    _log.info(f"[QUICK UPDATE] saved manual region for {side}")
+                                    _log.info(f"[QUICK UPDATE] saved manual calibration for {side}")
                         else:
                             # User cancelled selection
                             _log.info("[QUICK UPDATE] manual visual OCR region selection cancelled by user")

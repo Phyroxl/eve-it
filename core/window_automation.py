@@ -710,6 +710,10 @@ class EVEWindowAutomation:
         result["visual_ocr_own_marker_matched"] = detection.get("matched_own_marker", False)
         result["visual_ocr_price_text"]       = detection.get("price_text")
         result["visual_ocr_quantity_text"]    = detection.get("quantity_text")
+        result["visual_ocr_price_x0"]         = detection.get("visual_ocr_price_x0")
+        result["visual_ocr_price_x1"]         = detection.get("visual_ocr_price_x1")
+        result["visual_ocr_qty_x0"]           = detection.get("visual_ocr_qty_x0")
+        result["visual_ocr_qty_x1"]           = detection.get("visual_ocr_qty_x1")
         
         # Phase 3D: Backend diagnostics
         result["visual_ocr_backend"]           = "pytesseract"

@@ -808,17 +808,42 @@ class TestRowFiltering(unittest.TestCase):
         screenshot = np.zeros((100, 100, 3), dtype="uint8")
         order = {"price": 100, "volume_remain": 1}
         window_rect = {"width": 100, "height": 100}
-        manual = {"x_min_ratio": 0.1, "y_min_ratio": 0.1, "x_max_ratio": 0.9, "y_max_ratio": 0.9}
+        
+        # Legacy format
+        manual_legacy = {"x_min_ratio": 0.1, "y_min_ratio": 0.1, "x_max_ratio": 0.9, "y_max_ratio": 0.9}
 
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch.object(det, "_is_tesseract_available", return_value=True), \
              patch.object(det, "_find_blue_row_bands", return_value=[]):
-            result = det.detect_own_order_row(screenshot, order, window_rect, manual_region=manual)
+            result = det.detect_own_order_row(screenshot, order, window_rect, manual_region=manual_legacy)
         
         self.assertTrue(result["debug"]["manual_region_used"])
         self.assertEqual(result["debug"]["section_used"], "manual_override")
-        self.assertEqual(result["debug"]["manual_region_ratios"], [0.1, 0.1, 0.9, 0.9])
+
+    def test_manual_column_override(self):
+        det = EveMarketVisualDetector({"visual_ocr_marker_required": False})
+        import numpy as np
+        screenshot = np.zeros((100, 100, 3), dtype="uint8")
+        order = {"price": 100, "volume_remain": 1}
+        window_rect = {"width": 100, "height": 100}
+        
+        # New nested format
+        manual_new = {
+            "region": {"x_min_ratio": 0.1, "y_min_ratio": 0.1, "x_max_ratio": 0.9, "y_max_ratio": 0.9},
+            "quantity_column": {"x_min_ratio": 0.1, "x_max_ratio": 0.3},
+            "price_column": {"x_min_ratio": 0.4, "x_max_ratio": 0.6}
+        }
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch.object(det, "_is_tesseract_available", return_value=True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[]):
+            result = det.detect_own_order_row(screenshot, order, window_rect, manual_region=manual_new)
+        
+        self.assertTrue(result["debug"]["manual_region_used"])
+        self.assertEqual(result["debug"]["manual_qty_col_ratios"], [0.1, 0.3])
+        self.assertEqual(result["debug"]["manual_price_col_ratios"], [0.4, 0.6])
 
 if __name__ == "__main__":
     unittest.main()

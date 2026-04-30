@@ -252,6 +252,13 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Manual Region Used   : {_b(m_used)}")
     if m_used:
         lines.append(f"  Manual Region Ratios : {dbg.get('manual_region_ratios')}")
+        if "manual_qty_col_ratios" in dbg:
+            lines.append(f"  Manual Qty Col Ratios: {dbg.get('manual_qty_col_ratios')}")
+        if "manual_price_col_ratios" in dbg:
+            lines.append(f"  Manual Price Col Ratios: {dbg.get('manual_price_col_ratios')}")
+
+    lines.append(f"  Visual OCR Price X   : {automation.get('visual_ocr_price_x0')} to {automation.get('visual_ocr_price_x1')}")
+    lines.append(f"  Visual OCR Qty X     : {automation.get('visual_ocr_qty_x0')} to {automation.get('visual_ocr_qty_x1')}")
     lines.append(f"  Visual OCR Blue Bands: {_b(automation.get('visual_ocr_blue_bands_found'))}")
     lines.append(f"  Visual OCR Section   : {_b(automation.get('visual_ocr_section_used'))}")
     lines.append(f"  Visual OCR Sec Y Min : {_b(automation.get('visual_ocr_section_y_min'))}")
