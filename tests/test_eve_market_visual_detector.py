@@ -115,8 +115,16 @@ class TestBaseDetectionResult(unittest.TestCase):
         r = _base_detection_result()
         for key in ("status", "error", "candidates_count", "row_center_x",
                     "row_center_y", "matched_price", "matched_quantity",
-                    "matched_own_marker", "matched_side_section", "debug"):
+                    "matched_own_marker", "matched_side_section",
+                    "price_text", "quantity_text", "debug"):
             self.assertIn(key, r)
+
+    def test_debug_has_required_keys(self):
+        r = _base_detection_result()
+        for key in ("blue_bands_found", "section_used", "section_y_min", "section_y_max",
+                    "price_col_x_min", "price_col_x_max", "qty_col_x_min", "qty_col_x_max",
+                    "candidate_bands", "matched_band"):
+            self.assertIn(key, r["debug"])
 
     def test_default_status_error(self):
         self.assertEqual(_base_detection_result()["status"], "error")
@@ -128,11 +136,24 @@ class TestBaseDetectionResult(unittest.TestCase):
 
 def _det(overrides=None):
     cfg = {
-        "visual_ocr_require_unique_match":     True,
-        "visual_ocr_match_price":              True,
-        "visual_ocr_match_quantity":           True,
-        "visual_ocr_require_own_order_marker": True,
-        "visual_ocr_side_section_required":    True,
+        "visual_ocr_require_unique_match":      True,
+        "visual_ocr_match_price":               True,
+        "visual_ocr_match_quantity":            True,
+        "visual_ocr_require_own_order_marker":  True,
+        "visual_ocr_side_section_required":     True,
+        # Hardening ratio defaults
+        "visual_ocr_sell_section_y_min_ratio":  0.22,
+        "visual_ocr_sell_section_y_max_ratio":  0.58,
+        "visual_ocr_buy_section_y_min_ratio":   0.55,
+        "visual_ocr_buy_section_y_max_ratio":   0.88,
+        "visual_ocr_price_col_x_min_ratio":     0.48,
+        "visual_ocr_price_col_x_max_ratio":     0.68,
+        "visual_ocr_qty_col_x_min_ratio":       0.38,
+        "visual_ocr_qty_col_x_max_ratio":       0.52,
+        "visual_ocr_marker_x_min_ratio":        0.20,
+        "visual_ocr_marker_x_max_ratio":        0.32,
+        # Disable marker requirement by default so existing tests pass without marker data
+        "visual_ocr_marker_required":           False,
     }
     if overrides:
         cfg.update(overrides)
@@ -165,13 +186,18 @@ class TestDetectorBackendUnavailable(unittest.TestCase):
         self.assertEqual(result["error"], "ocr_backend_unavailable")
 
     def test_returns_error_when_pytesseract_unavailable(self):
+        import numpy as np
         det = _det()
+        screenshot = np.zeros((50, 100, 3), dtype="uint8")
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
-             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", False):
-            result = det.detect_own_order_row(MagicMock(), _ORDER, _WINDOW_RECT)
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", False), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]):
+            result = det.detect_own_order_row(screenshot, _ORDER, _WINDOW_RECT)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["error"], "ocr_backend_unavailable")
+        self.assertEqual(result["candidates_count"], 1)
+        self.assertEqual(result["debug"]["blue_bands_found"], 1)
 
 
 class TestDetectorNotFound(unittest.TestCase):
@@ -354,6 +380,153 @@ class TestFindBlueRowBands(unittest.TestCase):
         arr[60:66, :, 2] = 150
         result = det._find_blue_row_bands(arr, 0, 100, 0, 100)
         self.assertEqual(len(result), 2)
+
+
+class TestSectionBasedDetection(unittest.TestCase):
+    """Blue-band search is restricted to the correct section (sell vs buy)."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def _run(self, is_buy, expected_section):
+        det = _det()
+        order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": is_buy}
+        window_rect = {"left": 0, "top": 0, "width": 100, "height": 200}
+        screenshot = self._np.zeros((200, 100, 3), dtype="uint8")
+        calls = []
+
+        orig = det._find_blue_row_bands
+        def spy(arr, y0, y1, x0, x1):
+            calls.append((y0, y1))
+            return []
+        det._find_blue_row_bands = spy
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+
+        self.assertTrue(calls, "expected _find_blue_row_bands to be called")
+        y0_used, y1_used = calls[0]
+        if expected_section == "sell":
+            self.assertAlmostEqual(y0_used, int(200 * det.sell_y_min_ratio), delta=1)
+            self.assertAlmostEqual(y1_used, int(200 * det.sell_y_max_ratio), delta=1)
+        else:
+            self.assertAlmostEqual(y0_used, int(200 * det.buy_y_min_ratio), delta=1)
+            self.assertAlmostEqual(y1_used, int(200 * det.buy_y_max_ratio), delta=1)
+        self.assertEqual(result["debug"]["section_used"], expected_section)
+
+    def test_sell_order_uses_sell_section(self):
+        self._run(is_buy=False, expected_section="sell")
+
+    def test_buy_order_uses_buy_section(self):
+        self._run(is_buy=True, expected_section="buy")
+
+
+class TestColumnRatios(unittest.TestCase):
+    """Column pixel coords are derived from config ratios and stored in debug."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_column_coords_in_debug(self):
+        det = _det({
+            "visual_ocr_price_col_x_min_ratio": 0.50,
+            "visual_ocr_price_col_x_max_ratio": 0.70,
+            "visual_ocr_qty_col_x_min_ratio":   0.30,
+            "visual_ocr_qty_col_x_max_ratio":   0.45,
+        })
+        order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 200, "height": 200}
+        screenshot = self._np.zeros((200, 200, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+
+        dbg = result["debug"]
+        self.assertEqual(dbg["price_col_x_min"], int(200 * 0.50))
+        self.assertEqual(dbg["price_col_x_max"], int(200 * 0.70))
+        self.assertEqual(dbg["qty_col_x_min"],   int(200 * 0.30))
+        self.assertEqual(dbg["qty_col_x_max"],   int(200 * 0.45))
+
+
+class TestMarkerRequired(unittest.TestCase):
+    """When marker_required=True and no marker found, band is excluded."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_marker_required_no_marker_not_found(self):
+        det = _det({"visual_ocr_marker_required": True})
+        order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
+             patch.object(det, "_ocr_region", return_value="1595.90"), \
+             patch.object(det, "_detect_own_order_marker", return_value=False):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+        self.assertEqual(result["status"], "not_found")
+
+    def test_marker_not_required_passes_without_marker(self):
+        det = _det({"visual_ocr_marker_required": False})
+        order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
+        screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
+             patch.object(det, "_ocr_region", return_value="1595.90"), \
+             patch.object(det, "_detect_own_order_marker", return_value=False):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+        self.assertEqual(result["status"], "unique_match")
+
+
+class TestNoPytesseractReportsBlueBands(unittest.TestCase):
+    """Without pytesseract, blue_bands_found is still reported in debug."""
+
+    def setUp(self):
+        try:
+            import numpy as np
+            self._np = np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+    def test_blue_bands_reported_without_ocr(self):
+        det = _det()
+        order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
+        window_rect = {"left": 0, "top": 0, "width": 100, "height": 50}
+        screenshot = self._np.zeros((50, 100, 3), dtype="uint8")
+
+        with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
+             patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", False), \
+             patch.object(det, "_find_blue_row_bands", return_value=[(5, 20), (25, 40)]):
+            result = det.detect_own_order_row(screenshot, order, window_rect)
+        self.assertEqual(result["debug"]["blue_bands_found"], 2)
+        self.assertEqual(result["candidates_count"], 2)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"], "ocr_backend_unavailable")
 
 
 if __name__ == "__main__":

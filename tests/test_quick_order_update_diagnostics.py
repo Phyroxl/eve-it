@@ -171,6 +171,73 @@ class TestAutomationSectionRendering(unittest.TestCase):
         self.assertNotIn("Modify Order Warning", section)
 
 
+class TestVisualOCRHardeningFields(unittest.TestCase):
+    """Phase 3C hardening: new diagnostic fields in _format_automation_section."""
+
+    def _auto_with_ocr_fields(self, **extra):
+        auto = _base_automation()
+        auto.update({
+            "visual_ocr_blue_bands_found": 2,
+            "visual_ocr_section_used":     "sell",
+            "visual_ocr_section_y_min":    44,
+            "visual_ocr_section_y_max":    116,
+            "visual_ocr_own_marker_matched": True,
+            "visual_ocr_price_text":       "1595.90",
+            "visual_ocr_quantity_text":    "10",
+        })
+        auto.update(extra)
+        return auto
+
+    def test_blue_bands_found_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Blue Bands", section)
+        self.assertIn("2", section)
+
+    def test_section_used_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Section", section)
+        self.assertIn("sell", section)
+
+    def test_section_y_min_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Sec Y Min", section)
+        self.assertIn("44", section)
+
+    def test_section_y_max_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Sec Y Max", section)
+        self.assertIn("116", section)
+
+    def test_own_marker_matched_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Own Marker", section)
+        self.assertIn("True", section)
+
+    def test_price_text_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Price Txt", section)
+        self.assertIn("1595.90", section)
+
+    def test_quantity_text_shown(self):
+        section = format_automation_section(self._auto_with_ocr_fields())
+        self.assertIn("Visual OCR Qty Txt", section)
+        self.assertIn("10", section)
+
+    def test_overlay_path_shown_when_set(self):
+        auto = self._auto_with_ocr_fields(
+            visual_ocr_debug_overlay_path="/tmp/visual_ocr_overlay_123.png"
+        )
+        section = format_automation_section(auto)
+        self.assertIn("Visual OCR Overlay", section)
+        self.assertIn("/tmp/visual_ocr_overlay_123.png", section)
+
+    def test_overlay_path_absent_when_none(self):
+        auto = self._auto_with_ocr_fields()
+        auto.pop("visual_ocr_debug_overlay_path", None)
+        section = format_automation_section(auto)
+        self.assertNotIn("Visual OCR Overlay", section)
+
+
 class TestVisualOCRSectionRendering(unittest.TestCase):
 
     def test_visual_ocr_enabled_shown(self):

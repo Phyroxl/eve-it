@@ -49,6 +49,11 @@ _REQUIRED_KEYS = {
     "visual_ocr_enabled", "visual_ocr_status", "visual_ocr_candidates_count",
     "visual_ocr_matched_price", "visual_ocr_matched_quantity",
     "visual_ocr_row_x", "visual_ocr_row_y",
+    # Phase 3C hardening: new diagnostic fields
+    "visual_ocr_blue_bands_found", "visual_ocr_section_used",
+    "visual_ocr_section_y_min", "visual_ocr_section_y_max",
+    "visual_ocr_own_marker_matched", "visual_ocr_price_text",
+    "visual_ocr_quantity_text", "visual_ocr_debug_overlay_path",
 }
 
 _CFG_DISABLED = {
@@ -811,7 +816,14 @@ class TestVisualOCRStrategy(unittest.TestCase):
             "candidates_count": 1, "row_center_x": 200, "row_center_y": 150,
             "matched_price": True, "matched_quantity": True,
             "matched_own_marker": True, "matched_side_section": True,
-            "debug": {},
+            "price_text": "1595.90", "quantity_text": "10",
+            "debug": {
+                "blue_bands_found": 1, "section_used": "sell",
+                "section_y_min": 44, "section_y_max": 116,
+                "price_col_x_min": 192, "price_col_x_max": 272,
+                "qty_col_x_min": 152, "qty_col_x_max": 208,
+                "candidate_bands": [(145, 160)], "matched_band": (145, 160),
+            },
         }
 
     def _detection_not_found(self):
@@ -820,7 +832,46 @@ class TestVisualOCRStrategy(unittest.TestCase):
             "candidates_count": 0, "row_center_x": None, "row_center_y": None,
             "matched_price": False, "matched_quantity": False,
             "matched_own_marker": False, "matched_side_section": False,
-            "debug": {},
+            "price_text": None, "quantity_text": None,
+            "debug": {
+                "blue_bands_found": 0, "section_used": "sell",
+                "section_y_min": 44, "section_y_max": 116,
+                "price_col_x_min": 192, "price_col_x_max": 272,
+                "qty_col_x_min": 152, "qty_col_x_max": 208,
+                "candidate_bands": [], "matched_band": None,
+            },
+        }
+
+    def _detection_ambiguous(self):
+        return {
+            "status": "ambiguous", "error": None,
+            "candidates_count": 2, "row_center_x": None, "row_center_y": None,
+            "matched_price": False, "matched_quantity": False,
+            "matched_own_marker": False, "matched_side_section": False,
+            "price_text": None, "quantity_text": None,
+            "debug": {
+                "blue_bands_found": 2, "section_used": "sell",
+                "section_y_min": 44, "section_y_max": 116,
+                "price_col_x_min": 192, "price_col_x_max": 272,
+                "qty_col_x_min": 152, "qty_col_x_max": 208,
+                "candidate_bands": [(10, 25), (50, 65)], "matched_band": None,
+            },
+        }
+
+    def _detection_ocr_error(self):
+        return {
+            "status": "error", "error": "ocr_backend_unavailable",
+            "candidates_count": 1, "row_center_x": None, "row_center_y": None,
+            "matched_price": False, "matched_quantity": False,
+            "matched_own_marker": False, "matched_side_section": False,
+            "price_text": None, "quantity_text": None,
+            "debug": {
+                "blue_bands_found": 1, "section_used": "sell",
+                "section_y_min": 44, "section_y_max": 116,
+                "price_col_x_min": 192, "price_col_x_max": 272,
+                "qty_col_x_min": 152, "qty_col_x_max": 208,
+                "candidate_bands": [(10, 25)], "matched_band": None,
+            },
         }
 
     def _run(self, cfg, detection=None, screenshot=None):
@@ -855,11 +906,36 @@ class TestVisualOCRStrategy(unittest.TestCase):
                 order, "1595.90", selected_window=self._SELECTED
             )
 
-    # -- visual_ocr_enabled=False skips entirely ---------------------------------
+    # -- visual_ocr_enabled=False skips entirely and blocks paste -----------------
 
     def test_visual_ocr_disabled_in_cfg_skips(self):
         result = self._run(self._cfg(visual_ocr_enabled=False))
         self.assertIn("visual_ocr_disabled_in_config", result["steps_skipped"])
+
+    def test_visual_ocr_disabled_blocks_paste(self):
+        result = self._run(self._cfg(visual_ocr_enabled=False))
+        self.assertIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+        self.assertFalse(result["price_pasted"])
+
+    # -- ambiguous detection: no click, no paste ----------------------------------
+
+    def test_ambiguous_no_click_no_paste(self):
+        result = self._run(self._cfg(), detection=self._detection_ambiguous())
+        skipped = " ".join(result["steps_skipped"])
+        self.assertIn("visual_ocr_no_unique_match", skipped)
+        self.assertIn("paste_skipped_visual_ocr_step_failed", skipped)
+        self.assertFalse(result["price_pasted"])
+        self.assertEqual(result["visual_ocr_status"], "ambiguous")
+        self.assertEqual(result["visual_ocr_candidates_count"], 2)
+
+    # -- ocr error detection: no click, no paste ----------------------------------
+
+    def test_ocr_error_no_click_no_paste(self):
+        result = self._run(self._cfg(), detection=self._detection_ocr_error())
+        skipped = " ".join(result["steps_skipped"])
+        self.assertIn("paste_skipped_visual_ocr_step_failed", skipped)
+        self.assertFalse(result["price_pasted"])
+        self.assertEqual(result["visual_ocr_status"], "error")
 
     # -- screenshot backend missing ----------------------------------------------
 
@@ -969,6 +1045,32 @@ class TestVisualOCRStrategy(unittest.TestCase):
         result = self._run(self._cfg())
         for key in _REQUIRED_KEYS:
             self.assertIn(key, result, f"key '{key}' missing from result")
+
+    # -- new diagnostic fields populated from detection --------------------------
+
+    def test_blue_bands_found_populated(self):
+        result = self._run(self._cfg())
+        self.assertEqual(result["visual_ocr_blue_bands_found"], 1)
+
+    def test_section_used_populated(self):
+        result = self._run(self._cfg())
+        self.assertEqual(result["visual_ocr_section_used"], "sell")
+
+    def test_section_y_min_populated(self):
+        result = self._run(self._cfg())
+        self.assertIsNotNone(result["visual_ocr_section_y_min"])
+
+    def test_own_marker_matched_populated(self):
+        result = self._run(self._cfg())
+        self.assertTrue(result["visual_ocr_own_marker_matched"])
+
+    def test_price_text_populated(self):
+        result = self._run(self._cfg())
+        self.assertEqual(result["visual_ocr_price_text"], "1595.90")
+
+    def test_quantity_text_populated(self):
+        result = self._run(self._cfg())
+        self.assertEqual(result["visual_ocr_quantity_text"], "10")
 
     # -- visual_ocr_enabled flag reflected in result -----------------------------
 

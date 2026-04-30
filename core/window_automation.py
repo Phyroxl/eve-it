@@ -190,6 +190,18 @@ class EVEWindowAutomation:
         self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_menu_click_y_offset",           85))
         self.visual_ocr_debug_save           = bool(config.get("visual_ocr_debug_save_screenshot",         True))
         self.visual_ocr_debug_dir            = str(config.get("visual_ocr_debug_dir",                      "data/debug/visual_ocr"))
+        # Phase 3C hardening: ratio-based section / column / marker config
+        self.visual_ocr_sell_y_min_ratio   = float(config.get("visual_ocr_sell_section_y_min_ratio",  0.22))
+        self.visual_ocr_sell_y_max_ratio   = float(config.get("visual_ocr_sell_section_y_max_ratio",  0.58))
+        self.visual_ocr_buy_y_min_ratio    = float(config.get("visual_ocr_buy_section_y_min_ratio",   0.55))
+        self.visual_ocr_buy_y_max_ratio    = float(config.get("visual_ocr_buy_section_y_max_ratio",   0.88))
+        self.visual_ocr_price_x_min_ratio  = float(config.get("visual_ocr_price_col_x_min_ratio",    0.48))
+        self.visual_ocr_price_x_max_ratio  = float(config.get("visual_ocr_price_col_x_max_ratio",    0.68))
+        self.visual_ocr_qty_x_min_ratio    = float(config.get("visual_ocr_qty_col_x_min_ratio",      0.38))
+        self.visual_ocr_qty_x_max_ratio    = float(config.get("visual_ocr_qty_col_x_max_ratio",      0.52))
+        self.visual_ocr_marker_x_min_ratio = float(config.get("visual_ocr_marker_x_min_ratio",       0.20))
+        self.visual_ocr_marker_x_max_ratio = float(config.get("visual_ocr_marker_x_max_ratio",       0.32))
+        self.visual_ocr_marker_required    = bool(config.get("visual_ocr_marker_required",            True))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -618,6 +630,8 @@ class EVEWindowAutomation:
         """
         if not self.visual_ocr_enabled:
             result["steps_skipped"].append("visual_ocr_disabled_in_config")
+            result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
+            result["_paste_blocked_modify_dialog"] = True
             result["modify_order_warning"] = "visual_ocr_enabled=false — visual OCR step skipped"
             return
 
@@ -641,11 +655,21 @@ class EVEWindowAutomation:
             self._save_debug_screenshot(screenshot, result)
 
         detection = self._run_visual_ocr_detect(screenshot, order_data, window_rect)
-        result["visual_ocr_status"]          = detection.get("status")
+        if self.visual_ocr_debug_save:
+            self._save_debug_overlay(screenshot, detection, result)
+        result["visual_ocr_status"]           = detection.get("status")
         result["visual_ocr_candidates_count"] = detection.get("candidates_count", 0)
         result["visual_ocr_matched_price"]    = detection.get("matched_price", False)
         result["visual_ocr_matched_quantity"] = detection.get("matched_quantity", False)
         result["visual_ocr_debug"]            = detection.get("debug", {})
+        dbg = detection.get("debug", {})
+        result["visual_ocr_blue_bands_found"] = dbg.get("blue_bands_found", 0)
+        result["visual_ocr_section_used"]     = dbg.get("section_used")
+        result["visual_ocr_section_y_min"]    = dbg.get("section_y_min")
+        result["visual_ocr_section_y_max"]    = dbg.get("section_y_max")
+        result["visual_ocr_own_marker_matched"] = detection.get("matched_own_marker", False)
+        result["visual_ocr_price_text"]       = detection.get("price_text")
+        result["visual_ocr_quantity_text"]    = detection.get("quantity_text")
 
         if detection.get("error"):
             errors.append(f"visual_ocr_detection: {detection['error']}")
@@ -812,11 +836,22 @@ class EVEWindowAutomation:
 
     def _build_visual_ocr_config(self) -> dict:
         return {
-            "visual_ocr_require_unique_match":     self.visual_ocr_require_unique_match,
-            "visual_ocr_match_price":              self.visual_ocr_match_price,
-            "visual_ocr_match_quantity":           self.visual_ocr_match_quantity,
-            "visual_ocr_require_own_order_marker": self.visual_ocr_require_own_marker,
-            "visual_ocr_side_section_required":    self.visual_ocr_side_section_required,
+            "visual_ocr_require_unique_match":      self.visual_ocr_require_unique_match,
+            "visual_ocr_match_price":               self.visual_ocr_match_price,
+            "visual_ocr_match_quantity":            self.visual_ocr_match_quantity,
+            "visual_ocr_require_own_order_marker":  self.visual_ocr_require_own_marker,
+            "visual_ocr_side_section_required":     self.visual_ocr_side_section_required,
+            "visual_ocr_sell_section_y_min_ratio":  self.visual_ocr_sell_y_min_ratio,
+            "visual_ocr_sell_section_y_max_ratio":  self.visual_ocr_sell_y_max_ratio,
+            "visual_ocr_buy_section_y_min_ratio":   self.visual_ocr_buy_y_min_ratio,
+            "visual_ocr_buy_section_y_max_ratio":   self.visual_ocr_buy_y_max_ratio,
+            "visual_ocr_price_col_x_min_ratio":     self.visual_ocr_price_x_min_ratio,
+            "visual_ocr_price_col_x_max_ratio":     self.visual_ocr_price_x_max_ratio,
+            "visual_ocr_qty_col_x_min_ratio":       self.visual_ocr_qty_x_min_ratio,
+            "visual_ocr_qty_col_x_max_ratio":       self.visual_ocr_qty_x_max_ratio,
+            "visual_ocr_marker_x_min_ratio":        self.visual_ocr_marker_x_min_ratio,
+            "visual_ocr_marker_x_max_ratio":        self.visual_ocr_marker_x_max_ratio,
+            "visual_ocr_marker_required":           self.visual_ocr_marker_required,
         }
 
     def _save_debug_screenshot(self, screenshot, result: dict) -> None:
@@ -831,6 +866,53 @@ class EVEWindowAutomation:
             _log.debug(f"[AUTOMATION] visual_ocr: debug screenshot saved to {path}")
         except Exception as exc:
             _log.debug(f"[AUTOMATION] visual_ocr: debug screenshot save failed: {exc}")
+
+    def _save_debug_overlay(self, screenshot, detection: dict, result: dict) -> None:
+        """Save annotated debug screenshot with detection overlay. Silent on failure."""
+        try:
+            import os
+            from PIL import Image, ImageDraw
+            if hasattr(screenshot, 'shape'):
+                import numpy as _np
+                img = Image.fromarray(screenshot.astype('uint8'))
+            elif hasattr(screenshot, 'save'):
+                img = screenshot.copy()
+            else:
+                return
+
+            draw = ImageDraw.Draw(img)
+            dbg  = detection.get("debug", {})
+            w, h = img.size
+
+            sy_min = dbg.get("section_y_min")
+            sy_max = dbg.get("section_y_max")
+            if sy_min is not None and sy_max is not None:
+                draw.rectangle([0, sy_min, w - 1, sy_max], outline=(255, 255, 0), width=2)
+
+            for band in dbg.get("candidate_bands", []):
+                draw.rectangle([0, band[0], w - 1, band[1]], outline=(100, 100, 255), width=1)
+
+            matched_band = dbg.get("matched_band")
+            if matched_band:
+                draw.rectangle([0, matched_band[0], w - 1, matched_band[1]],
+                               outline=(0, 255, 0), width=2)
+
+            for x0, x1, color in (
+                (dbg.get("price_col_x_min"), dbg.get("price_col_x_max"), (255, 128, 0)),
+                (dbg.get("qty_col_x_min"),   dbg.get("qty_col_x_max"),   (0, 200, 255)),
+            ):
+                if x0 is not None and x1 is not None:
+                    draw.line([x0, 0, x0, h - 1], fill=color, width=1)
+                    draw.line([x1, 0, x1, h - 1], fill=color, width=1)
+
+            os.makedirs(self.visual_ocr_debug_dir, exist_ok=True)
+            ts   = int(time.time())
+            path = os.path.join(self.visual_ocr_debug_dir, f"visual_ocr_overlay_{ts}.png")
+            img.save(path)
+            result["visual_ocr_debug_overlay_path"] = path
+            _log.debug(f"[AUTOMATION] visual_ocr: debug overlay saved to {path}")
+        except Exception as exc:
+            _log.debug(f"[AUTOMATION] visual_ocr: debug overlay save failed: {exc}")
 
     def _handle_experimental_paste(self, result: dict, price_text: str, errors: list) -> None:
         if not self.exp_paste_enabled:
@@ -921,4 +1003,13 @@ class EVEWindowAutomation:
             "visual_ocr_window_rect":                  None,
             "visual_ocr_debug":                        {},
             "visual_ocr_debug_screenshot_path":        None,
+            # Phase 3C hardening: new diagnostic fields
+            "visual_ocr_blue_bands_found":             0,
+            "visual_ocr_section_used":                 None,
+            "visual_ocr_section_y_min":                None,
+            "visual_ocr_section_y_max":                None,
+            "visual_ocr_own_marker_matched":           False,
+            "visual_ocr_price_text":                   None,
+            "visual_ocr_quantity_text":                None,
+            "visual_ocr_debug_overlay_path":           None,
         }

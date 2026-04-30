@@ -239,9 +239,19 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Quantity  : {_b(automation.get('visual_ocr_matched_quantity'))}")
     lines.append(f"  Visual OCR Row X     : {_b(automation.get('visual_ocr_row_x'))}")
     lines.append(f"  Visual OCR Row Y     : {_b(automation.get('visual_ocr_row_y'))}")
+    lines.append(f"  Visual OCR Blue Bands: {_b(automation.get('visual_ocr_blue_bands_found'))}")
+    lines.append(f"  Visual OCR Section   : {_b(automation.get('visual_ocr_section_used'))}")
+    lines.append(f"  Visual OCR Sec Y Min : {_b(automation.get('visual_ocr_section_y_min'))}")
+    lines.append(f"  Visual OCR Sec Y Max : {_b(automation.get('visual_ocr_section_y_max'))}")
+    lines.append(f"  Visual OCR Own Marker: {_b(automation.get('visual_ocr_own_marker_matched'))}")
+    lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
+    lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
     dbg_path = automation.get("visual_ocr_debug_screenshot_path")
     if dbg_path:
         lines.append(f"  Visual OCR Debug Img : {dbg_path}")
+    overlay_path = automation.get("visual_ocr_debug_overlay_path")
+    if overlay_path:
+        lines.append(f"  Visual OCR Overlay   : {overlay_path}")
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
     cands = automation.get("candidate_windows") or []
     if cands:

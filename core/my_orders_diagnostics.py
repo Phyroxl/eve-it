@@ -167,7 +167,6 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
     if not errs:
         lines.append("No recent errors recorded.")
     else:
-        # Clean up errors (remove size=24 as requested)
         for e in errs[-15:]:
             cleaned = e.replace("?size=24", "").replace("&size=24", "")
             lines.append(f"● {cleaned}")

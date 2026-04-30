@@ -392,5 +392,81 @@ class TestVisualOCRConfigDefaults(unittest.TestCase):
             self.assertIn(key, cfg, f"key '{key}' missing from validated config")
 
 
+class TestHardeningRatioDefaults(unittest.TestCase):
+    """Phase 3C hardening: ratio config defaults and clamping."""
+
+    def test_sell_section_y_min_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_sell_section_y_min_ratio"], 0.22)
+
+    def test_sell_section_y_max_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_sell_section_y_max_ratio"], 0.58)
+
+    def test_buy_section_y_min_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_buy_section_y_min_ratio"], 0.55)
+
+    def test_buy_section_y_max_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_buy_section_y_max_ratio"], 0.88)
+
+    def test_qty_col_x_min_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_qty_col_x_min_ratio"], 0.38)
+
+    def test_qty_col_x_max_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_qty_col_x_max_ratio"], 0.52)
+
+    def test_price_col_x_min_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_price_col_x_min_ratio"], 0.48)
+
+    def test_price_col_x_max_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_price_col_x_max_ratio"], 0.68)
+
+    def test_marker_x_min_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_marker_x_min_ratio"], 0.20)
+
+    def test_marker_x_max_ratio_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertAlmostEqual(cfg["visual_ocr_marker_x_max_ratio"], 0.32)
+
+    def test_marker_required_default_true(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertTrue(cfg["visual_ocr_marker_required"])
+
+    def test_ratio_above_1_clamped_to_1(self):
+        cfg = validate_quick_order_update_config({
+            "visual_ocr_sell_section_y_min_ratio": 1.5,
+            "visual_ocr_price_col_x_max_ratio":    2.0,
+        })
+        self.assertAlmostEqual(cfg["visual_ocr_sell_section_y_min_ratio"], 1.0)
+        self.assertAlmostEqual(cfg["visual_ocr_price_col_x_max_ratio"],    1.0)
+
+    def test_ratio_below_0_clamped_to_0(self):
+        cfg = validate_quick_order_update_config({
+            "visual_ocr_buy_section_y_max_ratio":  -0.1,
+            "visual_ocr_qty_col_x_min_ratio":      -5.0,
+        })
+        self.assertAlmostEqual(cfg["visual_ocr_buy_section_y_max_ratio"], 0.0)
+        self.assertAlmostEqual(cfg["visual_ocr_qty_col_x_min_ratio"],     0.0)
+
+    def test_valid_ratio_preserved(self):
+        cfg = validate_quick_order_update_config({
+            "visual_ocr_sell_section_y_min_ratio": 0.15,
+            "visual_ocr_sell_section_y_max_ratio": 0.60,
+        })
+        self.assertAlmostEqual(cfg["visual_ocr_sell_section_y_min_ratio"], 0.15)
+        self.assertAlmostEqual(cfg["visual_ocr_sell_section_y_max_ratio"], 0.60)
+
+    def test_marker_required_bool_coercion(self):
+        cfg = validate_quick_order_update_config({"visual_ocr_marker_required": 0})
+        self.assertFalse(cfg["visual_ocr_marker_required"])
+
+
 if __name__ == "__main__":
     unittest.main()
