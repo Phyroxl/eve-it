@@ -289,10 +289,8 @@ def recalculate_competitor_price(market_orders: list, own_orders: list,
         competitor = comp_prices[0] if comp_prices else _SENTINEL_MAX
 
     return {
-        "best_sell": abs_best_buy if is_buy else abs_best_sell, # Keep original behavior for these?
-        # Actually Requisito 3 says best_sell: ..., best_buy: ...
-        "best_buy": abs_best_buy,
         "best_sell": abs_best_sell,
+        "best_buy": abs_best_buy,
         "competitor_price": competitor,
         "orders_count": len(market_prices),
         "own_excluded_count": excluded_count,
