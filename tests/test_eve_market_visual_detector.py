@@ -491,12 +491,13 @@ class TestMarkerRequired(unittest.TestCase):
         order = {"price": 1595.9, "volume_remain": 10, "is_buy_order": False}
         window_rect = {"left": 0, "top": 0, "width": 400, "height": 200}
         screenshot = self._np.zeros((200, 400, 3), dtype="uint8")
+        ocr_values = iter(["1595.90", "10"])
 
         with patch("core.eve_market_visual_detector._PIL_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._NUMPY_AVAILABLE", True), \
              patch("core.eve_market_visual_detector._PYTESSERACT_AVAILABLE", True), \
              patch.object(det, "_find_blue_row_bands", return_value=[(10, 25)]), \
-             patch.object(det, "_ocr_region", return_value="1595.90"), \
+             patch.object(det, "_ocr_region", side_effect=lambda a: next(ocr_values)), \
              patch.object(det, "_detect_own_order_marker", return_value=False):
             result = det.detect_own_order_row(screenshot, order, window_rect)
         self.assertEqual(result["status"], "unique_match")
