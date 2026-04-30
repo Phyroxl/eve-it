@@ -19,5 +19,9 @@
   "clear_price_field_before_paste": true,
   "paste_method": "ctrl+v",
   "pre_paste_delay_ms": 300,
-  "never_confirm_final_order": true
+  "never_confirm_final_order": true,
+  "modify_order_step_enabled": true,
+  "modify_order_strategy": "visual_ocr",
+  "visual_ocr_enabled": true,
+  "visual_ocr_allow_unverified_paste": true
 }
