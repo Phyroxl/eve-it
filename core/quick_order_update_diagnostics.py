@@ -247,9 +247,15 @@ def _format_automation_section(automation: dict) -> list:
     m_reg_enabled = m_reg_cfg.get("visual_ocr_manual_region_enabled", "N/A")
     lines.append(f"  Manual Region Enabled: {_b(m_reg_enabled)}")
     
+    # Saved profile status
+    s_sell = m_reg_cfg.get("saved_regions_sell", False)
+    s_buy = m_reg_cfg.get("saved_regions_buy", False)
+    lines.append(f"  Saved Regions Profile: SELL={_b(s_sell)} BUY={_b(s_buy)}")
+
     dbg = automation.get("visual_ocr_debug") or {}
     m_used = dbg.get("manual_region_used", False)
-    lines.append(f"  Manual Region Used   : {_b(m_used)}")
+    m_src  = "selected_now" if automation.get("manual_region_selected_now") else "saved_profile"
+    lines.append(f"  Manual Region Used   : {_b(m_used)} ({m_src if m_used else 'N/A'})")
     if m_used:
         lines.append(f"  Manual Region Ratios : {dbg.get('manual_region_ratios')}")
         if "manual_qty_col_ratios" in dbg:

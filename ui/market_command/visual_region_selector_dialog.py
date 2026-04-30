@@ -1,6 +1,6 @@
 """
 Dialog to manually select screen regions and columns for Visual OCR.
-Supports multi-step calibration (Region -> Quantity Column -> Price Column).
+Supports multi-step calibration (Single Side or Full SELL+BUY).
 """
 import logging
 from typing import Optional, Tuple, Dict, List
@@ -19,8 +19,10 @@ class VisualRegionSelectorDialog(QDialog):
     Returns a dict mapping step_id to (x0, y0, x1, y1) in pixel coordinates.
     """
     
-    def __init__(self, screenshot: QImage, parent=None):
+    def __init__(self, screenshot: QImage, mode: str = "single_side", side: str = "sell", parent=None):
         super().__init__(parent)
+        self.mode = mode
+        self.side = side
         self.setWindowTitle("CALIBRACIÓN VISUAL MANUAL")
         self.setMinimumSize(1100, 800)
         self.setStyleSheet("background-color:#0f172a; color:#f1f5f9;")
@@ -29,11 +31,23 @@ class VisualRegionSelectorDialog(QDialog):
         self.pixmap = QPixmap.fromImage(screenshot)
         
         # Steps definition
-        self.steps = [
-            {"id": "region", "label": "PASO 1/3: SELECCIONA LA REGIÓN DE LAS FILAS (ÁREA TOTAL DE ÓRDENES)"},
-            {"id": "quantity", "label": "PASO 2/3: SELECCIONA EL ANCHO DE LA COLUMNA 'CANTIDAD'"},
-            {"id": "price", "label": "PASO 3/3: SELECCIONA EL ANCHO DE LA COLUMNA 'PRECIO'"}
-        ]
+        if self.mode == "sell_buy_full":
+            self.steps = [
+                {"id": "sell_region", "label": "PASO 1/6: SELECCIONA REGIÓN DE ÓRDENES SELL (Vendedores)"},
+                {"id": "sell_quantity", "label": "PASO 2/6: SELECCIONA ANCHO COLUMNA 'CANTIDAD' (SELL)"},
+                {"id": "sell_price", "label": "PASO 3/6: SELECCIONA ANCHO COLUMNA 'PRECIO' (SELL)"},
+                {"id": "buy_region", "label": "PASO 4/6: SELECCIONA REGIÓN DE ÓRDENES BUY (Compradores)"},
+                {"id": "buy_quantity", "label": "PASO 5/6: SELECCIONA ANCHO COLUMNA 'CANTIDAD' (BUY)"},
+                {"id": "buy_price", "label": "PASO 6/6: SELECCIONA ANCHO COLUMNA 'PRECIO' (BUY)"},
+            ]
+        else:
+            s = side.upper()
+            self.steps = [
+                {"id": "region", "label": f"PASO 1/3: SELECCIONA REGIÓN DE ÓRDENES {s}"},
+                {"id": "quantity", "label": f"PASO 2/3: SELECCIONA ANCHO COLUMNA 'CANTIDAD' ({s})"},
+                {"id": "price", "label": f"PASO 3/3: SELECCIONA ANCHO COLUMNA 'PRECIO' ({s})"}
+            ]
+            
         self.current_step_idx = 0
         self.results: Dict[str, Tuple[int, int, int, int]] = {}
         

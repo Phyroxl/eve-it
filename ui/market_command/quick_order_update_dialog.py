@@ -166,6 +166,11 @@ class QuickOrderUpdateDialog(QDialog):
         self.btn_detect_windows.clicked.connect(self._on_detect_windows)
         row.addWidget(self.btn_detect_windows)
 
+        self.btn_full_calibrate = QPushButton("CALIBRAR SELL+BUY")
+        self.btn_full_calibrate.setStyleSheet(self._BTN)
+        self.btn_full_calibrate.clicked.connect(self._on_full_calibrate)
+        row.addWidget(self.btn_full_calibrate)
+
         fl.addLayout(row)
 
         self._window_status_lbl = QLabel(
@@ -563,50 +568,21 @@ class QuickOrderUpdateDialog(QDialog):
                         pil_img.save(buffer, format="PNG")
                         qimg = QImage.fromData(buffer.getvalue())
                         
-                        selector = VisualRegionSelectorDialog(qimg, self)
+                        selector = VisualRegionSelectorDialog(qimg, mode="single_side", side=side, parent=self)
                         if selector.exec() == QDialog.Accepted:
-                            results = selector.get_results() # dict of step_id -> (x0, y0, x1, y1)
+                            results = selector.get_results()
+                            manual_region = self._build_calibration_from_results(results, pil_img.size, prefix="")
                             
-                            reg_coords = results.get("region")
-                            if reg_coords:
-                                rx0, ry0, rx1, ry1 = reg_coords
-                                sw, sh = pil_img.size
-                                rw = rx1 - rx0
-                                rh = ry1 - ry0
-                                
-                                manual_region = {
-                                    "region": {
-                                        "x_min_ratio": rx0 / sw,
-                                        "y_min_ratio": ry0 / sh,
-                                        "x_max_ratio": rx1 / sw,
-                                        "y_max_ratio": ry1 / sh
-                                    },
-                                    "quantity_column": None,
-                                    "price_column": None
-                                }
-                                
-                                # Column ratios are relative to the region width
-                                q_coords = results.get("quantity")
-                                if q_coords and rw > 0:
-                                    qx0, _, qx1, _ = q_coords
-                                    manual_region["quantity_column"] = {
-                                        "x_min_ratio": (qx0 - rx0) / rw,
-                                        "x_max_ratio": (qx1 - rx0) / rw
-                                    }
-                                    
-                                p_coords = results.get("price")
-                                if p_coords and rw > 0:
-                                    px0, _, px1, _ = p_coords
-                                    manual_region["price_column"] = {
-                                        "x_min_ratio": (px0 - rx0) / rw,
-                                        "x_max_ratio": (px1 - rx0) / rw
-                                    }
-
+                            if manual_region:
                                 _log.info(f"[QUICK UPDATE] manual visual OCR calibration selected: {manual_region}")
                                 if cfg.get("visual_ocr_manual_region_save_profile", True):
                                     regions[side] = manual_region
                                     save_quick_order_update_regions(regions)
                                     _log.info(f"[QUICK UPDATE] saved manual calibration for {side}")
+                                
+                                # Tag result as selected now for diagnostics
+                                automation_kwargs["manual_region"] = manual_region
+                                result_metadata["manual_region_selected_now"] = True
                         else:
                             # User cancelled selection
                             _log.info("[QUICK UPDATE] manual visual OCR region selection cancelled by user")
@@ -652,12 +628,14 @@ class QuickOrderUpdateDialog(QDialog):
         result["candidate_windows"]       = self._window_candidates[:8]
         
         # Phase 3E: Ensure config is in result for diagnostics
-        if "config" not in result:
-            result["config"] = {
-                "visual_ocr_manual_region_enabled":          cfg.get("visual_ocr_manual_region_enabled", True),
-                "visual_ocr_manual_region_prompt_each_time": cfg.get("visual_ocr_manual_region_prompt_each_time", True),
-                "visual_ocr_manual_region_save_profile":     cfg.get("visual_ocr_manual_region_save_profile", True),
-            }
+        regions = load_quick_order_update_regions()
+        result["config"] = {
+            "visual_ocr_manual_region_enabled":          cfg.get("visual_ocr_manual_region_enabled", True),
+            "visual_ocr_manual_region_prompt_each_time": cfg.get("visual_ocr_manual_region_prompt_each_time", True),
+            "visual_ocr_manual_region_save_profile":     cfg.get("visual_ocr_manual_region_save_profile", True),
+            "saved_regions_sell":                        bool(regions.get("sell")),
+            "saved_regions_buy":                         bool(regions.get("buy")),
+        }
 
         self._update_automation_report(result)
 
@@ -715,3 +693,102 @@ class QuickOrderUpdateDialog(QDialog):
             if "[AUTOMATION]" not in self._diag_report:
                 self._diag_report += f"\n\n[AUTOMATION]\n  Status: error\n  Error: formatting_failed {exc}"
                 self._report_edit.setPlainText(self._diag_report)
+
+    def _on_full_calibrate(self):
+        """Perform a 6-step calibration for both SELL and BUY sides."""
+        cfg = self._automation_cfg
+        selected = self._selected_window()
+        if not selected:
+            self._on_detect_windows()
+            selected = self._selected_window()
+            if not selected:
+                self._status_lbl.setText("Selecciona una ventana primero")
+                return
+
+        self._status_lbl.setText("Iniciando calibración completa SELL + BUY...")
+        self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
+        QGuiApplication.processEvents()
+
+        try:
+            from core.window_automation import EVEWindowAutomation
+            auto_tmp = EVEWindowAutomation(cfg)
+            handle = selected["handle"]
+            rect = auto_tmp._get_window_rect(handle)
+            pil_img = auto_tmp._capture_window_screenshot(rect, {"steps_executed":[]}, [])
+            if not pil_img:
+                self._status_lbl.setText("Error al capturar pantalla para calibración")
+                return
+
+            from PySide6.QtGui import QImage
+            import io
+            buffer = io.BytesIO()
+            pil_img.save(buffer, format="PNG")
+            qimg = QImage.fromData(buffer.getvalue())
+
+            selector = VisualRegionSelectorDialog(qimg, mode="sell_buy_full", parent=self)
+            if selector.exec() == QDialog.Accepted:
+                results = selector.get_results()
+                regions = load_quick_order_update_regions()
+                
+                sell_calib = self._build_calibration_from_results(results, pil_img.size, prefix="sell_")
+                buy_calib  = self._build_calibration_from_results(results, pil_img.size, prefix="buy_")
+                
+                if sell_calib: regions["sell"] = sell_calib
+                if buy_calib:  regions["buy"]  = buy_calib
+                
+                save_quick_order_update_regions(regions)
+                _log.info("[QUICK UPDATE] full SELL+BUY calibration saved")
+                self._status_lbl.setText("Calibración SELL + BUY guardada")
+                self._status_lbl.setStyleSheet("color:#10b981; font-size:9px; font-weight:800;")
+            else:
+                self._status_lbl.setText("Calibración cancelada")
+                self._status_lbl.setStyleSheet("color:#64748b; font-size:9px; font-weight:800;")
+
+        except Exception as exc:
+            _log.error(f"[QUICK UPDATE] full calibration error: {exc}")
+            self._status_lbl.setText(f"Error: {exc}")
+            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+
+    def _build_calibration_from_results(self, results: dict, image_size: tuple, prefix: str = "") -> Optional[dict]:
+        """Helper to convert pixel coordinates from selector to ratio dict."""
+        sw, sh = image_size
+        reg_id = f"{prefix}region" if f"{prefix}region" in results else "region"
+        qty_id = f"{prefix}quantity" if f"{prefix}quantity" in results else "quantity"
+        prc_id = f"{prefix}price" if f"{prefix}price" in results else "price"
+        
+        reg_coords = results.get(reg_id)
+        if not reg_coords:
+            return None
+            
+        rx0, ry0, rx1, ry1 = reg_coords
+        rw = rx1 - rx0
+        if rw <= 0: return None
+        
+        calib = {
+            "region": {
+                "x_min_ratio": rx0 / sw,
+                "y_min_ratio": ry0 / sh,
+                "x_max_ratio": rx1 / sw,
+                "y_max_ratio": ry1 / sh
+            },
+            "quantity_column": None,
+            "price_column": None
+        }
+        
+        q_coords = results.get(qty_id)
+        if q_coords:
+            qx0, _, qx1, _ = q_coords
+            calib["quantity_column"] = {
+                "x_min_ratio": (qx0 - rx0) / rw,
+                "x_max_ratio": (qx1 - rx0) / rw
+            }
+            
+        p_coords = results.get(prc_id)
+        if p_coords:
+            px0, _, px1, _ = p_coords
+            calib["price_column"] = {
+                "x_min_ratio": (px0 - rx0) / rw,
+                "x_max_ratio": (px1 - rx0) / rw
+            }
+            
+        return calib
