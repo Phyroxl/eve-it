@@ -512,6 +512,7 @@ class QuickOrderUpdateDialog(QDialog):
         self._status_lbl.setText("Ejecutando automatización experimental...")
         self._status_lbl.setStyleSheet("color:#3b82f6; font-size:9px; font-weight:800;")
 
+        result = None
         try:
             from core.window_automation import EVEWindowAutomation
             auto   = EVEWindowAutomation(cfg)
@@ -519,11 +520,15 @@ class QuickOrderUpdateDialog(QDialog):
                 order_data, price_text, selected_window=selected
             )
         except Exception as exc:
-            _log.error(f"[QUICK UPDATE] automation error: {exc}")
-            self._status_lbl.setText(f"Error en automatización: {exc}")
-            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
-            return
-
+            _log.error(f"[QUICK UPDATE] automation crash: {exc}")
+            # Create a minimal error result to allow report generation
+            result = {
+                "status": "error",
+                "errors": [f"Crash en automatización: {exc}"],
+                "steps_executed": [],
+                "steps_skipped": ["automation_crashed"],
+            }
+        
         # Inject candidate list metadata into result for diagnostics
         result["candidate_windows_count"] = len(self._window_candidates)
         result["candidate_windows"]       = self._window_candidates[:8]
@@ -541,6 +546,10 @@ class QuickOrderUpdateDialog(QDialog):
             self._report_edit.setPlainText(updated_report)
         except Exception as exc:
             _log.warning(f"[QUICK UPDATE] could not update diag report: {exc}")
+            # Fallback: if even formatting fails, just append raw error to report if possible
+            if "[AUTOMATION]" not in self._diag_report:
+                self._diag_report += f"\n\n[AUTOMATION]\n  Status: error\n  Error: formatting_failed {exc}"
+                self._report_edit.setPlainText(self._diag_report)
 
         status  = result.get("status", "unknown")
         errors  = result.get("errors", [])

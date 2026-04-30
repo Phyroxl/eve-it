@@ -323,6 +323,9 @@ class EveMarketVisualDetector:
         section_y_max = max(section_y_min + 1, min(int(h * y_max_ratio), h))
 
         result["debug"]["section_used"]  = section_name
+        result["visual_ocr_section_y_min"] = section_y_min
+        result["visual_ocr_section_y_max"] = section_y_max
+        result["visual_ocr_min_order_y"]   = section_y_min + self.min_order_row_y_offset
         result["debug"]["section_y_min"] = section_y_min
         result["debug"]["section_y_max"] = section_y_max
         result["matched_side_section"]   = True

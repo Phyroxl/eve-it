@@ -178,22 +178,23 @@ def format_automation_section(automation: dict) -> str:
 
 def replace_or_append_automation_section(report: str, automation_section: str) -> str:
     """
-    Ensure [AUTOMATION] appears exactly once in a diagnostic report.
-
-    If `report` already contains '[AUTOMATION]', that block (from the marker to
-    end-of-string) is replaced with `automation_section`.
-    If it does not, `automation_section` is appended.
-
-    This prevents the double-section problem that occurs when:
-      1. format_quick_update_report() includes [AUTOMATION] because data["automation"] is set, AND
-      2. _on_automate() in the dialog appends format_automation_section() on top.
+    Ensure [AUTOMATION] appears exactly once in a diagnostic report, 
+    preserving any sections that might follow it.
     """
     marker = "[AUTOMATION]"
     if marker in report:
-        # Keep everything before the first occurrence of the marker
-        head = report[: report.index(marker)].rstrip()
-        return head + "\n\n" + automation_section
-    return report + "\n\n" + automation_section
+        start_idx = report.index(marker)
+        # Look for the next section marker '[' after the start of this section
+        next_section_idx = report.find("[", start_idx + len(marker))
+        
+        head = report[:start_idx].rstrip()
+        tail = ""
+        if next_section_idx != -1:
+            tail = "\n\n" + report[next_section_idx:].lstrip()
+            
+        return head + "\n\n" + automation_section + tail
+        
+    return report.rstrip() + "\n\n" + automation_section
 
 
 def _format_automation_section(automation: dict) -> list:
@@ -249,12 +250,9 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Rej Offset: {len(dbg.get('rejected_bands_by_offset') or [])}")
     lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
     
-    min_order_y = "N/A"
-    sec_y_min = automation.get('visual_ocr_section_y_min')
-    if sec_y_min is not None:
-        cfg = data.get("config") or {}
-        offset = cfg.get("visual_ocr_min_order_row_y_offset_from_section", 45)
-        min_order_y = sec_y_min + offset
+    # We used to calculate min_order_y here using 'data', but it's cleaner 
+    # to have the detector provide it or just show N/A if missing.
+    min_order_y = automation.get('visual_ocr_min_order_y', 'N/A')
     lines.append(f"  Visual OCR Min Ord Y : {min_order_y}")
 
     lines.append(f"  Visual OCR Panel X   : {dbg.get('market_panel_x_min', 'N/A')} to {dbg.get('market_panel_x_max', 'N/A')}")
