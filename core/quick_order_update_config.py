@@ -37,6 +37,11 @@ _DEFAULT_CONFIG: dict = {
     "modify_order_delay_ms":                    800,
     "require_modify_dialog_ready":              False,
     "paste_without_modify_dialog_verification": True,
+    # Phase 3B: hotkey_experimental parameters (unconfigured and inactive by default)
+    "modify_order_hotkey":                      "",
+    "modify_order_verify_window_title_contains": "Modify Order",
+    "modify_order_post_hotkey_delay_ms":        500,
+    "allow_unverified_modify_order_paste":      False,
 }
 
 _DELAY_KEYS = (
@@ -46,6 +51,7 @@ _DELAY_KEYS = (
     "post_action_delay_ms",
     "pre_paste_delay_ms",
     "modify_order_delay_ms",
+    "modify_order_post_hotkey_delay_ms",
 )
 _MAX_DELAY_MS = 30_000
 
@@ -112,7 +118,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
     for key in ("experimental_paste_enabled", "paste_into_focused_window",
                 "clear_price_field_before_paste",
                 "modify_order_step_enabled", "require_modify_dialog_ready",
-                "paste_without_modify_dialog_verification"):
+                "paste_without_modify_dialog_verification",
+                "allow_unverified_modify_order_paste"):
         if key in config:
             result[key] = bool(config[key])
 
@@ -134,6 +141,16 @@ def validate_quick_order_update_config(config: dict) -> dict:
             result["modify_order_strategy"] = val
         else:
             result["modify_order_strategy"] = "manual_focus_guard"
+
+    # modify_order_hotkey: any string is valid (empty string = not configured)
+    if "modify_order_hotkey" in config:
+        result["modify_order_hotkey"] = str(config["modify_order_hotkey"])
+
+    # modify_order_verify_window_title_contains: must be non-empty
+    if "modify_order_verify_window_title_contains" in config:
+        val = config["modify_order_verify_window_title_contains"]
+        if isinstance(val, str) and val.strip():
+            result["modify_order_verify_window_title_contains"] = val.strip()
 
     for key in _DELAY_KEYS:
         if key in config:

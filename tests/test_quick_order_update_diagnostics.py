@@ -50,6 +50,9 @@ def _base_automation(**overrides) -> dict:
         "require_modify_dialog_ready":             False,
         "paste_without_modify_dialog_verification": True,
         "modify_order_warning":                    None,
+        # Phase 3B fields
+        "modify_order_hotkey_configured":          False,
+        "allow_unverified_modify_order_paste":     False,
     }
     base.update(overrides)
     return base
@@ -130,6 +133,42 @@ class TestAutomationSectionRendering(unittest.TestCase):
                 "Final Confirm Action : NOT_EXECUTED_BY_DESIGN", section,
                 f"missing safety line for strategy={strategy}",
             )
+
+    def test_modify_hotkey_configured_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Modify Hotkey Config", section)
+
+    def test_require_dialog_ready_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Require Dialog Ready", section)
+
+    def test_allow_unverified_paste_shown(self):
+        section = format_automation_section(_base_automation())
+        self.assertIn("Allow Unverified Paste", section)
+
+    def test_modify_hotkey_configured_set_label(self):
+        section = format_automation_section(_base_automation(modify_order_hotkey_configured=True))
+        lines = section.split("\n")
+        hotkey_lines = [l for l in lines if "Modify Hotkey Config" in l]
+        self.assertTrue(hotkey_lines)
+        self.assertIn("set", hotkey_lines[0])
+
+    def test_modify_hotkey_configured_empty_label(self):
+        section = format_automation_section(_base_automation(modify_order_hotkey_configured=False))
+        lines = section.split("\n")
+        hotkey_lines = [l for l in lines if "Modify Hotkey Config" in l]
+        self.assertTrue(hotkey_lines)
+        self.assertIn("empty", hotkey_lines[0])
+
+    def test_modify_order_warning_shown_when_set(self):
+        section = format_automation_section(
+            _base_automation(modify_order_warning="test warning message")
+        )
+        self.assertIn("test warning message", section)
+
+    def test_modify_order_warning_absent_when_none(self):
+        section = format_automation_section(_base_automation(modify_order_warning=None))
+        self.assertNotIn("Modify Order Warning", section)
 
 
 if __name__ == "__main__":

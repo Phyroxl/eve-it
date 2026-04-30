@@ -161,6 +161,11 @@ class EVEWindowAutomation:
         self.modify_order_delay          = int(config.get("modify_order_delay_ms",                     800))
         self.require_modify_dialog_ready = bool(config.get("require_modify_dialog_ready",              False))
         self.paste_without_modify_verify = bool(config.get("paste_without_modify_dialog_verification", True))
+        # Phase 3B: hotkey_experimental parameters
+        self.modify_order_hotkey           = str(config.get("modify_order_hotkey",                      ""))
+        self.modify_verify_title           = str(config.get("modify_order_verify_window_title_contains", "Modify Order"))
+        self.modify_post_hotkey_delay      = int(config.get("modify_order_post_hotkey_delay_ms",         500))
+        self.allow_unverified_modify_paste = bool(config.get("allow_unverified_modify_order_paste",      False))
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -194,6 +199,8 @@ class EVEWindowAutomation:
         result["modify_order_strategy"]                   = self.modify_order_strategy
         result["require_modify_dialog_ready"]             = self.require_modify_dialog_ready
         result["paste_without_modify_dialog_verification"] = self.paste_without_modify_verify
+        result["modify_order_hotkey_configured"]          = bool(self.modify_order_hotkey)
+        result["allow_unverified_modify_order_paste"]     = self.allow_unverified_modify_paste
 
         if not self.enabled:
             result["status"] = "disabled"
@@ -437,32 +444,134 @@ class EVEWindowAutomation:
                 "user must manually open Modify Order before automating"
             )
             _log.info("[AUTOMATION] modify_order: manual_focus_guard — dialog not verified")
+            self._safe_sleep(self.modify_order_delay, "modify_order_delay", result, errors)
+            # Paste blocking for manual_focus_guard
+            if self.require_modify_dialog_ready:
+                result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
+                result["_paste_blocked_modify_dialog"] = True
+                _log.warning("[AUTOMATION] paste blocked — require_modify_dialog_ready=true")
+            elif not self.paste_without_modify_verify:
+                result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
+                result["_paste_blocked_modify_dialog"] = True
+                _log.warning("[AUTOMATION] paste blocked — paste_without_modify_dialog_verification=false")
+
+        elif self.modify_order_strategy == "hotkey_experimental":
+            # Phase 3B: delegates to dedicated method (handles own sleep + paste blocking)
+            self._run_hotkey_experimental(result, errors)
+
         else:
             result["steps_executed"].append(
                 f"modify_order_prepare_attempted_unknown_strategy: {self.modify_order_strategy}"
             )
             result["modify_order_dialog_verified"] = False
             result["modify_order_warning"] = (
-                f"unknown strategy '{self.modify_order_strategy}' — dialog not verified"
+                f"unknown strategy '{self.modify_order_strategy}' — dialog not verified, paste blocked"
             )
-
-        self._safe_sleep(self.modify_order_delay, "modify_order_delay", result, errors)
-
-        # Determine paste blocking
-        if self.require_modify_dialog_ready and not result["modify_order_dialog_verified"]:
             result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
             result["_paste_blocked_modify_dialog"] = True
-            _log.warning(
-                "[AUTOMATION] paste blocked — "
-                "require_modify_dialog_ready=true and dialog not verified"
+
+    def _run_hotkey_experimental(self, result: dict, errors: list) -> None:
+        """
+        Phase 3B — send a configurable hotkey to open Modify Order, then
+        attempt to verify the dialog appeared by window-title search.
+
+        NOTE: EVE Online renders its UI internally; the Modify Order interface
+        is drawn inside the game window, NOT as a native OS dialog.  The
+        window-title verification will almost always return False in practice.
+        Users must configure the correct hotkey in their EVE client settings
+        and set modify_order_hotkey in quick_order_update.json accordingly.
+        This strategy is unconfigured (modify_order_hotkey="") by default.
+        NEVER confirms the final order modification.
+        """
+        if not _PYWINAUTO_AVAILABLE:
+            errors.append("pywinauto not available — hotkey_experimental requires pywinauto")
+            result["modify_order_dialog_verified"] = False
+            result["modify_order_warning"] = "hotkey_experimental requires pywinauto (not installed)"
+            self._apply_hotkey_paste_blocking(result)
+            return
+
+        if not self.modify_order_hotkey:
+            result["steps_skipped"].append("modify_order_hotkey_missing")
+            result["modify_order_dialog_verified"] = False
+            result["modify_order_warning"] = (
+                "hotkey_experimental: modify_order_hotkey is empty — "
+                "set it in config/quick_order_update.json to the EVE hotkey for Modify Order"
             )
-        elif not self.paste_without_modify_verify and not result["modify_order_dialog_verified"]:
+            _log.warning("[AUTOMATION] hotkey_experimental: hotkey is empty — skipping")
+            self._apply_hotkey_paste_blocking(result)
+            return
+
+        # Send the hotkey to the currently-focused EVE window
+        try:
+            from pywinauto import keyboard
+            keyboard.send_keys(self.modify_order_hotkey)
+            result["steps_executed"].append("sent_modify_order_hotkey")
+            _log.info(f"[AUTOMATION] hotkey_experimental: sent hotkey={self.modify_order_hotkey!r}")
+        except Exception as exc:
+            errors.append(f"modify_order_hotkey_send_error: {exc}")
+            result["modify_order_dialog_verified"] = False
+            result["modify_order_warning"] = f"hotkey_experimental: hotkey send failed: {exc}"
+            self._apply_hotkey_paste_blocking(result)
+            return
+
+        # Wait for the dialog to potentially appear
+        self._safe_sleep(
+            self.modify_post_hotkey_delay, "modify_order_post_hotkey_delay", result, errors
+        )
+
+        # Attempt to verify the dialog via OS window title search
+        result["steps_executed"].append("modify_order_dialog_verification_attempted")
+        verified = self._verify_modify_order_dialog(result, errors)
+        result["modify_order_dialog_verified"] = verified
+
+        if verified:
+            result["steps_executed"].append("modify_order_dialog_verified")
+            result["modify_order_warning"] = None
+            _log.info("[AUTOMATION] hotkey_experimental: modify order dialog verified")
+        else:
+            result["steps_skipped"].append("modify_order_dialog_not_verified")
+            result["modify_order_warning"] = (
+                f"hotkey_experimental: no OS window found with title containing "
+                f"'{self.modify_verify_title}' — EVE renders Modify Order in-game, "
+                f"not as a native OS dialog"
+            )
+            _log.warning("[AUTOMATION] hotkey_experimental: dialog not verified")
+            self._apply_hotkey_paste_blocking(result)
+
+    def _verify_modify_order_dialog(self, result: dict, errors: list) -> bool:
+        """
+        Attempt to detect a window whose title contains
+        modify_order_verify_window_title_contains.
+
+        Caveat: EVE Online's Modify Order interface is rendered inside the game
+        window and does NOT create a separate OS-level window.  This check will
+        return False in virtually all real-world cases; it exists for completeness
+        and for any future native-dialog scenario.
+        """
+        if not _PYWINAUTO_AVAILABLE:
+            result["steps_skipped"].append("modify_dialog_verify_skipped_no_pywinauto")
+            return False
+        try:
+            from pywinauto import findwindows
+            handles = findwindows.find_windows(title_re=f".*{self.modify_verify_title}.*")
+            return bool(handles)
+        except Exception as exc:
+            errors.append(f"modify_dialog_verify_error: {exc}")
+            return False
+
+    def _apply_hotkey_paste_blocking(self, result: dict) -> None:
+        """
+        Decide whether to block paste for the hotkey_experimental strategy.
+        Blocks if require_modify_dialog_ready=True or allow_unverified_modify_order_paste=False.
+        """
+        if self.require_modify_dialog_ready and not result.get("modify_order_dialog_verified"):
             result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
             result["_paste_blocked_modify_dialog"] = True
-            _log.warning(
-                "[AUTOMATION] paste blocked — "
-                "paste_without_modify_dialog_verification=false and dialog not verified"
-            )
+            _log.warning("[AUTOMATION] paste blocked — require_modify_dialog_ready=true")
+        elif not self.allow_unverified_modify_paste and not result.get("modify_order_dialog_verified"):
+            result["steps_skipped"].append("paste_skipped_modify_dialog_not_verified")
+            result["_paste_blocked_modify_dialog"] = True
+            _log.warning("[AUTOMATION] paste blocked — allow_unverified_modify_order_paste=false")
 
     def _handle_experimental_paste(self, result: dict, price_text: str, errors: list) -> None:
         if not self.exp_paste_enabled:
@@ -539,4 +648,7 @@ class EVEWindowAutomation:
             "require_modify_dialog_ready":             False,
             "paste_without_modify_dialog_verification": True,
             "modify_order_warning":                    None,
+            # Phase 3B: hotkey_experimental
+            "modify_order_hotkey_configured":          False,
+            "allow_unverified_modify_order_paste":     False,
         }

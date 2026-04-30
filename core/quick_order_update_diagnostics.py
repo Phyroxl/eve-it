@@ -222,8 +222,14 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Price Pasted         : {_b(automation.get('price_pasted'))}")
     lines.append(f"  Modify Order Step    : {_b(automation.get('modify_order_step_enabled'))}")
     lines.append(f"  Modify Order Strategy: {_b(automation.get('modify_order_strategy'))}")
-    lines.append(f"  Modify Dialog Verified: {_b(automation.get('modify_order_dialog_verified'))}")
     lines.append(f"  Paste Without Verify : {_b(automation.get('paste_without_modify_dialog_verification'))}")
+    lines.append(f"  Modify Hotkey Config : {'set' if automation.get('modify_order_hotkey_configured') else 'empty'}")
+    lines.append(f"  Modify Dialog Verified: {_b(automation.get('modify_order_dialog_verified'))}")
+    lines.append(f"  Require Dialog Ready : {_b(automation.get('require_modify_dialog_ready'))}")
+    lines.append(f"  Allow Unverified Paste: {_b(automation.get('allow_unverified_modify_order_paste'))}")
+    modify_warn = automation.get("modify_order_warning")
+    if modify_warn:
+        lines.append(f"  Modify Order Warning : {modify_warn}")
     lines.append(f"  Never Confirm Order  : {_b(automation.get('never_confirm_final_order'))}")
     lines.append(f"  Candidate Win Count  : {_b(automation.get('candidate_windows_count'))}")
     cands = automation.get("candidate_windows") or []

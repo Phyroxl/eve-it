@@ -258,6 +258,38 @@ class TestModifyOrderDefaults(unittest.TestCase):
         for key in _DEFAULT_CONFIG:
             self.assertIn(key, cfg, f"key '{key}' missing from validated config")
 
+    def test_modify_order_hotkey_default_empty(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["modify_order_hotkey"], "")
+
+    def test_modify_order_verify_title_default(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["modify_order_verify_window_title_contains"], "Modify Order")
+
+    def test_modify_order_post_hotkey_delay_default_500(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertEqual(cfg["modify_order_post_hotkey_delay_ms"], 500)
+
+    def test_allow_unverified_modify_order_paste_default_false(self):
+        cfg = validate_quick_order_update_config({})
+        self.assertFalse(cfg["allow_unverified_modify_order_paste"])
+
+    def test_modify_order_hotkey_any_string_accepted(self):
+        cfg = validate_quick_order_update_config({"modify_order_hotkey": "^e"})
+        self.assertEqual(cfg["modify_order_hotkey"], "^e")
+
+    def test_modify_order_verify_title_empty_keeps_default(self):
+        cfg = validate_quick_order_update_config(
+            {"modify_order_verify_window_title_contains": "   "}
+        )
+        self.assertEqual(cfg["modify_order_verify_window_title_contains"], "Modify Order")
+
+    def test_modify_order_post_hotkey_delay_clamping(self):
+        cfg_low = validate_quick_order_update_config({"modify_order_post_hotkey_delay_ms": -100})
+        cfg_high = validate_quick_order_update_config({"modify_order_post_hotkey_delay_ms": 999999})
+        self.assertEqual(cfg_low["modify_order_post_hotkey_delay_ms"], 0)
+        self.assertLessEqual(cfg_high["modify_order_post_hotkey_delay_ms"], _MAX_DELAY_MS)
+
 
 if __name__ == "__main__":
     unittest.main()

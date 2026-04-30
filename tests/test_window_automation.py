@@ -43,6 +43,8 @@ _REQUIRED_KEYS = {
     "modify_order_prepare_attempted", "modify_order_dialog_verified",
     "require_modify_dialog_ready", "paste_without_modify_dialog_verification",
     "modify_order_warning",
+    # Phase 3B: hotkey_experimental
+    "modify_order_hotkey_configured", "allow_unverified_modify_order_paste",
 }
 
 _CFG_DISABLED = {
@@ -593,8 +595,160 @@ class TestModifyOrderPhase(unittest.TestCase):
         for key in ("modify_order_step_enabled", "modify_order_strategy",
                     "modify_order_prepare_attempted", "modify_order_dialog_verified",
                     "require_modify_dialog_ready", "paste_without_modify_dialog_verification",
-                    "modify_order_warning"):
+                    "modify_order_warning", "modify_order_hotkey_configured",
+                    "allow_unverified_modify_order_paste"):
             self.assertIn(key, result, f"Phase 3 key '{key}' missing from result")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3B: hotkey_experimental strategy tests
+# ---------------------------------------------------------------------------
+class TestHotkeyExperimentalStrategy(unittest.TestCase):
+    """Tests for Phase 3B — hotkey_experimental modify-order strategy."""
+
+    _SELECTED = {
+        "handle": 99999, "title": "EVE - Test",
+        "class_name": "EVEWindow", "visible": True,
+        "is_self_app": False, "score": 100,
+    }
+
+    def _cfg(self, **overrides):
+        base = {
+            "enabled": True, "dry_run": False, "use_pywinauto": True,
+            "require_window_selection": False,
+            "allow_title_fallback_without_selection": True,
+            "experimental_paste_enabled": True,
+            "paste_into_focused_window": True,
+            "clear_price_field_before_paste": False,
+            "paste_method": "ctrl+v",
+            "pre_paste_delay_ms": 0,
+            "open_market_delay_ms": 0,
+            "focus_client_delay_ms": 0,
+            "paste_price_delay_ms": 0,
+            "post_action_delay_ms": 0,
+            "modify_order_delay_ms": 0,
+            "modify_order_step_enabled": True,
+            "modify_order_strategy": "hotkey_experimental",
+            "modify_order_hotkey": "",
+            "modify_order_verify_window_title_contains": "Modify Order",
+            "modify_order_post_hotkey_delay_ms": 0,
+            "require_modify_dialog_ready": False,
+            "paste_without_modify_dialog_verification": True,
+            "allow_unverified_modify_order_paste": False,
+            "never_confirm_final_order": True,
+        }
+        base.update(overrides)
+        return base
+
+    def _run(self, cfg, verify_result=False):
+        """Run automation with mocked focus+connect+verify."""
+        mock_win = MagicMock()
+        with patch("core.window_automation._PYWINAUTO_AVAILABLE", True), \
+             patch("core.window_automation.EVEWindowAutomation._connect_by_handle",
+                   return_value=mock_win), \
+             patch("core.window_automation.EVEWindowAutomation._focus_window",
+                   return_value=True), \
+             patch("pywinauto.keyboard.send_keys"), \
+             patch("core.window_automation.EVEWindowAutomation._verify_modify_order_dialog",
+                   return_value=verify_result):
+            auto = EVEWindowAutomation(cfg)
+            return auto.execute_quick_order_update({}, "100", selected_window=self._SELECTED)
+
+    # -- empty hotkey (default unconfigured) ----------------------------------
+
+    def test_empty_hotkey_records_missing(self):
+        result = self._run(self._cfg(modify_order_hotkey=""))
+        self.assertIn("modify_order_hotkey_missing", result["steps_skipped"])
+
+    def test_empty_hotkey_dialog_not_verified(self):
+        result = self._run(self._cfg(modify_order_hotkey=""))
+        self.assertFalse(result["modify_order_dialog_verified"])
+
+    def test_empty_hotkey_no_hotkey_step_in_executed(self):
+        result = self._run(self._cfg(modify_order_hotkey=""))
+        self.assertNotIn("sent_modify_order_hotkey", result["steps_executed"])
+
+    def test_empty_hotkey_blocks_paste_by_default(self):
+        result = self._run(self._cfg(
+            modify_order_hotkey="", allow_unverified_modify_order_paste=False
+        ))
+        self.assertIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+        self.assertFalse(result["price_pasted"])
+
+    # -- hotkey configured, verification fails --------------------------------
+
+    def test_hotkey_sent_when_configured(self):
+        result = self._run(self._cfg(modify_order_hotkey="^e"), verify_result=False)
+        self.assertIn("sent_modify_order_hotkey", result["steps_executed"])
+
+    def test_hotkey_attempts_verification(self):
+        result = self._run(self._cfg(modify_order_hotkey="^e"), verify_result=False)
+        self.assertIn("modify_order_dialog_verification_attempted", result["steps_executed"])
+
+    def test_hotkey_blocks_paste_if_verification_fails(self):
+        result = self._run(self._cfg(
+            modify_order_hotkey="^e", allow_unverified_modify_order_paste=False
+        ), verify_result=False)
+        self.assertIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+        self.assertFalse(result["price_pasted"])
+
+    # -- hotkey configured, verification succeeds (mocked) --------------------
+
+    def test_hotkey_dialog_verified_when_mock_passes(self):
+        result = self._run(self._cfg(modify_order_hotkey="^e"), verify_result=True)
+        self.assertTrue(result["modify_order_dialog_verified"])
+        self.assertIn("modify_order_dialog_verified", result["steps_executed"])
+
+    def test_hotkey_paste_allowed_when_verified(self):
+        result = self._run(self._cfg(
+            modify_order_hotkey="^e", allow_unverified_modify_order_paste=False
+        ), verify_result=True)
+        self.assertNotIn("paste_skipped_modify_dialog_not_verified", result["steps_skipped"])
+        self.assertTrue(result["price_pasted"])
+
+    def test_hotkey_verified_no_confirm(self):
+        result = self._run(self._cfg(
+            modify_order_hotkey="^e", allow_unverified_modify_order_paste=False
+        ), verify_result=True)
+        for step in result["steps_executed"]:
+            self.assertNotIn("confirm", step.lower(),
+                             f"confirm must never be in steps_executed: {step}")
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+
+    # -- manual_focus_guard is unaffected ------------------------------------
+
+    def test_manual_focus_guard_no_hotkey_sent(self):
+        cfg = self._cfg(
+            modify_order_strategy="manual_focus_guard",
+            modify_order_hotkey="^e",
+            paste_without_modify_dialog_verification=True,
+        )
+        result = self._run(cfg)
+        self.assertNotIn("sent_modify_order_hotkey", result["steps_executed"])
+        self.assertIn("modify_order_prepare_attempted_manual_focus_guard",
+                      " ".join(result["steps_executed"]))
+
+    # -- final confirm always absent -----------------------------------------
+
+    def test_final_confirm_never_executed_empty_hotkey(self):
+        result = self._run(self._cfg(modify_order_hotkey=""))
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+        for step in result["steps_executed"]:
+            self.assertNotIn("confirm", step.lower())
+
+    def test_final_confirm_never_executed_with_hotkey_verified(self):
+        result = self._run(self._cfg(modify_order_hotkey="^e"), verify_result=True)
+        self.assertIn("DESIGN", " ".join(result["steps_skipped"]))
+        for step in result["steps_executed"]:
+            self.assertNotIn("confirm", step.lower())
+
+    def test_hotkey_configured_flag_true(self):
+        result = self._run(self._cfg(modify_order_hotkey="^e"))
+        self.assertTrue(result["modify_order_hotkey_configured"])
+
+    def test_hotkey_configured_flag_false_when_empty(self):
+        result = self._run(self._cfg(modify_order_hotkey=""))
+        self.assertFalse(result["modify_order_hotkey_configured"])
 
 
 if __name__ == "__main__":
