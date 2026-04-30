@@ -137,10 +137,28 @@ def format_quick_update_report(data: dict) -> str:
 
     cfg = data.get("config")
     lines.append("")
-    lines.append("[CONFIG]")
+    lines.append("[CONFIG DIAGNOSTICS]")
     if isinstance(cfg, dict):
-        for k, v in cfg.items():
-            lines.append(f"  {k:<18}: {v}")
+        meta = cfg.get("_metadata") or {}
+        lines.append(f"  Config Path         : {meta.get('config_path', 'N/A')}")
+        lines.append(f"  Config Exists       : {meta.get('config_exists', 'N/A')}")
+        lines.append(f"  Fallback Used       : {meta.get('config_fallback_used', 'N/A')}")
+        if meta.get("config_load_error"):
+            lines.append(f"  Load Error          : {meta.get('config_load_error')}")
+        
+        lines.append("")
+        lines.append("[EFFECTIVE CONFIG VALUES]")
+        # Show critical values that affect automation execution
+        critical_keys = [
+            "enabled", "dry_run", "experimental_paste_enabled", 
+            "paste_into_focused_window", "modify_order_step_enabled",
+            "modify_order_strategy", "visual_ocr_enabled",
+            "visual_ocr_paste_after_unverified_modify_click",
+            "never_confirm_final_order"
+        ]
+        for k in critical_keys:
+            if k in cfg:
+                lines.append(f"  {k:<18}: {cfg[k]}")
     else:
         lines.append(f"  {_fmt(cfg)}")
 
@@ -195,6 +213,77 @@ def replace_or_append_automation_section(report: str, automation_section: str) -
         return head + "\n\n" + automation_section + tail
         
     return report.rstrip() + "\n\n" + automation_section
+
+
+def format_config_section(config: dict) -> str:
+    """Format the [CONFIG DIAGNOSTICS] and [EFFECTIVE CONFIG VALUES] sections."""
+    lines = []
+    lines.append("[CONFIG DIAGNOSTICS]")
+    meta = config.get("_metadata") or {}
+    lines.append(f"  Config Path         : {meta.get('config_path', 'N/A')}")
+    lines.append(f"  Config Exists       : {meta.get('config_exists', 'N/A')}")
+    lines.append(f"  Fallback Used       : {meta.get('config_fallback_used', 'N/A')}")
+    if meta.get("config_load_error"):
+        lines.append(f"  Load Error          : {meta.get('config_load_error')}")
+    
+    lines.append("")
+    lines.append("[EFFECTIVE CONFIG VALUES]")
+    critical_keys = [
+        "enabled", "dry_run", "experimental_paste_enabled", 
+        "paste_into_focused_window", "modify_order_step_enabled",
+        "modify_order_strategy", "visual_ocr_enabled",
+        "visual_ocr_paste_after_unverified_modify_click",
+        "never_confirm_final_order"
+    ]
+    for k in critical_keys:
+        if k in config:
+            lines.append(f"  {k:<18}: {config[k]}")
+    
+    return "\n".join(lines)
+
+
+def replace_or_append_config_section(report: str, config_section: str) -> str:
+    """
+    Ensure [CONFIG DIAGNOSTICS] and [EFFECTIVE CONFIG VALUES] are updated in the report.
+    Since they are usually together, we look for [CONFIG DIAGNOSTICS].
+    """
+    marker = "[CONFIG DIAGNOSTICS]"
+    if marker in report:
+        start_idx = report.index(marker)
+        # Look for the next section marker '[' after the start of this section
+        # BUT skip [EFFECTIVE CONFIG VALUES] which is part of our update
+        next_search_start = start_idx + len(marker)
+        next_section_idx = -1
+        
+        current_pos = next_search_start
+        while True:
+            idx = report.find("[", current_pos)
+            if idx == -1: break
+            section_name = report[idx:report.find("]", idx)+1]
+            if section_name not in ["[CONFIG DIAGNOSTICS]", "[EFFECTIVE CONFIG VALUES]"]:
+                next_section_idx = idx
+                break
+            current_pos = idx + 1
+        
+        head = report[:start_idx].rstrip()
+        tail = ""
+        if next_section_idx != -1:
+            tail = "\n\n" + report[next_section_idx:].lstrip()
+            
+        return head + "\n\n" + config_section + tail
+
+    # If [CONFIG] was the old marker, replace it
+    old_marker = "[CONFIG]"
+    if old_marker in report:
+        start_idx = report.index(old_marker)
+        next_section_idx = report.find("[", start_idx + len(old_marker))
+        head = report[:start_idx].rstrip()
+        tail = ""
+        if next_section_idx != -1:
+            tail = "\n\n" + report[next_section_idx:].lstrip()
+        return head + "\n\n" + config_section + tail
+            
+    return report.rstrip() + "\n\n" + config_section
 
 
 def _format_automation_section(automation: dict) -> list:

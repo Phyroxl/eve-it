@@ -570,12 +570,14 @@ class TestAutomationButton(unittest.TestCase):
 
     def test_disabled_config_shows_message_not_automation(self):
         """With enabled=False, click sets status message without running automation."""
-        from PySide6.QtWidgets import QApplication
-        dlg = self._make_dialog(automation_cfg={"enabled": False, "dry_run": True})
-        with patch("core.window_automation.EVEWindowAutomation") as mock_auto:
-            dlg.btn_phase2.click()
-            # Should NOT have created EVEWindowAutomation
-            mock_auto.assert_not_called()
+        cfg = {"enabled": False, "dry_run": True}
+        dlg = self._make_dialog(automation_cfg=cfg)
+        # Patch loader to return disabled config
+        with patch("ui.market_command.quick_order_update_dialog.load_quick_order_update_config", return_value=cfg):
+            with patch("core.window_automation.EVEWindowAutomation") as mock_auto:
+                dlg.btn_phase2.click()
+                # Should NOT have created EVEWindowAutomation
+                mock_auto.assert_not_called()
         status_text = dlg._status_lbl.text()
         self.assertGreater(len(status_text), 0, "status label must be set")
         self.assertIn("desactivad", status_text.lower(),
@@ -584,7 +586,7 @@ class TestAutomationButton(unittest.TestCase):
 
     def test_dry_run_config_executes_automation(self):
         """With enabled=True dry_run=True, click runs automation and updates report exactly once."""
-        dlg = self._make_dialog(automation_cfg={
+        cfg = {
             "enabled": True, "dry_run": True, "confirm_required": True,
             "open_market_delay_ms": 0, "focus_client_delay_ms": 0,
             "paste_price_delay_ms": 0, "post_action_delay_ms": 0,
@@ -594,14 +596,17 @@ class TestAutomationButton(unittest.TestCase):
             "require_window_selection": False,
             "allow_title_fallback_without_selection": True,
             "exclude_self_app_windows": True,
-        })
+        }
+        dlg = self._make_dialog(automation_cfg=cfg)
         
         # Manually set a report that ALREADY has [AUTOMATION] to simulate duplication risk
         dlg._diag_report += "\n\n[AUTOMATION]\n  Enabled              : True\n  Status               : stale"
         dlg._report_edit.setPlainText(dlg._diag_report)
         
         # Must mock selected_window to pass the selection guard
-        with patch.object(QuickOrderUpdateDialog, "_selected_window", return_value={"handle": 123, "score": 100}):
+        # AND mock load_quick_order_update_config to return our test config
+        with patch.object(QuickOrderUpdateDialog, "_selected_window", return_value={"handle": 123, "score": 100}), \
+             patch("ui.market_command.quick_order_update_dialog.load_quick_order_update_config", return_value=cfg):
             dlg.btn_phase2.click()
 
         status_text = dlg._status_lbl.text()

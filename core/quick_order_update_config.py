@@ -94,10 +94,6 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_quantity_suffix_min_digits":     2,
     "visual_ocr_modify_menu_offset_x":           65,
     "visual_ocr_modify_menu_offset_y":           37,
-    "visual_ocr_context_menu_delay_ms":          400,
-    "visual_ocr_modify_dialog_delay_ms":         700,
-    "visual_ocr_right_click_x_offset":           20,
-    "visual_ocr_right_click_y_offset":           0,
     "visual_ocr_right_click_max_attempts":       3,
     "visual_ocr_right_click_retry_delay_ms":     250,
     "visual_ocr_pre_right_click_hover_ms":       150,
@@ -138,6 +134,9 @@ _DELAY_KEYS = (
     "modify_order_post_hotkey_delay_ms",
     "visual_ocr_context_menu_delay_ms",
     "visual_ocr_modify_dialog_delay_ms",
+    "visual_ocr_right_click_retry_delay_ms",
+    "visual_ocr_pre_right_click_hover_ms",
+    "visual_ocr_pre_right_click_left_click_delay_ms",
 )
 _MAX_DELAY_MS = 30_000
 
@@ -171,15 +170,31 @@ def _write_default(path: str) -> None:
 def load_quick_order_update_config() -> dict:
     """Load and validate config. Creates defaults if missing. Tolerates corrupt JSON."""
     path = _config_path()
-    if not os.path.exists(path):
+    metadata = {
+        "config_path": path,
+        "config_exists": os.path.exists(path),
+        "config_fallback_used": False,
+        "config_load_error": None,
+        "config_json_parse_failed": False,
+    }
+
+    if not metadata["config_exists"]:
         _write_default(path)
-        return dict(_DEFAULT_CONFIG)
+        result = dict(_DEFAULT_CONFIG)
+        result["_metadata"] = metadata
+        return result
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return validate_quick_order_update_config(data)
+        result = validate_quick_order_update_config(data)
+        result["_metadata"] = metadata
+        return result
     except (json.JSONDecodeError, ValueError) as exc:
         _log.error(f"[QU CONFIG] corrupt config ({exc}) — renaming to .corrupt and recreating")
+        metadata["config_json_parse_failed"] = True
+        metadata["config_load_error"] = str(exc)
+        metadata["config_fallback_used"] = True
         ts = int(time.time())
         corrupt_path = f"{path}.corrupt.{ts}"
         try:
@@ -187,10 +202,16 @@ def load_quick_order_update_config() -> dict:
         except OSError:
             pass
         _write_default(path)
-        return dict(_DEFAULT_CONFIG)
+        result = dict(_DEFAULT_CONFIG)
+        result["_metadata"] = metadata
+        return result
     except Exception as exc:
         _log.error(f"[QU CONFIG] error reading config: {exc} — using defaults")
-        return dict(_DEFAULT_CONFIG)
+        metadata["config_load_error"] = str(exc)
+        metadata["config_fallback_used"] = True
+        result = dict(_DEFAULT_CONFIG)
+        result["_metadata"] = metadata
+        return result
 
 
 def validate_quick_order_update_config(config: dict) -> dict:
@@ -272,12 +293,30 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_menu_click_x_offset", "visual_ocr_menu_click_y_offset",
                 "visual_ocr_min_row_height", "visual_ocr_max_row_height",
                 "visual_ocr_row_crop_y_padding", "visual_ocr_min_order_row_y_offset_from_section",
-                "visual_ocr_debug_max_crops"):
+                "visual_ocr_debug_max_crops", "visual_ocr_right_click_max_attempts",
+                "visual_ocr_manual_qty_left_padding_px", "visual_ocr_manual_qty_right_padding_px",
+                "visual_ocr_manual_price_left_padding_px", "visual_ocr_manual_price_right_padding_px",
+                "visual_ocr_quantity_suffix_min_digits", "visual_ocr_modify_menu_offset_x",
+                "visual_ocr_modify_menu_offset_y", "visual_ocr_context_menu_verify_region_w",
+                "visual_ocr_context_menu_verify_region_h", "visual_ocr_context_menu_min_changed_pixels"):
         if key in config:
             try:
                 result[key] = int(config[key])
             except (TypeError, ValueError):
                 pass
+
+    for key in ("visual_ocr_price_match_abs_tolerance", "visual_ocr_price_match_rel_tolerance"):
+        if key in config:
+            try:
+                result[key] = float(config[key])
+            except (TypeError, ValueError):
+                pass
+
+    if "visual_ocr_verify_context_menu_open" in config:
+        result["visual_ocr_verify_context_menu_open"] = bool(config["visual_ocr_verify_context_menu_open"])
+
+    if "visual_ocr_pre_right_click_left_click" in config:
+        result["visual_ocr_pre_right_click_left_click"] = bool(config["visual_ocr_pre_right_click_left_click"])
 
     # visual_ocr_menu_click_mode: must be a recognised mode
     if "visual_ocr_menu_click_mode" in config:

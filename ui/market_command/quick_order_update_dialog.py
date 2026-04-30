@@ -74,14 +74,19 @@ class QuickOrderUpdateDialog(QDialog):
         self._active_automation_run_id = None
         self._last_automation_run_id = None
 
-        # Load automation config once at init
+        # Load automation config once at init (will be reloaded before execution)
         try:
             self._automation_cfg = load_quick_order_update_config()
-        except Exception:
+        except Exception as exc:
+            _log.error(f"[QUICK UPDATE] unexpected error loading config at init: {exc}")
             self._automation_cfg = {
                 "enabled": False, "dry_run": True,
                 "require_window_selection": True,
                 "allow_title_fallback_without_selection": False,
+                "_metadata": {
+                    "config_load_error": f"Exception at init: {exc}",
+                    "config_fallback_used": True
+                }
             }
 
         self.setWindowTitle(f"Quick Order Update — {order.item_name}")
@@ -497,6 +502,18 @@ class QuickOrderUpdateDialog(QDialog):
     # Phase 2: automation
     # ------------------------------------------------------------------
     def _on_automate(self):
+        # HARDENING: Reload config before every automation run to pick up latest edits
+        try:
+            self._automation_cfg = load_quick_order_update_config()
+        except Exception as exc:
+            _log.error(f"[QUICK UPDATE] critical failure reloading config: {exc}")
+            # Fallback to safe state to prevent accidental execution with stale/broken config
+            self._automation_cfg["enabled"] = False
+            msg = f"ERROR CRÍTICO AL CARGAR CONFIGURACIÓN:\n{exc}\n\nAutomatización desactivada por seguridad."
+            self._status_lbl.setText("Error de configuración")
+            self._status_lbl.setStyleSheet("color:#ef4444; font-size:9px; font-weight:800;")
+            return
+
         cfg = self._automation_cfg
         if not cfg.get("enabled", False):
             msg = (
@@ -797,20 +814,31 @@ class QuickOrderUpdateDialog(QDialog):
         )
 
     def _update_automation_report(self, result: dict):
-        """Update the report panel with the [AUTOMATION] section from result."""
+        """Update the report panel with the [AUTOMATION] and [CONFIG] sections from result."""
         try:
             from core.quick_order_update_diagnostics import (
                 format_automation_section, replace_or_append_automation_section,
+                format_config_section, replace_or_append_config_section
             )
+            
+            # 1. Update Automation section
             auto_section = format_automation_section(result)
             updated_report = replace_or_append_automation_section(
                 self._diag_report, auto_section
             )
+            
+            # 2. Update Config section (result["config"] contains reloaded cfg)
+            cfg_data = result.get("config")
+            if cfg_data:
+                cfg_section = format_config_section(cfg_data)
+                updated_report = replace_or_append_config_section(
+                    updated_report, cfg_section
+                )
+
             self._diag_report = updated_report
             self._report_edit.setPlainText(updated_report)
         except Exception as exc:
             _log.warning(f"[QUICK UPDATE] could not update diag report: {exc}")
-            # Fallback: if even formatting fails, just append raw error to report if possible
             if "[AUTOMATION]" not in self._diag_report:
                 self._diag_report += f"\n\n[AUTOMATION]\n  Status: error\n  Error: formatting_failed {exc}"
                 self._report_edit.setPlainText(self._diag_report)

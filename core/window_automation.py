@@ -384,13 +384,16 @@ class EVEWindowAutomation:
         result["rejected_windows"] = rejected
         
         # Phase 3E: manual region config for diagnostics
-        result["config"] = {
+        if "config" not in result or not isinstance(result["config"], dict):
+            result["config"] = {}
+        
+        result["config"].update({
             "visual_ocr_manual_region_enabled":          self.visual_ocr_manual_region_enabled,
             "visual_ocr_manual_region_prompt_each_time": self.visual_ocr_manual_region_prompt_each,
             "visual_ocr_manual_region_save_profile":     self.visual_ocr_manual_region_save_profile,
             "visual_ocr_modify_menu_offset_x":           self.visual_ocr_menu_x_offset,
             "visual_ocr_modify_menu_offset_y":           self.visual_ocr_menu_y_offset,
-        }
+        })
 
         if not self.enabled:
             result["status"] = "disabled"
