@@ -29,6 +29,10 @@ class MarketAdvancedView(QWidget):
         self.lbl_status = None
         self.setup_ui()
         
+    def activate_view(self):
+        """Hook para activación de pestaña."""
+        pass
+        
     def setup_ui(self):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(15, 15, 15, 15)

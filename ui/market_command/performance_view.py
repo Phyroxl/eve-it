@@ -165,28 +165,43 @@ class SimpleBarChart(QWidget):
             p.drawText(tip_x + 8, tip_y + 40, f"TOTAL: {format_isk(cum, True)}")
 
 class MarketPerformanceView(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, defer_initial_refresh=False):
         super().__init__(parent)
         from core.config_manager import load_performance_config
         self.config = load_performance_config()
         self._sync_in_progress = False
         self._is_auto_sync = False
         self._image_generation = 0
+        self._initial_refresh_done = False
         self.engine = PerformanceEngine()
         self.icon_service = EveIconService.instance()
         self._purge_fake_char0()
         self.setup_ui()
-        self.discover_characters()
         
         # Setup Auto-Refresh Timer
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(self._on_auto_timer_tick)
         self._next_sync_seconds = 0
         
-        if self.config.auto_refresh_enabled:
-            self.start_auto_refresh()
-            
-        self.refresh_view()
+        if not defer_initial_refresh:
+            self.discover_characters()
+            if self.config.auto_refresh_enabled:
+                self.start_auto_refresh()
+            self.refresh_view()
+        else:
+            self._diag_label.setText("▸ Performance listo — carga diferida")
+
+    def activate_view(self):
+        """Llamado por el contenedor principal cuando esta pestaña se hace visible."""
+        if not self._initial_refresh_done:
+            _log.info("[PERF] Activación inicial de la vista Performance")
+            self.discover_characters()
+            if self.config.auto_refresh_enabled:
+                self.start_auto_refresh()
+            self.refresh_view()
+            self._initial_refresh_done = True
+        else:
+            _log.debug("[PERF] Vista ya estaba activa, saltando refresh automático")
 
     def _purge_fake_char0(self):
         """Elimina datos demo/fallback con character_id=0 que contaminan la vista."""
@@ -646,6 +661,7 @@ class MarketPerformanceView(QWidget):
 
     def refresh_view(self):
         """Entry point público — captura cualquier excepción y la hace visible."""
+        self._initial_refresh_done = True
         try:
             self._do_refresh()
         except Exception as exc:

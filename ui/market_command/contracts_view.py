@@ -56,6 +56,10 @@ class MarketContractsView(QWidget):
         self.setup_ui()
         self._load_config()
 
+    def activate_view(self):
+        """Hook para activación de pestaña."""
+        pass
+
     def setup_ui(self):
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)

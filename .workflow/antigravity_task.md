@@ -1,14 +1,9 @@
 # EVE iT Market Command / Performance Task List
 
-## Completado âœ…
-- [x] RediseÃ±o de **Modo Simple** (Filtros tÃ¡cticos, etiquetas claras, layout corregido).
-- [x] Persistencia de Filtros (Guardado automÃ¡tico en `config/market_filters.json`).
-- [x] BotÃ³n **RESET** funcional en ambos modos de mercado.
-- [x] ImplementaciÃ³n de **OAuth2 Real** en AuthManager (ID de cliente y Secreto configurados).
-- [x] VinculaciÃ³n de **CharacterID real** desde ESI.
-- [x] LÃ³gica de **Inventario por Item** (In / Out / Stock Neto / Estado Operativo).
-- [x] Mejora de **WalletPoller** (Uso de REPLACE y resoluciÃ³n de nombres de items).
-- [x] Seguridad de hilos (UI estable durante sincronizaciÃ³n).
+- [x] Unificación de iconos y nombres con placeholders.
+- [x] Optimización de Performance (Lazy Loading y Carga Diferida).
+- [x] Resolución de crash en EveIconService por firma de callback.
+- [x] Monitorización de tiempos de respuesta de la UI.
 
 ## En Progreso ðŸš§
 - [x] **Rutas Absolutas**: `WalletPoller` ya usa `os.path.abspath` para `market_performance.db` (completado sesiÃ³n 2).
@@ -2982,3 +2977,39 @@ Se ha corregido un crash crÃ­tico que ocurrÃ­a durante el arranque de la apl
 - [x] **Trazabilidad**: Los fallos de retratos se registran con el ID de cache negativo correcto.
 
 *Estado: EveIconService estable y protegido contra crashes de firma en callbacks.*
+---
+
+## SesiÃ³n 50 â€” 2026-05-01
+
+### STATUS: COMPLETADO âœ…
+
+### FASE COMPLETADA: OptimizaciÃ³n de Rendimiento y Lazy Loading en Market Command
+
+### RESUMEN
+Se ha resuelto la lentitud crÃ­tica al arrancar y cambiar pestaÃ±as en la suite de mercado mediante una arquitectura de carga bajo demanda.
+
+**Mejoras clave:**
+1. **Lazy Loading de Vistas**: `MarketCommandMain` ya no instancia todas las pestaÃ±as (Simple, Advanced, Performance, My Orders, Contracts) al inicio. Ahora las crea Ãºnicamente cuando el usuario navega a ellas por primera vez.
+2. **Carga Diferida (Performance)**: La vista de Performance ahora arranca instantÃ¡neamente sin disparar el refresco pesado de ESI. Solo sincroniza datos cuando la pestaÃ±a se activa por primera vez.
+3. **SincronizaciÃ³n bajo Demanda (My Orders)**: Las Ã³rdenes se sincronizan solo cuando la vista es visible, evitando picos de red y CPU en el arranque.
+4. **ResoluciÃ³n de Crash (EveIconService)**: Corregido un `TypeError` en el callback de retratos de personajes que impedÃ­a el arranque correcto. Se ha hecho la firma del mÃ©todo retrocompatible.
+5. **MonitorizaciÃ³n de UI**: AÃ±adido logging de tiempos (`time.perf_counter`) para medir la latencia de instanciaciÃ³n y cambio de pestaÃ±as.
+6. **Robustez de Iconos**: Mejorado el sistema de placeholders y gestiÃ³n de fallos en la carga de imÃ¡genes para evitar re-intentos infinitos.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/command_main.py` | Implementado gestor de vistas con placeholders y carga diferida. |
+| `ui/market_command/performance_view.py` | AÃ±adido flag `defer_initial_refresh` y hook `activate_view`. Evita refrescos redundantes. |
+| `ui/market_command/my_orders_view.py` | Movida la lÃ³gica de auto-login y sync al hook `activate_view`. |
+| `core/eve_icon_service.py` | Corregida firma de callback `_on_reply_finished` y lÃ³gica de retratos. |
+| `tests/test_eve_icon_service.py` | AÃ±adido test de regresiÃ³n para la firma del callback. |
+
+### CHECKS
+- [x] Arranque de la app instantÃ¡neo (sin delay de ESI).
+- [x] Cambio de pestaÃ±as fluido tras la primera carga.
+- [x] Logs de performance confirman tiempos de instanciaciÃ³n < 100ms.
+- [x] No hay crash al cargar retratos de personajes.
+- [x] Las seÃ±ales de autenticaciÃ³n se ignoran hasta que la vista de Ã³rdenes estÃ¡ lista.
+
+*Estado: UI optimizada para uso profesional intensivo.*

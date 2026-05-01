@@ -9,6 +9,23 @@ from ui.market_command.contracts_view import MarketContractsView
 class MarketCommandMain(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        self._views = {0: None, 1: None, 2: None, 3: None, 4: None}
+        self._view_classes = {
+            0: MarketSimpleView,
+            1: MarketAdvancedView,
+            2: MarketPerformanceView,
+            3: MarketMyOrdersView,
+            4: MarketContractsView,
+        }
+        self._view_names = {
+            0: "Modo Simple",
+            1: "Modo Avanzado",
+            2: "Performance",
+            3: "Mis Pedidos",
+            4: "Contratos",
+        }
+        
         self.setup_ui()
         from PySide6.QtCore import QTimer
         QTimer.singleShot(100, self.try_auto_restore)
@@ -82,19 +99,18 @@ class MarketCommandMain(QWidget):
         
         self.layout.addWidget(self.nav_frame)
         
-        # 2. Stacked Widget
+        # 2. Stacked Widget con Lazy Loading
         self.stack = QStackedWidget()
-        self.view_simple = MarketSimpleView()
-        self.view_advanced = MarketAdvancedView()
-        self.view_performance = MarketPerformanceView()
-        self.view_my_orders = MarketMyOrdersView()
-        self.view_contracts = MarketContractsView()
         
-        self.stack.addWidget(self.view_simple)
-        self.stack.addWidget(self.view_advanced)
-        self.stack.addWidget(self.view_performance)
-        self.stack.addWidget(self.view_my_orders)
-        self.stack.addWidget(self.view_contracts)
+        # Insertamos placeholders para cada índice
+        for i in range(5):
+            placeholder = QWidget()
+            placeholder.setLayout(QVBoxLayout())
+            placeholder.layout().addWidget(QLabel(f"Cargando {self._view_names[i]}...", alignment=Qt.AlignCenter))
+            self.stack.addWidget(placeholder)
+            
+        # El modo simple (index 0) lo cargamos inmediatamente para evitar parpadeo inicial
+        self._ensure_view_loaded(0)
         
         self.layout.addWidget(self.stack)
 
@@ -149,8 +165,50 @@ class MarketCommandMain(QWidget):
                 }
             """)
 
+    def _ensure_view_loaded(self, index):
+        if self._views[index] is not None:
+            return self._views[index]
+            
+        import time
+        start_t = time.perf_counter()
+        
+        cls = self._view_classes[index]
+        name = self._view_names[index]
+        
+        # PerformanceView requiere trato especial para carga diferida
+        if cls == MarketPerformanceView:
+            view = MarketPerformanceView(defer_initial_refresh=True)
+        else:
+            view = cls()
+            
+        self._views[index] = view
+        
+        # Reemplazar el placeholder en el stack
+        placeholder = self.stack.widget(index)
+        self.stack.removeWidget(placeholder)
+        self.stack.insertWidget(index, view)
+        placeholder.deleteLater()
+        
+        end_t = time.perf_counter()
+        ms = (end_t - start_t) * 1000
+        print(f"[UI PERF] Loaded view {name} (index {index}) in {ms:.2f} ms")
+        
+        return view
+
     def switch_view(self, index):
+        import time
+        start_t = time.perf_counter()
+        
+        # 1. Asegurar que la vista está instanciada
+        view = self._ensure_view_loaded(index)
+        
+        # 2. Cambiar de vista en el stack
         self.stack.setCurrentIndex(index)
+        
+        # 3. Notificar a la vista que se ha activado (para refrescos diferidos)
+        if hasattr(view, 'activate_view'):
+            view.activate_view()
+            
         self.btn_simple.setChecked(index == 0)
         self.btn_advanced.setChecked(index == 1)
         self.btn_performance.setChecked(index == 2)
@@ -172,6 +230,12 @@ class MarketCommandMain(QWidget):
             self.lbl_mode.setText("POSICIONES ABIERTAS")
         else:
             self.lbl_mode.setText("ARBITRAJE DE CONTRATOS")
+            
+        end_t = time.perf_counter()
+        ms = (end_t - start_t) * 1000
+        # Solo logueamos si tarda más de lo trivial
+        if ms > 5:
+            print(f"[UI PERF] Switched to index {index} in {ms:.2f} ms")
 
     def try_auto_restore(self):
         from core.auth_manager import AuthManager

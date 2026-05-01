@@ -25,6 +25,10 @@ class MarketSimpleView(QWidget):
         self.current_config = load_market_filters()
         self.setup_ui()
         
+    def activate_view(self):
+        """Hook para activación de pestaña."""
+        pass
+        
     def create_insight_box(self, title, color):
         f = QFrame()
         f.setStyleSheet("""

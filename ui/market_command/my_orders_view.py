@@ -685,8 +685,8 @@ class MarketMyOrdersView(QWidget):
         self.setup_ui()
         self.load_layouts()
         self._init_diagnostics()
+        self._initial_activation_done = False
         AuthManager.instance().authenticated.connect(self.on_authenticated)
-        QTimer.singleShot(100, self.try_auto_login)
 
     def _init_diagnostics(self):
         self._orders_diag = {
@@ -952,7 +952,8 @@ class MarketMyOrdersView(QWidget):
     def on_authenticated(self, name, tokens):
         self.btn_esi.setText(f"SALIR ({name.upper()})")
         self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#3b82f6", "#1e293b"))
-        self.do_sync()
+        if self._initial_activation_done:
+            self.do_sync()
 
     def try_auto_login(self):
         auth = AuthManager.instance()
@@ -1698,6 +1699,15 @@ class MarketMyOrdersView(QWidget):
 
         # ÍTEM column and any other column → open market (original behavior)
         self._open_market_from_table_item(item, t)
+
+    def activate_view(self):
+        """Llamado cuando esta pestaña se hace visible."""
+        if not self._initial_activation_done:
+            _log.info("[MY ORDERS] Activación inicial de la vista")
+            self.try_auto_login()
+            if AuthManager.instance().current_token:
+                self.do_sync()
+            self._initial_activation_done = True
 
     def update_taxes_info(self):
         auth = AuthManager.instance()
