@@ -1225,5 +1225,113 @@ class TestEVEWindowAutomationSafetyMicrofixes(unittest.TestCase):
             self.assertEqual(result.get("paste_block_reason"), "paste_guard_already_consumed")
             mock_release.assert_called()
 
+class TestEVEWindowAutomationSideOffsets(unittest.TestCase):
+    def setUp(self):
+        self._SELECTED = {"handle": 99999, "title": "EVE", "score": 100}
+        self.cfg = {
+            "enabled": True, "dry_run": False,
+            "modify_order_step_enabled": True,
+            "modify_order_strategy": "visual_ocr",
+            "visual_ocr_enabled": True,
+            "visual_ocr_sell_right_click_x_offset": 20,
+            "visual_ocr_sell_right_click_y_offset": 0,
+            "visual_ocr_sell_modify_menu_offset_x": 65,
+            "visual_ocr_sell_modify_menu_offset_y": 37,
+            "visual_ocr_buy_right_click_x_offset": 20,
+            "visual_ocr_buy_right_click_y_offset": 0,
+            "visual_ocr_buy_modify_menu_offset_x": 50,
+            "visual_ocr_buy_modify_menu_offset_y": 20,
+            "visual_ocr_menu_click_mode": "relative_to_right_click",
+            "visual_ocr_right_click_candidate_offsets": [{"name": "qty_left", "x_offset": 100, "y_offset": 0}]
+        }
+
+    @patch("core.window_automation._PYWINAUTO_AVAILABLE", True)
+    @patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", True)
+    @patch("core.window_automation.EVEWindowAutomation._get_window_rect", return_value={"left": 0, "top": 0, "width": 400, "height": 200})
+    @patch("core.window_automation.EVEWindowAutomation._capture_window_screenshot", return_value=MagicMock())
+    @patch("core.window_automation.EVEWindowAutomation._run_visual_ocr_detect")
+    @patch("core.window_automation.EVEWindowAutomation._visual_ocr_right_click", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._is_context_menu_open", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._mouse_move")
+    @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=99999)
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle", return_value=MagicMock())
+    def test_sell_side_uses_sell_offsets(self, mock_connect, mock_fg, mock_focus, mock_move, mock_menu, mock_lclick, mock_rclick, mock_detect, *args):
+        mock_detect.return_value = {
+            "status": "unique_match", "row_center_x": 200, "row_center_y": 150,
+            "matched_price": True, "matched_quantity": True, "matched_own_marker": True,
+            "debug": {"detection_mode": "strict"}
+        }
+        auto = EVEWindowAutomation(self.cfg)
+        order = {"price": 100.0, "volume_remain": 1, "is_buy_order": False}
+        result = auto.execute_quick_order_update(order, "100.00", selected_window=self._SELECTED)
+        
+        self.assertEqual(result["visual_ocr_side_used"], "sell")
+        self.assertEqual(result["visual_ocr_rc_offset"], (20, 0))
+        self.assertEqual(result["visual_ocr_mod_offset"], (65, 37))
+        self.assertEqual(result["visual_ocr_right_clk"], (220, 150))
+        self.assertEqual(result["visual_ocr_mod_clk"], (220 + 65, 150 + 37))
+
+    @patch("core.window_automation._PYWINAUTO_AVAILABLE", True)
+    @patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", True)
+    @patch("core.window_automation.EVEWindowAutomation._get_window_rect", return_value={"left": 0, "top": 0, "width": 400, "height": 200})
+    @patch("core.window_automation.EVEWindowAutomation._capture_window_screenshot", return_value=MagicMock())
+    @patch("core.window_automation.EVEWindowAutomation._run_visual_ocr_detect")
+    @patch("core.window_automation.EVEWindowAutomation._visual_ocr_right_click", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._is_context_menu_open", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._mouse_move")
+    @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._get_foreground_window_handle", return_value=99999)
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle", return_value=MagicMock())
+    def test_buy_side_uses_buy_offsets(self, mock_connect, mock_fg, mock_focus, mock_move, mock_menu, mock_lclick, mock_rclick, mock_detect, *args):
+        mock_detect.return_value = {
+            "status": "unique_match", "row_center_x": 200, "row_center_y": 150,
+            "matched_price": True, "matched_quantity": True, "matched_own_marker": True,
+            "debug": {"detection_mode": "strict"}
+        }
+        auto = EVEWindowAutomation(self.cfg)
+        order = {"price": 100.0, "volume_remain": 1, "is_buy_order": True}
+        result = auto.execute_quick_order_update(order, "100.00", selected_window=self._SELECTED)
+        
+        self.assertEqual(result["visual_ocr_side_used"], "buy")
+        self.assertEqual(result["visual_ocr_rc_offset"], (20, 0))
+        self.assertEqual(result["visual_ocr_mod_offset"], (50, 20))
+        self.assertEqual(result["visual_ocr_right_clk"], (220, 150))
+        self.assertEqual(result["visual_ocr_mod_clk"], (220 + 50, 150 + 20))
+
+    @patch("core.window_automation._PYWINAUTO_AVAILABLE", True)
+    @patch("core.window_automation._PIL_IMAGEGRAB_AVAILABLE", True)
+    @patch("core.window_automation.EVEWindowAutomation._get_window_rect", return_value={"left": 0, "top": 0, "width": 400, "height": 200})
+    @patch("core.window_automation.EVEWindowAutomation._capture_window_screenshot", return_value=MagicMock())
+    @patch("core.window_automation.EVEWindowAutomation._run_visual_ocr_detect")
+    @patch("core.window_automation.EVEWindowAutomation._visual_ocr_right_click", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._visual_ocr_left_click", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._is_context_menu_open", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._focus_window", return_value=True)
+    @patch("core.window_automation.EVEWindowAutomation._connect_by_handle", return_value=MagicMock())
+    def test_generic_fallback_works_if_keys_missing(self, mock_connect, mock_focus, mock_menu, mock_lclick, mock_rclick, mock_detect, *args):
+        cfg = {
+            "enabled": True, "dry_run": False,
+            "modify_order_step_enabled": True,
+            "modify_order_strategy": "visual_ocr",
+            "visual_ocr_enabled": True,
+            "visual_ocr_modify_menu_offset_x": 10,
+            "visual_ocr_modify_menu_offset_y": 15,
+            "visual_ocr_menu_click_mode": "relative_to_right_click",
+        }
+        mock_detect.return_value = {
+            "status": "unique_match", "row_center_x": 200, "row_center_y": 150,
+            "matched_price": True, "matched_quantity": True, "matched_own_marker": True,
+            "debug": {"detection_mode": "strict"}
+        }
+        auto = EVEWindowAutomation(cfg)
+        order = {"price": 100.0, "volume_remain": 1, "is_buy_order": True}
+        result = auto.execute_quick_order_update(order, "100.00", selected_window=self._SELECTED)
+        
+        self.assertEqual(result["visual_ocr_mod_offset"], (10, 15))
+        self.assertEqual(result["visual_ocr_offset_source"], "side_specific")
+
 if __name__ == "__main__":
     unittest.main()

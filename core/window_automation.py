@@ -218,6 +218,36 @@ class EVEWindowAutomation:
         self.visual_ocr_menu_click_mode      = str(config.get("visual_ocr_menu_click_mode",                "relative_to_right_click"))
         self.visual_ocr_menu_x_offset        = int(config.get("visual_ocr_modify_menu_offset_x",          65))
         self.visual_ocr_menu_y_offset        = int(config.get("visual_ocr_modify_menu_offset_y",          37))
+
+        # Side-specific offsets with fallback to generic if specific keys are missing
+        self.visual_ocr_sell_rc_x_offset = int(config.get("visual_ocr_sell_right_click_x_offset", 
+                                               config.get("visual_ocr_right_click_x_offset", 20)))
+        self.visual_ocr_sell_rc_y_offset = int(config.get("visual_ocr_sell_right_click_y_offset", 
+                                               config.get("visual_ocr_right_click_y_offset", 0)))
+        self.visual_ocr_sell_menu_x_offset = int(config.get("visual_ocr_sell_modify_menu_offset_x", 
+                                                config.get("visual_ocr_modify_menu_offset_x", 65)))
+        self.visual_ocr_sell_menu_y_offset = int(config.get("visual_ocr_sell_modify_menu_offset_y", 
+                                                config.get("visual_ocr_modify_menu_offset_y", 37)))
+
+        self.visual_ocr_buy_rc_x_offset = int(config.get("visual_ocr_buy_right_click_x_offset", 
+                                               config.get("visual_ocr_right_click_x_offset", 20)))
+        self.visual_ocr_buy_rc_y_offset = int(config.get("visual_ocr_buy_right_click_y_offset", 
+                                               config.get("visual_ocr_right_click_y_offset", 0)))
+        
+        # Special case for BUY menu: default is 50, 20 if both specific and generic are missing
+        if "visual_ocr_buy_modify_menu_offset_x" in config:
+            self.visual_ocr_buy_menu_x_offset = int(config["visual_ocr_buy_modify_menu_offset_x"])
+        elif "visual_ocr_modify_menu_offset_x" in config:
+            self.visual_ocr_buy_menu_x_offset = int(config["visual_ocr_modify_menu_offset_x"])
+        else:
+            self.visual_ocr_buy_menu_x_offset = 50
+
+        if "visual_ocr_buy_modify_menu_offset_y" in config:
+            self.visual_ocr_buy_menu_y_offset = int(config["visual_ocr_buy_modify_menu_offset_y"])
+        elif "visual_ocr_modify_menu_offset_y" in config:
+            self.visual_ocr_buy_menu_y_offset = int(config["visual_ocr_modify_menu_offset_y"])
+        else:
+            self.visual_ocr_buy_menu_y_offset = 20
         self.visual_ocr_debug_save           = bool(config.get("visual_ocr_debug_save_screenshot",         True))
         self.visual_ocr_debug_dir            = str(config.get("visual_ocr_debug_dir",                      "data/debug/visual_ocr"))
         self.visual_ocr_modify_menu_hover_ms = int(config.get("visual_ocr_modify_menu_hover_ms",           250))
@@ -865,6 +895,34 @@ class EVEWindowAutomation:
 
         if self._is_aborted(): return
 
+        # ── Side-specific offset selection ──────────────────────────────────
+        is_buy = order_data.get("is_buy_order", False)
+        side_str = "buy" if is_buy else "sell"
+        result["visual_ocr_side_used"] = side_str
+
+        if is_buy:
+            rc_off_x = self.visual_ocr_buy_rc_x_offset
+            rc_off_y = self.visual_ocr_buy_rc_y_offset
+            mod_off_x = self.visual_ocr_buy_menu_x_offset
+            mod_off_y = self.visual_ocr_buy_menu_y_offset
+        else:
+            rc_off_x = self.visual_ocr_sell_rc_x_offset
+            rc_off_y = self.visual_ocr_sell_rc_y_offset
+            mod_off_x = self.visual_ocr_sell_menu_x_offset
+            mod_off_y = self.visual_ocr_sell_menu_y_offset
+        
+        result["visual_ocr_rc_offset"] = (rc_off_x, rc_off_y)
+        result["visual_ocr_mod_offset"] = (mod_off_x, mod_off_y)
+        result["visual_ocr_offset_source"] = "side_specific"
+
+        # Build side-aware candidate list
+        run_candidates = list(self.visual_ocr_rc_candidate_offsets)
+        if run_candidates:
+            # Ensure first candidate matches side calibration
+            run_candidates[0] = {"name": f"{side_str}_qty_left", "x_offset": rc_off_x, "y_offset": rc_off_y}
+        else:
+            run_candidates = [{"name": f"{side_str}_qty_left", "x_offset": rc_off_x, "y_offset": rc_off_y}]
+
         # Robust context menu opening with retries
         success_rc = None
         result["visual_ocr_rc_attempts"] = 0
@@ -875,7 +933,7 @@ class EVEWindowAutomation:
             if self._is_aborted(): break
             
             # For each attempt, we try the list of candidates
-            for cand_idx, cand in enumerate(self.visual_ocr_rc_candidate_offsets):
+            for cand_idx, cand in enumerate(run_candidates):
                 if self._is_aborted(): break
                 
                 result["visual_ocr_rc_attempts"] += 1
@@ -963,14 +1021,16 @@ class EVEWindowAutomation:
         
         # Calculate menu position
         if self.visual_ocr_menu_click_mode == "relative_to_right_click":
-            menu_x = rc_x + self.visual_ocr_menu_x_offset
-            menu_y = rc_y + self.visual_ocr_menu_y_offset
+            menu_x = rc_x + mod_off_x
+            menu_y = rc_y + mod_off_y
         else:
-            menu_x = self.visual_ocr_menu_x_offset
-            menu_y = self.visual_ocr_menu_y_offset
+            menu_x = mod_off_x
+            menu_y = mod_off_y
 
         result["visual_ocr_menu_x"] = menu_x
         result["visual_ocr_menu_y"] = menu_y
+        result["visual_ocr_right_clk"] = (rc_x, rc_y)
+        result["visual_ocr_mod_clk"]   = (menu_x, menu_y)
 
         success_modify_click = False
         

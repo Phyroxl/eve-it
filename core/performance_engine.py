@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime, timedelta
 from core.performance_models import DailyPnLEntry, ItemPerformanceSummary, CharacterPerformanceSummary
+from core.performance_fee_allocator import allocate_item_fees
 
 class PerformanceEngine:
     def __init__(self, db_path=None):
@@ -108,6 +109,9 @@ class PerformanceEngine:
         conn = sqlite3.connect(self.db_path)
         try:
             c = conn.cursor()
+            
+            # 0. Calcular asignación de fees reales del journal
+            allocated_fees = allocate_item_fees(conn, character_id, date_from, date_to)
 
             # 1. Obtener actividad del periodo actual
             query_period = """
@@ -146,11 +150,26 @@ class PerformanceEngine:
                 # COGS: Cost of Goods Sold (Lo que nos costó adquirir lo que hemos vendido)
                 cogs = sold_qty * avg_buy_price
                 
-                # Fees: Usamos una estimación proporcional basada en los fees totales del periodo
-                # (Proporcional al volumen de venta de este item vs ventas totales)
-                # Nota: Esto es una aproximación para el desglose por item.
-                # El neto TOTAL usará los fees reales del journal.
-                est_fees = income * 0.025 if sold_qty > 0 else 0
+                # Fees: Usamos la asignación real basada en el journal
+                item_alloc = allocated_fees.get(item_id, {})
+                real_broker = item_alloc.get("allocated_broker_fees", 0.0)
+                real_tax = item_alloc.get("allocated_sales_tax", 0.0)
+                real_total_fees = item_alloc.get("allocated_total_fees", 0.0)
+                
+                # Fallback a estimación solo si no hay datos de journal en absoluto para este item 
+                # (aunque allocate_item_fees ya maneja proporciones)
+                if real_total_fees == 0 and income > 0:
+                    est_fees = income * 0.025
+                    method = "legacy_estimate"
+                    confidence = "low"
+                    exact_n = 0
+                    est_n = 1
+                else:
+                    est_fees = real_total_fees
+                    method = item_alloc.get("allocation_method", "proportional_fallback")
+                    confidence = item_alloc.get("fee_allocation_confidence", "low")
+                    exact_n = item_alloc.get("fee_allocation_exact_entries", 0)
+                    est_n = item_alloc.get("fee_allocation_estimated_entries", 0)
                 
                 net_profit = income - cogs - est_fees
                 net_units = bought_qty - sold_qty
@@ -182,7 +201,13 @@ class PerformanceEngine:
                     inventory_value_est=inventory_val,
                     margin_real_pct=margin,
                     trade_count=trades,
-                    status_text=status
+                    status_text=status,
+                    allocated_broker_fees=real_broker,
+                    allocated_sales_tax=real_tax,
+                    fee_allocation_method=method,
+                    fee_allocation_confidence=confidence,
+                    fee_allocation_exact_entries=exact_n,
+                    fee_allocation_estimated_entries=est_n
                 ))
 
         finally:

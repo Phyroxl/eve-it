@@ -53,6 +53,14 @@ class ItemPerformanceSummary:
     trade_count: int
     status_text: str = ""
 
+    # New fields for Session 47 (Allocated Fees)
+    allocated_broker_fees: float = 0.0
+    allocated_sales_tax: float = 0.0
+    fee_allocation_method: str = "legacy_estimate"
+    fee_allocation_confidence: str = "low"
+    fee_allocation_exact_entries: int = 0
+    fee_allocation_estimated_entries: int = 0
+
 @dataclass
 class CharacterPerformanceSummary:
     character_id: int

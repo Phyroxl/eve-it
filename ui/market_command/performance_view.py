@@ -415,7 +415,9 @@ class MarketPerformanceView(QWidget):
         self.det_in, self.lbl_det_in = create_det_box("Total Bought")
         self.det_out, self.lbl_det_out = create_det_box("Total Sold")
         self.det_stock, self.lbl_det_stock = create_det_box("Net Stock", "#3b82f6")
-        self.det_profit, self.lbl_det_profit = create_det_box("Realized (Est)", "#10b981")
+        self.det_profit, self.lbl_det_profit = create_det_box("Realized (COGS)", "#10b981")
+        self.det_fees, self.lbl_det_fees = create_det_box("Fees (Broker/Tax)", "#f59e0b")
+        self.det_alloc, self.lbl_det_alloc = create_det_box("Allocation Info", "#94a3b8")
         self.det_margin, self.lbl_det_margin = create_det_box("Margin")
         self.det_status, self.lbl_det_status = create_det_box("Operational Status", "#fbbf24")
         
@@ -423,6 +425,8 @@ class MarketPerformanceView(QWidget):
         dl.addWidget(self.det_out)
         dl.addWidget(self.det_stock)
         dl.addWidget(self.det_profit)
+        dl.addWidget(self.det_fees)
+        dl.addWidget(self.det_alloc)
         dl.addWidget(self.det_margin)
         dl.addWidget(self.det_status)
         
@@ -877,6 +881,16 @@ class MarketPerformanceView(QWidget):
             from utils.formatters import format_isk
             self.lbl_det_profit.setText(format_isk(item.net_profit))
             self.lbl_det_margin.setText(f"{item.margin_real_pct:.1f}%")
+            
+            # Allocated Fees Info
+            b_fees = format_isk(item.allocated_broker_fees, True)
+            s_tax = format_isk(item.allocated_sales_tax, True)
+            self.lbl_det_fees.setText(f"{b_fees} / {s_tax}")
+            
+            # Allocation Method & Confidence
+            conf_color = "#10b981" if item.fee_allocation_confidence == "high" else "#fbbf24" if item.fee_allocation_confidence == "medium" else "#64748b"
+            self.lbl_det_alloc.setText(f"{item.fee_allocation_method.upper()} ({item.fee_allocation_confidence.upper()})")
+            self.lbl_det_alloc.setStyleSheet(f"color: {conf_color}; font-size: 11px; font-weight: 700;")
             
             # Contexto adicional en el detalle
             exposure_text = f"Exposure: {format_isk(item.inventory_value_est, True)}"

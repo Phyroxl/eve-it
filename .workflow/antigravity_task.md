@@ -1,4 +1,4 @@
-﻿# EVE iT Market Command / Performance Task List
+# EVE iT Market Command / Performance Task List
 
 ## Completado âœ…
 - [x] RediseÃ±o de **Modo Simple** (Filtros tÃ¡cticos, etiquetas claras, layout corregido).
@@ -2823,3 +2823,64 @@ Se ha realizado una intervenciÃ³n crÃ­tica para estabilizar la interacciÃ³
 - La duraciÃ³n de movimiento (0.1s) y el hover (250ms) estÃ¡n optimizados para el refresco visual estÃ¡ndar de EVE Online (60fps/DX11).
 
 *Estado: AutomatizaciÃ³n de Visual OCR ahora es determinista y resistente a latencias de UI.*
+
+---
+
+## SesiÃ³n 46 â€” 2026-05-01
+
+### STATUS: COMPLETADO âœ…
+
+### FASE COMPLETADA: Side-specific BUY/SELL Visual OCR click offsets
+
+### RESUMEN
+ImplementaciÃ³n de offsets de click diferenciados para BUY y SELL. La posiciÃ³n de "Modificar pedido" en el menÃº contextual de EVE Online varÃ­a segÃºn el lado de la orden, lo que causaba fallos en el click de las Ã³rdenes de compra.
+
+- **BUY Calibration**: RC Offset (20, 0), Modify Offset (50, 20).
+- **SELL Preserved**: RC Offset (20, 0), Modify Offset (65, 37).
+- **Fallback**: Implementado fallback a claves genÃ©ricas para compatibilidad hacia atrÃ¡s.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/window_automation.py` | LÃ³gica de selecciÃ³n de offsets dinÃ¡mica. Fallback en `__init__`. TelemetrÃ­a detallada. |
+| `core/quick_order_update_config.py` | Definidas nuevas claves `visual_ocr_sell_*` y `visual_ocr_buy_*` en `_DEFAULT_CONFIG`. |
+| `core/quick_order_update_diagnostics.py` | Campos Side Used, RC/Mod Offsets, y coordenadas finales en el reporte. |
+| `config/quick_order_update.json` | Actualizados defaults del usuario. |
+| `tests/test_window_automation.py` | Nueva suite `TestEVEWindowAutomationSideOffsets`. |
+
+### CHECKS
+- [x] **Syntax**: `py_compile` (PASS).
+- [x] **Tests**: `Ran 202 tests. OK.`
+- [x] **Safety**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` (PASSED).
+
+*Estado: Visual OCR ahora soporta BUY y SELL con precision de pixel y fallback robusto.*
+
+---
+
+## SESIÓN 47: Motor de Asignación de Fees Reales por Item
+
+### OBJETIVO
+Reemplazar la estimación plana del 2.5% de fees por una asignación realista basada en el `wallet_journal`, vinculando impuestos y comisiones reales a cada item vendido/comprado.
+
+### IMPLEMENTACIÓN
+1. **Esquema DB**: Ampliación de `wallet_journal` para incluir `context_id` y `context_id_type` (vía `WalletPoller`).
+2. **Fee Allocator**: Creación de `core/performance_fee_allocator.py` con estrategia de capas:
+   - **Exact Match**: Usa `context_id` de ESI para vincular journal entries directamente a `transaction_id` o `order_id`.
+   - **Timing Match**: Vincula `transaction_tax` a ventas que ocurrieron en el mismo segundo exacto.
+   - **Proportional Fallback**: Distribuye fees huérfanos proporcionalmente al volumen de ISK de cada item.
+3. **Motor de Rendimiento**: Integración en `PerformanceEngine.build_item_summary`.
+4. **UI**: Actualización de `PerformanceView` para mostrar desglose de Broker/Tax y confianza de asignación en el panel de detalle.
+
+### ARCHIVOS MODIFICADOS
+- `core/wallet_poller.py` (Esquema y guardado)
+- `core/performance_models.py` (Metadata de fees)
+- `core/performance_engine.py` (Integración del cálculo)
+- `ui/market_command/performance_view.py` (Visualización)
+- `core/performance_fee_allocator.py` (Nuevo motor)
+
+### VALIDACIÓN
+- [x] **Syntax**: `py_compile` (PASS).
+- [x] **Unit Tests**: `test_performance_fee_allocator.py` (4 PASSED). Cubre exact match, timing match y fallback.
+- [x] **Backwards Compatibility**: Migración automática de columnas en DB existente.
+
+*Estado: El beneficio por item ahora refleja la realidad operativa de la wallet, detectando erosión de margen por modificaciones excesivas de órdenes.*

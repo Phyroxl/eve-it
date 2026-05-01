@@ -47,7 +47,9 @@ class WalletPoller(QObject):
             amount REAL,
             balance REAL,
             description TEXT,
-            reason TEXT
+            reason TEXT,
+            context_id INTEGER,
+            context_id_type TEXT
         )''')
 
         # Snapshots (balance history)
@@ -62,7 +64,16 @@ class WalletPoller(QObject):
         c.execute('CREATE INDEX IF NOT EXISTS idx_wt_char_date ON wallet_transactions (character_id, date)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_wj_char_date ON wallet_journal (character_id, date)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_ws_char ON wallet_snapshots (character_id)')
-
+        conn.commit()
+        
+        # Migración automática si las columnas faltan
+        try:
+            c.execute("ALTER TABLE wallet_journal ADD COLUMN context_id INTEGER")
+        except sqlite3.OperationalError: pass
+        try:
+            c.execute("ALTER TABLE wallet_journal ADD COLUMN context_id_type TEXT")
+        except sqlite3.OperationalError: pass
+        
         conn.commit()
         conn.close()
 
@@ -165,8 +176,11 @@ class WalletPoller(QObject):
             valid_types = ["market_transaction", "brokers_fee", "transaction_tax"]
             for e in entries:
                 if e.get('ref_type') in valid_types:
-                    c.execute("INSERT OR REPLACE INTO wallet_journal (id, character_id, date, ref_type, amount, balance, description) VALUES (?,?,?,?,?,?,?)",
-                              (e['id'], char_id, e['date'], e['ref_type'], e['amount'], e.get('balance'), e.get('description')))
+                    c.execute("""INSERT OR REPLACE INTO wallet_journal 
+                                 (id, character_id, date, ref_type, amount, balance, description, reason, context_id, context_id_type) 
+                                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                               (e['id'], char_id, e['date'], e['ref_type'], e['amount'], e.get('balance'), 
+                                e.get('description'), e.get('reason'), e.get('context_id'), e.get('context_id_type')))
                     saved += 1
             conn.commit()
         finally:
