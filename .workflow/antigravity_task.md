@@ -3608,3 +3608,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Logs: Añadida trazabilidad detallada de las acciones de apertura de mercado desde el dashboard Global.
 - Archivos: ui/market_command/my_orders_view.py.
 - Verificación: Compilación exitosa y 4 tests de sistema aprobados.
+
+## FIX: Category Scanning Pipeline (Simple & Advanced) - 2026-05-01
+
+- Pipeline: Refactorizado el motor de filtrado para aplicar la categoría SELECCIONADA sobre el universo completo de ítems, antes de cualquier filtro de rendimiento (Profit/ROI).
+- Filtros: Cambiados los valores por defecto de FilterConfig para ser no restrictivos (Capital 1T, Margen -100%, Spread 1000%), permitiendo exploración pura por categoría.
+- Límites: Implementado max_item_types (0 = sin límite). Los usuarios ahora pueden ver todas las naves, módulos, etc., sin recortes silenciosos.
+- UI: Añadido control "Max Tipos Item" en Modo Simple y Avanzado con tooltip informativo.
+- Worker: Incrementado el pool de escaneo del worker (_BROAD_POOL_SIZE a 10000) y hecho dinámico para respetar el límite de usuario.
+- Diagnóstico: Añadido [CATEGORY SCAN REPORT] detallado en logs y en el diálogo de diagnóstico, mostrando coincidencia de categoría vs filtros de usuario.
+- Metadata: Implementado prefetch de metadata completo antes del filtrado por categoría para asegurar precisión.
+- Archivos: core/market_engine.py, core/market_models.py, ui/market_command/simple_view.py, ui/market_command/advanced_view.py, ui/market_command/refresh_worker.py, core/market_scan_diagnostics.py.
+- Verificación: 3 tests de integración de pipeline aprobados.

@@ -16,9 +16,9 @@ from core.market_candidate_selector import build_economic_candidates, prefilter_
 
 logger = logging.getLogger('eve.market.worker')
 
-_TODOS_POOL_SIZE = 200      # Pool global para "Todos" (sin metadata, rápido)
-_BROAD_POOL_SIZE = 500      # Pool amplio para prefetch de metadata en categorías específicas
-_CATEGORY_LIMIT = 300       # Máximo candidatos por categoría tras filtro
+_TODOS_POOL_SIZE = 500      # Pool global para "Todos" (sin metadata, rápido)
+_BROAD_POOL_SIZE = 10000    # Pool amplio para prefetch de metadata en categorías específicas
+_CATEGORY_LIMIT_DEFAULT = 2000 # Límite por defecto para categorías
 _HISTORY_WORKERS = 8        # Clientes ESI paralelos para descarga de historial
 
 
@@ -167,7 +167,8 @@ class MarketRefreshWorker(QThread):
             t0 = time.time()
             if selected_category == "Todos":
                 # Seleccionar top N type_ids
-                initial_candidates = select_final_candidates(final_pool_cands, _TODOS_POOL_SIZE)
+                pool_size = max(_TODOS_POOL_SIZE, self.config.max_item_types) if self.config.max_item_types > 0 else _TODOS_POOL_SIZE
+                initial_candidates = select_final_candidates(final_pool_cands, pool_size)
                 self.diagnostics.notes.append(f"Phase 1 using top {len(initial_candidates)} from final_pool")
             else:
                 # Solo items con metadata ya en caché
@@ -246,7 +247,8 @@ class MarketRefreshWorker(QThread):
             # Paso 7: Determinar candidatos finales con metadata completa
             t0 = time.time()
             if selected_category == "Todos":
-                final_candidates = select_final_candidates(final_pool_cands, _TODOS_POOL_SIZE)
+                pool_size = max(_TODOS_POOL_SIZE, self.config.max_item_types) if self.config.max_item_types > 0 else _TODOS_POOL_SIZE
+                final_candidates = select_final_candidates(final_pool_cands, pool_size)
                 logger.info(f"[WORKER DIAG] Phase2 mode=Todos final_candidates={len(final_candidates)}")
             else:
                 # Prefetch metadata paralelo para pool amplio
@@ -275,7 +277,8 @@ class MarketRefreshWorker(QThread):
                         category_ids.append(t_id)
 
                 logger.info(f"[WORKER DIAG] Phase2 category_ids={len(category_ids)} for category={selected_category}")
-                final_candidates = category_ids[:_CATEGORY_LIMIT]
+                cat_limit = max(_CATEGORY_LIMIT_DEFAULT, self.config.max_item_types) if self.config.max_item_types > 0 else _CATEGORY_LIMIT_DEFAULT
+                final_candidates = category_ids[:cat_limit]
 
             # Estadísticas de distribución final
             if final_candidates:

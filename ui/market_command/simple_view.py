@@ -150,6 +150,11 @@ class MarketSimpleView(QWidget):
         self.spin_tax.setRange(0, 10); self.spin_tax.setSuffix("%"); self.spin_tax.setValue(self.current_config.sales_tax_pct)
         add_compact_input(scroll_layout, "Sales Tax %", self.spin_tax)
 
+        self.spin_max_items = QSpinBox()
+        self.spin_max_items.setRange(0, 10000); self.spin_max_items.setValue(self.current_config.max_item_types)
+        self.spin_max_items.setToolTip("0 = sin límite (Mostrar todos los items de la categoría)")
+        add_compact_input(scroll_layout, "Max Tipos Item", self.spin_max_items)
+
         self.chk_plex = QCheckBox("EXCLUIR PLEX / VOLÁTILES")
         self.chk_plex.setChecked(self.current_config.exclude_plex)
         self.chk_plex.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700; margin-top: 5px;")
@@ -365,6 +370,10 @@ class MarketSimpleView(QWidget):
         diagnostics.ui_config_at_filter_time = self.current_config.__dict__.copy() if hasattr(self.current_config, '__dict__') else {}
         diagnostics.filter_diagnostics = filter_diag
         diagnostics.dominant_filter = filter_diag.get("dominant_filter")
+        diagnostics.after_category = filter_diag.get("after_category", 0)
+        diagnostics.after_filters = filter_diag.get("after_filters", 0)
+        diagnostics.metadata_missing_count = filter_diag.get("metadata_missing_count", 0)
+        diagnostics.metadata_missing_ids = filter_diag.get("metadata_missing_ids", [])
         diagnostics.selected_category_ui = self.current_config.selected_category
         diagnostics.mode = "Simple"
         
@@ -396,6 +405,7 @@ class MarketSimpleView(QWidget):
         self.current_config.sales_tax_pct = self.spin_tax.value()
         self.current_config.exclude_plex = self.chk_plex.isChecked()
         self.current_config.selected_category = self.combo_category.currentText()
+        self.current_config.max_item_types = self.spin_max_items.value()
         
         # Reset advanced filters to safe defaults in Simple Mode
         self.current_config.buy_orders_min = 0
@@ -427,6 +437,7 @@ class MarketSimpleView(QWidget):
         self.spin_broker.setValue(self.current_config.broker_fee_pct)
         self.spin_tax.setValue(self.current_config.sales_tax_pct)
         self.combo_category.setCurrentText(self.current_config.selected_category)
+        self.spin_max_items.setValue(self.current_config.max_item_types)
 
     def apply_and_display(self):
         import logging

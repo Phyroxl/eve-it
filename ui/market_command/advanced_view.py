@@ -119,6 +119,11 @@ class MarketAdvancedView(QWidget):
         self.spin_spread.setRange(0, 999999); self.spin_spread.setSuffix("%"); self.spin_spread.setDecimals(1)
         add_adv_input(scroll_layout, "Spread Máximo %", self.spin_spread)
 
+        self.spin_max_items = QSpinBox()
+        self.spin_max_items.setRange(0, 10000); self.spin_max_items.setValue(self.current_config.max_item_types)
+        self.spin_max_items.setToolTip("0 = sin límite (Mostrar todos los items de la categoría)")
+        add_adv_input(scroll_layout, "Max Tipos Item", self.spin_max_items)
+
         # ─── BLOQUE 2: LIQUIDEZ Y VOLUMEN ───
         self.spin_vol = QSpinBox()
         self.spin_vol.setRange(0, 1000000)
@@ -341,6 +346,10 @@ class MarketAdvancedView(QWidget):
         diagnostics.ui_config_at_filter_time = self.current_config.__dict__.copy() if hasattr(self.current_config, '__dict__') else {}
         diagnostics.filter_diagnostics = filter_diag
         diagnostics.dominant_filter = filter_diag.get("dominant_filter")
+        diagnostics.after_category = filter_diag.get("after_category", 0)
+        diagnostics.after_filters = filter_diag.get("after_filters", 0)
+        diagnostics.metadata_missing_count = filter_diag.get("metadata_missing_count", 0)
+        diagnostics.metadata_missing_ids = filter_diag.get("metadata_missing_ids", [])
         diagnostics.selected_category_ui = self.current_config.selected_category
         diagnostics.mode = "Advanced"
 
@@ -403,6 +412,7 @@ class MarketAdvancedView(QWidget):
         self.current_config.spread_max_pct = self.spin_spread.value()
         self.current_config.exclude_plex = self.check_plex.isChecked()
         self.current_config.selected_category = self.combo_category.currentText()
+        self.current_config.max_item_types = self.spin_max_items.value()
         self.current_config.broker_fee_pct = self.spin_broker.value()
         self.current_config.sales_tax_pct = self.spin_tax.value()
         self.current_config.score_min = self.spin_score.value()
@@ -425,6 +435,7 @@ class MarketAdvancedView(QWidget):
         self.spin_sell_min.setValue(self.current_config.sell_orders_min)
         self.spin_profit_min.setValue(self.current_config.profit_day_min)
         self.combo_risk.setCurrentIndex(max(0, self.current_config.risk_max - 1))
+        self.spin_max_items.setValue(self.current_config.max_item_types)
 
     def on_selection_changed(self):
         sel = self.table.selectedItems()

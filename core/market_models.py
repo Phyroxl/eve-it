@@ -37,11 +37,11 @@ class MarketOpportunity:
 
 @dataclass
 class FilterConfig:
-    capital_max: float = 500_000_000.0
-    vol_min_day: int = 20
-    margin_min_pct: float = 5.0
-    spread_max_pct: float = 40.0
-    exclude_plex: bool = True
+    capital_max: float = 1_000_000_000_000.0 # 1 Trillion (Non-restrictive)
+    vol_min_day: int = 0
+    margin_min_pct: float = -100.0 # Allow losses by default in exploration
+    spread_max_pct: float = 1000.0
+    exclude_plex: bool = False
     broker_fee_pct: float = 3.0
     sales_tax_pct: float = 8.0
     
@@ -53,6 +53,7 @@ class FilterConfig:
     history_days_min: int = 0
     profit_day_min: float = 0.0
     selected_category: str = "Todos"
+    max_item_types: int = 0 # 0 = No limit
 
 @dataclass
 class PerformanceConfig:

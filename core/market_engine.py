@@ -82,26 +82,46 @@ def apply_filters(opportunities: List[MarketOpportunity], config: FilterConfig) 
     return filtered
 
 def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], config: FilterConfig) -> Tuple[List[MarketOpportunity], Dict]:
-    filtered = []
-    risk_map = {"Low": 1, "Medium": 2, "High": 3}
-
     total_raw = len(opportunities)
-    n_initial = sum(1 for o in opportunities if not o.is_enriched)
-    n_enriched = total_raw - n_initial
-    
-    logger.info(f"[FILTER DEBUG] before_apply_filters={total_raw} (enriched={n_enriched} initial={n_initial}) selected_category={config.selected_category}")
-    logger.info(f"[FILTER DEBUG] config capital_max={config.capital_max:.0f} vol_min_day={config.vol_min_day} margin_min_pct={config.margin_min_pct:.1f} spread_max_pct={config.spread_max_pct:.1f} score_min={config.score_min:.1f} risk_max={config.risk_max} buy_orders_min={config.buy_orders_min} sell_orders_min={config.sell_orders_min} history_days_min={config.history_days_min} profit_day_min={config.profit_day_min:.0f} exclude_plex={config.exclude_plex}")
-
-    # ── A) Filtros base (rápidos, sin ESI) ──────────────────────────────────────
-    pass_base = []
     stats = {
-        "no_buy_price": 0, "capital": 0, "volume": 0, "margin": 0,
-        "spread": 0, "risk": 0, "buy_orders": 0, "sell_orders": 0,
-        "history_days": 0, "profit_day": 0, "plex": 0, "score": 0,
-        "skipped_history_filters_initial": 0
+        "metadata_missing": 0, "category_mismatch": 0, "no_buy_price": 0,
+        "capital": 0, "volume": 0, "margin": 0, "spread": 0, "risk": 0,
+        "buy_orders": 0, "sell_orders": 0, "history_days": 0, "profit_day": 0,
+        "plex": 0, "score": 0, "limit": 0
     }
+    
+    logger.info(f"[CATEGORY SCAN START] total_raw={total_raw} selected_category={config.selected_category}")
 
-    for opp in opportunities:
+    # ── 1. Metadata Resolution & Category Filter (First Phase) ────────────────
+    # We apply category filter on the FULL universe before any performance filtering.
+    pass_category = []
+    metadata_missing_ids = []
+    
+    if config.selected_category != "Todos":
+        # Prefetch metadata for all candidates to avoid blocking in loop
+        type_ids = [o.type_id for o in opportunities]
+        ItemResolver.instance().prefetch_type_metadata(type_ids)
+        
+        for opp in opportunities:
+            cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
+            if cat_id is None:
+                stats["metadata_missing"] += 1
+                metadata_missing_ids.append(opp.type_id)
+                continue
+            
+            match, reason = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
+            if match:
+                pass_category.append(opp)
+            else:
+                stats["category_mismatch"] += 1
+    else:
+        pass_category = opportunities
+
+    # ── 2. Performance & User Filters (Second Phase) ──────────────────────────
+    pass_user = []
+    risk_map = {"Low": 1, "Medium": 2, "High": 3}
+    
+    for opp in pass_category:
         if opp.best_buy_price <= 0:
             stats["no_buy_price"] += 1; continue
             
@@ -124,7 +144,6 @@ def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], confi
             stats["sell_orders"] += 1; continue
 
         if opp.is_enriched:
-            # Filtros que requieren historial: solo para datos enriquecidos
             if opp.liquidity.volume_5d < config.vol_min_day:
                 stats["volume"] += 1; continue
             if opp.liquidity.history_days < config.history_days_min:
@@ -134,55 +153,47 @@ def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], confi
             current_risk = risk_map.get(opp.risk_level, 3)
             if current_risk > config.risk_max:
                 stats["risk"] += 1; continue
-        else:
-            stats["skipped_history_filters_initial"] += 1
 
-        # Score filter (aplica si hay score calculado y se pide mínimo)
         if config.score_min > 0 and opp.score_breakdown is not None:
             if opp.score_breakdown.final_score < config.score_min:
                 stats["score"] += 1; continue
 
-        pass_base.append(opp)
+        pass_user.append(opp)
 
-    # ── B) Shortcut para "Todos" (sin metadata) ──────────────────────────────────
-    if config.selected_category == "Todos":
-        filtered = pass_base
-    else:
-        # ── C) Prefetch de metadata solo si se necesita filtro de categoría ──────────
-        if pass_base:
-            type_ids = [o.type_id for o in pass_base]
-            ItemResolver.instance().prefetch_type_metadata(type_ids)
+    # ── 3. Apply Limits (Third Phase) ──────────────────────────────────────────
+    final_results = pass_user
+    limit_applied = False
+    if config.max_item_types > 0 and len(pass_user) > config.max_item_types:
+        stats["limit"] = len(pass_user) - config.max_item_types
+        final_results = pass_user[:config.max_item_types]
+        limit_applied = True
 
-        # ── D) Filtro de categoría (estricto) ────────────────────────────────────────
-        cat_filtered = []
-        for opp in pass_base:
-            cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(opp.type_id, blocking=False)
-            match, _ = is_type_in_category(config.selected_category, cat_id, grp_id, opp.item_name)
-            if match:
-                cat_filtered.append(opp)
-        filtered = cat_filtered
-
-    # Preparar diagnóstico
-    relevant_stats = {k: v for k, v in stats.items() if k != 'skipped_history_filters_initial' and v > 0}
+    # ── 4. Diagnostics & Reporting ─────────────────────────────────────────────
+    relevant_stats = {k: v for k, v in stats.items() if v > 0}
     dominant_filter = max(relevant_stats, key=relevant_stats.get) if relevant_stats else None
     
-    category_removed = len(pass_base) - len(filtered)
-    if category_removed > 0:
-        stats["category"] = category_removed
-        if not dominant_filter or category_removed > stats.get(dominant_filter, 0):
-            dominant_filter = "category"
-
     diagnostics = {
         "total_raw": total_raw,
-        "after_base": len(pass_base),
-        "after_category": len(filtered),
+        "after_category": len(pass_category),
+        "after_filters": len(pass_user),
+        "final_count": len(final_results),
         "removed": stats,
+        "metadata_missing_count": stats["metadata_missing"],
+        "metadata_missing_ids": metadata_missing_ids[:20], # Sample
         "dominant_filter": dominant_filter,
-        "selected_category": config.selected_category
+        "selected_category": config.selected_category,
+        "limit_applied": limit_applied,
+        "limit_value": config.max_item_types
     }
 
-    logger.info(f"[FILTER DIAG] final={len(filtered)} dominant={dominant_filter} stats={relevant_stats}")
-    return filtered, diagnostics
+    # Mandatory Category Scan Report Logging
+    report_msg = f"\n[CATEGORY SCAN REPORT]\nMode: N/A (Engine Level)\nSelected Category: {config.selected_category}\nRaw Market Items: {total_raw}\nMetadata Missing: {stats['metadata_missing']}\nCategory Match Count: {len(pass_category)}\nAfter User Filters: {len(pass_user)}\nDisplayed Rows: {len(final_results)}\nLimit Applied: {limit_applied} (Value: {config.max_item_types})\nDominant Filter: {dominant_filter}\n"
+    logger.info(report_msg)
+    
+    if metadata_missing_ids:
+        logger.warning(f"[CATEGORY WARNING] metadata_missing_count={stats['metadata_missing']} sample={metadata_missing_ids[:10]}")
+
+    return final_results, diagnostics
 
 def score_opportunity(opp: MarketOpportunity, config: FilterConfig) -> ScoreBreakdown:
     liq_norm = min(opp.liquidity.volume_5d / 5000.0, 1.0)

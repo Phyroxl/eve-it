@@ -62,6 +62,10 @@ class MarketScanDiagnostics:
     # Filter Diagnosis
     filter_diagnostics: Dict[str, Any] = field(default_factory=dict)
     dominant_filter: Optional[str] = None
+    after_category: int = 0
+    after_filters: int = 0
+    metadata_missing_count: int = 0
+    metadata_missing_ids: List[int] = field(default_factory=list)
     
     # Metadata & History Stats
     metadata_total: int = 0
@@ -178,7 +182,13 @@ class MarketScanDiagnostics:
             report.append(f"Dominant Filter:          {str(self.dominant_filter).upper()}")
             report.append(f"Total Raw (at UI):        {self.filter_diagnostics.get('total_raw', 0)}")
             report.append(f"Pass Base Filter:         {self.filter_diagnostics.get('after_base', 0)}")
-            report.append(f"Pass Category Filter:     {self.filter_diagnostics.get('after_category', 0)}")
+            report.append(f"Pass Category Filter:     {self.filter_diagnostics.get('after_category', 0) or self.after_category}")
+            report.append(f"Pass User Filters:         {self.filter_diagnostics.get('after_filters', 0) or self.after_filters}")
+            
+            if self.metadata_missing_count > 0:
+                report.append(f"Metadata Missing:         {self.metadata_missing_count}")
+                if self.metadata_missing_ids:
+                    report.append(f"  - Samples: {self.metadata_missing_ids[:10]}")
             
             removed = self.filter_diagnostics.get("removed", {})
             if removed:
