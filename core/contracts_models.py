@@ -75,6 +75,14 @@ class ScanDiagnostics:
     contract_cache_hits: int = 0
     contract_cache_misses: int = 0
 
+    # ESI Fetch Telemetry
+    esi_total_pages: int = 0
+    esi_pages_fetched: int = 0
+    esi_raw_contracts: int = 0
+    esi_unique_contracts: int = 0
+    esi_limit_hit: bool = False
+    esi_fetch_stopped_reason: str = ""
+
     def to_summary(self) -> str:
         return (f"Total: {self.total_scanned} | Profitable: {self.profitable} | "
                 f"Low Profit/ROI: {self.excluded_by_low_profit}/{self.excluded_by_low_roi} | "

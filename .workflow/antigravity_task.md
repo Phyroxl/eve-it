@@ -3536,3 +3536,11 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Diagnosticos: Aadida seccion [OPEN IN-GAME] al reporte de escaneo.
 - Tests: Verificado con tests/test_contract_interaction.py y tests/test_contract_abyssal.py.
 - Estado: Operacional y robusto ante ordenacion de tabla.
+
+## FIX: Use valid PySide6 shortcuts in contracts view - 2026-05-01
+
+- Bug: QGuiApplication.Copy no existe en PySide6, causando crash al usar Ctrl+C.
+- Fix: Reemplazado por QKeySequence.StandardKey.Copy y SelectAll.
+- Mejora: Implementada logica de copia masiva TSV que maneja rangos no contiguos y todas las columnas visibles.
+- Proteccion: Aadido bloque try-except en keyPressEvent para evitar crashes por eventos de teclado.
+- Estado: Operacional y verificado con tests.

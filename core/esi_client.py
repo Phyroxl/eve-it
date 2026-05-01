@@ -446,33 +446,94 @@ class ESIClient:
             logger.error(f"Error opening contract window (contract_id={contract_id}): {e}")
             return False
 
-    def public_contracts(self, region_id: int) -> list:
+    def _fetch_public_contracts_page(self, region_id: int, page: int):
+        """Helper para descargar una página de contratos públicos con reintentos."""
+        url = f"{self.BASE_URL}/contracts/public/{region_id}/?datasource=tranquility&page={page}"
+        retries = 3
+        while retries > 0:
+            self._rate_limit()
+            try:
+                response = self.session.get(url, timeout=15)
+                if response.status_code == 200:
+                    total_pages = int(response.headers.get('X-Pages', 1))
+                    return response.json(), total_pages
+                elif response.status_code == 429:
+                    retry_after = float(response.headers.get('Retry-After', 5))
+                    time.sleep(retry_after)
+                    retries -= 1
+                    continue
+                else:
+                    return None, None
+            except Exception:
+                time.sleep(1)
+                retries -= 1
+        return None, None
+
+    def public_contracts(self, region_id: int, diagnostics=None, force_refresh: bool = False) -> list:
         """
-        GET /contracts/public/{region_id}/?page=1
-        Obtiene primera página (hasta 1000 contratos).
-        Filtra en local: solo type='item_exchange' y status='outstanding'.
-        Cache TTL: 300s
+        Fetch ALL public contracts for a region using ESI pagination.
+        Filters locally for 'item_exchange' and 'outstanding'.
         """
-        cache_key = f"public_contracts_{region_id}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        self._rate_limit()
-        url = f"{self.BASE_URL}/contracts/public/{region_id}/?datasource=tranquility&page=1"
-        try:
-            response = self.session.get(url, timeout=15)
-            if response.status_code == 200:
-                all_contracts = response.json()
-                filtered = [
-                    c for c in all_contracts
-                    if c.get('type') == 'item_exchange'
-                    and c.get('status', 'outstanding') == 'outstanding'
-                ]
-                self.cache.set(cache_key, filtered, 300)
-                return filtered
+        cache_key = f"public_contracts_v2_{region_id}"
+        if not force_refresh:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                if diagnostics:
+                    diagnostics.esi_raw_contracts = len(cached)
+                    diagnostics.esi_unique_contracts = len(cached)
+                    diagnostics.esi_fetch_stopped_reason = "cache"
+                return cached
+
+        # 1. Fetch first page to get total page count
+        data_p1, total_pages = self._fetch_public_contracts_page(region_id, 1)
+        if data_p1 is None:
+            if diagnostics: diagnostics.esi_fetch_stopped_reason = "p1_failed"
             return []
-        except Exception:
-            return []
+
+        all_raw_contracts = list(data_p1)
+        pages_fetched = 1
+        
+        if diagnostics:
+            diagnostics.esi_total_pages = total_pages
+            diagnostics.esi_pages_fetched = 1
+            diagnostics.esi_raw_contracts = len(data_p1)
+
+        # 2. Fetch remaining pages in parallel
+        if total_pages > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            max_workers = 10
+            pages_to_fetch = range(2, total_pages + 1)
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_page = {executor.submit(self._fetch_public_contracts_page, region_id, p): p for p in pages_to_fetch}
+                for future in as_completed(future_to_page):
+                    page_data, _ = future.result()
+                    pages_fetched += 1
+                    if page_data:
+                        all_raw_contracts.extend(page_data)
+                    
+                    if diagnostics:
+                        diagnostics.esi_pages_fetched = pages_fetched
+                        diagnostics.esi_raw_contracts = len(all_raw_contracts)
+
+        # 3. Deduplicate by contract_id
+        unique_contracts_map = {c['contract_id']: c for c in all_raw_contracts}
+        unique_contracts = list(unique_contracts_map.values())
+        
+        if diagnostics:
+            diagnostics.esi_unique_contracts = len(unique_contracts)
+            diagnostics.esi_fetch_stopped_reason = "complete"
+
+        # 4. Filter locally (item_exchange + outstanding)
+        # Note: We filter locally to match the legacy behavior but we report raw counts in diagnostics
+        filtered = [
+            c for c in unique_contracts
+            if c.get('type') == 'item_exchange'
+            and c.get('status', 'outstanding') == 'outstanding'
+        ]
+        
+        self.cache.set(cache_key, filtered, 600) # Cache for 10 mins
+        return filtered
 
     def contract_items(self, contract_id: int) -> list:
         """

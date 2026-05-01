@@ -43,7 +43,13 @@ class ContractsScanWorker(QThread):
             if self._cancelled: return
             self.status.emit("Conectando con ESI (Public Contracts)...")
             self.progress.emit(5)
-            contracts_raw = client.public_contracts(self.config.region_id)
+            
+            # Inicializar diagnóstico si no existe
+            from core.contracts_models import ScanDiagnostics
+            if not hasattr(self, 'diag') or self.diag is None:
+                self.diag = ScanDiagnostics()
+                
+            contracts_raw = client.public_contracts(self.config.region_id, diagnostics=self.diag, force_refresh=self.force_refresh)
             
             if self._cancelled: return
             if not contracts_raw:
@@ -146,8 +152,8 @@ class ContractsScanWorker(QThread):
             
             resolve_done_time = time.time()
             
-            from core.contracts_models import ScanDiagnostics
-            self.diag = ScanDiagnostics()
+            # self.diag already initialized and populated by client.public_contracts
+            # self.diag.total_scanned set here refers to analyzed candidates
             self.diag.total_scanned = len(candidates)
 
             # 6. Análisis Final
@@ -224,7 +230,7 @@ class ContractsScanWorker(QThread):
         for c in contracts_raw:
             if self._cancelled: break
             
-            # Solo intercambios de items
+            # Solo intercambios de items (Ya filtrado en client.public_contracts, pero doble check)
             if c.get('type') != 'item_exchange': continue
             
             price = c.get('price', 0.0)
@@ -242,4 +248,12 @@ class ContractsScanWorker(QThread):
             
         # Ordenar por los más recientes primero para mayor probabilidad de éxito
         result.sort(key=lambda x: x.get('date_issued', ''), reverse=True)
-        return result[:self.config.max_contracts_to_scan]
+        
+        # Aplicar límite si max_contracts_to_scan > 0
+        limit = self.config.max_contracts_to_scan
+        if limit > 0 and len(result) > limit:
+            if self.diag:
+                self.diag.esi_limit_hit = True
+            return result[:limit]
+            
+        return result
