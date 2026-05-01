@@ -272,6 +272,12 @@ class EveMarketVisualDetector:
         self.allow_edge_rows       = bool(config.get("visual_ocr_allow_edge_rows_in_manual_region", True))
         self.edge_row_padding      = int(config.get("visual_ocr_edge_row_padding_px", 8))
         
+        # BUY splitting logic (Phase 3H)
+        self.buy_split_large_bands       = bool(config.get("visual_ocr_buy_split_large_bands", True))
+        self.buy_expected_row_height     = int(config.get("visual_ocr_buy_expected_row_height_px", 18))
+        self.buy_large_band_min_height   = int(config.get("visual_ocr_buy_large_band_min_height_px", 40))
+        self.buy_row_split_overlap       = int(config.get("visual_ocr_buy_row_split_overlap_px", 2))
+        
         if _PYTESSERACT_AVAILABLE:
             if not self.tesseract_cmd:
                 self.tesseract_cmd = _autodetect_tesseract_cmd()
@@ -340,6 +346,7 @@ class EveMarketVisualDetector:
         target_price    = float(order_data.get("price", 0))
         target_quantity = int(order_data.get("volume_remain", 0))
         is_buy_order    = bool(order_data.get("is_buy_order", False))
+        result["_order_side"] = "buy" if is_buy_order else "sell"
 
         h, w = img_array.shape[:2]
 
@@ -426,7 +433,8 @@ class EveMarketVisualDetector:
         result["debug"]["qty_col_x_max"]   = qty_x1
 
         candidate_bands = self._find_blue_row_bands(
-            img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"]
+            img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"],
+            is_buy_order=is_buy_order
         )
         result["debug"]["raw_candidate_bands"] = list(candidate_bands)
 
@@ -445,7 +453,11 @@ class EveMarketVisualDetector:
             result, window_rect, manual_region=(manual_region is not None),
             is_fallback=False
         )
-        result["debug"]["detection_mode"] = "strict"
+        
+        mode = "strict"
+        if verified and result["debug"].get("visual_ocr_buy_large_bands_split"):
+            mode = "buy_split_large_band"
+        result["debug"]["detection_mode"] = mode
         
         # Pass 2: Fallback (if enabled and strict pass failed to find a unique match)
         if not verified and self.manual_full_height_scan and manual_region:
@@ -458,7 +470,10 @@ class EveMarketVisualDetector:
                 is_fallback=True
             )
             if verified:
-                result["debug"]["detection_mode"] = "fallback_full_region"
+                if result["debug"].get("visual_ocr_buy_large_bands_split"):
+                    result["debug"]["detection_mode"] = "buy_split_large_band"
+                else:
+                    result["debug"]["detection_mode"] = "fallback_full_region"
         
         result["candidates_count"] = len(verified)
 
@@ -516,6 +531,15 @@ class EveMarketVisualDetector:
             # Robustness: if manual region is active, be more tolerant of edge rows
             is_edge = False
             if manual_region and self.allow_edge_rows:
+                # Only reject if EXTREMELY close to edge (within 2px)
+                if y0 <= (section_y_min + 2):
+                    is_edge = True
+                    result["debug"].setdefault("rejected_bands_by_top_edge", []).append((y0, y1))
+                elif y1 >= (section_y_max - 2):
+                    is_edge = True
+                    result["debug"].setdefault("rejected_bands_by_bottom_edge", []).append((y0, y1))
+            else:
+                # Normal edge filtering
                 if y0 <= (section_y_min + self.edge_row_padding):
                     is_edge = True
                     result["debug"].setdefault("rejected_bands_by_top_edge", []).append((y0, y1))
@@ -528,6 +552,8 @@ class EveMarketVisualDetector:
                 min_h = self.min_row_height if not is_fallback else (self.min_row_height - 2)
                 max_h = self.max_row_height if not is_fallback else (self.max_row_height + 4)
                 
+                # If this was a split band, height should be fine. 
+                # If not split and too tall, we still reject here.
                 if height < min_h or height > max_h:
                     result["debug"]["rejected_bands_by_height"].append({"band": [y0, y1], "height": height})
                     continue
@@ -541,6 +567,10 @@ class EveMarketVisualDetector:
             filtered.append((y0, y1))
             
         result["debug"]["blue_bands_found"] = len(filtered)
+        result["debug"]["visual_ocr_rej_top"] = len(result["debug"].get("rejected_bands_by_top_edge", []))
+        result["debug"]["visual_ocr_rej_bot"] = len(result["debug"].get("rejected_bands_by_bottom_edge", []))
+        result["debug"]["visual_ocr_rej_height"] = len(result["debug"].get("rejected_bands_by_height", []))
+
         if not filtered:
             return []
 
@@ -548,17 +578,32 @@ class EveMarketVisualDetector:
         need_ocr = (self.match_price and target_price > 0) or (self.match_quantity and target_quantity > 0)
         if need_ocr:
             if not _PYTESSERACT_AVAILABLE or not self._is_tesseract_available():
-                # We expect caller to have checked this, but for safety:
                 return []
 
         verified = []
         import time
         ts = int(time.time() * 1000)
         
+        is_buy_order = result["debug"].get("section_used") == "buy" or (result["debug"].get("section_used") == "manual_override" and result.get("_order_side") == "buy")
+
         for idx, (y_min, y_max) in enumerate(filtered):
             own_marker, m_pix, m_rgb = self._detect_own_order_marker(img_array, y_min, y_max, w)
             
-            if self.marker_required and not own_marker:
+            # Phase 3H: For BUY, the green background is "background band" evidence
+            is_background_band = False
+            if is_buy_order and result["debug"].get("visual_ocr_buy_large_band_detected"):
+                # If this row came from a split large band, treat it as background band
+                large_band = result["debug"].get("visual_ocr_buy_large_band")
+                if large_band and y_min >= large_band[0] and y_max <= large_band[1]:
+                    is_background_band = True
+            
+            # Relax marker requirement for BUY if background band is present
+            effective_marker = own_marker
+            if is_buy_order and is_background_band:
+                effective_marker = True # Treat background as marker for detection purpose
+                result["debug"]["visual_ocr_buy_background_band"] = True
+
+            if self.marker_required and not effective_marker:
                 result["debug"]["marker_rejected_bands"].append({
                     "band": [y_min, y_max],
                     "marker_pixels": m_pix,
@@ -595,8 +640,9 @@ class EveMarketVisualDetector:
                 max_tol = max(self.price_match_abs_tolerance, target_price * self.price_match_rel_tolerance)
                 price_ok = price_diff <= max_tol
                 
-                if self.debug_save_crops and idx < self.debug_max_crops:
-                    self._save_debug_crop(price_region, f"visual_ocr_{ts}_p{idx+1}_fb{is_fallback}.png")
+                if self.debug_save_crops and idx < 20: # Save more crops for BUY debugging
+                    suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
+                    self._save_debug_crop(price_region, f"visual_ocr_{ts}_p{suffix}_fb{is_fallback}.png")
 
             # Quantity Match
             qty_match_type = "disabled" if not self.match_quantity else "none"
@@ -608,18 +654,20 @@ class EveMarketVisualDetector:
                 qty_text = self._ocr_region(qty_region)
                 ocr_qty  = normalize_quantity_text(qty_text)
                 
-                match_res = self._match_quantity(ocr_qty, target_quantity, price_ok, own_marker)
+                match_res = self._match_quantity(ocr_qty, target_quantity, price_ok, effective_marker)
                 qty_ok = match_res["matched"]
                 qty_match_type = match_res["confidence"]
                 qty_confidence = match_res["confidence"]
                 qty_reason = match_res["reason"]
                 
-                if self.debug_save_crops and idx < self.debug_max_crops:
-                    self._save_debug_crop(qty_region, f"visual_ocr_{ts}_q{idx+1}_fb{is_fallback}.png")
+                if self.debug_save_crops and idx < 20:
+                    suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
+                    self._save_debug_crop(qty_region, f"visual_ocr_{ts}_q{suffix}_fb{is_fallback}.png")
 
             # Scoring
             score = 0
             if own_marker: score += 100
+            elif is_buy_order and is_background_band: score += 60 # Weak marker evidence for BUY background
             else:          score -= 100
             
             if price_ok:   score += 80
@@ -634,6 +682,7 @@ class EveMarketVisualDetector:
             attempt = {
                 "band": [y_min, y_max],
                 "marker_matched": own_marker,
+                "is_background_band": is_background_band,
                 "price_match": price_ok,
                 "quantity_match": qty_ok,
                 "score": score,
@@ -657,7 +706,7 @@ class EveMarketVisualDetector:
                 "quantity_match_type": qty_match_type,
                 "quantity_match_confidence": qty_confidence,
                 "quantity_reason":    qty_reason,
-                "matched_own_marker": own_marker,
+                "matched_own_marker": own_marker or (is_buy_order and is_background_band),
                 "price_text":         price_text,
                 "quantity_text":      qty_text,
                 "normalized_quantity": ocr_qty,
@@ -667,8 +716,7 @@ class EveMarketVisualDetector:
             }
             
             # Acceptance criteria for verified candidates
-            if own_marker and price_ok:
-                # If quantity matched or we are in fallback and it's near-miss
+            if (own_marker or (is_buy_order and is_background_band)) and price_ok:
                 if qty_ok or (is_fallback and qty_match_type in ["suffix", "near_ocr"]):
                     verified.append(candidate)
                 
@@ -677,7 +725,7 @@ class EveMarketVisualDetector:
                 current_best = result["debug"].get("best_rejected_row")
                 if not current_best or score > current_best.get("score", -999):
                     reason = "unknown"
-                    if not own_marker: reason = "marker_mismatch"
+                    if not (own_marker or (is_buy_order and is_background_band)): reason = "marker_mismatch"
                     elif not price_ok: reason = "price_mismatch"
                     elif not qty_ok:   reason = "quantity_mismatch"
                     
@@ -754,7 +802,8 @@ class EveMarketVisualDetector:
         return result
 
     def _find_blue_row_bands(self, img_array, y_start: int, y_end: int,
-                              x_start: int, x_end: int, debug: dict) -> list:
+                              x_start: int, x_end: int, debug: dict,
+                              is_buy_order: bool = False) -> list:
         """
         Find horizontal pixel bands matching EVE's own-order blue color.
         Returns list of (y_min, y_max) tuples in original image coordinates.
@@ -824,6 +873,36 @@ class EveMarketVisualDetector:
                 band_start = idx
             prev = idx
         bands.append((y_start + band_start, y_start + prev + 1))
+        
+        # BUY splitting logic (Phase 3H)
+        if is_buy_order and self.buy_split_large_bands:
+            split_bands = []
+            split_count = 0
+            for (y0, y1) in bands:
+                h = y1 - y0
+                if h >= self.buy_large_band_min_height:
+                    debug["visual_ocr_buy_large_band_detected"] = True
+                    debug["visual_ocr_buy_large_band"] = [y0, y1]
+                    # Split into row-sized chunks
+                    step = self.buy_expected_row_height
+                    overlap = self.buy_row_split_overlap
+                    
+                    curr_y = y0
+                    while curr_y + step <= y1 + overlap:
+                        end_y = min(y1, curr_y + step)
+                        split_bands.append((curr_y, end_y))
+                        split_count += 1
+                        curr_y += (step - overlap)
+                        if curr_y >= y1 - 4: # Too close to end
+                            break
+                else:
+                    split_bands.append((y0, y1))
+            
+            if split_count > 0:
+                debug["visual_ocr_buy_large_bands_split"] = 1 # We only track if any were split
+                debug["visual_ocr_buy_split_rows_count"] = split_count
+                return split_bands
+
         return bands
 
     def _detect_own_order_marker(self, img_array, y_min: int, y_max: int,

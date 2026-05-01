@@ -3023,3 +3023,25 @@ Se corrigió el problema donde, aunque el cambio de pestaña era rápido, la UI 
 - [x] El usuario tiene control total sobre cuándo iniciar sincronizaciones pesadas.
 
 *Estado: UI de Market Command profesional, libre de bloqueos y reactiva.*
+
+## BUY Visual OCR large-band row splitting (2026-05-01)
+
+### Root Cause
+EVE Online highlights the entire "Buyer" section of the market window with a contiguous green background. The existing blue-band/marker detection logic interpreted this large green block as a single, massive order row (e.g., [510, 665]). When passed to OCR, this oversized crop resulted in garbage text or empty results, causing BUY order updates to fail while SELL orders (which lack this contiguous background) worked perfectly.
+
+### Implementation Strategy
+1.  **Large Band Splitting**: Modified `EveMarketVisualDetector` to detect oversized bands in BUY orders and split them into row-sized candidates using a configurable expected row height (default 18px).
+2.  **Side-Aware Evidence**: Updated the scoring logic to treat split rows within a BUY background band as having "background evidence," relaxing the strict requirement for the blue own-order marker if price/quantity match.
+3.  **Relaxed Edge Filtering**: Improved tolerance for rows near the top/bottom of a manual region to prevent aggressive rejection of valid BUY rows.
+4.  **Enhanced Diagnostics**: Added metrics for split counts, background evidence detection, and detailed rejection reasons.
+
+### Verification Results
+*   **Compilation**: All modules compiled successfully via `py_compile`.
+*   **Regression Tests**: 155 tests passed in the core suite.
+*   **Safety**: Verified that `Final Confirm Action` remains `NOT_EXECUTED_BY_DESIGN`.
+*   **Manual Validation Checklist**:
+    *   BUY row split into ~9 candidates for 155px band.
+    *   Side-specific offsets (20,0) and (50,20) correctly applied after unique_match.
+    *   SELL behavior unchanged.
+
+**Commit Hash**: [PENDING]

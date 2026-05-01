@@ -126,6 +126,10 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_manual_region_full_height_scan": True,
     "visual_ocr_allow_edge_rows_in_manual_region": True,
     "visual_ocr_edge_row_padding_px":           8,
+    "visual_ocr_buy_split_large_bands":         True,
+    "visual_ocr_buy_expected_row_height_px":    18,
+    "visual_ocr_buy_large_band_min_height_px":  40,
+    "visual_ocr_buy_row_split_overlap_px":      2,
 }
 
 _RATIO_KEYS = (
@@ -248,7 +252,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_manual_region_save_profile", "visual_ocr_marker_required",
                 "visual_ocr_verify_context_menu_open", "visual_ocr_paste_after_unverified_modify_click",
                 "visual_ocr_allow_unverified_paste", "visual_ocr_modify_click_retry_if_menu_closed",
-                "visual_ocr_pre_right_click_left_click"):
+                "visual_ocr_pre_right_click_left_click",
+                "visual_ocr_buy_split_large_bands"):
         if key in config:
             result[key] = bool(config[key])
             user_keys.add(key)
@@ -315,7 +320,9 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_sell_right_click_x_offset", "visual_ocr_sell_right_click_y_offset",
                 "visual_ocr_sell_modify_menu_offset_x", "visual_ocr_sell_modify_menu_offset_y",
                 "visual_ocr_buy_right_click_x_offset", "visual_ocr_buy_right_click_y_offset",
-                "visual_ocr_buy_modify_menu_offset_x", "visual_ocr_buy_modify_menu_offset_y"):
+                "visual_ocr_buy_modify_menu_offset_x", "visual_ocr_buy_modify_menu_offset_y",
+                "visual_ocr_buy_expected_row_height_px", "visual_ocr_buy_large_band_min_height_px",
+                "visual_ocr_buy_row_split_overlap_px"):
         if key in config:
             try:
                 result[key] = int(config[key])

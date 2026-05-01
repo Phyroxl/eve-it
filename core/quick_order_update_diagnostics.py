@@ -397,9 +397,14 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Raw Bands : {len(dbg.get('raw_candidate_bands') or [])}")
     lines.append(f"  Visual OCR Rej Height: {len(dbg.get('rejected_bands_by_height') or [])}")
     lines.append(f"  Visual OCR Rej Offset: {len(dbg.get('rejected_bands_by_offset') or [])}")
-    lines.append(f"  Visual OCR Rej Top   : {len(dbg.get('rejected_bands_by_top_edge') or [])}")
-    lines.append(f"  Visual OCR Rej Bot   : {len(dbg.get('rejected_bands_by_bottom_edge') or [])}")
+    lines.append(f"  Visual OCR Rej Top   : {dbg.get('visual_ocr_rej_top', len(dbg.get('rejected_bands_by_top_edge') or []))}")
+    lines.append(f"  Visual OCR Rej Bot   : {dbg.get('visual_ocr_rej_bot', len(dbg.get('rejected_bands_by_bottom_edge') or []))}")
     lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
+    
+    # BUY splitting diagnostics
+    lines.append(f"  Visual OCR BUY Split : {dbg.get('visual_ocr_buy_large_bands_split', 0)}")
+    lines.append(f"  Visual OCR BUY Rows  : {dbg.get('visual_ocr_buy_split_rows_count', 0)}")
+    lines.append(f"  Visual OCR BUY Backgr: {_b(dbg.get('visual_ocr_buy_background_band', False))}")
     
     # Click diagnostics
     rc_attempts = automation.get("visual_ocr_rc_attempts", 0)
