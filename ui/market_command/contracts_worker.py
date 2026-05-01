@@ -10,6 +10,9 @@ from core.contracts_engine import (
     calculate_contract_metrics, score_contract, apply_contracts_filters
 )
 from core.esi_client import ESIClient
+import logging
+
+logger = logging.getLogger('eve.contracts_worker')
 
 # VERSION: 1.1.0-STABILITY (Real functional implementation)
 
@@ -70,6 +73,7 @@ class ContractsScanWorker(QThread):
             import time
             from concurrent.futures import ThreadPoolExecutor
             from core.contracts_cache import ContractsCache
+            from core.item_resolver import ItemResolver
             from dataclasses import asdict
 
             start_time = time.time()

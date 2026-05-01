@@ -3406,3 +3406,13 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Ahora, si una vista falla al cargar, se muestra un mensaje de error con boton de reintento en lugar de bloquear la UI.
 - Archivos: ui/market_command/contracts_view.py, ui/market_command/command_main.py.
 - Verificacion: Script de diagnostico (instanciacion exitosa) y tests de contratos (7 passed).
+
+## FIX: Resolve ItemResolver Dependency - 2026-05-01
+
+- Bug: NameError: name ItemResolver is not defined al iniciar el escaneo.
+- Causa: Falta el import de ItemResolver dentro del motodo run() de ContractsScanWorker.
+- Fix aplicado: 
+  - Aadido import local de ItemResolver en ContractsScanWorker.run().
+  - Aadido import de logging y definicion de logger en contracts_worker.py.
+- Archivos: ui/market_command/contracts_worker.py.
+- Verificacion: py_compile exitoso y tests de contratos (7 passed).
