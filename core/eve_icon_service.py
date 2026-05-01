@@ -247,24 +247,18 @@ class EveIconService(QObject):
     def _get_category_label(self, type_id: int) -> str:
         """Classify item to get a 2-4 letter label."""
         from core.item_resolver import ItemResolver
-        cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(type_id, blocking=False)
+        cat_id, grp_id, name, _ = ItemResolver.instance().resolve_category_info(type_id, blocking=False)
         
-        if cat_id is None: return "?"
-        
-        # Categories (simplified)
-        # Ships: 6
+        if name and "SKIN" in name.upper(): return "SKIN"
         if cat_id == 6: return "SHIP"
-        # Modules: 7, 8, 18, 22, 23, 32, 65, 66...
-        if cat_id in (7, 8, 18, 32): return "MOD"
-        # Drones: 18 (some)
-        if grp_id in (100, 101, 311, 638): return "DRN"
-        # Blueprints: 9
-        if cat_id == 9: return "BP"
-        # SKINS: 91
+        if cat_id == 7: return "MOD"
+        if cat_id == 18: return "DRON"
+        if cat_id == 8: return "CHRG"
+        if cat_id == 9: return "BLUE"
+        if cat_id == 16: return "SKIL"
         if cat_id == 91: return "SKIN"
-        # Ore/Minerals: 25, 4, 17
+        if cat_id == 2: return "IMPL"
         if cat_id in (25, 4, 17): return "ORE"
-        
         return "ITEM"
 
     def get_diagnostics(self) -> dict:

@@ -261,7 +261,15 @@ def apply_contracts_filters(
             if diagnostics: diagnostics.excluded_by_complexity += 1
             continue
             
-        # 4. Exclusión explícita por falta de precio
+        # 4. Abyssal
+        if config.exclude_abyssal:
+            has_abyssal = any("Abyssal" in i.item_name or "Mutated" in i.item_name for i in c.items)
+            if has_abyssal:
+                c.filter_reason = "Contiene items Abyssal/Mutated"
+                if diagnostics: diagnostics.excluded_by_abyssal += 1
+                continue
+
+        # 5. Exclusión explícita por falta de precio
         if config.exclude_no_price and c.jita_sell_value <= 0:
             c.filter_reason = "Sin valoración (Excluido por filtro)"
             if diagnostics: diagnostics.excluded_by_no_price += 1
@@ -321,7 +329,24 @@ def apply_contracts_filters(
                     main_item = it
             
             if main_item:
+                # Intentar clasificar por Category ID real de ESI
+                item_cat = "other"
+                
+                # Mapeo de Category IDs de EVE a IDs internos de MARKET_CATEGORIES
+                # Ships: 6, Modules: 7, Drones: 18, Blueprints: 9, Skills: 16, PI: 43, Abyssal: 63
+                # (Estos IDs son orientativos, lo ideal es que ItemResolver los proporcione)
+                
+                # Heurística mejorada: Si el item tiene un category_id real en su objeto ContractItem (si lo añadiéramos)
+                # Pero ContractItem no tiene category_id. Vamos a usar ItemMetadataHelper.resolve_category 
+                # pero pasándole el nombre. El problema es que "Abyssal Warp Disruptor" contiene "Disruptor" 
+                # que puede caer en módulos.
+                
                 item_cat = ItemMetadataHelper.resolve_category(main_item.item_name)
+                
+                # Caso especial: Si es Abyssal, su categoría real debería ser Abyssal, no Módulos/Naves
+                if "Abyssal" in main_item.item_name or "Mutated" in main_item.item_name:
+                    item_cat = "abyssal"
+
                 # Normalización para comparación
                 if str(item_cat).lower() == cat_filter:
                     final_filtered.append(c)

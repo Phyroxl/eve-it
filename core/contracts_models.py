@@ -51,6 +51,7 @@ class ScanDiagnostics:
     profitable: int = 0
     excluded_by_no_items: int = 0
     excluded_by_zero_value: int = 0
+    excluded_by_abyssal: int = 0
     # Zero Value Breakdown
     zv_all_items_missing_price: int = 0
     zv_all_items_unmarketable: int = 0
@@ -130,4 +131,5 @@ class ContractsFilterConfig:
     exclude_no_price: bool = True
     exclude_blueprints: bool = False
     exclude_bpcs: bool = False
+    exclude_abyssal: bool = False
     category_filter: str = "all"  # ships, modules, etc.

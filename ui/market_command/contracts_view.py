@@ -24,10 +24,33 @@ from ui.market_command.widgets import ItemInteractionHelper
 
 
 def _format_isk(value: float) -> str:
-    if value >= 1_000_000_000: return f"{value/1_000_000_000:.2f}B ISK"
-    if value >= 1_000_000:     return f"{value/1_000_000:.1f}M ISK"
-    if value >= 1_000:         return f"{value/1_000:.1f}K ISK"
-    return f"{value:.0f} ISK"
+    abs_v = abs(value)
+    if abs_v >= 1_000_000_000: 
+        res = f"{value/1_000_000_000:.2f}B".replace(".", ",")
+    elif abs_v >= 1_000_000:
+        res = f"{value/1_000_000:.1f}M".replace(".", ",")
+    elif abs_v >= 1_000:
+        res = f"{value/1_000:.1f}K".replace(".", ",")
+    else:
+        res = f"{value:.0f}"
+    
+    return f"{res} ISK"
+
+def _format_isk_full(value: float) -> str:
+    """Formato con puntos de miles: 1.234.567 ISK"""
+    # En Python {:,} usa comas por defecto.
+    s = f"{int(value):,}".replace(",", ".")
+    return f"{s} ISK"
+
+class NumericTableWidgetItem(QTableWidgetItem):
+    def __init__(self, text, value):
+        super().__init__(str(text))
+        self.sort_value = float(value) if value is not None else -1e18
+
+    def __lt__(self, other):
+        if isinstance(other, NumericTableWidgetItem):
+            return self.sort_value < other.sort_value
+        return super().__lt__(other)
 
 def _format_expiry(date_expired: str) -> str:
     from datetime import datetime, timezone
@@ -203,9 +226,15 @@ class MarketContractsView(QWidget):
         self.exclude_blueprints_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
         fl.addWidget(self.exclude_blueprints_check)
 
-        self.exclude_bpcs_check = QCheckBox("Excluir Copias (BPCs)")
-        self.exclude_bpcs_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
-        fl.addWidget(self.exclude_bpcs_check)
+        self.check_bpcs = QCheckBox("Excluir Copias (BPCs)")
+        self.check_bpcs.setChecked(self.config.exclude_bpcs)
+        self.check_bpcs.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        fl.addWidget(self.check_bpcs)
+
+        self.check_abyssal = QCheckBox("Excluir Abyssal")
+        self.check_abyssal.setChecked(self.config.exclude_abyssal)
+        self.check_abyssal.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        fl.addWidget(self.check_abyssal)
 
         fl.addStretch()
 
@@ -361,6 +390,7 @@ class MarketContractsView(QWidget):
         )
         self.results_table.cellClicked.connect(self.on_row_selected)
         self.results_table.cellDoubleClicked.connect(self.on_row_double_clicked)
+        self.results_table.setSortingEnabled(True)
         
         # Splitter para resizabilidad
         self.splitter = QSplitter(Qt.Vertical)
@@ -462,7 +492,8 @@ class MarketContractsView(QWidget):
         self.scan_max_spin.setValue(self.config.max_contracts_to_scan)
         self.exclude_no_price_check.setChecked(self.config.exclude_no_price)
         self.exclude_blueprints_check.setChecked(self.config.exclude_blueprints)
-        self.exclude_bpcs_check.setChecked(self.config.exclude_bpcs)
+        self.check_bpcs.setChecked(self.config.exclude_bpcs)
+        self.check_abyssal.setChecked(self.config.exclude_abyssal)
         
         idx = self.combo_category.findData(self.config.category_filter)
         if idx >= 0: self.combo_category.setCurrentIndex(idx)
@@ -477,7 +508,8 @@ class MarketContractsView(QWidget):
         self.config.max_contracts_to_scan = self.scan_max_spin.value()
         self.config.exclude_no_price = self.exclude_no_price_check.isChecked()
         self.config.exclude_blueprints = self.exclude_blueprints_check.isChecked()
-        self.config.exclude_bpcs = self.exclude_bpcs_check.isChecked()
+        self.config.exclude_bpcs = self.check_bpcs.isChecked()
+        self.config.exclude_abyssal = self.check_abyssal.isChecked()
         self.config.category_filter = self.combo_category.currentData() or "all"
         save_contracts_filters(self.config)
 
@@ -568,6 +600,7 @@ class MarketContractsView(QWidget):
         report.append(f"  exclude_no_price: {self.config.exclude_no_price}")
         report.append(f"  exclude_bpos: {self.config.exclude_blueprints}")
         report.append(f"  exclude_bpcs: {self.config.exclude_bpcs}")
+        report.append(f"  exclude_abyssal: {self.config.exclude_abyssal}")
 
         if not self.last_diag:
             report.append("\nNo hay diagnóstico disponible todavía. Ejecuta un escaneo.")
@@ -585,22 +618,6 @@ class MarketContractsView(QWidget):
         report.append(f"  Hide Low ROI: {'True' if self.config.roi_min_pct > 0 else 'False'}")
         report.append(f"  Hide Zero Value: {'True' if self.config.exclude_no_price else 'False'}")
 
-        report.append("\n[VALUATION STATUS COUNTS]")
-        rentable = 0
-        no_rentable = 0
-        sin_precio = 0
-        for row in range(self.results_table.rowCount()):
-            item = self.results_table.item(row, 0)
-            if item:
-                c = item.data(Qt.UserRole)
-                if c:
-                    if c.jita_sell_value <= 0: sin_precio += 1
-                    elif c.net_profit > 0: rentable += 1
-                    else: no_rentable += 1
-        
-        report.append(f"  Rentable: {rentable}")
-        report.append(f"  No rentable: {no_rentable}")
-        report.append(f"  Sin precio / Zero Value: {sin_precio}")
         report.append(f"  Total Visible: {self.results_table.rowCount()}")
 
         report.append("\n[FILTER EXCLUSIONS (HIDDEN)]")
@@ -608,11 +625,17 @@ class MarketContractsView(QWidget):
         report.append(f"  Excluded by No Items: {d.excluded_by_no_items}")
         report.append(f"  Excluded by Blueprint: {d.excluded_by_blueprint}")
         report.append(f"  Excluded by BPC: {d.excluded_by_bpc}")
+        report.append(f"  Excluded by Abyssal: {d.excluded_by_abyssal}")
         report.append(f"  Excluded by Complexity: {d.excluded_by_complexity}")
         report.append(f"  Excluded by Category: {d.excluded_by_category}")
         if self.config.exclude_no_price:
             report.append(f"  Excluded by Zero Value Filter: {d.excluded_by_no_price}")
 
+        report.append("\n[ICON DIAGNOSTICS]")
+        id_diag = self.icon_service.get_diagnostics()
+        report.append(f"  Loaded: {id_diag['loaded']} | Failed: {id_diag['failed_total']}")
+        report.append(f"  Placeholders Used: {id_diag['placeholders']}")
+        
         report.append("\n[ZERO VALUE ANALYSIS (NON-EXCLUDED)]")
         report.append(f"  Total Zero Value Seen: {d.excluded_by_zero_value}")
         report.append(f"  All Items Missing Price: {d.zv_all_items_missing_price}")
@@ -722,68 +745,101 @@ class MarketContractsView(QWidget):
 
         return "\n".join(report)
 
+    def keyPressEvent(self, event):
+        if event.matches(QGuiApplication.Copy):
+            if self.items_table.hasFocus():
+                self.copy_table_selection(self.items_table)
+                return
+            if self.results_table.hasFocus():
+                self.copy_table_selection(self.results_table)
+                return
+        super().keyPressEvent(event)
+
+    def copy_table_selection(self, table):
+        selection = table.selectedRanges()
+        if not selection:
+            return
+        
+        rows = []
+        # Solo manejamos un rango por simplicidad, o concatenamos
+        for r in selection:
+            for row in range(r.topRow(), r.bottomRow() + 1):
+                row_data = []
+                for col in range(r.leftColumn(), r.rightColumn() + 1):
+                    it = table.item(row, col)
+                    row_data.append(it.text() if it else "")
+                rows.append("\t".join(row_data))
+        
+        if rows:
+            text = "\n".join(rows)
+            QGuiApplication.clipboard().setText(text)
+            self.status_label.setText(f"Copiado: {len(rows)} filas al portapapeles")
+            self.status_label.setStyleSheet("color: #10b981; font-size: 9px;")
+
     def add_contract_row(self, c):
-        # Insertar fila (se asume que el llamador ya aplicó filtros)
         row = self.results_table.rowCount()
+        self.results_table.setSortingEnabled(False)
         self.results_table.insertRow(row)
-
-        i_num = QTableWidgetItem(str(row + 1))
-        i_num.setTextAlignment(Qt.AlignCenter)
-        if c.filter_reason:
-            i_num.setToolTip(f"Motivo: {c.filter_reason}")
         
-        items_txt = str(c.item_type_count)
-        if c.has_unresolved_items or c.valuation_warning:
-            items_txt += " ⚠"
-        i_items = QTableWidgetItem(items_txt)
-        i_items.setTextAlignment(Qt.AlignCenter)
+        # Guardamos el objeto en la primera celda para recuperación rápida
+        num_item = NumericTableWidgetItem(str(row + 1), row + 1)
+        num_item.setData(Qt.UserRole, c)
+        num_item.setForeground(QColor("#64748b"))
         
-        i_cost = QTableWidgetItem(_format_isk(c.contract_cost))
-        i_cost.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        items_item = NumericTableWidgetItem(str(c.item_type_count), c.item_type_count)
         
-        i_js = QTableWidgetItem(_format_isk(c.jita_sell_value))
-        i_js.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        cost_item = NumericTableWidgetItem(_format_isk(c.contract_cost), c.contract_cost)
+        cost_item.setToolTip(_format_isk_full(c.contract_cost))
         
-        i_jb = QTableWidgetItem(_format_isk(c.jita_buy_value))
-        i_jb.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        sell_item = NumericTableWidgetItem(_format_isk(c.jita_sell_value), c.jita_sell_value)
+        sell_item.setToolTip(_format_isk_full(c.jita_sell_value))
         
-        i_profit = QTableWidgetItem(_format_isk(c.net_profit))
-        i_profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        i_profit.setForeground(QColor("#10b981"))
+        buy_item = NumericTableWidgetItem(_format_isk(c.jita_buy_value), c.jita_buy_value)
+        buy_item.setToolTip(_format_isk_full(c.jita_buy_value))
         
-        i_roi = QTableWidgetItem(f"{c.roi_pct:.1f}%")
-        i_roi.setTextAlignment(Qt.AlignCenter)
-        if c.roi_pct > 20: i_roi.setForeground(QColor("#10b981"))
-        elif c.roi_pct > 10: i_roi.setForeground(QColor("#f59e0b"))
-        else: i_roi.setForeground(QColor("#f1f5f9"))
+        profit_item = NumericTableWidgetItem(_format_isk(c.net_profit), c.net_profit)
+        profit_item.setToolTip(_format_isk_full(c.net_profit))
+        if c.net_profit > 0:
+            profit_item.setForeground(QColor("#10b981")) # Verde
+        elif c.net_profit < 0:
+            profit_item.setForeground(QColor("#ef4444")) # Rojo
+        else:
+            profit_item.setForeground(QColor("#94a3b8")) # Gris
+            
+        roi_item = NumericTableWidgetItem(f"{c.roi_pct:.1f}%", c.roi_pct)
+        if c.roi_pct >= 20: roi_item.setForeground(QColor("#10b981"))
+        elif c.roi_pct < 0: roi_item.setForeground(QColor("#ef4444"))
         
-        exp_txt = _format_expiry(c.date_expired)
-        i_exp = QTableWidgetItem(exp_txt)
-        i_exp.setTextAlignment(Qt.AlignCenter)
+        exp_item = QTableWidgetItem(_format_expiry(c.date_expired))
         
-        i_score = QTableWidgetItem(f"{c.score:.1f}")
-        i_score.setTextAlignment(Qt.AlignCenter)
+        score_item = NumericTableWidgetItem(f"{c.score:.1f}", c.score)
+        if c.score >= 50: score_item.setForeground(QColor("#10b981"))
         
-        # Color coding de fila
+        self.results_table.setItem(row, 0, num_item)
+        self.results_table.setItem(row, 1, items_item)
+        self.results_table.setItem(row, 2, cost_item)
+        self.results_table.setItem(row, 3, sell_item)
+        self.results_table.setItem(row, 4, buy_item)
+        self.results_table.setItem(row, 5, profit_item)
+        self.results_table.setItem(row, 6, roi_item)
+        self.results_table.setItem(row, 7, exp_item)
+        self.results_table.setItem(row, 8, score_item)
+        
+        for col in range(9):
+            it = self.results_table.item(row, col)
+            if it: it.setTextAlignment(Qt.AlignCenter)
+        
+        self.results_table.setSortingEnabled(True)
+        
+        # Color coding de fila opcional
         if c.score > 70:
-            for i in [i_num, i_items, i_cost, i_js, i_jb, i_profit, i_roi, i_exp, i_score]:
-                i.setBackground(QColor("#0d2418"))
+            for col in range(9):
+                it = self.results_table.item(row, col)
+                if it: it.setBackground(QColor("#0d2418"))
         elif c.score < 40:
-            for i in [i_num, i_items, i_cost, i_js, i_jb, i_profit, i_roi, i_exp, i_score]:
-                i.setBackground(QColor("#1a1505"))
-
-        self.results_table.setItem(row, 0, i_num)
-        self.results_table.setItem(row, 1, i_items)
-        self.results_table.setItem(row, 2, i_cost)
-        self.results_table.setItem(row, 3, i_js)
-        self.results_table.setItem(row, 4, i_jb)
-        self.results_table.setItem(row, 5, i_profit)
-        self.results_table.setItem(row, 6, i_roi)
-        self.results_table.setItem(row, 7, i_exp)
-        self.results_table.setItem(row, 8, i_score)
-        
-        # Guardar ref oculta en la fila
-        i_num.setData(Qt.UserRole, c)
+            for col in range(9):
+                it = self.results_table.item(row, col)
+                if it: it.setBackground(QColor("#1a1505"))
 
     def apply_filters_locally(self):
         # Si no hay resultados, no borramos lo que había
@@ -932,13 +988,13 @@ class MarketContractsView(QWidget):
         self.lbl_det_title.setText(f"CONTRATO {c.contract_id} — SCORE: {c.score:.1f}")
         
         # Llenar métricas
-        self.lbl_det_cost.setText(f"<b>COSTE:</b> <span style='color:#f1f5f9;'>{_format_isk(c.contract_cost)}</span>")
-        self.lbl_det_sell.setText(f"<b>JITA SELL:</b> <span style='color:#f1f5f9;'>{_format_isk(c.jita_sell_value)}</span>")
+        self.lbl_det_cost.setText(f"<b>COSTE:</b> <span style='color:#f1f5f9;'>{_format_isk_full(c.contract_cost)}</span>")
+        self.lbl_det_sell.setText(f"<b>JITA SELL:</b> <span style='color:#f1f5f9;'>{_format_isk_full(c.jita_sell_value)}</span>")
         
         color_p = "#10b981" if c.net_profit > 0 else "#ef4444"
-        self.lbl_det_profit.setText(f"<b>NET PROFIT:</b> <span style='color:{color_p};'>{_format_isk(c.net_profit)}</span>")
+        self.lbl_det_profit.setText(f"<b>NET PROFIT:</b> <span style='color:{color_p};'>{_format_isk_full(c.net_profit)}</span>")
         
-        color_r = "#10b981" if c.roi_pct >= 20 else ("#f59e0b" if c.roi_pct >= 10 else "#f1f5f9")
+        color_r = "#10b981" if c.roi_pct >= 20 else ("#f59e0b" if c.roi_pct >= 10 else ("#ef4444" if c.roi_pct < 0 else "#f1f5f9"))
         self.lbl_det_roi.setText(f"<b>ROI:</b> <span style='color:{color_r};'>{c.roi_pct:.1f}%</span>")
         
         risk_msgs = []
