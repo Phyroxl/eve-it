@@ -1426,6 +1426,11 @@ class TestSELLHardening(unittest.TestCase):
             )
         self.assertEqual(result["debug"]["visual_ocr_sell_grid_y_min"], 150)
 
+    def test_detector_has_save_debug_crop_method(self):
+        """Regression test for HOTFIX: ensure _save_debug_crop is a detector method."""
+        self.assertTrue(hasattr(self.detector, "_save_debug_crop"))
+        self.assertTrue(callable(self.detector._save_debug_crop))
+
 if __name__ == "__main__":
     unittest.main()
 

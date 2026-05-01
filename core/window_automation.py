@@ -877,6 +877,7 @@ class EVEWindowAutomation:
         result["visual_ocr_abort_reason"]      = dbg.get("abort_reason")
         result["visual_ocr_ocr_calls"]         = dbg.get("ocr_calls_count", 0)
         result["visual_ocr_elapsed_ms"]        = dbg.get("elapsed_ms", 0)
+        result["visual_ocr_max_ocr_calls"]     = dbg.get("max_ocr_calls", 0)
 
         # Fix 2: Tick propagation (diagnostics)
         result["visual_ocr_price_tick"]        = dbg.get("price_tick_used", 0.0)

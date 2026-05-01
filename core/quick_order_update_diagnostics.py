@@ -369,7 +369,7 @@ def _format_automation_section(automation: dict) -> list:
     # Fix 1: Timeout/Abort
     lines.append(f"  Visual OCR Abort Reason: {automation.get('visual_ocr_abort_reason', 'N/A')}")
     lines.append(f"  Visual OCR OCR Calls: {automation.get('visual_ocr_ocr_calls', 0)}")
-    lines.append(f"  Visual OCR Max OCR Calls: {m_reg_cfg.get('visual_ocr_max_total_ocr_calls_per_detection', 'N/A')}")
+    lines.append(f"  Visual OCR Max OCR Calls: {automation.get('visual_ocr_max_ocr_calls', 'N/A')}")
     lines.append(f"  Visual OCR Elapsed Ms: {automation.get('visual_ocr_elapsed_ms', 0)} ms")
     
     # Fix 2: Tick propagation

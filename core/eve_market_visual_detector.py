@@ -214,6 +214,12 @@ def _base_detection_result() -> dict:
 # Main detector class
 # ---------------------------------------------------------------------------
 
+class OCRDetectionAborted(Exception):
+    """Custom exception to abort detection when limits are reached."""
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
 class EveMarketVisualDetector:
     """
     Detect the own-order row in an EVE Online market window screenshot.
@@ -1916,11 +1922,7 @@ class EveMarketVisualDetector:
             _log.warning(f"[VISUAL_OCR] OCR region error: {exc}")
             return ""
 
-class OCRDetectionAborted(Exception):
-    """Custom exception to abort detection when limits are reached."""
-    def __init__(self, reason: str):
-        self.reason = reason
-        super().__init__(reason)
+
 
     def _save_debug_crop(self, img_array, filename: str):
         """Save a debug crop to disk if possible."""

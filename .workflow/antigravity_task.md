@@ -3272,3 +3272,9 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - [x] Mantenida la política NOT_EXECUTED_BY_DESIGN.
 
 *Estado: Localización de órdenes SELL altamente resistente a ruidos de precio y falsos positivos de rejilla.*
+
+## HOTFIX Visual OCR method indentation regression - 2026-05-01
+
+- causa: _save_debug_crop qued fuera de EveMarketVisualDetector tras aadir OCRDetectionAborted
+- fix: motodo restaurado en clase correcta y UnboundLocalError en diagnsticos corregido
+- tests ejecutados: test_visual_ocr_matching (97 passed), stability, window_automation, quick_order_update_flow (all OK)
