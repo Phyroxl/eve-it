@@ -3467,3 +3467,17 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Aadido bloque try-except en apply_filters_locally para asegurar que los resultados se rendericen incluso si falla la logica de diagnostico.
 - Archivos: ui/market_command/contracts_view.py.
 - Verificacion: Compilacion exitosa de todos los modulos. El error de importacion ha sido eliminado.
+
+## FIX: Details Panel and Empty Contracts - 2026-05-01
+
+- Bug: Panel inferior de detalles aparecoa vacoo.
+- Causa: on_scan_finished no estaba asignando resultados a self._all_results tras un cambio previo, lo que provocaba que la UI trabajara con una lista vacoa o desincronizada.
+- Bug: Contratos con 0 items o 0 ISK aparecoan como rentables.
+- Solucion: 
+  - Restaurada asignacion de results en on_scan_finished.
+  - Implementada exclusion estricta para contratos con item_count=0 o valor nulo.
+  - El profit monimo 0 ahora exige un profit estrictamente positivo (>0.01 ISK).
+  - Mejorado el reporte de diagnostico para incluir [DETAILS PANEL] con informacion de la seleccion actual y conteo de items en memoria.
+  - Corregido el reporte de cacho fusionando las estadosticas del worker con el diagnostico de la UI.
+- Archivos: core/contracts_models.py, core/contracts_engine.py, ui/market_command/contracts_view.py.
+- Verificacion: Tests de exclusion pasados. Compilacion exitosa.

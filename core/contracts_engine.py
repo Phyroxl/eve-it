@@ -214,10 +214,22 @@ def apply_contracts_filters(
         diagnostics.total_scanned += len(contracts)
         
     for c in contracts:
+        # 0. Sanity Checks (No items or no value)
+        if c.item_type_count == 0:
+            c.filter_reason = "No contiene items"
+            if diagnostics: diagnostics.excluded_by_no_items += 1
+            continue
+            
+        if c.jita_sell_value <= 0 and c.net_profit <= 0:
+            c.filter_reason = "Valor zero o nulo"
+            if diagnostics: diagnostics.excluded_by_zero_value += 1
+            continue
+
         # 1. Profit & ROI
-        # Aseguramos que el ROI en config y en el contrato estén en la misma escala (ej. 1.0 = 1%)
-        if c.net_profit < config.profit_min_isk:
-            c.filter_reason = f"Profit {c.net_profit/1e6:.1f}M < {config.profit_min_isk/1e6:.1f}M"
+        # Si min_profit es 0, exigimos que sea estrictamente positivo para ser 'rentable'
+        min_p = config.profit_min_isk if config.profit_min_isk > 0 else 0.01
+        if c.net_profit < min_p:
+            c.filter_reason = f"Profit {c.net_profit/1e6:.2f}M < {min_p/1e6:.2f}M"
             if diagnostics: diagnostics.excluded_by_low_profit += 1
             continue
             

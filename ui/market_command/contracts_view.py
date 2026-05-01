@@ -587,11 +587,28 @@ class MarketContractsView(QWidget):
         report.append(f"  Excluded by BPC: {d.excluded_by_bpc}")
         report.append(f"  Excluded by Category: {d.excluded_by_category}")
         report.append(f"  Excluded by Complexity: {d.excluded_by_complexity}")
+        report.append(f"  Excluded by No Items: {d.excluded_by_no_items}")
+        report.append(f"  Excluded by Zero Value: {d.excluded_by_zero_value}")
 
         report.append("\n[CACHE]")
-        report.append(f"  Cache Hits: {d.contract_cache_hits}")
-        report.append(f"  Cache Misses: {d.contract_cache_misses}")
+        report.append(f"  Contract Cache Hits: {d.contract_cache_hits}")
+        report.append(f"  Contract Cache Misses: {d.contract_cache_misses}")
         
+        # Panel de detalles (info de selección actual)
+        report.append("\n[DETAILS PANEL]")
+        if hasattr(self, '_current_contract_id') and self._current_contract_id:
+            report.append(f"  Selected Contract ID: {self._current_contract_id}")
+            report.append(f"  Items in Table: {self.items_table.rowCount()}")
+            # Buscar el objeto real
+            target = next((res for res in self._all_results if res.contract_id == self._current_contract_id), None)
+            if target:
+                report.append(f"  Memory Item Count: {len(target.items)}")
+                report.append(f"  Has Detailed Items: {len(target.items) > 0}")
+            else:
+                report.append("  Error: Selected contract not found in _all_results")
+        else:
+            report.append("  No contract selected in UI")
+
         if self._scan_start_time:
             import time
             elapsed = time.time() - self._scan_start_time
@@ -618,7 +635,7 @@ class MarketContractsView(QWidget):
             if item:
                 c = item.data(Qt.UserRole)
                 if c:
-                    report.append(f"  ID:{c.contract_id} | Items:{c.item_type_count} | Profit:{c.net_profit:,.0f} | ROI:{c.roi_pct:.1f}% | Score:{c.score:.1f}")
+                    report.append(f"  ID:{c.contract_id} | Items:{c.item_type_count} (Mem:{len(c.items)}) | Profit:{c.net_profit:,.0f} | ROI:{c.roi_pct:.1f}% | FilterReason:{c.filter_reason}")
 
         # Buscar muestras rentables incluso si no están visibles
         if d.profitable > 0 and self.results_table.rowCount() == 0:
@@ -709,8 +726,13 @@ class MarketContractsView(QWidget):
         diag = None
         try:
             diag = ScanDiagnostics()
+            # Copiar contadores de cache del último diagnóstico si existe (del worker)
+            if self.last_diag:
+                diag.contract_cache_hits = self.last_diag.contract_cache_hits
+                diag.contract_cache_misses = self.last_diag.contract_cache_misses
+            
             filtered = apply_contracts_filters(self._all_results, self.config, diag)
-            self.last_diag = diag
+            self.last_diag = diag # Actualizar con el último filtrado local
             self._scan_events.append(f"filters_applied input={len(self._all_results)} output={len(filtered)}")
         except Exception as e:
             logger.error(f"[CONTRACTS] Error in local diagnostic/filter pass: {e}")
@@ -757,6 +779,10 @@ class MarketContractsView(QWidget):
         logger.info(f"[CONTRACTS] Scan finished with {len(results)} results.")
         self._all_results = results
         self.last_diag = getattr(self.worker, 'diag', None)
+        
+        # Si el worker tiene diagnóstico, lo preservamos
+        if self.last_diag:
+            logger.info(f"[CONTRACTS] Preserving worker diag: {self.last_diag.to_summary()}")
         
         self.btn_scan.setVisible(True)
         self.btn_cancel.setVisible(False)

@@ -49,13 +49,16 @@ class ScanDiagnostics:
     excluded_by_low_profit: int = 0
     excluded_by_low_roi: int = 0
     profitable: int = 0
+    excluded_by_no_items: int = 0
+    excluded_by_zero_value: int = 0
     contract_cache_hits: int = 0
     contract_cache_misses: int = 0
 
     def to_summary(self) -> str:
         return (f"Total: {self.total_scanned} | Profitable: {self.profitable} | "
                 f"Low Profit/ROI: {self.excluded_by_low_profit}/{self.excluded_by_low_roi} | "
-                f"BP/BPC: {self.excluded_by_blueprint}/{self.excluded_by_bpc}")
+                f"BP/BPC: {self.excluded_by_blueprint}/{self.excluded_by_bpc} | "
+                f"No Items/Val: {self.excluded_by_no_items}/{self.excluded_by_zero_value}")
 
 
 @dataclass
