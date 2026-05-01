@@ -463,15 +463,19 @@ def _format_automation_section(automation: dict) -> list:
     if ocr_attempts:
         lines.append(f"  Visual OCR OCR Attempts: {len(ocr_attempts)}")
         for i, att in enumerate(ocr_attempts[:3]):
-            p_conf = att.get('price_confidence', 'none')
+            p_conf   = att.get('price_confidence', 'none')
             p_reason = att.get('price_reason', '')
             tgt_grps = att.get('price_target_groups', [])
             ocr_grps = att.get('price_ocr_groups', [])
+            aln_off  = att.get('alignment_offset', 0)
+            txt_band = att.get('text_band')
             lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}' score={att.get('score', 0)}")
             if p_conf != 'none':
                 lines.append(f"       price_type={p_conf} reason={p_reason}")
             if tgt_grps:
                 lines.append(f"       target_groups={tgt_grps} ocr_groups={ocr_grps}")
+            if aln_off != 0:
+                lines.append(f"       alignment_offset={aln_off} text_band={txt_band}")
     
     lines.append(f"  Visual OCR Qty Target: {automation.get('visual_ocr_quantity_target', 'N/A')}")
     lines.append(f"  Visual OCR Qty Norm  : {automation.get('visual_ocr_quantity_normalized', 'N/A')}")
@@ -526,6 +530,11 @@ def _format_automation_section(automation: dict) -> list:
         lines.append(f"    Visual OCR Best Candidate Score : {best_score}")
         lines.append(f"    Visual OCR Best Candidate Reason: {best_rej.get('reject_reason', 'unknown')}")
         lines.append(f"    p_match={best_rej.get('price_match')} q_match={best_rej.get('quantity_match')} reason={best_rej.get('reject_reason')}")
+        aln_off_rej = best_rej.get('alignment_offset', 0)
+        if aln_off_rej != 0:
+            lines.append(f"    Visual OCR Marker Band : {best_rej.get('marker_band')}")
+            lines.append(f"    Visual OCR Text Band   : {best_rej.get('text_band')}")
+            lines.append(f"    Visual OCR Align Offset: {aln_off_rej}")
 
     # BUY: top-3 candidates sorted by score descending
     is_buy_section = (dbg.get("section_used") in ("buy", "manual_override") and
@@ -546,10 +555,15 @@ def _format_automation_section(automation: dict) -> list:
                 f"       q='{att.get('quantity_text')}' qty_type={att.get('quantity_match_type','none')} "
                 f"qty_reason={att.get('quantity_reason','')}"
             )
-            tgt_g = att.get('price_target_groups', [])
-            ocr_g = att.get('price_ocr_groups', [])
+            tgt_g   = att.get('price_target_groups', [])
+            ocr_g   = att.get('price_ocr_groups', [])
+            aln_off = att.get('alignment_offset', 0)
+            txt_b   = att.get('text_band')
+            mkr_b   = att.get('marker_band')
             if tgt_g:
                 lines.append(f"       target_groups={tgt_g} ocr_groups={ocr_g}")
+            if aln_off != 0:
+                lines.append(f"       marker_band={mkr_b} text_band={txt_b} alignment_offset={aln_off}")
     
     rej = dbg.get("marker_rejected_bands") or []
     if rej:

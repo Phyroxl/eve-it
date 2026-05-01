@@ -87,6 +87,11 @@ def normalize_price_text(text: str) -> float:
         parts = text.split(".")
         if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
             text = text.replace(".", "")
+        elif (len(parts) >= 3 and
+              all(len(p) == 3 for p in parts[1:-1]) and
+              1 <= len(parts[-1]) <= 2):
+            # NNN.GGG.CC → thousands + 2-digit cents: "16.680.00" → "16680.00"
+            text = "".join(parts[:-1]) + "." + parts[-1]
         # Else keep as decimal dot
     elif "," in text:
         # If exactly 3 digits after the comma, assume thousands separator
@@ -319,6 +324,10 @@ class EveMarketVisualDetector:
         
         self.buy_allow_price_anchor      = bool(config.get("visual_ocr_buy_allow_price_anchor_quantity_weak", True))
         self.price_digit_pattern_match   = bool(config.get("visual_ocr_price_digit_pattern_match", True))
+
+        # Phase 3K: vertical OCR search for BUY marker/text misalignment
+        self.buy_vertical_search_enabled = bool(config.get("visual_ocr_buy_vertical_search_enabled", True))
+        self.buy_vertical_search_offsets = list(config.get("visual_ocr_buy_vertical_search_offsets", [-16, -12, -8, -4, 0, 4, 8]))
         
         if _PYTESSERACT_AVAILABLE:
             if not self.tesseract_cmd:
@@ -679,7 +688,13 @@ class EveMarketVisualDetector:
             ocr_qty    = 0
             price_ok   = True
             qty_ok     = True
-            
+
+            # Phase 3K: vertical alignment tracking
+            marker_band      = [y_min, y_max]
+            text_band        = [ocr_y0, ocr_y1]
+            alignment_offset = 0
+            _vsearch_qty_text = None
+
             p_match_res = {
                 "matched": True,
                 "confidence": "disabled",
@@ -692,44 +707,87 @@ class EveMarketVisualDetector:
             if self.match_price and target_price > 0:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
-                
+
                 p_match_res = self._match_price_ocr(price_text, target_price, is_buy_order)
                 price_ok = p_match_res["matched"]
                 ocr_price = p_match_res["normalized"]
-                
+
                 if self.debug_save_crops and idx < 20: # Save more crops for BUY debugging
                     suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
                     self._save_debug_crop(price_region, f"visual_ocr_{ts}_p{suffix}_fb{is_fallback}.png")
+
+            # Phase 3K: Vertical OCR search for BUY marker/text misalignment.
+            # When a band has own_marker=True but standard OCR fails on the exact
+            # band window, the text may be slightly above or below the marker pixels.
+            # Search ±N px offset windows and use the best-matching one.
+            if (not price_ok and is_buy_order and self.buy_vertical_search_enabled
+                    and own_marker):
+                cy  = (y_min + y_max) // 2
+                rh  = y_max - y_min
+                vs  = self._ocr_vertical_search(
+                    img_array, cy, rh,
+                    price_x0_padded, price_x1_padded,
+                    qty_x0_padded, qty_x1_padded,
+                    target_price, is_buy_order
+                )
+                if vs:
+                    price_text        = vs["price_text"]
+                    p_match_res       = vs["p_match"]
+                    price_ok          = True
+                    ocr_price         = p_match_res["normalized"]
+                    text_band         = [vs["ocr_y0"], vs["ocr_y1"]]
+                    alignment_offset  = vs["offset"]
+                    _vsearch_qty_text = vs["qty_text"]
 
             # Quantity Match
             qty_match_type = "disabled" if not self.match_quantity else "none"
             qty_confidence = "none"
             qty_reason = "not_matched"
-            
+
             if self.match_quantity and target_quantity > 0:
-                qty_region = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
-                qty_text = self._ocr_region(qty_region)
-                ocr_qty  = normalize_quantity_text(qty_text)
-                
+                # Phase 3K: prefer qty from the vertical-search window when used
+                if _vsearch_qty_text is not None:
+                    qty_text = _vsearch_qty_text
+                    ocr_qty  = normalize_quantity_text(qty_text)
+                else:
+                    qty_region = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
+                    qty_text = self._ocr_region(qty_region)
+                    ocr_qty  = normalize_quantity_text(qty_text)
+
                 match_res = self._match_quantity(ocr_qty, target_quantity, price_ok, effective_marker, is_buy_order, qty_text)
-                qty_ok = match_res["matched"]
+                qty_ok         = match_res["matched"]
                 qty_match_type = match_res["confidence"]
                 qty_confidence = match_res["confidence"]
-                qty_reason = match_res["reason"]
-                
-                # Phase 3I: BUY Price Anchor Logic
-                # If price is strong (digit_pattern or numeric) and row is within buy background
-                if not qty_ok and self.buy_allow_price_anchor and is_buy_order and is_background_band:
+                qty_reason     = match_res["reason"]
+
+                # If vsearch qty failed, also try the original band's qty
+                if not qty_ok and _vsearch_qty_text is not None:
+                    orig_qty_region = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
+                    orig_qty_text   = self._ocr_region(orig_qty_region)
+                    orig_ocr_qty    = normalize_quantity_text(orig_qty_text)
+                    orig_m          = self._match_quantity(orig_ocr_qty, target_quantity, price_ok, effective_marker, is_buy_order, orig_qty_text)
+                    if orig_m["matched"]:
+                        qty_text       = orig_qty_text
+                        ocr_qty        = orig_ocr_qty
+                        qty_ok         = True
+                        qty_match_type = orig_m["confidence"]
+                        qty_confidence = orig_m["confidence"]
+                        qty_reason     = orig_m["reason"]
+
+                # Phase 3K: Tightened price anchor.
+                # Requires own_marker=True (not just background band) to prevent
+                # competitor false-positives from background-only split rows.
+                if not qty_ok and self.buy_allow_price_anchor and is_buy_order and own_marker:
                     if p_match_res["confidence"] in ["digit_pattern", "numeric_tolerance"]:
-                        # Treat as weak match (will only be accepted if unique or best)
-                        qty_ok = True
+                        qty_ok         = True
                         qty_match_type = "weak_price_anchor"
                         qty_confidence = "weak_price_anchor"
-                        qty_reason = "price_anchor_override"
+                        qty_reason     = "price_anchor_override"
 
                 if self.debug_save_crops and idx < 20:
                     suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
-                    self._save_debug_crop(qty_region, f"visual_ocr_{ts}_q{suffix}_fb{is_fallback}.png")
+                    qty_crop = img_array[ocr_y0:ocr_y1, qty_x0_padded:qty_x1_padded]
+                    self._save_debug_crop(qty_crop, f"visual_ocr_{ts}_q{suffix}_fb{is_fallback}.png")
 
             # Scoring
             score = 0
@@ -760,6 +818,10 @@ class EveMarketVisualDetector:
             elif qty_match_type == "weak_price_anchor": score += 10
             else:                            score -= 30
 
+            # Phase 3K: small penalty when marker and text windows are misaligned
+            if alignment_offset != 0:
+                score -= 5
+
             # Record attempt
             attempt = {
                 "band": [y_min, y_max],
@@ -782,7 +844,10 @@ class EveMarketVisualDetector:
                 "normalized_quantity": ocr_qty,
                 "target_quantity": target_quantity,
                 "quantity_match_type": qty_match_type,
-                "quantity_reason": qty_reason
+                "quantity_reason": qty_reason,
+                "marker_band": marker_band,
+                "text_band": text_band,
+                "alignment_offset": alignment_offset,
             }
             result["debug"].setdefault("ocr_attempts", []).append(attempt)
 
@@ -980,6 +1045,56 @@ class EveMarketVisualDetector:
                 return res
 
         return res
+
+    def _ocr_vertical_search(self, img_array, y_center: int, row_height: int,
+                              price_x0: int, price_x1: int,
+                              qty_x0: int, qty_x1: int,
+                              target_price: float, is_buy_order: bool) -> Optional[dict]:
+        """
+        Try multiple vertical y-offset windows around y_center to find a price match.
+        Used when the standard OCR crop for a BUY marker band fails — the marker pixels
+        may be in a slightly different vertical position than the text pixels.
+        Returns the best-matching window dict, or None if no offset yields a match.
+        """
+        h = img_array.shape[0]
+        half = max(row_height // 2, 6)
+
+        _conf_rank = {
+            "numeric_tolerance":        4,
+            "digit_pattern":            3,
+            "scaled_digit_pattern":     2,
+            "corrupted_million_pattern": 1,
+            "disabled":                 0,
+        }
+
+        best: Optional[dict] = None
+        best_rank = -1
+
+        for offset in self.buy_vertical_search_offsets:
+            y0 = max(0, y_center - half + offset)
+            y1 = min(h, y_center + half + offset)
+            if y1 - y0 < 6:
+                continue
+            price_region = img_array[y0:y1, price_x0:price_x1]
+            if price_region.size == 0:
+                continue
+            price_text = self._ocr_region(price_region)
+            p_match = self._match_price_ocr(price_text, target_price, is_buy_order)
+            rank = _conf_rank.get(p_match["confidence"], -1)
+            if p_match["matched"] and rank > best_rank:
+                qty_region = img_array[y0:y1, qty_x0:qty_x1]
+                qty_text = self._ocr_region(qty_region) if qty_region.size > 0 else ""
+                best = {
+                    "price_text": price_text,
+                    "qty_text":   qty_text,
+                    "p_match":    p_match,
+                    "ocr_y0":     y0,
+                    "ocr_y1":     y1,
+                    "offset":     offset,
+                }
+                best_rank = rank
+
+        return best
 
     def _populate_match(self, result: dict, candidate: dict):
         """Fill result dict with successful match data."""

@@ -3113,4 +3113,42 @@ Band [574,592], own_marker=True: base=100 + corrupted_million_pattern=45 + buy_a
 - **Safety**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` invariant preserved — no Enter, no confirm click, no guard weakened.
 - **SELL behavior**: Unchanged. SELL offsets (65,37) intact. BUY offsets (50,20) intact.
 
+## Phase 3K: BUY Visual OCR Row/Text Alignment Search
+
+**Objective**: Fix BUY order detection when the detected band split separates the marker pixels and the text pixels into different 18px windows. Real-world case: Vespa EC-600 (order_id=7320444128), price=16,680.00 ISK, qty=1879 — band=[516,534] has `marker=True` but OCR reads garbage `"con anicy"` because text starts at ~y=520 (cut off by split). Band=[500,518] reads competitor price `"16.698. 00 ISK"` correctly but has no marker.
+
+### Root Cause:
+BUY split with step=18, overlap=2 produces windows at [500,518], [516,534], [532,550], etc. The 2px overlap means our row (starting at y≈518) ends up split: the marker indicator (bright-blue dot at bottom of row) is captured in [516,534], but the price/qty text (at top of the next physical row, ~[520,538]) is cut off at the top of that window. OCR on a 18px crop with 2px of text at the very top produces garbage.
+
+### Changes Implemented:
+
+- **`normalize_price_text` enhancement**: Added detection of "NNN.GGG.CC" format (thousands dot + 2-digit cents), e.g. "16.680.00" → 16680.0. Previously failed because parts[-1]="00" has 2 digits (not 3), bypassing the existing thousands-separator path.
+
+- **`_ocr_vertical_search(img, y_center, row_height, ...)` new method**: For BUY bands with `own_marker=True` where standard OCR fails on price, tries multiple y-offset windows (default: [-16,-12,-8,-4,0,4,8] px) around the band center. Selects the window with the highest-confidence price match. Returns `{price_text, qty_text, p_match, ocr_y0, ocr_y1, offset}` or None.
+
+- **Phase 3K trigger in `_run_detection_pass`**: After Price Match fails, if `is_buy_order and own_marker`, calls vertical search. If it finds a match, uses that window's price/qty text with `alignment_offset` recorded.
+
+- **Qty fallback**: If vsearch qty doesn't match target, also tries original band's qty OCR. Price-anchor (weak qty) then fires only if `own_marker=True` (previously fired on `is_background_band`, which was too loose).
+
+- **Safety**: Vertical search only triggers for `own_marker=True` bands — competitor rows (marker=False) cannot accidentally find our price via vertical search.
+
+- **Diagnostics**: `marker_band`, `text_band`, `alignment_offset` added to each attempt dict and shown in BUY Top Candidates and best_rejected_row sections.
+
+- **Config**: `visual_ocr_buy_vertical_search_enabled: true`, `visual_ocr_buy_vertical_search_offsets: [-16,-12,-8,-4,0,4,8]`.
+
+- **Score**: -5 penalty when `alignment_offset != 0` (slight evidence discount for misaligned windows).
+
+### Score Math (Vespa EC-600, after fix):
+Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or nearby)=+80, qty_exact=+50 (or near_ocr=+25), alignment_penalty=-5 = **≥175 ≥ threshold 150** → UNIQUE_MATCH.
+
+### False-Positive Safety:
+- Competitor at [500,518] (marker=False): vertical search NOT triggered (requires own_marker=True). Score stays negative.
+- "16.698.00 ISK" → 16698.0, diff=18 > tol=15 → rejected numerically. Digit pattern: "1669800" vs "16680" → no substring match → rejected.
+
+### Verification Results:
+- **Unit Tests**: 197 passed (44 + 3 + 107 + 43 across all 4 suites, +19 new tests).
+- **New test classes**: `TestSmallPriceNormalization` (4), `TestSmallPriceOCRMatching` (10), `TestBUYVerticalOCRSearch` (4).
+- **Safety**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` invariant preserved.
+- **SELL behavior**: Unchanged. No SELL tests broken. BUY offsets (50,20) intact.
+
 **Status**: Phase 3I Complete. BUY order automation is now resilient to typical green-background OCR artifacts.

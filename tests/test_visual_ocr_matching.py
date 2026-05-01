@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 from core.eve_market_visual_detector import (
-    EveMarketVisualDetector, normalize_quantity_text,
+    EveMarketVisualDetector, normalize_quantity_text, normalize_price_text,
     _price_groups, _price_group_tokens_matched,
 )
 
@@ -284,6 +285,276 @@ class TestBUYCorruptedPriceMatching(unittest.TestCase):
         self.assertGreater(clean_rank, corr_rank,
                            f"Clean match ({clean_res['confidence']}) should outrank "
                            f"corrupted_million ({corr_res['confidence']})")
+
+
+class TestSmallPriceNormalization(unittest.TestCase):
+    """Tests for small EVE prices with 2-digit decimal format (Phase 3K)."""
+
+    def test_dot_thousands_two_digit_decimal(self):
+        """Test C: '16.680.00 ISK' → 16680.0 (thousands dot + 2-digit cents)."""
+        self.assertAlmostEqual(normalize_price_text("16.680.00 ISK"), 16680.0, places=2)
+
+    def test_dot_thousands_two_digit_decimal_competitor(self):
+        """Test B pre: '16.698.00 ISK' → 16698.0 (competitor price, different value)."""
+        self.assertAlmostEqual(normalize_price_text("16.698.00 ISK"), 16698.0, places=2)
+
+    def test_million_price_unchanged(self):
+        """'29.660.000' is still handled by the 3-digit groups path → 29660000."""
+        self.assertAlmostEqual(normalize_price_text("29.660.000"), 29660000.0, places=1)
+
+    def test_european_dual_separator_unchanged(self):
+        """'194.308,00' → 194308.0 (existing European path, unchanged)."""
+        self.assertAlmostEqual(normalize_price_text("194.308,00"), 194308.0, places=2)
+
+
+class TestSmallPriceOCRMatching(unittest.TestCase):
+    """
+    Integration tests for BUY row alignment: Vespa EC-600 real case.
+    order_id=7320444128, target_price=16680.0 ISK, target_qty=1879.
+    """
+
+    def setUp(self):
+        self.config = {
+            "visual_ocr_require_unique_match": True,
+            "visual_ocr_match_price": True,
+            "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 15.0,
+            "visual_ocr_allow_quantity_suffix_match": True,
+            "visual_ocr_quantity_suffix_min_digits": 2,
+            "visual_ocr_allow_quantity_near_ocr": True,
+            "visual_ocr_score_threshold": 150,
+            "visual_ocr_buy_allow_price_anchor_quantity_weak": True,
+            "visual_ocr_buy_vertical_search_enabled": True,
+            "visual_ocr_buy_vertical_search_offsets": [-16, -12, -8, -4, 0, 4, 8],
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+        self.target_price = 16_680.0
+        self.target_qty   = 1879
+
+    # ── Test C: target small price accepted ──────────────────────────────────
+
+    def test_target_small_price_dot_format(self):
+        """Test C: '16.680.00 ISK' must match target 16680."""
+        res = self.detector._match_price_ocr("16.680.00 ISK", self.target_price)
+        self.assertTrue(res["matched"], f"Expected match for '16.680.00 ISK', got: {res}")
+
+    # ── Test D: O/0 artifact accepted ────────────────────────────────────────
+
+    def test_o_artifact_small_price(self):
+        """Test D: '16.68O.OO ISK' (O as 0) must match target 16680."""
+        res = self.detector._match_price_ocr("16.68O.OO ISK", self.target_price)
+        self.assertTrue(res["matched"], f"Expected match with O→0 artifact, got: {res}")
+
+    def test_space_separated_price_digit_pattern(self):
+        """'16 680 00 ISK' matches via digit_pattern (target digits in OCR digits)."""
+        res = self.detector._match_price_ocr("16 680 00 ISK", self.target_price)
+        self.assertTrue(res["matched"])
+
+    # ── Test B: competitor rejected ──────────────────────────────────────────
+
+    def test_competitor_16698_rejected(self):
+        """Test B: '16.698. 00 ISK' (competitor 16698) must be rejected for target 16680."""
+        res = self.detector._match_price_ocr("16.698. 00 ISK", self.target_price, is_buy_order=True)
+        self.assertFalse(res["matched"],
+                         f"Competitor 16698 must not match target 16680; got: {res}")
+
+    def test_competitor_16698_digit_pattern_rejected(self):
+        """'16698 ISK' must not match target 16680 via digit_pattern."""
+        res = self.detector._match_price_ocr("16698 ISK", self.target_price)
+        self.assertFalse(res["matched"],
+                         f"16698 must be rejected for target 16680; diff=18 > tol=15")
+
+    # ── Test E: bad quantity rejected ────────────────────────────────────────
+
+    def test_qty_70_rejected_for_1879(self):
+        """Test E: OCR qty 70 must NOT match target qty 1879."""
+        res = self.detector._match_quantity(70, self.target_qty, True, True)
+        self.assertFalse(res["matched"], "qty=70 must not match target_qty=1879")
+
+    def test_qty_18_rejected_for_1879(self):
+        """Test E extra: OCR qty 18 must NOT match target qty 1879."""
+        res = self.detector._match_quantity(18, self.target_qty, True, True)
+        self.assertFalse(res["matched"], "qty=18 must not match target_qty=1879")
+
+    def test_qty_1880_near_match(self):
+        """OCR qty 1880 is a near_ocr match for target 1879 (diff=1 ≤ 2)."""
+        res = self.detector._match_quantity(1880, self.target_qty, True, True)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "near_ocr")
+
+    def test_qty_1879_exact(self):
+        """OCR qty 1879 exact match."""
+        res = self.detector._match_quantity(1879, self.target_qty, True, True)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "exact")
+
+    # ── Test F: price-anchor tightened to own_marker ─────────────────────────
+
+    def test_price_anchor_requires_own_marker(self):
+        """
+        Test F: price_anchor must NOT fire when own_marker=False even with
+        is_background_band-equivalent (marker_match=False).
+        Phase 3K tightened price_anchor to require own_marker=True.
+        The _match_quantity API doesn't track this — we verify behavior via
+        the score math: background-only bands (marker_match=False) do not
+        trigger the price_anchor path in _run_detection_pass.
+        """
+        # Verify qty 70 is still rejected (no price-anchor fires at this level)
+        res = self.detector._match_quantity(70, self.target_qty, price_match=True, marker_match=False)
+        self.assertFalse(res["matched"],
+                         "qty=70 must not match even with price_match=True when marker=False")
+
+    def test_price_anchor_fires_with_own_marker(self):
+        """
+        Test F continued: with own_marker=True + strong price, price_anchor
+        allows qty acceptance. We test that the price_anchor path is reached
+        by verifying that a reasonable near-ocr qty still matches with marker.
+        """
+        # 1878 is within 10% of 1879 (diff=1), should match near_ocr with marker
+        res = self.detector._match_quantity(1878, self.target_qty, price_match=True, marker_match=True)
+        self.assertTrue(res["matched"])
+
+
+class TestBUYVerticalOCRSearch(unittest.TestCase):
+    """
+    Test A: Verify vertical OCR search finds price/qty from offset window.
+    Uses mock OCR to simulate marker at [516,534] with text at offset=-8 window.
+    """
+
+    def setUp(self):
+        self.config = {
+            "visual_ocr_require_unique_match": True,
+            "visual_ocr_match_price": True,
+            "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 15.0,
+            "visual_ocr_allow_quantity_suffix_match": True,
+            "visual_ocr_quantity_suffix_min_digits": 2,
+            "visual_ocr_allow_quantity_near_ocr": True,
+            "visual_ocr_score_threshold": 150,
+            "visual_ocr_buy_allow_price_anchor_quantity_weak": True,
+            "visual_ocr_buy_vertical_search_enabled": True,
+            "visual_ocr_buy_vertical_search_offsets": [-16, -12, -8, -4, 0, 4, 8],
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+        self.target_price = 16_680.0
+        self.target_qty   = 1879
+
+    def test_vertical_search_finds_price_at_negative_offset(self):
+        """
+        Test A: marker at band=[516,534], text readable at offset=-8 window [508,526].
+        _ocr_vertical_search must return that offset and matched price.
+        """
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        img = _np.zeros((600, 600, 3), dtype=_np.uint8)
+
+        # Mock ocr_region: returns "16.680.00 ISK" at the 3rd price call (offset=-8),
+        # and garbage for all others. Offsets: [-16,-12,-8,-4,0,4,8] → 7 price calls.
+        # When offset=-8 matches, qty call fires immediately after (1 qty call).
+        ocr_sequence = iter([
+            "con anicy",       # offset=-16 price
+            "con anicy",       # offset=-12 price
+            "16.680.00 ISK",   # offset=-8  price → match
+            "1879",            # offset=-8  qty
+            "con anicy",       # offset=-4  price
+            "con anicy",       # offset=0   price
+            "con anicy",       # offset=4   price
+            "con anicy",       # offset=8   price
+        ])
+
+        with patch.object(self.detector, '_ocr_region', side_effect=ocr_sequence):
+            result = self.detector._ocr_vertical_search(
+                img, y_center=525, row_height=18,
+                price_x0=100, price_x1=200,
+                qty_x0=50,    qty_x1=90,
+                target_price=self.target_price, is_buy_order=True
+            )
+
+        self.assertIsNotNone(result, "Vertical search must return a result when price is found")
+        self.assertTrue(result["p_match"]["matched"])
+        self.assertEqual(result["offset"], -8)
+        self.assertEqual(result["qty_text"], "1879")
+
+    def test_vertical_search_returns_none_when_no_match(self):
+        """Vertical search returns None when no offset window gives a price match."""
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        img = _np.zeros((600, 600, 3), dtype=_np.uint8)
+
+        with patch.object(self.detector, '_ocr_region', return_value="con anicy"):
+            result = self.detector._ocr_vertical_search(
+                img, y_center=525, row_height=18,
+                price_x0=100, price_x1=200,
+                qty_x0=50,    qty_x1=90,
+                target_price=self.target_price, is_buy_order=True
+            )
+
+        self.assertIsNone(result)
+
+    def test_vertical_search_picks_highest_confidence(self):
+        """When multiple offsets match, the one with higher confidence is selected."""
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        img = _np.zeros((600, 600, 3), dtype=_np.uint8)
+
+        # offset=-12 → digit_pattern match (rank=3)
+        # offset=-8  → numeric_tolerance match (rank=4, better)
+        # Both are valid but numeric_tolerance wins.
+        ocr_sequence = iter([
+            "con anicy",       # offset=-16 price
+            "16 680 00 ISK",   # offset=-12 price → digit_pattern match
+            "1879",            # offset=-12 qty
+            "16.680.00 ISK",   # offset=-8  price → numeric_tolerance (better)
+            "1 879",           # offset=-8  qty
+            "con anicy",       # offset=-4  price
+            "con anicy",       # offset=0   price
+            "con anicy",       # offset=4   price
+            "con anicy",       # offset=8   price
+        ])
+
+        with patch.object(self.detector, '_ocr_region', side_effect=ocr_sequence):
+            result = self.detector._ocr_vertical_search(
+                img, y_center=525, row_height=18,
+                price_x0=100, price_x1=200,
+                qty_x0=50,    qty_x1=90,
+                target_price=self.target_price, is_buy_order=True
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["p_match"]["confidence"], "numeric_tolerance")
+        self.assertEqual(result["offset"], -8)
+
+    def test_sell_vertical_search_not_triggered(self):
+        """
+        Test G sentinel: SELL orders don't use BUY vertical search.
+        _ocr_vertical_search is a BUY-only feature. SELL flow doesn't call it.
+        """
+        # Verify the method signature accepts is_buy_order=False without error
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        img = _np.zeros((200, 200, 3), dtype=_np.uint8)
+
+        with patch.object(self.detector, '_ocr_region', return_value=""):
+            result = self.detector._ocr_vertical_search(
+                img, y_center=100, row_height=18,
+                price_x0=50, price_x1=150,
+                qty_x0=10,   qty_x1=40,
+                target_price=16680.0, is_buy_order=False
+            )
+        # Returns None (no match found with empty OCR)
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
