@@ -11,7 +11,7 @@ logger = logging.getLogger('eve.contracts_cache')
 class ContractsCache:
     _instance = None
     _cache_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'contracts_analysis_cache.json')
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
 
     def __init__(self):
         self.cache: Dict[str, Dict[str, Any]] = {}

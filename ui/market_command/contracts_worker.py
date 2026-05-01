@@ -169,8 +169,13 @@ class ContractsScanWorker(QThread):
                 
                 if cached_analysis:
                     result = ContractArbitrageResult.from_dict(cached_analysis)
-                    cache_hits += 1
-                else:
+                    # Si la cache no tiene items pero el contrato s debera tenerlos, forzamos re-anlisis
+                    if len(result.items) == 0 and result.item_type_count > 0:
+                        cached_analysis = None
+                    else:
+                        cache_hits += 1
+                
+                if not cached_analysis:
                     items = analyze_contract_items(items_raw, price_index, name_map, self.config, metadata_map)
                     result = calculate_contract_metrics(contract, items, self.config)
                     result.score = score_contract(result)

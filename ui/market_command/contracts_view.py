@@ -621,6 +621,26 @@ class MarketContractsView(QWidget):
         report.append(f"  Profitable Found: {d.profitable}")
         report.append(f"  Table Row Count: {self.results_table.rowCount()}")
 
+        # Panel de detalles (info de selección actual)
+        report.append("\n[DETAILS PANEL]")
+        if hasattr(self, '_current_contract_id') and self._current_contract_id:
+            report.append(f"  Selected Contract ID: {self._current_contract_id}")
+            report.append(f"  Items in UI Table: {self.items_table.rowCount()}")
+            
+            # Buscar el objeto real
+            target = next((res for res in self._all_results if res.contract_id == self._current_contract_id), None)
+            if target:
+                report.append(f"  Expected Item Count: {target.item_type_count}")
+                report.append(f"  Memory Item Count: {len(target.items)}")
+                report.append(f"  Has Detailed Items: {len(target.items) > 0}")
+                report.append(f"  Details Load Source: {getattr(self, '_last_details_source', 'unknown')}")
+                if hasattr(self, '_last_details_error') and self._last_details_error:
+                    report.append(f"  Details Error: {self._last_details_error}")
+            else:
+                report.append("  Error: Selected contract not found in memory (_all_results)")
+        else:
+            report.append("  No contract selected in UI")
+
         if d.profitable > 0 and self.results_table.rowCount() == 0:
             report.append("\n!!! WARNING: profitable_results_exist_but_ui_empty !!!")
             report.append("  (Found profitable contracts but none are visible in the table)")
@@ -805,7 +825,39 @@ class MarketContractsView(QWidget):
         if not item: return
         c = item.data(Qt.UserRole)
         if c:
-            self.populate_detail_panel(c)
+            if len(c.items) == 0 and c.item_type_count > 0:
+                self.lazy_load_contract_details(c)
+            else:
+                self._last_details_source = "memory"
+                self.populate_detail_panel(c)
+
+    def lazy_load_contract_details(self, c):
+        self.lbl_det_title.setText(f"BUSCANDO DETALLES DEL CONTRATO {c.contract_id}...")
+        self.items_table.setRowCount(0)
+        self._last_details_error = None
+        
+        try:
+            from core.contracts_cache import ContractsCache
+            cache = ContractsCache.instance()
+            cached = cache.get_light_entry(c.contract_id)
+            
+            if cached and cached.get('items'):
+                from core.contracts_models import ContractArbitrageResult
+                rehydrated = ContractArbitrageResult.from_dict(cached)
+                if rehydrated.items:
+                    c.items = rehydrated.items
+                    self._last_details_source = "cache"
+                    self.populate_detail_panel(c)
+                    return
+            
+            self._last_details_source = "missing"
+            self._last_details_error = "Detalles no encontrados en cach. Por favor, re-escanea."
+            self.lbl_det_title.setText(f"DETALLES NO DISPONIBLES PARA {c.contract_id}")
+            self.lbl_det_risk.setText("<b>ERROR:</b> <span style='color:#ef4444;'>Los detalles de este contrato no estn en memoria ni en cach. Re-escanea para recuperarlos.</span>")
+        except Exception as e:
+            self._last_details_source = "error"
+            self._last_details_error = str(e)
+            logger.error(f"Error lazy loading details: {e}")
 
     def on_row_double_clicked(self, row, col):
         item = self.results_table.item(row, 0)

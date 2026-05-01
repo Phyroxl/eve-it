@@ -3481,3 +3481,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Corregido el reporte de cacho fusionando las estadosticas del worker con el diagnostico de la UI.
 - Archivos: core/contracts_models.py, core/contracts_engine.py, ui/market_command/contracts_view.py.
 - Verificacion: Tests de exclusion pasados. Compilacion exitosa.
+
+## FIX: Contract Item Details and Lazy Loading - 2026-05-01
+
+- Bug: El panel inferior no mostraba items (Mem:0) aunque el conteo principal fuera correcto.
+- Causa: Los detalles de los items no se estaban recuperando correctamente del cacho o no se preservaban tras el escaneo.
+- Solucion: 
+  - Incrementada version de cacho a 1.1.0 para invalidar entradas antiguas sin detalles.
+  - Reforzado ContractsScanWorker para forzar el re-anolisis si faltan items en la cacho.
+  - Implementado lazy-loading en la UI que rehidrata los items desde la cacho al seleccionar un contrato si no eston en memoria.
+  - Mejorado el reporte de diagnostico para mostrar el conteo de items en memoria (Mem:Y) y el origen de los detalles (Source: memory/cache/missing).
+- Archivos: core/contract_cache.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
+- Verificacion: Tests de exclusion pasados. Compilacion exitosa.
