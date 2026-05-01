@@ -3516,3 +3516,14 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Cache: Aadido reporte detallado de entradas y hits/misses para validar el rendimiento.
 - Archivos: core/contracts_engine.py, core/eve_icon_service.py, ui/market_command/contracts_view.py.
 - Verificacion: Tests de diagnostico actualizados para el nuevo modo. Compilacion exitosa.
+
+## FIX: Polish contracts interactions, filters and formatting - 2026-05-01
+
+- Interaccion: Doble click en un contrato ahora lo abre correctamente in-game.
+- Ordenacion: Implementado NumericTableWidgetItem para que las columnas de ISK, ROI y Score se ordenen numoricamente.
+- Formato: Aplicado formato europeo (puntos para miles, comas para decimales) y resaltado en rojo para profits negativos.
+- Portapapeles: Implementado copiado masivo (Ctrl+A + Ctrl+C) en el panel de detalles como TSV.
+- Filtros: Aadido filtro de Exclusion Abyssal y mejorada la categorizacion real (Category ID).
+- Iconos: Refinados fallbacks de SKIN y diagnostico de iconos en el reporte.
+- Archivos: ui/market_command/contracts_view.py, core/contracts_engine.py, core/contracts_models.py, core/eve_icon_service.py.
+- Verificacion: Nuevos tests en tests/test_contract_abyssal.py aprobados.

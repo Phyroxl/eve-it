@@ -125,6 +125,10 @@ class MarketContractsView(QWidget):
         self.config = load_contracts_filters()
         self.icon_service = EveIconService.instance()
         self._image_generation = 0
+        self._last_open_attempt = 0
+        self._last_open_source = "none"
+        self._last_open_success = False
+        self._last_open_error = ""
         self.setup_ui()
         self._load_config()
 
@@ -602,6 +606,15 @@ class MarketContractsView(QWidget):
         report.append(f"  exclude_bpcs: {self.config.exclude_bpcs}")
         report.append(f"  exclude_abyssal: {self.config.exclude_abyssal}")
 
+        report.append("\n[OPEN IN-GAME]")
+        report.append(f"  Last Open Attempt: {self._last_open_attempt if self._last_open_attempt > 0 else 'None'}")
+        report.append(f"  Last Open Source: {self._last_open_source}")
+        report.append(f"  Selected Contract ID: {getattr(self, '_current_contract_id', 'None')}")
+        report.append(f"  Open Method: ESI UI (POST /ui/openwindow/contract/)")
+        report.append(f"  Open Success: {self._last_open_success}")
+        if self._last_open_error:
+            report.append(f"  Open Error: {self._last_open_error}")
+
         if not self.last_diag:
             report.append("\nNo hay diagnóstico disponible todavía. Ejecuta un escaneo.")
             return "\n".join(report)
@@ -971,11 +984,14 @@ class MarketContractsView(QWidget):
             logger.error(f"Error lazy loading details: {e}")
 
     def on_row_double_clicked(self, row, col):
+        # Forzar obtención del objeto desde la columna 0 de la fila visual clicada
         item = self.results_table.item(row, 0)
         if not item: return
         c = item.data(Qt.UserRole)
         if c:
             self._current_contract_id = c.contract_id
+            self._last_open_source = "double_click"
+            logger.info(f"[CONTRACT OPEN] Double-click at row {row} -> ID {c.contract_id}")
             self.on_open_in_game_clicked()
 
     def populate_detail_panel(self, c):
@@ -1082,13 +1098,48 @@ class MarketContractsView(QWidget):
 
     def on_open_in_game_clicked(self):
         contract_id = getattr(self, '_current_contract_id', 0)
-        if not contract_id: return
+        
+        # Fallback: Si no hay un current_id (clic sin selección previa?), buscar en la tabla
+        if not contract_id:
+            sel_items = self.results_table.selectedItems()
+            if sel_items:
+                row = sel_items[0].row()
+                it = self.results_table.item(row, 0)
+                if it:
+                    c = it.data(Qt.UserRole)
+                    if c:
+                        contract_id = c.contract_id
+                        self._current_contract_id = contract_id
+
+        if not contract_id or contract_id == 0:
+            self.status_label.setText("● SELECCIONA UN CONTRATO PRIMERO")
+            self.status_label.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800;")
+            return
+        
+        # Tracking para diagnóstico
+        self._last_open_attempt = contract_id
+        if self._last_open_source != "double_click":
+            self._last_open_source = "button"
+            
+        logger.info(f"[CONTRACT OPEN] Attempting source={self._last_open_source} contract_id={contract_id}")
         
         def feedback(msg, color):
+            # Reconocemos éxito por el color verde del helper
+            success = (color == "#34d399")
+            self._last_open_success = success
+            self._last_open_error = msg if not success else ""
+            
             self.status_label.setText(f"● {msg.upper()}")
             self.status_label.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800;")
+            
+            if success:
+                logger.info(f"[CONTRACT OPEN SUCCESS] contract_id={contract_id}")
+            else:
+                logger.warning(f"[CONTRACT OPEN ERROR] contract_id={contract_id} msg={msg}")
 
         ItemInteractionHelper.open_contract_in_game(ESIClient(), contract_id, feedback)
+        # Reset source para el siguiente
+        self._last_open_source = "none"
 
     def open_main_item_market(self):
         auth = AuthManager.instance()

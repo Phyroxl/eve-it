@@ -417,15 +417,14 @@ class ESIClient:
         Abre la ventana de mercado regional en el cliente de EVE Online.
         Requiere scope: esi-ui.open_window.v1
         """
-        endpoint = f"/ui/openwindow/marketdetails/"
+        endpoint = "/ui/openwindow/marketdetails/"
         params = {'type_id': type_id}
-        headers = {'Authorization': f'Bearer {access_token}'}
         
-        self._rate_limit()
         try:
-            # ESI UI endpoints are POST
-            response = self.session.post(f"{self.BASE_URL}{endpoint}", params=params, headers=headers, timeout=10)
-            return response.status_code == 204 # 204 No Content is success for this endpoint
+            res = self._request_auth("POST", endpoint, access_token, params=params)
+            if res is None: return False
+            if res.status_code == 403: return "missing_scope"
+            return res.status_code == 204
         except Exception as e:
             logger.error(f"Error opening market window (type_id={type_id}): {e}")
             return False
@@ -435,16 +434,14 @@ class ESIClient:
         Abre el contrato en el cliente de EVE Online.
         Requiere scope: esi-ui.open_window.v1
         """
-        endpoint = f"/ui/openwindow/contract/"
+        endpoint = "/ui/openwindow/contract/"
         params = {'contract_id': contract_id}
-        headers = {'Authorization': f'Bearer {access_token}'}
         
-        self._rate_limit()
         try:
-            response = self.session.post(f"{self.BASE_URL}{endpoint}", params=params, headers=headers, timeout=10)
-            if response.status_code == 403:
-                return "missing_scope"
-            return response.status_code == 204
+            res = self._request_auth("POST", endpoint, access_token, params=params)
+            if res is None: return False
+            if res.status_code == 403: return "missing_scope"
+            return res.status_code == 204
         except Exception as e:
             logger.error(f"Error opening contract window (contract_id={contract_id}): {e}")
             return False
