@@ -3596,3 +3596,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - UX Dashboard: Optimizada la alineación del gráfico y los iconos, creando una experiencia de terminal de análisis profesional.
 - Archivos: ui/market_command/my_orders_view.py.
 - Verificación: 13 tests de sistema aprobados. Compilación exitosa.
+
+## IMPROVE: Trade Profits Global - Double Click Market & Icon Alignment - 2026-05-01
+
+- Interacción: Implementado doble click en iconos y nombres del gráfico Global para abrir el mercado del ítem en EVE.
+- Ranking: Añadido soporte de doble click en la tabla de ranking lateral para abrir mercado.
+- Widgets: Creada clase ClickableIcon para manejar eventos de doble click de forma limpia en el dashboard.
+- Alineación: Refinado el posicionamiento de los iconos bajo las barras del gráfico, ajustando márgenes para sincronización visual con el eje X.
+- Tooltips: Los iconos ahora incluyen tooltips informativos que invitan a la interacción (Doble click para abrir mercado).
+- Refactor: Eliminada duplicación de lógica de carga de iconos y limpiado el código de renderizado del dashboard.
+- Logs: Añadida trazabilidad detallada de las acciones de apertura de mercado desde el dashboard Global.
+- Archivos: ui/market_command/my_orders_view.py.
+- Verificación: Compilación exitosa y 4 tests de sistema aprobados.

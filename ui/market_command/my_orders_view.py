@@ -81,6 +81,20 @@ class SemanticTableWidgetItem(QTableWidgetItem):
             return p1 < p2
         return super().__lt__(other)
 
+class ClickableIcon(QLabel):
+    """Icono que detecta doble click para abrir mercado."""
+    double_clicked = Signal(int, str) # type_id, name
+    
+    def __init__(self, type_id, name, parent=None):
+        super().__init__(parent)
+        self.type_id = type_id
+        self.item_name = name
+        self.setCursor(Qt.PointingHandCursor)
+        
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self.type_id, self.item_name)
+
 # --- Workers ---
 
 class SyncWorker(QThread):
@@ -688,6 +702,7 @@ class TradeProfitsDialog(QDialog):
         self.ranking_table.setStyleSheet("background: transparent; color: #f1f5f9; border: none; font-size: 11px;")
         self.ranking_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.ranking_table.setIconSize(QSize(24, 24))
+        self.ranking_table.itemDoubleClicked.connect(self.on_ranking_double_click)
         
         ranking_v.addWidget(self.ranking_table)
         self.content_h.addWidget(self.ranking_panel, 1)
@@ -750,6 +765,31 @@ class TradeProfitsDialog(QDialog):
             # Ir a Tabla
             self.stack.setCurrentIndex(0)
             self.btn_global.setText("VISTA GLOBAL")
+
+    def on_ranking_double_click(self, item):
+        row = item.row()
+        it_name = self.ranking_table.item(row, 0)
+        if it_name:
+            tid = it_name.data(Qt.UserRole)
+            name = it_name.text()
+            if tid:
+                self.open_market_for_item(tid, name, "ranking_table")
+
+    def on_bar_double_clicked(self, index, barset):
+        if hasattr(self, '_current_chart_items') and index < len(self._current_chart_items):
+            item = self._current_chart_items[index]
+            self.open_market_for_item(item['type_id'], item['name'], "chart_bar")
+
+    def on_icon_double_clicked(self, tid, name):
+        self.open_market_for_item(tid, name, "chart_icon")
+
+    def open_market_for_item(self, tid, name, source):
+        _log.info(f"[TRADE PROFITS OPEN MARKET] source={source} type_id={tid} item={name}")
+        try:
+            from ui.market_command.widgets import ItemInteractionHelper
+            ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
+        except Exception as e:
+            _log.error(f"[TRADE PROFITS OPEN MARKET ERROR] {e}")
 
     def on_bar_hovered(self, status, index, barset):
         if status:
@@ -862,6 +902,7 @@ class TradeProfitsDialog(QDialog):
         series.append(set_gain)
         series.append(set_loss)
         series.hovered.connect(self.on_bar_hovered)
+        series.doubleClicked.connect(self.on_bar_double_clicked)
         chart.addSeries(series)
 
         axisX = QBarCategoryAxis()
@@ -886,6 +927,10 @@ class TradeProfitsDialog(QDialog):
 
         self.chart_view.setChart(chart)
         
+        # Ajustar márgenes para alinear iconos con el PlotArea (aprox)
+        # El eje Y suele ocupar unos 60-70px con números largos.
+        self.icon_row_layout.setContentsMargins(60, 0, 20, 5)
+        
         # 3. Limpiar y Repoblar Iconos debajo de las barras
         while self.icon_row_layout.count():
             child = self.icon_row_layout.takeAt(0)
@@ -893,16 +938,16 @@ class TradeProfitsDialog(QDialog):
             
         for item in top_items:
             tid = item['type_id']
-            i_lbl = QLabel()
+            i_lbl = ClickableIcon(tid, item['name'])
             i_lbl.setFixedSize(24, 24)
-            i_lbl.setToolTip(item['name'])
+            i_lbl.setToolTip(f"<b>{item['name']}</b><br/>Doble click para abrir mercado")
             i_lbl.setStyleSheet("background: transparent; border: none;")
+            i_lbl.double_clicked.connect(self.on_icon_double_clicked)
             
             pix = self.icon_service.get_icon(tid, 24)
             if pix and not pix.isNull():
                 i_lbl.setPixmap(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
-                # Placeholder sutil
                 i_lbl.setStyleSheet("background: #1e293b; border-radius: 4px;")
             
             self.icon_row_layout.addWidget(i_lbl, 0, Qt.AlignCenter)
