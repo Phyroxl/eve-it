@@ -22,6 +22,7 @@ MARKET_CATEGORIES = [
     ItemCategory("skills", "Libros de Habilidades", ["Skill"]),
     ItemCategory("pi", "Planetary Interaction", ["Planetary"]),
     ItemCategory("abyssal", "Abisal / Especial", ["Abyssal", "Mutaplasmid", "Officer", "Deadspace"]),
+    ItemCategory("skins", "SKINs", ["SKIN"]),
 ]
 
 class ItemMetadataHelper:

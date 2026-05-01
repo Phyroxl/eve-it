@@ -590,6 +590,22 @@ class MarketContractsView(QWidget):
         report.append(f"  Excluded by No Items: {d.excluded_by_no_items}")
         report.append(f"  Excluded by Zero Value: {d.excluded_by_zero_value}")
 
+        report.append("\n[ZERO VALUE BREAKDOWN]")
+        report.append(f"  All Items Missing Price: {d.zv_all_items_missing_price}")
+        report.append(f"  Item Details Missing: {d.zv_item_details_missing}")
+        report.append(f"  Price Lookup Failed: {d.zv_price_lookup_failed}")
+        report.append(f"  Jita Sell Missing: {d.zv_jita_sell_missing}")
+        report.append(f"  Blueprint/BPC Disabled: {d.zv_blueprint_bpc_disabled}")
+        report.append(f"  Unknown/Other: {d.zv_unknown}")
+
+        report.append("\n[VALUATION COUNTS]")
+        report.append(f"  Contracts With Any Priced Items: {d.val_any_priced}")
+        report.append(f"  Contracts With All Items Priced: {d.val_all_priced}")
+        report.append(f"  Contracts With Partial Pricing: {d.val_partial_pricing}")
+        report.append(f"  Contracts With No Priced Items: {d.val_no_priced}")
+        report.append(f"  Items Priced: {d.val_items_priced} / {d.val_total_items_seen}")
+        report.append(f"  Items Missing Price: {d.val_items_missing_price}")
+
         report.append("\n[CACHE]")
         report.append(f"  Contract Cache Hits: {d.contract_cache_hits}")
         report.append(f"  Contract Cache Misses: {d.contract_cache_misses}")
@@ -656,6 +672,16 @@ class MarketContractsView(QWidget):
                 c = item.data(Qt.UserRole)
                 if c:
                     report.append(f"  ID:{c.contract_id} | Items:{c.item_type_count} (Mem:{len(c.items)}) | Profit:{c.net_profit:,.0f} | ROI:{c.roi_pct:.1f}% | FilterReason:{c.filter_reason}")
+
+        # Muestras de contratos excluidos por Zero Value
+        zero_value_samples = [c for c in self._all_results if c.jita_sell_value <= 0 and c.item_type_count > 0][:10]
+        if zero_value_samples:
+            report.append("\n[SAMPLE ZERO VALUE CONTRACTS]")
+            for c in zero_value_samples:
+                items_preview = ", ".join([i.item_name for i in c.items[:3]])
+                report.append(f"  ID:{c.contract_id} | Items:{c.item_type_count} (Mem:{len(c.items)}) | Cost:{c.contract_cost:,.0f} | Reason:{c.filter_reason}")
+                if items_preview:
+                    report.append(f"    Sample Items: {items_preview}")
 
         # Buscar muestras rentables incluso si no están visibles
         if d.profitable > 0 and self.results_table.rowCount() == 0:

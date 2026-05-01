@@ -51,6 +51,26 @@ class ScanDiagnostics:
     profitable: int = 0
     excluded_by_no_items: int = 0
     excluded_by_zero_value: int = 0
+    # Zero Value Breakdown
+    zv_all_items_missing_price: int = 0
+    zv_all_items_unmarketable: int = 0
+    zv_price_lookup_failed: int = 0
+    zv_jita_sell_missing: int = 0
+    zv_item_details_missing: int = 0
+    zv_blueprint_bpc_disabled: int = 0
+    zv_parse_error: int = 0
+    zv_unknown: int = 0
+    
+    # Valuation Counts
+    val_any_priced: int = 0
+    val_all_priced: int = 0
+    val_partial_pricing: int = 0
+    val_no_priced: int = 0
+    val_total_items_seen: int = 0
+    val_items_priced: int = 0
+    val_items_missing_price: int = 0
+    val_items_unmarketable: int = 0
+
     contract_cache_hits: int = 0
     contract_cache_misses: int = 0
 

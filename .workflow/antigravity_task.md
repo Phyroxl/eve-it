@@ -3493,3 +3493,16 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Mejorado el reporte de diagnostico para mostrar el conteo de items en memoria (Mem:Y) y el origen de los detalles (Source: memory/cache/missing).
 - Archivos: core/contract_cache.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
 - Verificacion: Tests de exclusion pasados. Compilacion exitosa.
+
+## FIX: Valuation Diagnostics and SKIN Icons - 2026-05-01
+
+- Bug: Iconos de SKINs no se visualizaban correctamente o usaban fallbacks genoricos.
+- Problema: 915 contratos excluidos por Zero Value sin explicacion clara.
+- Solucion: 
+  - Implementado desglose granular de Zero Value (missing price, unmarketable, etc.).
+  - Aadida seccion [SAMPLE ZERO VALUE CONTRACTS] al reporte para auditar contratos excluidos.
+  - Aadidos contadores globales de valoracion (val_any_priced, val_no_priced, etc.).
+  - Registrada la categoroa SKIN en MARKET_CATEGORIES para mejorar el etiquetado de iconos.
+  - Refinado el motor de filtrado para diferenciar correctamente entre Low Profit y Zero Value.
+- Archivos: core/contracts_models.py, core/contracts_engine.py, core/item_metadata.py, ui/market_command/contracts_view.py.
+- Verificacion: Tests de diagnostico de valoracion pasados. Compilacion exitosa.

@@ -214,14 +214,42 @@ def apply_contracts_filters(
         diagnostics.total_scanned += len(contracts)
         
     for c in contracts:
+        if diagnostics:
+            # Stats de items a nivel global de lo visto
+            diagnostics.val_total_items_seen += len(c.items)
+            priced_count = sum(1 for i in c.items if i.jita_sell_price > 0)
+            diagnostics.val_items_priced += priced_count
+            diagnostics.val_items_missing_price += (len(c.items) - priced_count)
+            
+            if priced_count == len(c.items) and len(c.items) > 0:
+                diagnostics.val_all_priced += 1
+            elif priced_count > 0:
+                diagnostics.val_partial_pricing += 1
+            else:
+                diagnostics.val_no_priced += 1
+
         # 0. Sanity Checks (No items or no value)
         if c.item_type_count == 0:
             c.filter_reason = "No contiene items"
             if diagnostics: diagnostics.excluded_by_no_items += 1
             continue
             
-        if c.jita_sell_value <= 0 and c.net_profit <= 0:
-            c.filter_reason = "Valor zero o nulo"
+        if c.jita_sell_value <= 0:
+            # Desglose de por qué es Zero Value
+            reason = "Valor zero"
+            if not c.items:
+                reason = "Detalles de items no disponibles"
+                if diagnostics: diagnostics.zv_item_details_missing += 1
+            else:
+                unpriced = sum(1 for i in c.items if i.jita_sell_price <= 0)
+                if unpriced == len(c.items):
+                    reason = "Todos los items sin precio Jita"
+                    if diagnostics: diagnostics.zv_all_items_missing_price += 1
+                else:
+                    reason = "Valoración neta zero"
+                    if diagnostics: diagnostics.zv_unknown += 1
+            
+            c.filter_reason = reason
             if diagnostics: diagnostics.excluded_by_zero_value += 1
             continue
 
