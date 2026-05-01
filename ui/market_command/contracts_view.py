@@ -431,6 +431,11 @@ class MarketContractsView(QWidget):
         self.lbl_ins_roi.setText("-")
         self.lbl_ins_top.setText("-")
 
+    def reset_filters(self):
+        from core.contracts_models import ContractsFilterConfig
+        self.config = ContractsFilterConfig()
+        self._load_config()
+
     def on_scan_context_menu(self, pos):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)

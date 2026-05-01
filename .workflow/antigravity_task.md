@@ -3395,3 +3395,14 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Mejorado el reporte de progreso y diagnosticos de performance.
 - Archivos: core/contracts_cache.py, core/contracts_models.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
 - Tests: tests/test_contract_performance.py (3 passed).
+
+## FIX: Restore Contracts Tab Initialization - 2026-05-01
+
+- Bug crotico: La pestaoa de Contratos no era clickeable tras el commit de performance.
+- Causa: Falta del motodo reset_filters en MarketContractsView, lo que causaba un AttributeError en el constructor.
+- Fix aplicado: 
+  - Restaurado reset_filters en MarketContractsView.
+  - Aadida robustez en MarketCommandMain (command_main.py) con un bloque try-except en la carga de vistas.
+  - Ahora, si una vista falla al cargar, se muestra un mensaje de error con boton de reintento en lugar de bloquear la UI.
+- Archivos: ui/market_command/contracts_view.py, ui/market_command/command_main.py.
+- Verificacion: Script de diagnostico (instanciacion exitosa) y tests de contratos (7 passed).

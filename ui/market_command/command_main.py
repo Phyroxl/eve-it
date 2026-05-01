@@ -180,11 +180,35 @@ class MarketCommandMain(QWidget):
         cls = self._view_classes[index]
         name = self._view_names[index]
         
-        # PerformanceView requiere trato especial para carga diferida
-        if cls == MarketPerformanceView:
-            view = MarketPerformanceView(defer_initial_refresh=True)
-        else:
-            view = cls()
+        try:
+            # PerformanceView requiere trato especial para carga diferida
+            if cls == MarketPerformanceView:
+                view = MarketPerformanceView(defer_initial_refresh=True)
+            else:
+                view = cls()
+        except Exception as e:
+            _log.error(f"Error cargando vista {name}: {e}", exc_info=True)
+            # Widget de Error Fallback
+            view = QWidget()
+            err_layout = QVBoxLayout(view)
+            err_lbl = QLabel(f"❌ Error al cargar {name}\n\n{str(e)}")
+            err_lbl.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: 800;")
+            err_lbl.setAlignment(Qt.AlignCenter)
+            err_layout.addWidget(err_lbl)
+            
+            retry_btn = QPushButton("REINTENTAR CARGA")
+            retry_btn.setFixedWidth(200)
+            retry_btn.setStyleSheet("background: #1e293b; color: #f1f5f9; padding: 10px; border-radius: 4px;")
+            retry_btn.clicked.connect(lambda: self.switch_view(index))
+            err_layout.addWidget(retry_btn, 0, Qt.AlignCenter)
+            
+            # No guardamos en self._views para permitir reintento real
+            # Reemplazar el placeholder en el stack
+            placeholder = self.stack.widget(index)
+            self.stack.removeWidget(placeholder)
+            self.stack.insertWidget(index, view)
+            placeholder.deleteLater()
+            return view
             
         self._views[index] = view
         
