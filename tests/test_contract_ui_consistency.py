@@ -47,7 +47,11 @@ def test_config_mutation_check():
     # Verify that changing config values (like from UI spinboxes) behaves as expected
     config = ContractsFilterConfig(profit_min_isk=0)
     
-    item = ContractItem(type_id=1, item_name="X", quantity=1, line_sell_value=100)
+    item = ContractItem(
+        type_id=1, item_name="X", quantity=1, line_sell_value=100,
+        is_included=True, jita_sell_price=100, jita_buy_price=90, 
+        line_buy_value=90, pct_of_total=100
+    )
     res = ContractArbitrageResult(contract_id=1, net_profit=10.0, items=[item]) # Profit 10
     
     assert len(apply_contracts_filters([res], config)) == 1

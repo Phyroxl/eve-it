@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from core.eve_icon_service import EveIconService
 
-from core.contracts_models import ContractsFilterConfig
+from core.contracts_models import ContractsFilterConfig, ScanDiagnostics
 from core.config_manager import load_contracts_filters, save_contracts_filters
 from ui.market_command.contracts_worker import ContractsScanWorker
 # from ui.market_command.performance_view import AsyncImageLoader (Removed)
@@ -703,15 +703,25 @@ class MarketContractsView(QWidget):
         self.results_table.setRowCount(0)
         self._image_generation += 1
         
-        from core.contracts_engine import apply_contracts_filters, ScanDiagnostics
-        diag = ScanDiagnostics()
-        filtered = apply_contracts_filters(self._all_results, self.config, diag)
-        self.last_diag = diag # Actualizar con el último filtrado local
+        from core.contracts_engine import apply_contracts_filters
         
-        self._scan_events.append(f"filters_applied input={len(self._all_results)} output={len(filtered)}")
+        # Intentar diagnóstico, pero no bloquear si falla
+        diag = None
+        try:
+            diag = ScanDiagnostics()
+            filtered = apply_contracts_filters(self._all_results, self.config, diag)
+            self.last_diag = diag
+            self._scan_events.append(f"filters_applied input={len(self._all_results)} output={len(filtered)}")
+        except Exception as e:
+            logger.error(f"[CONTRACTS] Error in local diagnostic/filter pass: {e}")
+            self._scan_events.append(f"error_in_filtering: {e}")
+            # Fallback: intentar filtrar sin diagnóstico si diag falló
+            filtered = apply_contracts_filters(self._all_results, self.config)
+
         self._scan_events.append(f"table_rendered rows={len(filtered)}")
         
-        logger.info(f"[CONTRACTS] Local filtering: in={len(self._all_results)}, out={len(filtered)}. Reasons: {diag.to_summary()}")
+        if diag:
+            logger.info(f"[CONTRACTS] Local filtering: in={len(self._all_results)}, out={len(filtered)}. Reasons: {diag.to_summary()}")
         
         for c in filtered:
             self.add_contract_row(c)

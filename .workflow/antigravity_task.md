@@ -3456,3 +3456,14 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Trazado de eventos internos para depurar el pipeline de filtrado local.
 - Archivos: ui/market_command/contracts_view.py.
 - Verificacion: Test de consistencia UI pasado. Compilacion exitosa.
+
+## FIX: ScanDiagnostics Import Error - 2026-05-01
+
+- Bug: ImportError ScanDiagnostics en apply_filters_locally bloqueaba el renderizado de resultados.
+- Causa: Se intentaba importar ScanDiagnostics desde core.contracts_engine cuando su definicion real esto en core.contracts_models.
+- Solucion: 
+  - Corregido el import en contracts_view.py apuntando a core.contracts_models.
+  - Movido el import a nivel de modulo para mayor claridad.
+  - Aadido bloque try-except en apply_filters_locally para asegurar que los resultados se rendericen incluso si falla la logica de diagnostico.
+- Archivos: ui/market_command/contracts_view.py.
+- Verificacion: Compilacion exitosa de todos los modulos. El error de importacion ha sido eliminado.
