@@ -3584,3 +3584,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - UX: El botón "Global" alterna fluidamente entre la tabla de transacciones y el dashboard analítico.
 - Archivos: ui/market_command/my_orders_view.py.
 - Verificación: Compilación exitosa y 4 tests de lógica financiera aprobados.
+
+## IMPROVE: Polish trade profits global chart with rich tooltips icons and premium formatting - 2026-05-01
+
+- Iconos bajo barras: Implementada fila de iconos de ítems sincronizada debajo del gráfico de barras para identificación visual instantánea.
+- Tooltips Ricos: Añadidos tooltips interactivos en el gráfico que muestran: Profit Neto, Nº Operaciones, Profit Medio, Stock Actual y Coste Medio (WAC).
+- Eje Y y Formato: Refinado el formato numérico del eje Y y del ranking lateral con separadores de miles y abreviaturas premium (K/M/B).
+- Métricas Detalladas: Mejoradas las tarjetas superiores para mostrar el ítem responsable del mayor beneficio y la mayor pérdida.
+- Integración de Stock: Conectada la vista global con el CostBasisService para mostrar existencias actuales en tiempo real durante el hover.
+- Ranking Premium: Añadidos tooltips detallados a la tabla de ranking lateral y mejorado el espaciado y jerarquía visual.
+- UX Dashboard: Optimizada la alineación del gráfico y los iconos, creando una experiencia de terminal de análisis profesional.
+- Archivos: ui/market_command/my_orders_view.py.
+- Verificación: 13 tests de sistema aprobados. Compilación exitosa.

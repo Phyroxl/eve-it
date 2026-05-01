@@ -13,5 +13,7 @@
   "exclude_blueprints": true,
   "exclude_bpcs": true,
   "exclude_abyssal": true,
-  "category_filter": "all"
+  "category_filter": "all",
+  "only_current_station": false,
+  "availability_filter": "public"
 }

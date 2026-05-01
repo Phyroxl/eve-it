@@ -8,10 +8,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, 
     QGridLayout, QDialog, QMessageBox, QProgressBar, QLineEdit, QComboBox, QMenu,
-    QStackedWidget
+    QStackedWidget, QToolTip
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter, QBrush, QFont
+from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter, QBrush, QFont, QCursor
 from PySide6.QtCharts import QChart, QChartView, QBarSet, QBarSeries, QBarCategoryAxis, QValueAxis, QLegend
 from core.eve_icon_service import EveIconService
 
@@ -645,14 +645,26 @@ class TradeProfitsDialog(QDialog):
         self.content_h = QHBoxLayout()
         self.content_h.setSpacing(15)
         
-        # Contenedor del Gráfico
+        # Contenedor del Gráfico + Iconos
         self.chart_container = QFrame()
         self.chart_container.setStyleSheet("background: #0f172a; border-radius: 12px; border: 1px solid #1e293b;")
         chart_v = QVBoxLayout(self.chart_container)
+        chart_v.setContentsMargins(10, 10, 10, 5)
+        chart_v.setSpacing(0)
+        
         self.chart_view = QChartView()
         self.chart_view.setRenderHint(QPainter.Antialiasing)
         self.chart_view.setStyleSheet("background: transparent; border: none;")
         chart_v.addWidget(self.chart_view)
+        
+        # Fila de Iconos debajo del chart
+        self.icon_row_frame = QFrame()
+        self.icon_row_frame.setFixedHeight(35)
+        self.icon_row_frame.setStyleSheet("background: transparent; border: none;")
+        self.icon_row_layout = QHBoxLayout(self.icon_row_frame)
+        self.icon_row_layout.setContentsMargins(55, 0, 15, 5) # Ajuste manual inicial para el eje Y
+        self.icon_row_layout.setSpacing(2)
+        chart_v.addWidget(self.icon_row_frame)
         
         self.content_h.addWidget(self.chart_container, 2)
         
@@ -688,20 +700,22 @@ class TradeProfitsDialog(QDialog):
 
     def _create_metric_card(self, title, value, subtitle):
         card = QFrame()
-        card.setFixedHeight(100)
-        card.setStyleSheet("background: #0f172a; border-radius: 10px; border: 1px solid #1e293b; padding: 10px;")
+        card.setFixedHeight(110)
+        card.setStyleSheet("background: #0f172a; border-radius: 10px; border: 1px solid #1e293b; padding: 12px;")
         l = QVBoxLayout(card)
         l.setSpacing(2)
         
         t_lbl = QLabel(title)
-        t_lbl.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; letter-spacing: 1px;")
+        t_lbl.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: 800; letter-spacing: 1.2px;")
         v_lbl = QLabel(value)
-        v_lbl.setStyleSheet("color: #f1f5f9; font-size: 16px; font-weight: 900;")
+        v_lbl.setStyleSheet("color: #f1f5f9; font-size: 15px; font-weight: 900;")
         s_lbl = QLabel(subtitle)
-        s_lbl.setStyleSheet("color: #64748b; font-size: 9px;")
+        s_lbl.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 500;")
+        s_lbl.setWordWrap(True)
         
         l.addWidget(t_lbl); l.addWidget(v_lbl); l.addWidget(s_lbl)
-        card.setProperty("v_label", v_lbl) # Guardar referencia
+        card.setProperty("v_label", v_lbl) 
+        card.setProperty("s_label", s_lbl)
         return card
 
     def _format_short_isk(self, val):
@@ -737,6 +751,35 @@ class TradeProfitsDialog(QDialog):
             self.stack.setCurrentIndex(0)
             self.btn_global.setText("VISTA GLOBAL")
 
+    def on_bar_hovered(self, status, index, barset):
+        if status:
+            if not hasattr(self, '_current_chart_items') or index >= len(self._current_chart_items):
+                return
+            
+            item = self._current_chart_items[index]
+            from core.cost_basis_service import CostBasisService
+            wac = CostBasisService.instance()
+            cb = wac.get_cost_basis(item['type_id'])
+            stock = wac.stock_map.get(str(item['type_id']), {}).get('qty', 0)
+            
+            avg_profit = item['net_profit'] / item['count'] if item['count'] > 0 else 0
+            
+            tooltip = f"<b>{item['name']}</b><br/>"
+            tooltip += f"<hr/>"
+            tooltip += f"Profit Neto: <span style='color:{'#10b981' if item['net_profit'] >= 0 else '#ef4444'}'>{format_isk(item['net_profit'])}</span><br/>"
+            tooltip += f"Operaciones: {item['count']}<br/>"
+            tooltip += f"Avg Profit/Trade: {format_isk(avg_profit)}<br/>"
+            tooltip += f"<hr/>"
+            tooltip += f"Stock Actual: {'SÍ (' + str(stock) + ')' if stock > 0 else 'NO'}<br/>"
+            if cb:
+                tooltip += f"Coste Medio (WAC): {format_isk(cb.average_buy_price)}<br/>"
+            else:
+                tooltip += f"Coste Medio: N/A<br/>"
+                
+            QToolTip.showText(QCursor.pos(), tooltip, self.chart_view)
+        else:
+            QToolTip.hideText()
+
     def update_chart(self):
         if not self.all_trades:
             return
@@ -756,10 +799,14 @@ class TradeProfitsDialog(QDialog):
 
         # Actualizar Tarjetas
         self.card_total.property("v_label").setText(format_isk(total_profit))
-        self.card_total.property("v_label").setStyleSheet(f"color: {'#10b981' if total_profit >= 0 else '#ef4444'}; font-size: 16px; font-weight: 900;")
+        self.card_total.property("v_label").setStyleSheet(f"color: {'#10b981' if total_profit >= 0 else '#ef4444'}; font-size: 15px; font-weight: 900;")
         
         self.card_winner.property("v_label").setText(format_isk(max_win))
+        self.card_winner.property("s_label").setText(f"Responsable: {top_win_item}")
+        
         self.card_loser.property("v_label").setText(format_isk(max_loss))
+        self.card_loser.property("s_label").setText(f"Responsable: {top_loss_item}")
+        
         self.card_count.property("v_label").setText(str(trade_count))
         
         # 2. Agrupar por item para el gráfico
@@ -779,6 +826,7 @@ class TradeProfitsDialog(QDialog):
         else:
             top_items = sorted_stats
 
+        self._current_chart_items = top_items
         if not top_items:
             return
 
@@ -813,6 +861,7 @@ class TradeProfitsDialog(QDialog):
 
         series.append(set_gain)
         series.append(set_loss)
+        series.hovered.connect(self.on_bar_hovered)
         chart.addSeries(series)
 
         axisX = QBarCategoryAxis()
@@ -837,7 +886,28 @@ class TradeProfitsDialog(QDialog):
 
         self.chart_view.setChart(chart)
         
-        # 3. Actualizar Tabla de Ranking
+        # 3. Limpiar y Repoblar Iconos debajo de las barras
+        while self.icon_row_layout.count():
+            child = self.icon_row_layout.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+            
+        for item in top_items:
+            tid = item['type_id']
+            i_lbl = QLabel()
+            i_lbl.setFixedSize(24, 24)
+            i_lbl.setToolTip(item['name'])
+            i_lbl.setStyleSheet("background: transparent; border: none;")
+            
+            pix = self.icon_service.get_icon(tid, 24)
+            if pix and not pix.isNull():
+                i_lbl.setPixmap(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                # Placeholder sutil
+                i_lbl.setStyleSheet("background: #1e293b; border-radius: 4px;")
+            
+            self.icon_row_layout.addWidget(i_lbl, 0, Qt.AlignCenter)
+        
+        # 4. Actualizar Tabla de Ranking
         self.ranking_table.setRowCount(0)
         self.ranking_table.setRowCount(len(top_items))
         self._image_generation += 1
@@ -861,6 +931,12 @@ class TradeProfitsDialog(QDialog):
             i_profit = QTableWidgetItem(self._format_short_isk(item['net_profit']))
             i_profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             i_profit.setForeground(QColor("#10b981" if item['net_profit'] >= 0 else "#ef4444"))
+            
+            # Tooltip rico para el ranking
+            avg_p = item['net_profit'] / item['count'] if item['count'] > 0 else 0
+            tt = f"Ítem: {item['name']}\nProfit Neto: {format_isk(item['net_profit'])}\nTrades: {item['count']}\nAvg/Trade: {format_isk(avg_p)}"
+            i_item.setToolTip(tt)
+            i_profit.setToolTip(tt)
             
             self.ranking_table.setItem(r, 0, i_item)
             self.ranking_table.setItem(r, 1, i_profit)
