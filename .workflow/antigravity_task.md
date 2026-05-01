@@ -3432,3 +3432,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Corregido manejo de la categoroa " Todas las categoroas\.
 - Archivos: core/contracts_models.py, core/contracts_engine.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
 - Verificacion: 9 tests pasados (incluyendo nuevos tests de serializacion y preservacion de items).
+
+## FIX: Results Disappearance and Diagnostic Report - 2026-05-01
+
+- Bug: Los resultados de contratos aparecoan y desaparecoan al finalizar el escaneo.
+- Causa: El worker devolvoa solo los filtrados, y apply_filters_locally re-filtraba una lista ya filtrada con una configuracion que podoa ser mos estricta, resultando en vacoo.
+- Solucion: 
+  - El worker ahora devuelve TODOS los resultados analizados.
+  - apply_filters_locally ahora es el onico responsable del filtrado final en UI.
+  - Aadida ventana de REPORTE/DIAGNUSTICO copiable para depurar problemas de filtrado.
+  - Normalizado el filtro de categoroa para evitar exclusiones accidentales.
+- Archivos: core/contracts_models.py, core/contracts_engine.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
+- Verificacion: Tests de lomites y categoroa pasados. Compilacion exitosa.

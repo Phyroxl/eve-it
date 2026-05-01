@@ -1,11 +1,15 @@
+import logging
+import traceback
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QDoubleSpinBox, QSpinBox, QCheckBox, QProgressBar,
-    QGridLayout, QComboBox, QSplitter
+    QGridLayout, QComboBox, QSplitter, QTextEdit
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap, QPainter
+
+logger = logging.getLogger(__name__)
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from core.eve_icon_service import EveIconService
 
@@ -45,11 +49,55 @@ def _format_expiry(date_expired: str) -> str:
         return date_expired
 
 
+class ContractReportDialog(QWidget):
+    def __init__(self, report_text: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Diagnóstico de Escaneo de Contratos")
+        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
+        self.resize(700, 500)
+        self.setStyleSheet("background: #0f172a; color: #f1f5f9;")
+        
+        layout = QVBoxLayout(self)
+        self.txt = QTableWidget() # Usaremos un widget de texto para el reporte
+        self.edit = QTextEdit()
+        self.edit.setReadOnly(True)
+        self.edit.setPlainText(report_text)
+        self.edit.setStyleSheet("""
+            QTextEdit { 
+                background: #000000; 
+                color: #10b981; 
+                font-family: 'Consolas', monospace; 
+                font-size: 11px; 
+                border: 1px solid #1e293b; 
+                padding: 10px;
+            }
+        """)
+        layout.addWidget(self.edit)
+        
+        btns = QHBoxLayout()
+        btn_copy = QPushButton("COPIAR REPORTE")
+        btn_copy.setStyleSheet("background: #10b981; color: #064e3b; font-weight: 800; padding: 10px; border-radius: 4px;")
+        btn_copy.clicked.connect(self.copy_report)
+        
+        btn_close = QPushButton("CERRAR")
+        btn_close.setStyleSheet("background: #1e293b; color: #f1f5f9; padding: 10px; border-radius: 4px;")
+        btn_close.clicked.connect(self.close)
+        
+        btns.addWidget(btn_copy)
+        btns.addWidget(btn_close)
+        layout.addLayout(btns)
+
+    def copy_report(self):
+        QGuiApplication.clipboard().setText(self.edit.toPlainText())
+
+
 class MarketContractsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
         self._all_results = []
+        self.last_diag = None
+        self._scan_start_time = None
         self.config = load_contracts_filters()
         self.icon_service = EveIconService.instance()
         self._image_generation = 0
@@ -203,10 +251,20 @@ class MarketContractsView(QWidget):
             "QPushButton { background-color: transparent; color: #64748b; font-size: 10px; font-weight: 800; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; } "
             "QPushButton:hover { background-color: #1e293b; color: #f1f5f9; }"
         )
-        self.btn_clear.clicked.connect(self._clear_table)
+        self.btn_clear.clicked.connect(self.on_clear_clicked)
         header_l.addWidget(self.btn_clear)
 
-        self.btn_cancel = QPushButton("CANCELAR")
+        self.btn_report = QPushButton("REPORTE")
+        self.btn_report.setFixedHeight(35)
+        self.btn_report.setCursor(Qt.PointingHandCursor)
+        self.btn_report.setStyleSheet(
+            "QPushButton { background-color: #1e293b; color: #94a3b8; font-size: 10px; font-weight: 800; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; } "
+            "QPushButton:hover { background-color: #334155; color: #f1f5f9; }"
+        )
+        self.btn_report.clicked.connect(self.on_report_clicked)
+        header_l.addWidget(self.btn_report)
+
+        self.btn_cancel = QPushButton("CANCELAR ESCANEO")
         self.btn_cancel.setFixedHeight(35)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
         self.btn_cancel.setStyleSheet(
@@ -453,6 +511,8 @@ class MarketContractsView(QWidget):
             QMessageBox.warning(self, "Login", "Por favor inicia sesión con EVE SSO (ve a la pestaña Performance o Mis Pedidos).")
             return
 
+        import time
+        self._scan_start_time = time.time()
         self._save_config()
         self._clear_table()
         
@@ -475,9 +535,79 @@ class MarketContractsView(QWidget):
             self.worker.cancel()
             self.status_label.setText("Cancelando...")
 
+    def on_clear_clicked(self):
+        self._clear_table()
+        self.status_label.setText("Tabla limpia.")
+        self.status_label.setStyleSheet("color: #64748b; font-size: 9px;")
+
+    def on_report_clicked(self):
+        report = self.generate_diagnostic_report()
+        self.diag_win = ContractReportDialog(report, self)
+        self.diag_win.show()
+
+    def generate_diagnostic_report(self) -> str:
+        import datetime
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        report = []
+        report.append("[CONTRACT SCAN REPORT]")
+        report.append(f"Generated At: {now}")
+        report.append(f"Region: {self.combo_region.currentText()} ({self.config.region_id})")
+        report.append(f"Category: {self.combo_category.currentText()} ({self.config.category_filter})")
+        
+        report.append("\n[FILTERS]")
+        report.append(f"  capital_min: {self.config.capital_min_isk:,.0f} ISK")
+        report.append(f"  capital_max: {self.config.capital_max_isk:,.0f} ISK")
+        report.append(f"  min_profit: {self.config.profit_min_isk:,.0f} ISK")
+        report.append(f"  min_roi_pct: {self.config.roi_min_pct}%")
+        report.append(f"  max_item_types: {self.config.item_types_max}")
+        report.append(f"  exclude_no_price: {self.config.exclude_no_price}")
+        report.append(f"  exclude_bpos: {self.config.exclude_blueprints}")
+        report.append(f"  exclude_bpcs: {self.config.exclude_bpcs}")
+
+        if not self.last_diag:
+            report.append("\nNo hay diagnóstico disponible todavía. Ejecuta un escaneo.")
+            return "\n".join(report)
+
+        d = self.last_diag
+        report.append("\n[PIPELINE COUNTS]")
+        report.append(f"  Total Scanned (Candidates): {d.total_scanned}")
+        report.append(f"  Profitable Found: {d.profitable}")
+        report.append(f"  Currently Visible in UI: {self.results_table.rowCount()}")
+
+        report.append("\n[FILTER EXCLUSIONS]")
+        report.append(f"  Excluded by Low Profit: {d.excluded_by_low_profit}")
+        report.append(f"  Excluded by Low ROI: {d.excluded_by_low_roi}")
+        report.append(f"  Excluded by No Price: {d.excluded_by_no_price}")
+        report.append(f"  Excluded by Blueprint: {d.excluded_by_blueprint}")
+        report.append(f"  Excluded by BPC: {d.excluded_by_bpc}")
+        report.append(f"  Excluded by Category: {d.excluded_by_category}")
+        report.append(f"  Excluded by Complexity: {d.excluded_by_complexity}")
+
+        report.append("\n[CACHE]")
+        report.append(f"  Cache Hits: {d.contract_cache_hits}")
+        report.append(f"  Cache Misses: {d.contract_cache_misses}")
+        
+        if self._scan_start_time:
+            import time
+            elapsed = time.time() - self._scan_start_time
+            report.append(f"\n[PERFORMANCE]")
+            report.append(f"  Total Elapsed Time: {elapsed:.2f}s")
+
+        report.append("\n[SAMPLES DISPLAYED]")
+        for i in range(min(5, self.results_table.rowCount())):
+            item = self.results_table.item(i, 0)
+            if item:
+                c = item.data(Qt.UserRole)
+                if c:
+                    report.append(f"  ID:{c.contract_id} | Items:{c.item_type_count} | Profit:{c.net_profit:,.0f} | ROI:{c.roi_pct:.1f}% | Score:{c.score:.1f}")
+
+        return "\n".join(report)
+
     def add_contract_row(self, c):
         # Insertar fila si cumple filtro
         from core.contracts_engine import apply_contracts_filters
+        # Aquí no pasamos diag para no duplicar contadores durante el scan incremental
         filtered_single = apply_contracts_filters([c], self.config)
         if not filtered_single:
             return
@@ -544,8 +674,11 @@ class MarketContractsView(QWidget):
         i_num.setData(Qt.UserRole, c)
 
     def apply_filters_locally(self):
+        # Si no hay resultados, no borramos lo que había
         if not self._all_results:
+            logger.info("[CONTRACTS] No results to filter locally.")
             return
+            
         self._save_config()
         self.results_table.setRowCount(0)
         self._image_generation += 1
@@ -553,6 +686,9 @@ class MarketContractsView(QWidget):
         from core.contracts_engine import apply_contracts_filters, ScanDiagnostics
         diag = ScanDiagnostics()
         filtered = apply_contracts_filters(self._all_results, self.config, diag)
+        self.last_diag = diag # Actualizar con el último filtrado local
+        
+        logger.info(f"[CONTRACTS] Local filtering: in={len(self._all_results)}, out={len(filtered)}. Reasons: {diag.to_summary()}")
         
         for c in filtered:
             self.add_contract_row(c)
@@ -573,17 +709,22 @@ class MarketContractsView(QWidget):
 
         # Mostrar diagnóstico en la barra de estado
         self.status_label.setText(f"Diagnóstico: {diag.to_summary()}")
+        self.status_label.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800;")
         self.status_label.setToolTip(
             f"Excluidos por:\n"
             f"- Profit bajo: {diag.excluded_by_low_profit}\n"
             f"- ROI bajo: {diag.excluded_by_low_roi}\n"
             f"- Sin precio: {diag.excluded_by_no_price}\n"
             f"- BP/BPC: {diag.excluded_by_blueprint}/{diag.excluded_by_bpc}\n"
-            f"- Categoría/Otros: {diag.excluded_by_category + diag.excluded_by_complexity}"
+            f"- Categoría: {diag.excluded_by_category}\n"
+            f"- Complejidad: {diag.excluded_by_complexity}"
         )
 
     def on_scan_finished(self, results):
+        logger.info(f"[CONTRACTS] Scan finished with {len(results)} results.")
         self._all_results = results
+        self.last_diag = getattr(self.worker, 'diag', None)
+        
         self.btn_scan.setVisible(True)
         self.btn_cancel.setVisible(False)
         self.progress_widget.setVisible(False)
@@ -592,6 +733,7 @@ class MarketContractsView(QWidget):
         self.apply_filters_locally() # Re-render final ordenado
 
     def on_scan_error(self, msg):
+        logger.error(f"[CONTRACTS] Scan error: {msg}")
         self.btn_scan.setVisible(True)
         self.btn_cancel.setVisible(False)
         self.progress_widget.setVisible(False)

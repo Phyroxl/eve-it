@@ -49,6 +49,8 @@ class ScanDiagnostics:
     excluded_by_low_profit: int = 0
     excluded_by_low_roi: int = 0
     profitable: int = 0
+    contract_cache_hits: int = 0
+    contract_cache_misses: int = 0
 
     def to_summary(self) -> str:
         return (f"Total: {self.total_scanned} | Profitable: {self.profitable} | "

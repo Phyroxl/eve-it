@@ -147,12 +147,14 @@ class ContractsScanWorker(QThread):
             resolve_done_time = time.time()
             
             from core.contracts_models import ScanDiagnostics
-            diag = ScanDiagnostics()
+            self.diag = ScanDiagnostics()
+            self.diag.total_scanned = len(candidates)
 
             # 6. Análisis Final
             self.status.emit("Calculando profit y aplicando filtros...")
             processed_count = 0
             cache_hits = 0
+            
             for i, contract in enumerate(candidates):
                 if self._cancelled: break
                 
@@ -178,25 +180,23 @@ class ContractsScanWorker(QThread):
                 processed_count += 1
                 self._scanned_count = processed_count
                 
-                # Filtros
-                filtered_single = apply_contracts_filters([result], self.config, diag)
+                # Añadir a la lista total (para permitir re-filtrado local posterior)
+                all_results.append(result)
+                
+                # Emitir para UI inmediata solo si es rentable
+                filtered_single = apply_contracts_filters([result], self.config, self.diag)
                 if filtered_single:
-                    all_results.append(result)
                     self.batch_ready.emit(result)
                 
                 if i % 10 == 0:
                     self.progress.emit(20 + int((i / len(candidates)) * 75))
 
             cache.save_cache()
+            self.diag.contract_cache_hits = cache_hits
+            self.diag.contract_cache_misses = processed_count - cache_hits
+
             end_time = time.time()
-            
-            logger.info(
-                f"[PERF] Scan complete: total_time={end_time-start_time:.2f}s | "
-                f"fetch_items={fetch_done_time-start_time:.2f}s | "
-                f"resolve={resolve_done_time-fetch_done_time:.2f}s | "
-                f"cache_hits={cache_hits}/{processed_count}"
-            )
-            logger.info(f"[DIAG] {diag.to_summary()}")
+            logger.info(f"[PERF] Scan complete: {end_time-start_time:.2f}s | {self.diag.to_summary()}")
 
             # 7. Finalización
             if self._cancelled:
@@ -204,13 +204,8 @@ class ContractsScanWorker(QThread):
                 self.finished.emit(all_results)
                 return
 
-            self.progress.emit(95)
-            self.status.emit("Ordenando por Score...")
-            # Re-aplicar filtros para asegurar consistencia final (especialmente categoría)
-            final_diag = ScanDiagnostics()
-            final = apply_contracts_filters(all_results, self.config, final_diag)
             self.progress.emit(100)
-            self.finished.emit(final)
+            self.finished.emit(all_results)
 
         except Exception as e:
             import traceback

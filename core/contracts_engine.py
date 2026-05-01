@@ -257,7 +257,8 @@ def apply_contracts_filters(
         result.append(c)
     
     # Filtro por categoría (basado en el item de mayor valor)
-    if config.category_filter != "all" and config.category_filter != "Todas las categorías":
+    cat_filter = str(config.category_filter).lower()
+    if cat_filter not in ("all", "todas las categorías", "none", ""):
         from core.item_metadata import ItemMetadataHelper
         final_filtered = []
         for c in result:
@@ -271,7 +272,8 @@ def apply_contracts_filters(
             
             if main_item:
                 item_cat = ItemMetadataHelper.resolve_category(main_item.item_name)
-                if item_cat == config.category_filter:
+                # Normalización para comparación
+                if str(item_cat).lower() == cat_filter:
                     final_filtered.append(c)
                 else:
                     if diagnostics: diagnostics.excluded_by_category += 1
