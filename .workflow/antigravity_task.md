@@ -3572,3 +3572,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Tests: Actualizado 	ests/test_my_orders_state_transition.py para mockear el CostBasisService y ajustar estados esperados (Liderando vs Empate).
 - Archivos: ui/market_command/my_orders_view.py, core/cost_basis_service.py, core/my_orders_diagnostics.py, tests/test_my_orders_state_transition.py.
 - Verificación: 13 tests aprobados (incluyendo WAC y transiciones de estado). Compilación exitosa.
+
+## IMPROVE: Upgrade trade profits global chart with item icons and premium analytics - 2026-05-01
+
+- Dashboard: Implementada vista "Global" estilo dashboard premium dentro de la misma ventana de Trade Profits.
+- Métricas: Añadidas 4 tarjetas de resumen superior (Net Profit Total, Top Winner, Top Loser, Total Trades) con diseño oscuro y tipografía resaltada.
+- Gráfico: Rediseñado el gráfico de barras con diferenciación de colores (Esmeralda para ganancias, Rojo para pérdidas) y línea de base cero clara.
+- Ranking: Añadido panel lateral con el Top 20 de rentabilidad, incluyendo iconos de ítem y nombres completos.
+- Formato: Implementado formateador de ISK abreviado (K/M/B) para mejorar la legibilidad en el dashboard.
+- Iconos: Integrado el sistema de EveIconService para cargar fotos de ítems de forma asíncrona en el ranking global.
+- UX: El botón "Global" alterna fluidamente entre la tabla de transacciones y el dashboard analítico.
+- Archivos: ui/market_command/my_orders_view.py.
+- Verificación: Compilación exitosa y 4 tests de lógica financiera aprobados.

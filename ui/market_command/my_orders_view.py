@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter, QBrush
-from PySide6.QtCharts import QChart, QChartView, QBarSet, QBarSeries, QBarCategoryAxis, QValueAxis
+from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter, QBrush, QFont
+from PySide6.QtCharts import QChart, QChartView, QBarSet, QBarSeries, QBarCategoryAxis, QValueAxis, QLegend
 from core.eve_icon_service import EveIconService
 
 from core.esi_client import ESIClient
@@ -622,16 +622,98 @@ class TradeProfitsDialog(QDialog):
         
         self.stack.addWidget(self.table_page)
         
-        # Página 2: Vista Global (Chart)
+        # Página 2: Vista Global (Dashboard Premium)
         self.global_page = QWidget()
-        global_layout = QVBoxLayout(self.global_page)
+        self.global_layout = QVBoxLayout(self.global_page)
+        self.global_layout.setContentsMargins(10, 10, 10, 10)
+        self.global_layout.setSpacing(20)
+        
+        # Tarjetas de Resumen (Métricas Superiores)
+        self.metrics_layout = QHBoxLayout()
+        self.card_total = self._create_metric_card("NET PROFIT TOTAL", "0.00 ISK", "Beneficio consolidado")
+        self.card_winner = self._create_metric_card("TOP WINNER", "---", "Mayor ganancia única")
+        self.card_loser = self._create_metric_card("TOP LOSER", "---", "Mayor pérdida única")
+        self.card_count = self._create_metric_card("TOTAL TRADES", "0", "Operaciones cerradas")
+        
+        self.metrics_layout.addWidget(self.card_total)
+        self.metrics_layout.addWidget(self.card_winner)
+        self.metrics_layout.addWidget(self.card_loser)
+        self.metrics_layout.addWidget(self.card_count)
+        self.global_layout.addLayout(self.metrics_layout)
+        
+        # Área de Contenido (Gráfico + Ranking Lateral)
+        self.content_h = QHBoxLayout()
+        self.content_h.setSpacing(15)
+        
+        # Contenedor del Gráfico
+        self.chart_container = QFrame()
+        self.chart_container.setStyleSheet("background: #0f172a; border-radius: 12px; border: 1px solid #1e293b;")
+        chart_v = QVBoxLayout(self.chart_container)
         self.chart_view = QChartView()
         self.chart_view.setRenderHint(QPainter.Antialiasing)
-        global_layout.addWidget(self.chart_view)
+        self.chart_view.setStyleSheet("background: transparent; border: none;")
+        chart_v.addWidget(self.chart_view)
+        
+        self.content_h.addWidget(self.chart_container, 2)
+        
+        # Panel de Ranking Lateral
+        self.ranking_panel = QFrame()
+        self.ranking_panel.setFixedWidth(320)
+        self.ranking_panel.setStyleSheet("background: #0f172a; border-radius: 12px; border: 1px solid #1e293b;")
+        ranking_v = QVBoxLayout(self.ranking_panel)
+        ranking_v.setContentsMargins(15, 15, 15, 15)
+        
+        rank_title = QLabel("TOP 20 RENTABILIDAD")
+        rank_title.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 800; letter-spacing: 1px;")
+        ranking_v.addWidget(rank_title)
+        
+        self.ranking_table = QTableWidget(0, 2)
+        self.ranking_table.setHorizontalHeaderLabels(["ÍTEM", "PROFIT NETO"])
+        self.ranking_table.horizontalHeader().setVisible(False)
+        self.ranking_table.verticalHeader().setVisible(False)
+        self.ranking_table.setShowGrid(False)
+        self.ranking_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.ranking_table.setStyleSheet("background: transparent; color: #f1f5f9; border: none; font-size: 11px;")
+        self.ranking_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.ranking_table.setIconSize(QSize(24, 24))
+        
+        ranking_v.addWidget(self.ranking_table)
+        self.content_h.addWidget(self.ranking_panel, 1)
+        
+        self.global_layout.addLayout(self.content_h, 1)
         
         self.stack.addWidget(self.global_page)
         
         layout.addWidget(self.stack)
+
+    def _create_metric_card(self, title, value, subtitle):
+        card = QFrame()
+        card.setFixedHeight(100)
+        card.setStyleSheet("background: #0f172a; border-radius: 10px; border: 1px solid #1e293b; padding: 10px;")
+        l = QVBoxLayout(card)
+        l.setSpacing(2)
+        
+        t_lbl = QLabel(title)
+        t_lbl.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; letter-spacing: 1px;")
+        v_lbl = QLabel(value)
+        v_lbl.setStyleSheet("color: #f1f5f9; font-size: 16px; font-weight: 900;")
+        s_lbl = QLabel(subtitle)
+        s_lbl.setStyleSheet("color: #64748b; font-size: 9px;")
+        
+        l.addWidget(t_lbl); l.addWidget(v_lbl); l.addWidget(s_lbl)
+        card.setProperty("v_label", v_lbl) # Guardar referencia
+        return card
+
+    def _format_short_isk(self, val):
+        abs_val = abs(val)
+        prefix = "-" if val < 0 else ""
+        if abs_val >= 1_000_000_000:
+            return f"{prefix}{abs_val/1_000_000_000:.1f}B"
+        if abs_val >= 1_000_000:
+            return f"{prefix}{abs_val/1_000_000:.1f}M"
+        if abs_val >= 1_000:
+            return f"{prefix}{abs_val/1_000:.0f}K"
+        return f"{prefix}{abs_val:,.0f}"
 
     def load_data(self):
         self.worker = TradeProfitsWorker(self.char_id, self.token)
@@ -659,18 +741,39 @@ class TradeProfitsDialog(QDialog):
         if not self.all_trades:
             return
 
-        # Agrupar por item
+        # 1. Calcular Métricas Globales
+        total_profit = sum(t['profit'] for t in self.all_trades)
+        max_win = max([t['profit'] for t in self.all_trades]) if self.all_trades else 0
+        max_loss = min([t['profit'] for t in self.all_trades]) if self.all_trades else 0
+        trade_count = len(self.all_trades)
+        
+        # Encontrar items responsables de top/worst
+        top_win_item = "---"
+        top_loss_item = "---"
+        for t in self.all_trades:
+            if t['profit'] == max_win: top_win_item = t['name']
+            if t['profit'] == max_loss: top_loss_item = t['name']
+
+        # Actualizar Tarjetas
+        self.card_total.property("v_label").setText(format_isk(total_profit))
+        self.card_total.property("v_label").setStyleSheet(f"color: {'#10b981' if total_profit >= 0 else '#ef4444'}; font-size: 16px; font-weight: 900;")
+        
+        self.card_winner.property("v_label").setText(format_isk(max_win))
+        self.card_loser.property("v_label").setText(format_isk(max_loss))
+        self.card_count.property("v_label").setText(str(trade_count))
+        
+        # 2. Agrupar por item para el gráfico
         stats = {}
         for t in self.all_trades:
             tid = t['type_id']
             if tid not in stats:
-                stats[tid] = {'name': t['name'], 'net_profit': 0.0}
+                stats[tid] = {'type_id': tid, 'name': t['name'], 'net_profit': 0.0, 'count': 0}
             stats[tid]['net_profit'] += t['profit']
+            stats[tid]['count'] += 1
 
-        # Ordenar por profit neto DESC (incluye los más negativos al final)
         sorted_stats = sorted(stats.values(), key=lambda x: x['net_profit'], reverse=True)
         
-        # Tomar los 10 mejores y los 10 peores (o top 20 si hay pocos)
+        # Tomar los 10 mejores y los 10 peores
         if len(sorted_stats) > 20:
             top_items = sorted_stats[:10] + sorted_stats[-10:]
         else:
@@ -680,44 +783,87 @@ class TradeProfitsDialog(QDialog):
             return
 
         chart = QChart()
-        chart.setTitle("RENTABILIDAD POR ÍTEM (NET PROFIT)")
+        chart.setTitle("RANKING DE RENTABILIDAD POR ÍTEM")
         chart.setAnimationOptions(QChart.SeriesAnimations)
         chart.setBackgroundVisible(False)
         chart.setTitleBrush(QBrush(QColor("#f1f5f9")))
+        chart.setTitleFont(QFont("Inter", 12, QFont.Bold))
 
         series = QBarSeries()
         
-        profit_set = QBarSet("Net Profit")
-        profit_set.setColor(QColor("#10b981")) # Emerald para positivos por defecto
+        # Usamos dos sets para diferenciar colores
+        set_gain = QBarSet("Ganancias")
+        set_loss = QBarSet("Pérdidas")
+        set_gain.setColor(QColor("#10b981"))
+        set_loss.setColor(QColor("#ef4444"))
         
         categories = []
         for item in top_items:
             val = item['net_profit']
-            profit_set.append(val)
+            if val >= 0:
+                set_gain.append(val)
+                set_loss.append(0)
+            else:
+                set_gain.append(0)
+                set_loss.append(val)
+                
             name = item['name']
-            if len(name) > 12: name = name[:10] + ".."
+            if len(name) > 15: name = name[:13] + ".."
             categories.append(name)
 
-        series.append(profit_set)
+        series.append(set_gain)
+        series.append(set_loss)
         chart.addSeries(series)
 
         axisX = QBarCategoryAxis()
         axisX.append(categories)
         axisX.setLabelsColor(QColor("#94a3b8"))
         axisX.setLabelsAngle(-45)
+        axisX.setGridLineVisible(False)
         chart.addAxis(axisX, Qt.AlignBottom)
         series.attachAxis(axisX)
 
         axisY = QValueAxis()
         axisY.setLabelsColor(QColor("#94a3b8"))
+        axisY.setGridLineColor(QColor("#1e293b"))
+        axisY.setLabelFormat("%.0f") 
         chart.addAxis(axisY, Qt.AlignLeft)
         series.attachAxis(axisY)
 
         chart.legend().setVisible(True)
         chart.legend().setAlignment(Qt.AlignBottom)
         chart.legend().setLabelColor(QColor("#94a3b8"))
+        chart.legend().setMarkerShape(QLegend.MarkerShapeCircle)
 
         self.chart_view.setChart(chart)
+        
+        # 3. Actualizar Tabla de Ranking
+        self.ranking_table.setRowCount(0)
+        self.ranking_table.setRowCount(len(top_items))
+        self._image_generation += 1
+        gen = self._image_generation
+        
+        for r, item in enumerate(top_items):
+            tid = item.get('type_id')
+            
+            i_item = QTableWidgetItem(item['name'])
+            i_item.setData(Qt.UserRole, tid)
+            
+            if tid:
+                pix = self.icon_service.get_icon(
+                    tid, 24,
+                    callback=lambda p, t_id=tid, row=r, g=gen: 
+                        self._load_icon_into_table_item(self.ranking_table, row, 0, t_id, p, g)
+                )
+                if pix and not pix.isNull():
+                    i_item.setIcon(QIcon(pix.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+
+            i_profit = QTableWidgetItem(self._format_short_isk(item['net_profit']))
+            i_profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            i_profit.setForeground(QColor("#10b981" if item['net_profit'] >= 0 else "#ef4444"))
+            
+            self.ranking_table.setItem(r, 0, i_item)
+            self.ranking_table.setItem(r, 1, i_profit)
 
     def apply_filters(self):
         txt = self.txt_filter.text().lower()
