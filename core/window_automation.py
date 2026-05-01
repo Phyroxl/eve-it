@@ -887,6 +887,16 @@ class EVEWindowAutomation:
         result["visual_ocr_sell_grid_header_skip"] = dbg.get("visual_ocr_sell_grid_header_skip")
         result["visual_ocr_sell_grid_y_min"]       = dbg.get("visual_ocr_sell_grid_y_min")
         result["visual_ocr_sell_grid_y_max"]       = dbg.get("visual_ocr_sell_grid_y_max")
+
+        # Phase 3R: Manual region dimensions — forward to config so diagnostics line 406 shows real values
+        _mrw = dbg.get("manual_region_width_px")
+        _mrh = dbg.get("manual_region_height_px")
+        if _mrw is not None:
+            result["visual_ocr_manual_region_width_px"]  = _mrw
+            result["visual_ocr_manual_region_height_px"] = _mrh
+            if isinstance(result.get("config"), dict):
+                result["config"]["manual_region_width_px"]  = _mrw
+                result["config"]["manual_region_height_px"] = _mrh
         
         # Phase 3D: Backend diagnostics
         result["visual_ocr_backend"]           = "pytesseract"

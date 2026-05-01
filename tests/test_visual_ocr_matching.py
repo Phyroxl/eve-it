@@ -1536,5 +1536,128 @@ class TestSELLGridRouting(unittest.TestCase):
         )
 
 
+class TestSELLGridRowBuilding(unittest.TestCase):
+    """Phase 3R: SELL manual grid must build rows, not burn OCR budget."""
+
+    def _det(self, extra=None):
+        from core.eve_market_visual_detector import EveMarketVisualDetector
+        cfg = {"visual_ocr_match_price": True, "visual_ocr_match_quantity": True,
+               "visual_ocr_price_match_abs_tolerance": 15.0,
+               "visual_ocr_price_match_rel_tolerance": 0.001,
+               "visual_ocr_allow_quantity_near_ocr": True,
+               "visual_ocr_score_threshold": 150}
+        if extra:
+            cfg.update(extra)
+        return EveMarketVisualDetector(cfg)
+
+    def _manual_region(self):
+        return {"x_min_ratio": 0.38, "y_min_ratio": 0.20,
+                "x_max_ratio": 0.69, "y_max_ratio": 0.42}
+
+    def test_A_manual_region_dimensions_in_debug(self):
+        """manual_region_width_px and height_px are written to debug dict."""
+        import numpy as np
+        from unittest.mock import patch
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        order_data = {"price": 17_960_000.0, "volume_remain": 2,
+                      "is_buy_order": False, "tick": 50_000.0}
+        window_rect = {"left": 0, "top": 0, "width": 800, "height": 600}
+        mr = self._manual_region()
+        with patch.object(det, '_run_sell_manual_grid_fallback', return_value=[]):
+            res = det.detect_own_order_row(img, order_data, window_rect, manual_region=mr)
+        dbg = res.get("debug", {})
+        self.assertIsNotNone(dbg.get("manual_region_width_px"),
+                             "manual_region_width_px must be set in debug")
+        expected_w = int(800 * mr["x_max_ratio"]) - int(800 * mr["x_min_ratio"])
+        self.assertEqual(dbg["manual_region_width_px"], expected_w)
+
+    def test_B_grid_rows_nonzero_with_matching_ocr(self):
+        """Direct call to _run_sell_manual_grid_fallback with mocked OCR produces rows."""
+        import numpy as np
+        from unittest.mock import patch
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        price_str = "17,960,000.00"
+        qty_str = "2"
+        # Small y range (header_skip=32 → grid from 132..160) keeps row count well below sell_grid_max_rows
+        with patch.object(det, '_ocr_region', side_effect=[price_str, qty_str] * 50):
+            det._run_sell_manual_grid_fallback(
+                img, 100, 160, 0, 800, 400, 600, 20, 80,
+                17_960_000.0, 2, {"left": 0, "top": 0}, result, order_tick=50_000.0
+            )
+        self.assertGreater(result["debug"].get("visual_ocr_sell_grid_rows", 0), 0,
+                           "grid must iterate at least one row")
+
+    def test_C_sell_price_crop_retry_never_called_in_grid(self):
+        """_sell_price_crop_retry must NOT be called from the grid loop."""
+        import numpy as np
+        from unittest.mock import patch, MagicMock
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        retry_mock = MagicMock(return_value=None)
+        # Small y range to avoid hitting sell_grid_max_rows abort
+        with patch.object(det, '_ocr_region', return_value=""), \
+             patch.object(det, '_sell_price_crop_retry', retry_mock):
+            det._run_sell_manual_grid_fallback(
+                img, 100, 160, 0, 800, 400, 600, 20, 80,
+                17_960_000.0, 2, {"left": 0, "top": 0}, result, order_tick=50_000.0
+            )
+        retry_mock.assert_not_called()
+
+    def test_D_price_crop_no_overlap_with_qty_crop(self):
+        """price_x0_p must never overlap qty_x1_p — overlap guard must fire."""
+        import numpy as np
+        from unittest.mock import patch
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        ocr_calls = []
+        def tracking_ocr(region, **kw):
+            ocr_calls.append(region.shape)
+            return ""
+        # qty_x1=80, price_x0=70 — without guard these would overlap
+        with patch.object(det, '_ocr_region', side_effect=tracking_ocr):
+            det._run_sell_manual_grid_fallback(
+                img, 100, 200, 0, 800,
+                price_x0=70, price_x1=300,
+                qty_x0=20, qty_x1=80,
+                target_price=17_960_000.0, target_quantity=2,
+                window_rect={"left": 0, "top": 0}, result=result, order_tick=50_000.0
+            )
+        # Price region is the first ocr call in each row pair — must have positive width
+        price_widths = [s[1] for i, s in enumerate(ocr_calls) if i % 2 == 0]
+        for w in price_widths:
+            self.assertGreater(w, 0, "price crop must have positive width after overlap guard")
+
+    def test_E_stats_persisted_on_abort(self):
+        """grid_rows/grid_attempts written to debug even when OCRDetectionAborted fires."""
+        import numpy as np
+        from unittest.mock import patch
+        from core.eve_market_visual_detector import OCRDetectionAborted
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        call_count = [0]
+        def abort_after_few(region, **kw):
+            call_count[0] += 1
+            if call_count[0] >= 3:
+                raise OCRDetectionAborted("ocr_detection_timeout")
+            return ""
+        # OCRDetectionAborted propagates out of _run_sell_manual_grid_fallback (try/finally, not try/except)
+        try:
+            with patch.object(det, '_ocr_region', side_effect=abort_after_few):
+                det._run_sell_manual_grid_fallback(
+                    img, 100, 400, 0, 800, 400, 600, 20, 80,
+                    17_960_000.0, 2, {"left": 0, "top": 0}, result, order_tick=50_000.0
+                )
+        except OCRDetectionAborted:
+            pass
+        self.assertGreater(result["debug"].get("visual_ocr_sell_grid_attempts", 0), 0,
+                           "grid_attempts must be persisted via try/finally even on abort")
+
+
 if __name__ == "__main__":
     unittest.main()

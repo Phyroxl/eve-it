@@ -463,6 +463,7 @@ class EveMarketVisualDetector:
 
             result["debug"]["manual_region_used"] = True
             result["debug"]["manual_region_ratios"] = [x_min_ratio, y_min_ratio, x_max_ratio, y_max_ratio]
+            # Width/height will be set after section bounds are computed (below)
             if qty_col_cfg:
                 result["debug"]["manual_qty_col_ratios"] = [self._qty_x_min_override, self._qty_x_max_override]
             if price_col_cfg:
@@ -486,6 +487,12 @@ class EveMarketVisualDetector:
 
         section_y_min = max(0, min(int(h * y_min_ratio), h - 1))
         section_y_max = max(section_y_min + 1, min(int(h * y_max_ratio), h))
+
+        if manual_region:
+            panel_x0_pre = int(w * x_min_ratio)
+            panel_x1_pre = int(w * x_max_ratio)
+            result["debug"]["manual_region_width_px"]  = panel_x1_pre - panel_x0_pre
+            result["debug"]["manual_region_height_px"] = section_y_max - section_y_min
 
         result["debug"]["section_used"]  = section_name
         result["visual_ocr_section_y_min"] = section_y_min
@@ -1560,13 +1567,19 @@ class EveMarketVisualDetector:
         seen_text_bands: list = []
         all_attempts: list = []
 
-        # Padded columns
-        price_x0_p = max(panel_x0, price_x0 - self.price_left_padding)
+        # Columns: do NOT apply left-padding to price crop in grid scan — the price
+        # and qty columns may be adjacent (gap as small as 3px) and left-padding would
+        # bleed the qty column into the price OCR, producing "2 17,960,000" strings
+        # that trigger expensive _sell_price_crop_retry for every single row.
+        price_x0_p = price_x0
         price_x1_p = min(panel_x1, price_x1 + self.price_right_padding)
-        qty_x0_p   = max(panel_x0, qty_x0   - self.qty_left_padding)
-        qty_x1_p   = min(panel_x1, qty_x1   + self.qty_right_padding)
+        qty_x0_p   = max(panel_x0, qty_x0 - self.qty_left_padding)
+        qty_x1_p   = min(panel_x1, qty_x1  + self.qty_right_padding)
+        # Guard: ensure price crop does not overlap qty crop
+        if price_x0_p <= qty_x1_p:
+            price_x0_p = qty_x1_p + 1
 
-        # Fix 4: Skip header
+        # Skip header
         grid_y_min = section_y_min + self.sell_grid_header_skip_px
         result["debug"]["visual_ocr_sell_grid_header_skip"] = self.sell_grid_header_skip_px
         result["debug"]["visual_ocr_sell_grid_y_min"] = grid_y_min
@@ -1574,8 +1587,8 @@ class EveMarketVisualDetector:
 
         grid_rows = 0
         grid_attempts = 0
-        for y0 in range(grid_y_min, section_y_max, self.sell_manual_grid_step_px):
-            # Fix 1: Limit rows
+        try:
+          for y0 in range(grid_y_min, section_y_max, self.sell_manual_grid_step_px):
             if grid_rows >= self.sell_grid_max_rows:
                 raise OCRDetectionAborted("sell_grid_row_limit_exceeded")
 
@@ -1585,8 +1598,9 @@ class EveMarketVisualDetector:
                     continue
                 grid_rows += 1
                 grid_attempts += 1
-                
-                # Fix 1: Limit attempts
+                result["debug"]["visual_ocr_sell_grid_rows"]    = grid_rows
+                result["debug"]["visual_ocr_sell_grid_attempts"] = grid_attempts
+
                 if grid_attempts > self.sell_grid_max_attempts:
                     raise OCRDetectionAborted("sell_grid_attempt_limit_exceeded")
 
@@ -1594,19 +1608,11 @@ class EveMarketVisualDetector:
                 if pr.size == 0:
                     continue
                 price_text = self._ocr_region(pr, result=result)
-                
-                # Try standard price match
+
+                # Standard price match — no _sell_price_crop_retry in grid context:
+                # the retry makes up to 30 additional OCR calls per row and rapidly
+                # exhausts the timeout budget when scanning many rows.
                 p_match = self._match_price_ocr(price_text, target_price, False, order_tick)
-                
-                # Apply SELL price crop retry if needed
-                if not p_match["matched"] and self.match_price and target_price > 0:
-                    retry_res = self._sell_price_crop_retry(
-                        img_array, y0, y1, price_x0_p, price_x1_p,
-                        target_price, target_quantity, price_text, order_tick
-                    )
-                    if retry_res["success"]:
-                        price_text = retry_res["price_text"]
-                        p_match    = retry_res["p_match"]
 
                 qr       = img_array[y0:y1, qty_x0_p:qty_x1_p]
                 qty_text = self._ocr_region(qr) if qr.size > 0 else ""
@@ -1701,16 +1707,17 @@ class EveMarketVisualDetector:
                     "marker_band": [y0, y1], "text_band": tb, "alignment_offset": 0,
                 })
 
-        # Save top rejections for diagnostics (Fix 5: Limit)
-        if all_attempts:
-            all_attempts.sort(key=lambda x: x["score"], reverse=True)
-            result["debug"]["sell_grid_best_rejections"] = all_attempts[:self.debug_max_rejections]
+        finally:
+            # Always persist stats — even if OCRDetectionAborted fires mid-loop
+            result["debug"]["visual_ocr_sell_grid_fallback"] = True
+            result["debug"]["visual_ocr_sell_grid_rows"]     = grid_rows
+            result["debug"]["visual_ocr_sell_grid_attempts"] = grid_attempts
+            result["debug"]["visual_ocr_sell_grid_strong"]   = len(strong)
+            result["debug"]["detection_mode"] = "sell_manual_grid_fallback"
+            if all_attempts:
+                all_attempts.sort(key=lambda x: x["score"], reverse=True)
+                result["debug"]["sell_grid_best_rejections"] = all_attempts[:self.debug_max_rejections]
 
-        result["debug"]["visual_ocr_sell_grid_fallback"] = True
-        result["debug"]["visual_ocr_sell_grid_rows"] = grid_rows
-        result["debug"]["visual_ocr_sell_grid_attempts"] = grid_attempts
-        result["debug"]["visual_ocr_sell_grid_strong"] = len(strong)
-        result["debug"]["detection_mode"] = "sell_manual_grid_fallback"
         return strong
 
     def _populate_match(self, result: dict, candidate: dict):
