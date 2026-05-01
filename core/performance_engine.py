@@ -163,13 +163,18 @@ class PerformanceEngine:
                     method = "legacy_estimate"
                     confidence = "low"
                     exact_n = 0
+                    timing_n = 0
                     est_n = 1
+                    orphan_n = 0
                 else:
                     est_fees = real_total_fees
                     method = item_alloc.get("allocation_method", "proportional_fallback")
                     confidence = item_alloc.get("fee_allocation_confidence", "low")
                     exact_n = item_alloc.get("fee_allocation_exact_entries", 0)
+                    timing_n = item_alloc.get("fee_allocation_timing_entries", 0)
+                    high_timing_n = item_alloc.get("fee_allocation_high_conf_timing", 0)
                     est_n = item_alloc.get("fee_allocation_estimated_entries", 0)
+                    orphan_n = item_alloc.get("fee_allocation_orphan_entries", 0)
                 
                 net_profit = income - cogs - est_fees
                 net_units = bought_qty - sold_qty
@@ -207,7 +212,10 @@ class PerformanceEngine:
                     fee_allocation_method=method,
                     fee_allocation_confidence=confidence,
                     fee_allocation_exact_entries=exact_n,
-                    fee_allocation_estimated_entries=est_n
+                    fee_allocation_high_conf_timing=high_timing_n,
+                    fee_allocation_timing_entries=timing_n,
+                    fee_allocation_estimated_entries=est_n,
+                    fee_allocation_orphan_entries=orphan_n
                 ))
 
         finally:

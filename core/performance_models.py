@@ -59,7 +59,10 @@ class ItemPerformanceSummary:
     fee_allocation_method: str = "legacy_estimate"
     fee_allocation_confidence: str = "low"
     fee_allocation_exact_entries: int = 0
+    fee_allocation_high_conf_timing: int = 0
+    fee_allocation_timing_entries: int = 0
     fee_allocation_estimated_entries: int = 0
+    fee_allocation_orphan_entries: int = 0
 
 @dataclass
 class CharacterPerformanceSummary:

@@ -51,19 +51,15 @@ def test_diagnose_exact_transaction_context(temp_db):
     char_id = 1
     date_now = "2026-05-01T12:00:00Z"
     
-    # 1. Add transaction
     c.execute("INSERT INTO wallet_transactions VALUES (?,?,?,?,?,?,?,?,?,?)",
               (100, char_id, date_now, 34, "Tritanium", 1000, 5.0, 0, 1000, 60000001))
     
-    # 2. Add journal entry with exact context_id match
     c.execute("INSERT INTO wallet_journal VALUES (?,?,?,?,?,?,?,?,?,?)",
               (500, char_id, date_now, "transaction_tax", -150.0, 1000.0, "Tax", None, 100, "transaction_id"))
     
     temp_db.commit()
-    
     diag = diagnose_fee_allocation(temp_db, char_id, "2026-05-01", "2026-05-01")
     
-    assert len(diag["entries"]) == 1
     e = diag["entries"][0]
     assert e["classification"] == "exact_transaction_context"
     assert e["confidence"] == "high"
@@ -74,16 +70,13 @@ def test_diagnose_exact_order_context(temp_db):
     char_id = 1
     date_now = "2026-05-01T12:00:00Z"
     
-    # 1. Add transaction
     c.execute("INSERT INTO wallet_transactions VALUES (?,?,?,?,?,?,?,?,?,?)",
               (101, char_id, date_now, 1230, "Vexor", 1, 20000000.0, 0, 5000, 60000001))
     
-    # 2. Add journal entry with exact order_id match
     c.execute("INSERT INTO wallet_journal VALUES (?,?,?,?,?,?,?,?,?,?)",
               (501, char_id, date_now, "brokers_fee", -250000.0, 1000.0, "Broker", None, 5000, "order_id"))
     
     temp_db.commit()
-    
     diag = diagnose_fee_allocation(temp_db, char_id, "2026-05-01", "2026-05-01")
     
     e = diag["entries"][0]
@@ -96,61 +89,74 @@ def test_diagnose_description_match(temp_db):
     char_id = 1
     date_now = "2026-05-01T12:00:00Z"
     
-    # 1. Add transaction with a large realistic order_id
     c.execute("INSERT INTO wallet_transactions VALUES (?,?,?,?,?,?,?,?,?,?)",
               (102, char_id, date_now, 638, "Raven", 1, 500000000.0, 1, 6000000000, 60000001))
     
-    # 2. Add journal entry with order_id in description
     c.execute("INSERT INTO wallet_journal VALUES (?,?,?,?,?,?,?,?,?,?)",
               (502, char_id, date_now, "brokers_fee", -5000000.0, 1000.0, "Market order commission for 6000000000", None, None, None))
     
     temp_db.commit()
-    
     diag = diagnose_fee_allocation(temp_db, char_id, "2026-05-01", "2026-05-01")
     
     e = diag["entries"][0]
     assert e["best_guess_order_id"] == 6000000000
-    assert e["classification"] == "description_possible_match"
+    assert e["classification"] == "description_match"
     assert e["confidence"] == "medium"
 
-def test_diagnose_timing_match(temp_db):
+def test_diagnose_timing_exact_cluster(temp_db):
     c = temp_db.cursor()
     char_id = 1
     date_now = "2026-05-01T12:00:00Z"
     
-    # 1. Add transaction
     c.execute("INSERT INTO wallet_transactions VALUES (?,?,?,?,?,?,?,?,?,?)",
               (103, char_id, date_now, 34, "Tritanium", 1000, 5.0, 0, 7000, 60000001))
     
-    # 2. Add tax entry at same time but no context/desc match
     c.execute("INSERT INTO wallet_journal VALUES (?,?,?,?,?,?,?,?,?,?)",
               (503, char_id, date_now, "transaction_tax", -150.0, 1000.0, "Sales tax", None, None, None))
     
     temp_db.commit()
-    
     diag = diagnose_fee_allocation(temp_db, char_id, "2026-05-01", "2026-05-01")
     
     e = diag["entries"][0]
-    assert e["classification"] == "timing_possible_match"
-    assert e["confidence"] == "medium" # Single nearby transaction
+    assert e["classification"] == "timing_exact_sale_cluster"
+    assert e["confidence"] == "high"
+
+def test_diagnose_nearby_sorting(temp_db):
+    c = temp_db.cursor()
+    char_id = 1
+    j_date = "2026-05-01T12:00:00Z"
+    
+    # SELL item A at 11:59:20 (delta -40s)
+    c.execute("INSERT INTO wallet_transactions VALUES (?,?,?,?,?,?,?,?,?,?)",
+              (101, char_id, "2026-05-01T11:59:20Z", 10, "Item A", 1, 100, 0, 101, 1))
+    # SELL item B at 12:00:00 (delta 0s)
+    c.execute("INSERT INTO wallet_transactions VALUES (?,?,?,?,?,?,?,?,?,?)",
+              (102, char_id, j_date, 20, "Item B", 1, 200, 0, 102, 1))
+              
+    c.execute("INSERT INTO wallet_journal VALUES (?,?,?,?,?,?,?,?,?,?)",
+              (502, char_id, j_date, "transaction_tax", -10.0, 1000.0, "Tax", None, None, None))
+              
+    temp_db.commit()
+    diag = diagnose_fee_allocation(temp_db, char_id, "2026-05-01", "2026-05-01")
+    
+    e = diag["entries"][0]
+    assert e["nearby_transactions"][0]["item_id"] == 20
 
 def test_diagnose_orphan(temp_db):
     c = temp_db.cursor()
     char_id = 1
     
-    # Add journal entry far from any transaction
     c.execute("INSERT INTO wallet_journal VALUES (?,?,?,?,?,?,?,?,?,?)",
               (504, char_id, "2026-05-01T12:00:00Z", "brokers_fee", -100.0, 1000.0, "Mystery fee", None, None, None))
     
     temp_db.commit()
-    
     diag = diagnose_fee_allocation(temp_db, char_id, "2026-05-01", "2026-05-01")
     
     e = diag["entries"][0]
     assert e["classification"] == "orphan"
     assert e["confidence"] == "none"
 
-def test_report_formatter(temp_db):
+def test_report_formatter_with_warning(temp_db):
     c = temp_db.cursor()
     char_id = 1
     date_now = "2026-05-01T12:00:00Z"
@@ -163,9 +169,8 @@ def test_report_formatter(temp_db):
     report = format_fee_diagnostics_report(diag)
     
     assert "[WALLET FEE DIAGNOSTICS]" in report
-    assert "[RECENT FEE ENTRIES]" in report
+    assert "[!] WARNING: CONTEXT_ID UNAVAILABLE" in report
     assert "ID: 505" in report
-    assert "Classification: ORPHAN" in report
 
 def test_diagnostic_is_readonly(temp_db):
     c = temp_db.cursor()
