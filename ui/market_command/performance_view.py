@@ -290,11 +290,19 @@ class MarketPerformanceView(QWidget):
         self.btn_refresh.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; border-radius: 4px;")
         self.btn_refresh.clicked.connect(self.on_sync_clicked)
         
+        self.btn_diag_fees = QPushButton("DIAGNÓSTICO FEES")
+        self.btn_diag_fees.setFixedWidth(120)
+        self.btn_diag_fees.setFixedHeight(30)
+        self.btn_diag_fees.setCursor(Qt.PointingHandCursor)
+        self.btn_diag_fees.setStyleSheet("background: #1e293b; color: #94a3b8; font-weight: 800; border-radius: 4px; border: 1px solid #334155;")
+        self.btn_diag_fees.clicked.connect(self.on_diag_fees_clicked)
+        
         header.addLayout(title_v)
         header.addStretch()
         header.addWidget(self.combo_char)
         header.addWidget(self.combo_range)
         header.addLayout(auto_group)
+        header.addWidget(self.btn_diag_fees)
         header.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header)
 
@@ -962,12 +970,104 @@ class MarketPerformanceView(QWidget):
             self.refresh_view() # Para limpiar el texto de "Next sync" en el diag label
 
     def on_auto_interval_changed(self):
-        self.config.refresh_interval_min = self.combo_auto_time.currentData()
+        val = self.combo_auto_time.currentData()
+        self.config.refresh_interval_min = val
         from core.config_manager import save_performance_config
         save_performance_config(self.config)
-        
-        if self.config.auto_refresh_enabled:
+        if self.check_auto.isChecked():
             self.start_auto_refresh()
+
+    def on_diag_fees_clicked(self):
+        char_id = self.combo_char.currentData()
+        if not char_id or char_id <= 0:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Diagnóstico de Fees", "Selecciona un personaje válido primero.")
+            return
+            
+        days_map = {0: 1, 1: 7, 2: 30, 3: 90}
+        days = days_map.get(self.combo_range.currentIndex(), 30)
+        from datetime import datetime, timedelta
+        date_to   = datetime.utcnow().strftime("%Y-%m-%d")
+        date_from = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        from core.performance_fee_diagnostics import diagnose_fee_allocation, format_fee_diagnostics_report
+        import sqlite3
+        
+        try:
+            conn = sqlite3.connect(self.engine.db_path)
+            diag_data = diagnose_fee_allocation(conn, char_id, date_from, date_to)
+            report = format_fee_diagnostics_report(diag_data)
+            conn.close()
+            
+            dialog = FeeDiagnosticsDialog(report, self)
+            dialog.exec()
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error de Diagnóstico", f"No se pudo generar el reporte: {e}")
+
+class FeeDiagnosticsDialog(QDialog):
+    def __init__(self, report, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Diagnóstico de Wallet Fees")
+        self.setMinimumSize(700, 600)
+        self.setStyleSheet("background: #0f172a; color: #f1f5f9;")
+        
+        layout = QVBoxLayout(self)
+        
+        header = QLabel("DIAGNÓSTICO DE ASIGNACIÓN DE FEES")
+        header.setStyleSheet("color: #3b82f6; font-size: 14px; font-weight: 900;")
+        layout.addWidget(header)
+        
+        desc = QLabel("Este reporte analiza cómo se vinculan las comisiones (Broker) e impuestos (Tax) a tus transacciones.")
+        desc.setStyleSheet("color: #64748b; font-size: 10px;")
+        layout.addWidget(desc)
+        
+        from PySide6.QtWidgets import QTextEdit
+        self.text_area = QTextEdit()
+        self.text_area.setReadOnly(True)
+        self.text_area.setPlainText(report)
+        self.text_area.setStyleSheet("""
+            QTextEdit {
+                background: #000000;
+                color: #10b981;
+                border: 1px solid #1e293b;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 10px;
+                padding: 10px;
+            }
+        """)
+        layout.addWidget(self.text_area)
+        
+        btns = QHBoxLayout()
+        btn_copy = QPushButton("COPIAR REPORTE")
+        btn_copy.setCursor(Qt.PointingHandCursor)
+        btn_copy.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; padding: 8px; border-radius: 4px;")
+        btn_copy.clicked.connect(self.copy_to_clipboard)
+        
+        btn_close = QPushButton("CERRAR")
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet("background: #1e293b; color: #94a3b8; font-weight: 800; padding: 8px; border-radius: 4px;")
+        btn_close.clicked.connect(self.accept)
+        
+        btns.addStretch()
+        btns.addWidget(btn_copy)
+        btns.addWidget(btn_close)
+        layout.addLayout(btns)
+        
+    def copy_to_clipboard(self):
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.clipboard().setText(self.text_area.toPlainText())
+        # Visual feedback
+        btn = self.sender()
+        old_text = btn.text()
+        btn.setText("¡COPIADO!")
+        btn.setStyleSheet("background: #10b981; color: white; font-weight: 800; padding: 8px; border-radius: 4px;")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2000, lambda: self._reset_copy_btn(btn, old_text))
+        
+    def _reset_copy_btn(self, btn, old_text):
+        btn.setText(old_text)
+        btn.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; padding: 8px; border-radius: 4px;")
 
     def start_auto_refresh(self):
         self._next_sync_seconds = self.config.refresh_interval_min * 60

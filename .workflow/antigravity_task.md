@@ -2884,3 +2884,30 @@ Reemplazar la estimación plana del 2.5% de fees por una asignación realista ba
 - [x] **Backwards Compatibility**: Migración automática de columnas en DB existente.
 
 *Estado: El beneficio por item ahora refleja la realidad operativa de la wallet, detectando erosión de margen por modificaciones excesivas de órdenes.*
+
+---
+
+## SESIÓN 48: Diagnóstico de Asignación de Fees del Wallet Journal
+
+### OBJETIVO
+Implementar una herramienta de diagnóstico para inspeccionar las entradas reales del `wallet_journal` y validar la precisión del motor de asignación de fees por item.
+
+### IMPLEMENTACIÓN
+1. **Motor de Diagnóstico**: Creación de `core/performance_fee_diagnostics.py` con clasificación por capas:
+   - **Exact Match**: Vinculación por `context_id` (transaction/order).
+   - **Description Match**: Extracción de IDs mediante regex en la descripción del journal.
+   - **Timing Match**: Detección de transacciones cercanas (±60s).
+   - **Orphan Detection**: Identificación de registros sin vínculos claros.
+2. **UI**: Botón "DIAGNÓSTICO FEES" en `MarketPerformanceView` que genera un reporte detallado en un diálogo scrollable con opción de copiado al portapapeles.
+
+### ARCHIVOS MODIFICADOS
+- `core/performance_fee_diagnostics.py` (Nuevo motor diagnóstico)
+- `ui/market_command/performance_view.py` (Botón y diálogo de reporte)
+- `tests/test_performance_fee_diagnostics.py` (Pruebas unitarias)
+
+### VALIDACIÓN
+- [x] **Syntax**: `py_compile` (PASS).
+- [x] **Unit Tests**: `test_performance_fee_diagnostics.py` (7 PASSED).
+- [x] **Integración**: Verificación de que la operación es estrictamente de solo lectura sobre la DB.
+
+*Estado: Herramienta de inspección operativa para auditar la transparencia del cálculo de beneficio neto por item.*
