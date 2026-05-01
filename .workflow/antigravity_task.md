@@ -3444,3 +3444,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Normalizado el filtro de categoroa para evitar exclusiones accidentales.
 - Archivos: core/contracts_models.py, core/contracts_engine.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
 - Verificacion: Tests de lomites y categoroa pasados. Compilacion exitosa.
+
+## FIX: Render Profitable Contract Results - 2026-05-01
+
+- Bug: Profitable Found > 0 pero UI vacoa tras escaneo.
+- Causa: add_contract_row realizaba un re-filtrado redundante que descartaba los items ya validados por el motor principal.
+- Solucion: 
+  - Eliminado filtrado redundante en add_contract_row.
+  - Mejorado reporte de diagnostico con secciones: [RESULT LIST SIZES], [POST SCAN EVENTS], [SAMPLES PROFITABLE (NOT VISIBLE)].
+  - Aadida advertencia crotica en el reporte si hay rentables pero la tabla esto vacoa.
+  - Trazado de eventos internos para depurar el pipeline de filtrado local.
+- Archivos: ui/market_command/contracts_view.py.
+- Verificacion: Test de consistencia UI pasado. Compilacion exitosa.

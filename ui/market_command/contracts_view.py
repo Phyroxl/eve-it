@@ -98,6 +98,7 @@ class MarketContractsView(QWidget):
         self._all_results = []
         self.last_diag = None
         self._scan_start_time = None
+        self._scan_events = []
         self.config = load_contracts_filters()
         self.icon_service = EveIconService.instance()
         self._image_generation = 0
@@ -483,6 +484,7 @@ class MarketContractsView(QWidget):
     def _clear_table(self):
         self.results_table.setRowCount(0)
         self._all_results = []
+        self._scan_events = []
         self.detail_frame.setVisible(False)
         self.lbl_ins_scanned.setText("-")
         self.lbl_ins_profit.setText("-")
@@ -522,6 +524,8 @@ class MarketContractsView(QWidget):
         self.insights_widget.setVisible(False)
         self.progress_bar.setValue(0)
 
+        self._scan_events.append(f"scan_started at {time.strftime('%H:%M:%S')}")
+        
         self.worker = ContractsScanWorker(self.config, force_refresh=force_refresh)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.status.connect(self.status_label.setText)
@@ -594,7 +598,21 @@ class MarketContractsView(QWidget):
             report.append(f"\n[PERFORMANCE]")
             report.append(f"  Total Elapsed Time: {elapsed:.2f}s")
 
-        report.append("\n[SAMPLES DISPLAYED]")
+        report.append("\n[RESULT LIST SIZES]")
+        report.append(f"  Raw Results (All): {len(self._all_results)}")
+        report.append(f"  Analyzed Results: {d.total_scanned}")
+        report.append(f"  Profitable Found: {d.profitable}")
+        report.append(f"  Table Row Count: {self.results_table.rowCount()}")
+
+        if d.profitable > 0 and self.results_table.rowCount() == 0:
+            report.append("\n!!! WARNING: profitable_results_exist_but_ui_empty !!!")
+            report.append("  (Found profitable contracts but none are visible in the table)")
+
+        report.append("\n[POST SCAN EVENTS]")
+        for ev in self._scan_events[-10:]:
+            report.append(f"  - {ev}")
+
+        report.append("\n[SAMPLES DISPLAYED (VISIBLE)]")
         for i in range(min(5, self.results_table.rowCount())):
             item = self.results_table.item(i, 0)
             if item:
@@ -602,16 +620,18 @@ class MarketContractsView(QWidget):
                 if c:
                     report.append(f"  ID:{c.contract_id} | Items:{c.item_type_count} | Profit:{c.net_profit:,.0f} | ROI:{c.roi_pct:.1f}% | Score:{c.score:.1f}")
 
+        # Buscar muestras rentables incluso si no están visibles
+        if d.profitable > 0 and self.results_table.rowCount() == 0:
+            report.append("\n[SAMPLES PROFITABLE (NOT VISIBLE)]")
+            from core.contracts_engine import apply_contracts_filters
+            profs = apply_contracts_filters(self._all_results, self.config)
+            for c in profs[:5]:
+                report.append(f"  ID:{c.contract_id} | Profit:{c.net_profit:,.0f} | ROI:{c.roi_pct:.1f}% | FilterReason:{c.filter_reason}")
+
         return "\n".join(report)
 
     def add_contract_row(self, c):
-        # Insertar fila si cumple filtro
-        from core.contracts_engine import apply_contracts_filters
-        # Aquí no pasamos diag para no duplicar contadores durante el scan incremental
-        filtered_single = apply_contracts_filters([c], self.config)
-        if not filtered_single:
-            return
-
+        # Insertar fila (se asume que el llamador ya aplicó filtros)
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
 
@@ -688,6 +708,9 @@ class MarketContractsView(QWidget):
         filtered = apply_contracts_filters(self._all_results, self.config, diag)
         self.last_diag = diag # Actualizar con el último filtrado local
         
+        self._scan_events.append(f"filters_applied input={len(self._all_results)} output={len(filtered)}")
+        self._scan_events.append(f"table_rendered rows={len(filtered)}")
+        
         logger.info(f"[CONTRACTS] Local filtering: in={len(self._all_results)}, out={len(filtered)}. Reasons: {diag.to_summary()}")
         
         for c in filtered:
@@ -730,6 +753,7 @@ class MarketContractsView(QWidget):
         self.progress_widget.setVisible(False)
         self.insights_widget.setVisible(True)
         
+        self._scan_events.append(f"scan_finished received results count={len(results)}")
         self.apply_filters_locally() # Re-render final ordenado
 
     def on_scan_error(self, msg):
