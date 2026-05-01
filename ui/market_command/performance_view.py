@@ -171,9 +171,9 @@ class MarketPerformanceView(QWidget):
         self.config = load_performance_config()
         self._sync_in_progress = False
         self._is_auto_sync = False
+        self._image_generation = 0
         self.engine = PerformanceEngine()
         self.icon_service = EveIconService.instance()
-        self._purge_fake_char0()
         self._purge_fake_char0()
         self.setup_ui()
         self.discover_characters()
@@ -685,7 +685,7 @@ class MarketPerformanceView(QWidget):
             self.kpi_cost.update_value("0 ISK")
             self.kpi_broker.update_value("0 ISK")
             self.kpi_tax.update_value("0 ISK")
-            self.kpi_realized.update_value("0 ISK")
+            self.kpi_net_profit.update_value("0 ISK")
             self.kpi_exposure.update_value("0 ISK", "No sync")
             
             self.context_lbl.setText("SIN DATOS")
