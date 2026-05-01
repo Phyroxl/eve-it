@@ -3180,3 +3180,11 @@ Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or 
 - **Diagnostics**: Visual OCR Marker Band / Text Band / Click Band / Click Source / Align Offset shown after Row Y.
 - **Tests**: 4 new tests in `TestBUYAlignedClick` (A: misaligned→text_band, B: aligned→band, C: SELL unchanged, D: grid fallback).
 - **All tests**: 222 passed (69+3+107+43).
+
+## Phase 3O: SELL Visual OCR Mixed Quantity-Price Recovery
+
+- **Bug**: SELL price crop OCR `'739, 121.108,08 IS'` treated all digits as one number (739121.1), causing price_mismatch.
+- **Fix 1**: `_match_price_ocr` SELL fallback — if text splits on `', '` with a leading all-digit token, normalize the suffix as price. `'121.108,08 IS'` → 121108.08, diff=8.08 ≤ tol → `sell_mixed_price_extraction`.
+- **Fix 2**: Main loop SELL qty recovery — if standard qty match fails, own_marker=True, price_ok, and price_text starts with target_qty, accept with `sell_qty_from_mixed_price_text`.
+- **Fix 3**: Suggested action is now side-specific: SELL failures show `improve_sell_ocr_price_or_scroll`.
+- **Tests**: 4 new tests in `TestSELLMixedPriceRecovery` (A-D). 226 total passing (73+3+107+43).

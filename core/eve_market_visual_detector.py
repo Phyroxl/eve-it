@@ -552,17 +552,18 @@ class EveMarketVisualDetector:
         if not verified:
             result["status"] = "not_found"
             # Suggested action logic
+            _ocr_action = "improve_buy_ocr_price_or_scroll" if is_buy_order else "improve_sell_ocr_price_or_scroll"
             if not candidate_bands:
                 # If manual_region exists and we made OCR attempts, don't ask for recalibration
                 if manual_region and len(result["debug"].get("ocr_attempts") or []) > 0:
-                    result["visual_ocr_suggested_action"] = "improve_buy_ocr_price_or_scroll"
+                    result["visual_ocr_suggested_action"] = _ocr_action
                 else:
                     result["visual_ocr_suggested_action"] = "recalibrate_side"
             else:
                 split_found = result["debug"].get("visual_ocr_buy_large_bands_split")
                 ocr_attempts = len(result["debug"].get("ocr_attempts") or [])
                 if split_found or ocr_attempts > 0 or manual_region:
-                    result["visual_ocr_suggested_action"] = "improve_buy_ocr_price_or_scroll"
+                    result["visual_ocr_suggested_action"] = _ocr_action
                 else:
                     best_rej = result["debug"].get("best_rejected_row")
                     if best_rej and best_rej.get("marker_matched") and best_rej.get("price_match"):
@@ -802,6 +803,16 @@ class EveMarketVisualDetector:
                         qty_confidence = orig_m["confidence"]
                         qty_reason     = orig_m["reason"]
 
+                # SELL: recover qty from mixed price-crop text (e.g. '739, 121.108,08 IS')
+                if not qty_ok and not is_buy_order and own_marker and price_ok:
+                    m = re.match(r'^\s*(\d+)\s*[,\s]', price_text)
+                    if m and int(m.group(1)) == target_quantity:
+                        qty_ok         = True
+                        qty_match_type = "sell_qty_from_mixed_price_text"
+                        qty_confidence = "sell_qty_from_mixed_price_text"
+                        qty_reason     = "quantity_found_in_price_crop"
+                        ocr_qty        = target_quantity
+
                 # Phase 3K: Tightened price anchor.
                 # Requires own_marker=True and OCR qty must not be a clear different number.
                 if not qty_ok and self.buy_allow_price_anchor and is_buy_order and own_marker:
@@ -1027,6 +1038,20 @@ class EveMarketVisualDetector:
                 res["reason"] = "price_group_all_significant_matched"
                 res["digits"] = ",".join(str(t) for t in raw_tokens)
                 return res
+
+        # SELL: mixed qty+price crop — try suffix after first "NNN, " leading group
+        if not is_buy_order:
+            parts = re.split(r',\s+', price_text, maxsplit=1)
+            if len(parts) == 2 and re.match(r'^\s*\d+\s*$', parts[0]):
+                suffix_price = normalize_price_text(parts[1])
+                diff_s = abs(suffix_price - target_price)
+                if diff_s <= max_tol:
+                    res["matched"]    = True
+                    res["normalized"] = suffix_price
+                    res["confidence"] = "sell_mixed_price_extraction"
+                    res["diff"]       = diff_s
+                    res["reason"]     = "sell_price_extracted_from_mixed_text"
+                    return res
 
         res["normalized"] = ocr_price
         res["diff"] = diff

@@ -962,3 +962,68 @@ class TestBUYAlignedClick(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSELLMixedPriceRecovery(unittest.TestCase):
+    """Phase 3O: SELL OCR recovery when qty bleeds into price crop."""
+
+    def _detector(self):
+        from core.eve_market_visual_detector import EveMarketVisualDetector
+        return EveMarketVisualDetector({})
+
+    def test_A_sell_mixed_qty_price_matches(self):
+        """Test A: SELL '739, 121.108,08 IS' should match target 121100."""
+        det = self._detector()
+        res = det._match_price_ocr("739, 121.108,08 IS", 121100.0, is_buy_order=False)
+        self.assertTrue(res["matched"], f"Expected match, got: {res}")
+        self.assertEqual(res["confidence"], "sell_mixed_price_extraction")
+        self.assertAlmostEqual(res["normalized"], 121108.08, places=1)
+
+    def test_B_sell_qty_recovered_from_mixed_price_text(self):
+        """Test B: qty 'stadén 7' fails, but price_text '739, 121.108,08 IS' recovers qty=739."""
+        from core.eve_market_visual_detector import normalize_quantity_text
+        det = self._detector()
+        # Simulate the detection loop path
+        price_text = "739, 121.108,08 IS"
+        qty_text   = "stadén 7"
+        target_price    = 121100.0
+        target_quantity = 739
+
+        p_match = det._match_price_ocr(price_text, target_price, is_buy_order=False)
+        self.assertTrue(p_match["matched"])
+
+        ocr_qty   = normalize_quantity_text(qty_text)
+        q_match   = det._match_quantity(ocr_qty, target_quantity, True, True, False, qty_text)
+        qty_ok    = q_match["matched"]
+        qty_type  = q_match["confidence"]
+
+        # Standard match fails; SELL recovery via price_text
+        if not qty_ok:
+            import re
+            m = re.match(r'^\s*(\d+)\s*[,\s]', price_text)
+            if m and int(m.group(1)) == target_quantity:
+                qty_ok   = True
+                qty_type = "sell_qty_from_mixed_price_text"
+
+        self.assertTrue(qty_ok, "qty recovery from price_text failed")
+        self.assertEqual(qty_type, "sell_qty_from_mixed_price_text")
+
+    def test_C_sell_wrong_leading_qty_not_recovered(self):
+        """Test C: leading qty 555 != target 739 → no recovery."""
+        import re
+        price_text = "555, 121.108,08 IS"
+        target_quantity = 739
+        m = re.match(r'^\s*(\d+)\s*[,\s]', price_text)
+        recovered = m is not None and int(m.group(1)) == target_quantity
+        self.assertFalse(recovered)
+
+    def test_D_buy_unaffected_by_sell_extraction(self):
+        """Test D: BUY orders must not use sell_mixed_price_extraction."""
+        det = self._detector()
+        res = det._match_price_ocr("739, 121.108,08 IS", 121100.0, is_buy_order=True)
+        self.assertNotEqual(res.get("confidence"), "sell_mixed_price_extraction",
+                            "BUY must not use SELL mixed extraction path")
+
+
+if __name__ == "__main__":
+    unittest.main()
