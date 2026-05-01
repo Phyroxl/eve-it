@@ -3,7 +3,7 @@ from core.contracts_models import ContractArbitrageResult, ContractItem, Contrac
 from core.contracts_engine import apply_contracts_filters
 
 def test_zero_value_breakdown():
-    config = ContractsFilterConfig(profit_min_isk=0, roi_min_pct=0)
+    config = ContractsFilterConfig(profit_min_isk=0, roi_min_pct=0, exclude_no_price=False)
     diag = ScanDiagnostics()
     
     # Contract with items but all missing price
@@ -21,7 +21,7 @@ def test_zero_value_breakdown():
     )
     
     filtered = apply_contracts_filters([c], config, diag)
-    assert len(filtered) == 0
+    assert len(filtered) == 1
     assert diag.excluded_by_zero_value == 1
     assert diag.zv_all_items_missing_price == 1
     assert diag.val_no_priced == 1
@@ -46,7 +46,7 @@ def test_low_profit_not_zero_value():
     # profit is 40, min_profit is 100.
     
     filtered = apply_contracts_filters([c], config, diag)
-    assert len(filtered) == 0
+    assert len(filtered) == 0 # STILL EXCLUDED because min_profit > 0
     assert diag.excluded_by_low_profit == 1
     assert diag.excluded_by_zero_value == 0
 

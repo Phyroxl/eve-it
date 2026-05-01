@@ -228,62 +228,26 @@ def apply_contracts_filters(
             else:
                 diagnostics.val_no_priced += 1
 
-        # 0. Sanity Checks (No items or no value)
+        # --- FILTROS DE EXCLUSIÓN EXPLÍCITA (OCULTAN RESULTADOS) ---
+        
+        # 0. Sanity Checks
         if c.item_type_count == 0:
             c.filter_reason = "No contiene items"
             if diagnostics: diagnostics.excluded_by_no_items += 1
             continue
             
-        if c.jita_sell_value <= 0:
-            # Desglose de por qué es Zero Value
-            reason = "Valor zero"
-            if not c.items:
-                reason = "Detalles de items no disponibles"
-                if diagnostics: diagnostics.zv_item_details_missing += 1
-            else:
-                unpriced = sum(1 for i in c.items if i.jita_sell_price <= 0)
-                if unpriced == len(c.items):
-                    reason = "Todos los items sin precio Jita"
-                    if diagnostics: diagnostics.zv_all_items_missing_price += 1
-                else:
-                    reason = "Valoración neta zero"
-                    if diagnostics: diagnostics.zv_unknown += 1
-            
-            c.filter_reason = reason
-            if diagnostics: diagnostics.excluded_by_zero_value += 1
+        # 1. Capital (Coste)
+        if c.contract_cost < config.capital_min_isk or c.contract_cost > config.capital_max_isk:
+            c.filter_reason = f"Capital fuera de rango ({c.contract_cost/1e6:.1f}M)"
+            if diagnostics: diagnostics.excluded_by_low_profit += 1 # Reutilizamos counter por ahora
             continue
 
-        # 1. Profit & ROI
-        # Si min_profit es 0, exigimos que sea estrictamente positivo para ser 'rentable'
-        min_p = config.profit_min_isk if config.profit_min_isk > 0 else 0.01
-        if c.net_profit < min_p:
-            c.filter_reason = f"Profit {c.net_profit/1e6:.2f}M < {min_p/1e6:.2f}M"
-            if diagnostics: diagnostics.excluded_by_low_profit += 1
-            continue
-            
-        if c.roi_pct < config.roi_min_pct:
-            c.filter_reason = f"ROI {c.roi_pct:.1f}% < {config.roi_min_pct:.1f}%"
-            if diagnostics: diagnostics.excluded_by_low_roi += 1
-            continue
-        
-        # 2. Complexity
-        if c.item_type_count > config.item_types_max:
-            c.filter_reason = f"Items {c.item_type_count} > {config.item_types_max}"
-            if diagnostics: diagnostics.excluded_by_complexity += 1
-            continue
-        
-        # 3. Prices
-        if config.exclude_no_price and c.has_unresolved_items:
-            c.filter_reason = f"Items sin precio ({c.unresolved_count})"
-            if diagnostics: diagnostics.excluded_by_no_price += 1
-            continue
-        
-        # 4. Blueprints
+        # 2. Blueprints
         if config.exclude_blueprints and c.has_blueprints:
             c.filter_reason = "Contiene Blueprints"
             if diagnostics: diagnostics.excluded_by_blueprint += 1
             continue
-        
+            
         if config.exclude_bpcs:
             has_copy = any(i.is_copy for i in c.items)
             if has_copy:
@@ -291,11 +255,57 @@ def apply_contracts_filters(
                 if diagnostics: diagnostics.excluded_by_bpc += 1
                 continue
         
-        # Si llega aquí, es un candidato rentable
+        # 3. Complexity
+        if c.item_type_count > config.item_types_max:
+            c.filter_reason = f"Items {c.item_type_count} > {config.item_types_max}"
+            if diagnostics: diagnostics.excluded_by_complexity += 1
+            continue
+            
+        # 4. Exclusión explícita por falta de precio
+        if config.exclude_no_price and c.jita_sell_value <= 0:
+            c.filter_reason = "Sin valoración (Excluido por filtro)"
+            if diagnostics: diagnostics.excluded_by_no_price += 1
+            continue
+
+        # --- CRITERIOS DE RENTABILIDAD (NO OCULTAN SI LOS FILTROS SON 0) ---
+        
         c.filter_reason = "Rentable"
-        if diagnostics: diagnostics.profitable += 1
+        
+        if c.jita_sell_value <= 0:
+            # Desglose de por qué es Zero Value
+            if not c.items:
+                c.filter_reason = "Detalles no disponibles"
+                if diagnostics: diagnostics.zv_item_details_missing += 1
+            else:
+                unpriced = sum(1 for i in c.items if i.jita_sell_price <= 0)
+                if unpriced == len(c.items):
+                    c.filter_reason = "Sin precio Jita"
+                    if diagnostics: diagnostics.zv_all_items_missing_price += 1
+                else:
+                    c.filter_reason = "Valoración zero"
+                    if diagnostics: diagnostics.zv_unknown += 1
+            
+            if diagnostics: diagnostics.excluded_by_zero_value += 1
+            # Si el usuario NO marcó exclude_no_price, lo dejamos pasar aunque sea 0
+            # Pero si min_profit > 0, entonces sí se ocultará en el siguiente paso
+
+        # Profit & ROI: Solo ocultan si el usuario puso un umbral real (>0)
+        if config.profit_min_isk > 0 and c.net_profit < config.profit_min_isk:
+            c.filter_reason = f"Profit bajo ({c.net_profit/1e6:.1f}M)"
+            if diagnostics: diagnostics.excluded_by_low_profit += 1
+            continue
+
+        if config.roi_min_pct > 0 and c.roi_pct < config.roi_min_pct:
+            c.filter_reason = f"ROI bajo ({c.roi_pct:.1f}%)"
+            if diagnostics: diagnostics.excluded_by_low_roi += 1
+            continue
+
+        # Si llegamos aquí, el contrato es visible
+        if c.net_profit > 0 and c.jita_sell_value > 0:
+            if diagnostics: diagnostics.profitable += 1
+        
         result.append(c)
-    
+
     # Filtro por categoría (basado en el item de mayor valor)
     cat_filter = str(config.category_filter).lower()
     if cat_filter not in ("all", "todas las categorías", "none", ""):

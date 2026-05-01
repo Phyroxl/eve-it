@@ -574,23 +574,47 @@ class MarketContractsView(QWidget):
             return "\n".join(report)
 
         d = self.last_diag
-        report.append("\n[PIPELINE COUNTS]")
-        report.append(f"  Total Scanned (Candidates): {d.total_scanned}")
-        report.append(f"  Profitable Found: {d.profitable}")
-        report.append(f"  Currently Visible in UI: {self.results_table.rowCount()}")
+        report.append("\n[PIPELINE]")
+        report.append(f"  Total Scanned (Candidates): {len(self._all_results)}")
+        report.append(f"  Profitable (Strict): {d.profitable}")
+        report.append(f"  Visible in UI: {self.results_table.rowCount()}")
 
-        report.append("\n[FILTER EXCLUSIONS]")
-        report.append(f"  Excluded by Low Profit: {d.excluded_by_low_profit}")
-        report.append(f"  Excluded by Low ROI: {d.excluded_by_low_roi}")
-        report.append(f"  Excluded by No Price: {d.excluded_by_no_price}")
+        report.append("\n[DISPLAY POLICY]")
+        report.append(f"  Mode: EXPLORATORY (Show All Scanned)")
+        report.append(f"  Hide Low Profit: {'True' if self.config.profit_min_isk > 0 else 'False'}")
+        report.append(f"  Hide Low ROI: {'True' if self.config.roi_min_pct > 0 else 'False'}")
+        report.append(f"  Hide Zero Value: {'True' if self.config.exclude_no_price else 'False'}")
+
+        report.append("\n[VALUATION STATUS COUNTS]")
+        rentable = 0
+        no_rentable = 0
+        sin_precio = 0
+        for row in range(self.results_table.rowCount()):
+            item = self.results_table.item(row, 0)
+            if item:
+                c = item.data(Qt.UserRole)
+                if c:
+                    if c.jita_sell_value <= 0: sin_precio += 1
+                    elif c.net_profit > 0: rentable += 1
+                    else: no_rentable += 1
+        
+        report.append(f"  Rentable: {rentable}")
+        report.append(f"  No rentable: {no_rentable}")
+        report.append(f"  Sin precio / Zero Value: {sin_precio}")
+        report.append(f"  Total Visible: {self.results_table.rowCount()}")
+
+        report.append("\n[FILTER EXCLUSIONS (HIDDEN)]")
+        report.append(f"  Excluded by Capital: {d.excluded_by_low_profit if self.config.capital_min_isk > 0 or self.config.capital_max_isk < 1e12 else 0}")
+        report.append(f"  Excluded by No Items: {d.excluded_by_no_items}")
         report.append(f"  Excluded by Blueprint: {d.excluded_by_blueprint}")
         report.append(f"  Excluded by BPC: {d.excluded_by_bpc}")
-        report.append(f"  Excluded by Category: {d.excluded_by_category}")
         report.append(f"  Excluded by Complexity: {d.excluded_by_complexity}")
-        report.append(f"  Excluded by No Items: {d.excluded_by_no_items}")
-        report.append(f"  Excluded by Zero Value: {d.excluded_by_zero_value}")
+        report.append(f"  Excluded by Category: {d.excluded_by_category}")
+        if self.config.exclude_no_price:
+            report.append(f"  Excluded by Zero Value Filter: {d.excluded_by_no_price}")
 
-        report.append("\n[ZERO VALUE BREAKDOWN]")
+        report.append("\n[ZERO VALUE ANALYSIS (NON-EXCLUDED)]")
+        report.append(f"  Total Zero Value Seen: {d.excluded_by_zero_value}")
         report.append(f"  All Items Missing Price: {d.zv_all_items_missing_price}")
         report.append(f"  Item Details Missing: {d.zv_item_details_missing}")
         report.append(f"  Price Lookup Failed: {d.zv_price_lookup_failed}")
@@ -606,9 +630,14 @@ class MarketContractsView(QWidget):
         report.append(f"  Items Priced: {d.val_items_priced} / {d.val_total_items_seen}")
         report.append(f"  Items Missing Price: {d.val_items_missing_price}")
 
-        report.append("\n[CACHE]")
-        report.append(f"  Contract Cache Hits: {d.contract_cache_hits}")
-        report.append(f"  Contract Cache Misses: {d.contract_cache_misses}")
+        report.append("\n[CACHE DETAILS]")
+        from core.contracts_cache import ContractsCache
+        cc = ContractsCache.instance()
+        report.append(f"  Cache File: {cc._cache_file}")
+        report.append(f"  Cache Version: {cc.VERSION}")
+        report.append(f"  Cache Entries: {len(cc.cache)}")
+        report.append(f"  Scan Hits: {d.contract_cache_hits}")
+        report.append(f"  Scan Misses: {d.contract_cache_misses}")
         
         # Panel de detalles (info de selección actual)
         report.append("\n[DETAILS PANEL]")

@@ -215,18 +215,27 @@ class EveIconService(QObject):
         
         # Background
         grad = QLinearGradient(0, 0, 0, size)
-        grad.setColorAt(0, QColor("#1e293b"))
-        grad.setColorAt(1, QColor("#0f172a"))
-        painter.setBrush(grad)
-        painter.setPen(QColor("#334155"))
-        painter.drawRoundedRect(1, 1, size-2, size-2, 4, 4)
         
         # Determine label if not provided
         if not label:
             label = self._get_category_label(type_id)
             
+        if label == "SKIN":
+            # Tactical Teal/Cyan for SKINS
+            grad.setColorAt(0, QColor("#083344"))
+            grad.setColorAt(1, QColor("#064e3b"))
+            painter.setBrush(grad)
+            painter.setPen(QColor("#06b6d4"))
+        else:
+            grad.setColorAt(0, QColor("#1e293b"))
+            grad.setColorAt(1, QColor("#0f172a"))
+            painter.setBrush(grad)
+            painter.setPen(QColor("#334155"))
+            
+        painter.drawRoundedRect(1, 1, size-2, size-2, 4, 4)
+        
         # Draw label
-        painter.setPen(QColor("#94a3b8"))
+        painter.setPen(QColor("#ffffff") if label == "SKIN" else QColor("#94a3b8"))
         font = QFont("Arial", 8, QFont.Weight.Bold)
         if size < 32: font.setPointSize(6)
         painter.setFont(font)

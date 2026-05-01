@@ -3506,3 +3506,13 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Refinado el motor de filtrado para diferenciar correctamente entre Low Profit y Zero Value.
 - Archivos: core/contracts_models.py, core/contracts_engine.py, core/item_metadata.py, ui/market_command/contracts_view.py.
 - Verificacion: Tests de diagnostico de valoracion pasados. Compilacion exitosa.
+
+## IMPROVE: Contract Exploratory Mode and SKIN Icons - 2026-05-01
+
+- Cambio de filosofoa: Ahora se muestran TODOS los contratos escaneados por defecto (modo exploratorio).
+- Logica de filtrado: Las exclusiones automoticas por profit bajo o falta de precio solo se aplican si el usuario activa umbrales (>0) o marca los checkboxes correspondientes.
+- Reporte: Aadida seccion [DISPLAY POLICY] y desgloses de estado (Rentable, No rentable, Sin precio).
+- Iconos: Refinados los fallbacks de SKIN con un estilo toctico distintivo (Teal/Cyan) y etiquetado claro si la imagen falla.
+- Cache: Aadido reporte detallado de entradas y hits/misses para validar el rendimiento.
+- Archivos: core/contracts_engine.py, core/eve_icon_service.py, ui/market_command/contracts_view.py.
+- Verificacion: Tests de diagnostico actualizados para el nuevo modo. Compilacion exitosa.
