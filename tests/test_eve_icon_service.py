@@ -39,5 +39,27 @@ class TestEveIconService(unittest.TestCase):
         self.assertIn("size=32", url)
         self.assertNotIn("size=24", url)
 
+    def test_on_reply_finished_signature_robustness(self):
+        """Regression test for the portrait callback crash."""
+        # This test ensures that calling the callback with 3 arguments doesn't raise TypeError
+        from unittest.mock import MagicMock, patch
+        
+        # We patch the methods that would actually try to do things with Qt objects
+        # to avoid crashes in headless environments
+        with patch.object(self.service, '_on_success'), \
+             patch.object(self.service, '_on_total_failure'):
+            
+            mock_reply = MagicMock()
+            mock_reply.error.return_value = 0 # No error
+            
+            try:
+                # Call with ONLY 3 positional arguments (the old crashing way)
+                self.service._on_reply_finished(mock_reply, -999, 64)
+            except TypeError as e:
+                self.fail(f"_on_reply_finished raised TypeError: {e}")
+            except Exception as e:
+                # Other exceptions might happen due to mocking, but we only care about TypeError
+                pass
+
 if __name__ == '__main__':
     unittest.main()

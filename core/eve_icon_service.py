@@ -112,7 +112,7 @@ class EveIconService(QObject):
             request = QNetworkRequest(QUrl(url))
             request.setAttribute(QNetworkRequest.Attribute.User, "portrait")
             reply = self.net_manager.get(request)
-            reply.finished.connect(lambda: self._on_reply_finished(reply, cache_id, size))
+            reply.finished.connect(lambda: self._on_reply_finished(reply, cache_id, size, "portrait"))
             
         return self._generate_placeholder(0, size, label="PILOT")
 
@@ -129,7 +129,7 @@ class EveIconService(QObject):
         reply = self.net_manager.get(request)
         reply.finished.connect(lambda: self._on_reply_finished(reply, type_id, size, endpoint_type))
 
-    def _on_reply_finished(self, reply: QNetworkReply, type_id: int, size: int, endpoint_type: str):
+    def _on_reply_finished(self, reply: QNetworkReply, type_id: int, size: int, endpoint_type: str = "unknown"):
         if endpoint_type is None:
             endpoint_type = "unknown"
         
@@ -189,8 +189,14 @@ class EveIconService(QObject):
         logger.debug(f"Total icon failure for ID {type_id}. Generating placeholder.")
         self.stats["failed_total"] += 1
         self.stats["placeholders"] += 1
+        
+        # Preserve negative cache_id behavior for characters (portraits)
         self.failed_ids.add(type_id)
         
+        # Use PILOT label for failed portraits if not specified
+        if label is None and type_id < 0:
+            label = "PILOT"
+            
         pixmap = self._generate_placeholder(type_id if type_id > 0 else 0, size, label=label)
         self.icon_cache[type_id] = pixmap
         

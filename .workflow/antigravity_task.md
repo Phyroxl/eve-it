@@ -2911,3 +2911,74 @@ Implementar una herramienta de diagnóstico para inspeccionar las entradas reale
 - [x] **Integración**: Verificación de que la operación es estrictamente de solo lectura sobre la DB.
 
 *Estado: Herramienta de inspección operativa para auditar la transparencia del cálculo de beneficio neto por item.*
+
+---
+
+## SesiÃ³n 46 â€” 2026-05-01
+
+### STATUS: COMPLETADO âœ…
+
+### FASE COMPLETADA: Mejora de asignaciÃ³n de fees por timing clusters (Sin context_id)
+
+### RESUMEN
+Se ha implementado una lÃ³gica de asignaciÃ³n de fees mucho mÃ¡s inteligente para usuarios donde ESI no proporciona `context_id` (vÃ­nculos exactos entre diario y transacciones). El sistema ahora utiliza un motor de scoring basado en proximidad temporal y afinidad lÃ³gica de eventos.
+
+**Mejoras clave:**
+1. **Motor de Scoring de Afinidad**: Nueva funciÃ³n `score_nearby_transaction_for_fee` que prioriza:
+   - Coincidencia exacta de segundo (`dt=0`).
+   - Lado de la operaciÃ³n (`transaction_tax` prefiere `SELL`).
+   - Proximidad absoluta (mÃ¡s cercano primero).
+2. **ClasificaciÃ³n `timing_exact_sale_cluster`**: Cuando un tax coincide exactamente en segundo con una venta, se asigna con **Confianza Alta**.
+3. **GestiÃ³n de RÃ¡fagas de Broker Fees**: Los rÃ¡fagas de `brokers_fee` cerca de una operaciÃ³n se detectan como `broker_fee_nearest_transaction` (Confianza Media).
+4. **Resguardo de Totales**: Se mantiene el fallback proporcional para casos ambiguos, garantizando que el 100% de los ISK del journal se asignen al inventario sin descuadres.
+5. **DiagnÃ³stico Transparente**: El informe de diagnÃ³stico ahora avisa explÃ­citamente si `context_id` no estÃ¡ disponible y muestra el scoring de cada candidato.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/performance_fee_allocator.py` | Implementado motor de scoring y lÃ³gica de clusters. |
+| `core/performance_fee_diagnostics.py` | Actualizadas clasificaciones, sorting de candidatos y warning de `context_id`. |
+| `core/performance_engine.py` | IntegraciÃ³n de nuevos contadores de diagnÃ³stico (`high_conf_timing`, `timing`, `orphan`). |
+| `core/performance_models.py` | AÃ±adidos campos de trazabilidad a `ItemPerformanceSummary`. |
+| `tests/test_performance_fee_allocator.py` | AÃ±adidos tests de prioridad temporal y de lado. |
+| `tests/test_performance_fee_diagnostics.py` | AÃ±adidos tests de clusters exactos y validaciÃ³n de reportes. |
+
+### CHECKS
+- [x] **Pytest**: 15 tests pasados (100%).
+- [x] **Py_compile**: Todos los mÃ³dulos afectados compilan sin errores.
+- [x] **Confianza Alta**: `transaction_tax` a `dt=0` con `SELL` marca confianza alta.
+- [x] **Sorting**: El diagnÃ³stico muestra el mejor match primero.
+- [x] **Warning**: Visible en el reporte si no hay links exactos en el journal.
+
+*Estado: AsignaciÃ³n de fees robusta y transparente, incluso sin soporte de context_id de ESI.*
+
+---
+
+## SesiÃ³n 47 â€” 2026-05-01
+
+### STATUS: COMPLETADO âœ…
+
+### FASE COMPLETADA: Fix de crash en callback de retratos y robustez de EveIconService
+
+### RESUMEN
+Se ha corregido un crash crÃ­tico que ocurrÃ­a durante el arranque de la aplicaciÃ³n al intentar cargar el retrato del personaje. El problema residÃ­a en una discrepancia de firma entre la llamada de retorno (`callback`) y la definiciÃ³n del mÃ©todo `_on_reply_finished`.
+
+**Mejoras y Fixes:**
+1. **CorrecciÃ³n de Firma**: Se ha actualizado `get_portrait()` para pasar el argumento `endpoint_type="portrait"` requerido por el mÃ©todo de procesamiento de respuestas.
+2. **Retrocompatibilidad y Robustez**: Se ha modificado `_on_reply_finished()` para que `endpoint_type` sea opcional (valor por defecto `"unknown"`), evitando crashes si futuras llamadas omiten este parÃ¡metro.
+3. **GestiÃ³n de Fallos en Retratos**: Se ha refinado `_on_total_failure()` para asegurar que los fallos en retratos (IDs negativos) utilicen siempre la etiqueta `"PILOT"` y se cacheen correctamente para evitar reintentos infinitos.
+4. **Test de RegresiÃ³n**: Se ha aÃ±adido un test unitario en `tests/test_eve_icon_service.py` que verifica la robustez de la firma del mÃ©todo ante llamadas con sÃ³lo 3 argumentos posicionales.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/eve_icon_service.py` | Fix en `get_portrait`, firma de `_on_reply_finished` y lÃ³gica de `_on_total_failure`. |
+| `tests/test_eve_icon_service.py` | AÃ±adido test de regresiÃ³n para la firma del callback. |
+
+### CHECKS
+- [x] **Pytest**: `tests/test_eve_icon_service.py` con 4 tests pasados (100%).
+- [x] **Py_compile**: `core/eve_icon_service.py` compila correctamente.
+- [x] **Robustez**: El mÃ©todo `_on_reply_finished` acepta llamadas con 3 argumentos sin lanzar `TypeError`.
+- [x] **Trazabilidad**: Los fallos de retratos se registran con el ID de cache negativo correcto.
+
+*Estado: EveIconService estable y protegido contra crashes de firma en callbacks.*
