@@ -869,8 +869,23 @@ class EVEWindowAutomation:
         # Propagate SELL grid diagnostics from debug to top level for report
         result["visual_ocr_sell_grid_fallback"] = dbg.get("visual_ocr_sell_grid_fallback", False)
         result["visual_ocr_sell_grid_rows"]     = dbg.get("visual_ocr_sell_grid_rows", 0)
+        result["visual_ocr_sell_grid_attempts"] = dbg.get("visual_ocr_sell_grid_attempts", 0)
         result["visual_ocr_sell_grid_strong"]   = dbg.get("visual_ocr_sell_grid_strong", 0)
         result["visual_ocr_sell_grid_best_rejections"] = dbg.get("sell_grid_best_rejections", [])
+
+        # Fix 1: Timeout/Abort
+        result["visual_ocr_abort_reason"]      = dbg.get("abort_reason")
+        result["visual_ocr_ocr_calls"]         = dbg.get("ocr_calls_count", 0)
+        result["visual_ocr_elapsed_ms"]        = dbg.get("elapsed_ms", 0)
+
+        # Fix 2: Tick propagation (diagnostics)
+        result["visual_ocr_price_tick"]        = dbg.get("price_tick_used", 0.0)
+        result["visual_ocr_price_tick_source"] = dbg.get("price_tick_source", "missing")
+        
+        # Fix 4: Header skip
+        result["visual_ocr_sell_grid_header_skip"] = dbg.get("visual_ocr_sell_grid_header_skip")
+        result["visual_ocr_sell_grid_y_min"]       = dbg.get("visual_ocr_sell_grid_y_min")
+        result["visual_ocr_sell_grid_y_max"]       = dbg.get("visual_ocr_sell_grid_y_max")
         
         # Phase 3D: Backend diagnostics
         result["visual_ocr_backend"]           = "pytesseract"
@@ -1213,7 +1228,16 @@ class EVEWindowAutomation:
         try:
             from core.eve_market_visual_detector import EveMarketVisualDetector
             detector = EveMarketVisualDetector(self._build_visual_ocr_config())
-            return detector.detect_own_order_row(screenshot, order_data, window_rect, manual_region=manual_region)
+
+            # Fix 2: Propagate tick source
+            tick = order_data.get("tick")
+            source = "order_data" if tick is not None else "missing"
+            
+            res = detector.detect_own_order_row(screenshot, order_data, window_rect, manual_region=manual_region)
+            if "debug" in res:
+                res["debug"]["price_tick_used"] = tick if tick is not None else 0.0
+                res["debug"]["price_tick_source"] = source
+            return res
         except Exception as exc:
             _log.error(f"[AUTOMATION] _run_visual_ocr_detect error: {exc}")
             return {"status": "error", "error": str(exc), "candidates_count": 0,
@@ -1297,6 +1321,15 @@ class EVEWindowAutomation:
             "visual_ocr_debug_dir":                     self.visual_ocr_debug_dir,
             "visual_ocr_buy_price_max_tick_fraction":   self.visual_ocr_buy_price_max_tick_fraction,
             "visual_ocr_sell_price_max_tick_fraction":  getattr(self, "visual_ocr_sell_price_max_tick_fraction", 0.49),
+            
+            # Fix 1: Timeout/límites OCR
+            "visual_ocr_detection_timeout_ms":          getattr(self, "visual_ocr_detection_timeout_ms", 8000),
+            "visual_ocr_max_total_ocr_calls_per_detection": getattr(self, "visual_ocr_max_ocr_calls", 120),
+            "visual_ocr_sell_grid_max_rows":            getattr(self, "visual_ocr_sell_grid_max_rows", 50),
+            "visual_ocr_sell_grid_max_attempts":        getattr(self, "visual_ocr_sell_grid_max_attempts", 80),
+            "visual_ocr_sell_retry_max_variants":       getattr(self, "visual_ocr_sell_retry_max_variants", 30),
+            "visual_ocr_debug_max_rejections":          getattr(self, "visual_ocr_debug_max_rejections", 10),
+            "visual_ocr_sell_grid_header_skip_px":      getattr(self, "visual_ocr_sell_grid_header_skip_px", 32),
         }
 
     def _save_debug_screenshot(self, screenshot, result: dict) -> None:

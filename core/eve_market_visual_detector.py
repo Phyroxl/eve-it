@@ -338,6 +338,18 @@ class EveMarketVisualDetector:
         self.sell_manual_grid_row_heights      = list(config.get("visual_ocr_sell_manual_grid_row_heights", [18, 20, 22]))
         self.sell_manual_grid_step_px          = int(config.get("visual_ocr_sell_manual_grid_step_px", 8))
         self.sell_manual_grid_min_score        = int(config.get("visual_ocr_sell_manual_grid_min_score", 180))
+        self.sell_grid_header_skip_px          = int(config.get("visual_ocr_sell_grid_header_skip_px", 32))
+
+        # Fix 1: Timeout/límites duros OCR
+        self.detection_timeout_ms = int(config.get("visual_ocr_detection_timeout_ms", 8000))
+        self.max_total_ocr_calls = int(config.get("visual_ocr_max_total_ocr_calls_per_detection", 120))
+        self.sell_grid_max_rows = int(config.get("visual_ocr_sell_grid_max_rows", 50))
+        self.sell_grid_max_attempts = int(config.get("visual_ocr_sell_grid_max_attempts", 80))
+        self.sell_retry_max_variants = int(config.get("visual_ocr_sell_retry_max_variants", 30))
+        self.debug_max_rejections = int(config.get("visual_ocr_debug_max_rejections", 10))
+
+        self._start_time = 0.0
+        self._ocr_calls_count = 0
 
         # Phase 3K: vertical OCR search for BUY marker/text misalignment
         self.buy_vertical_search_enabled = bool(config.get("visual_ocr_buy_vertical_search_enabled", True))
@@ -393,7 +405,15 @@ class EveMarketVisualDetector:
             return result
 
         try:
+            import time
+            self._start_time = time.time()
+            self._ocr_calls_count = 0
             return self._run_detection(screenshot, order_data, window_rect, result, manual_region=manual_region)
+        except OCRDetectionAborted as abort:
+            _log.warning(f"[VISUAL_OCR] detection aborted: {abort.reason}")
+            result["status"] = "aborted"
+            result["debug"]["abort_reason"] = abort.reason
+            return result
         except Exception as exc:
             _log.error(f"[VISUAL_OCR] detection error: {exc}")
             result["status"] = "error"
@@ -556,6 +576,8 @@ class EveMarketVisualDetector:
         # Phase 3P: manual SELL grid fallback
         if (not verified and not is_buy_order and manual_region and
                 self.sell_manual_grid_fallback_enabled):
+            # Flag MUST be True even if it finds 0
+            result["debug"]["visual_ocr_sell_grid_fallback"] = True
             grid_candidates = self._run_sell_manual_grid_fallback(
                 img_array, section_y_min, section_y_max,
                 panel_x0, panel_x1,
@@ -1178,6 +1200,21 @@ class EveMarketVisualDetector:
 
         return res
 
+    def _check_limits(self, result: Optional[dict] = None):
+        """Internal check for time and call limits. Raises OCRDetectionAborted."""
+        import time
+        elapsed_ms = (time.time() - self._start_time) * 1000
+        
+        if result and "debug" in result:
+            result["debug"]["ocr_calls_count"] = self._ocr_calls_count
+            result["debug"]["elapsed_ms"] = int(elapsed_ms)
+
+        if elapsed_ms > self.detection_timeout_ms:
+            raise OCRDetectionAborted("ocr_detection_timeout")
+        
+        if self._ocr_calls_count > self.max_total_ocr_calls:
+            raise OCRDetectionAborted("ocr_call_limit_exceeded")
+
     def _sell_price_crop_retry(self, img_array, ocr_y0: int, ocr_y1: int,
                                price_x0: int, price_x1: int,
                                target_price: float, target_quantity: int,
@@ -1264,7 +1301,7 @@ class EveMarketVisualDetector:
                 if region.size == 0:
                     continue
 
-                text = self._ocr_region(region)
+                text = self._ocr_region(region, result=diag)
                 pm = self._match_price_ocr(text, target_price, False, order_tick)
                 
                 var_diag = {
@@ -1277,6 +1314,7 @@ class EveMarketVisualDetector:
                     "confidence": pm["confidence"]
                 }
                 diag["sell_price_retry_variants"].append(var_diag)
+                
 
                 if pm["matched"]:
                     diag["sell_price_retry_success"] = True
@@ -1287,6 +1325,10 @@ class EveMarketVisualDetector:
                         "variant": v_name,
                         "diagnostics": diag
                     }
+                
+                # Fix 1: Limit variants
+                if len(diag["sell_price_retry_variants"]) >= self.sell_retry_max_variants:
+                    raise OCRDetectionAborted("sell_retry_variant_limit_exceeded")
 
         return {"success": False, "diagnostics": diag}
 
@@ -1514,18 +1556,34 @@ class EveMarketVisualDetector:
         qty_x0_p   = max(panel_x0, qty_x0   - self.qty_left_padding)
         qty_x1_p   = min(panel_x1, qty_x1   + self.qty_right_padding)
 
+        # Fix 4: Skip header
+        grid_y_min = section_y_min + self.sell_grid_header_skip_px
+        result["debug"]["visual_ocr_sell_grid_header_skip"] = self.sell_grid_header_skip_px
+        result["debug"]["visual_ocr_sell_grid_y_min"] = grid_y_min
+        result["debug"]["visual_ocr_sell_grid_y_max"] = section_y_max
+
         grid_rows = 0
-        for y0 in range(section_y_min, section_y_max, self.sell_manual_grid_step_px):
+        grid_attempts = 0
+        for y0 in range(grid_y_min, section_y_max, self.sell_manual_grid_step_px):
+            # Fix 1: Limit rows
+            if grid_rows >= self.sell_grid_max_rows:
+                raise OCRDetectionAborted("sell_grid_row_limit_exceeded")
+
             for rh in self.sell_manual_grid_row_heights:
                 y1 = min(h, y0 + rh)
                 if y1 - y0 < 6:
                     continue
                 grid_rows += 1
+                grid_attempts += 1
+                
+                # Fix 1: Limit attempts
+                if grid_attempts > self.sell_grid_max_attempts:
+                    raise OCRDetectionAborted("sell_grid_attempt_limit_exceeded")
 
                 pr = img_array[y0:y1, price_x0_p:price_x1_p]
                 if pr.size == 0:
                     continue
-                price_text = self._ocr_region(pr)
+                price_text = self._ocr_region(pr, result=result)
                 
                 # Try standard price match
                 p_match = self._match_price_ocr(price_text, target_price, False, order_tick)
@@ -1633,12 +1691,14 @@ class EveMarketVisualDetector:
                     "marker_band": [y0, y1], "text_band": tb, "alignment_offset": 0,
                 })
 
-        # Save top rejections for diagnostics
+        # Save top rejections for diagnostics (Fix 5: Limit)
         if all_attempts:
             all_attempts.sort(key=lambda x: x["score"], reverse=True)
-            result["debug"]["sell_grid_best_rejections"] = all_attempts[:10]
+            result["debug"]["sell_grid_best_rejections"] = all_attempts[:self.debug_max_rejections]
 
+        result["debug"]["visual_ocr_sell_grid_fallback"] = True
         result["debug"]["visual_ocr_sell_grid_rows"] = grid_rows
+        result["debug"]["visual_ocr_sell_grid_attempts"] = grid_attempts
         result["debug"]["visual_ocr_sell_grid_strong"] = len(strong)
         result["debug"]["detection_mode"] = "sell_manual_grid_fallback"
         return strong
@@ -1838,8 +1898,11 @@ class EveMarketVisualDetector:
             
         return matched, pixels, avg_rgb
 
-    def _ocr_region(self, img_array) -> str:
+    def _ocr_region(self, img_array, result: Optional[dict] = None) -> str:
         """Run pytesseract OCR on a numpy array region. Returns '' if unavailable."""
+        self._ocr_calls_count += 1
+        self._check_limits(result)
+        
         if not _PYTESSERACT_AVAILABLE or not _PIL_AVAILABLE:
             return ""
         try:
@@ -1847,9 +1910,17 @@ class EveMarketVisualDetector:
             config = f"--psm {self.tesseract_psm}"
             text = _pytesseract.image_to_string(img, lang=self.tesseract_lang, config=config)
             return text.strip()
+        except OCRDetectionAborted:
+            raise
         except Exception as exc:
             _log.warning(f"[VISUAL_OCR] OCR region error: {exc}")
             return ""
+
+class OCRDetectionAborted(Exception):
+    """Custom exception to abort detection when limits are reached."""
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
     def _save_debug_crop(self, img_array, filename: str):
         """Save a debug crop to disk if possible."""

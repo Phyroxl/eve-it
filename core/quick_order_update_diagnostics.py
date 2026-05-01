@@ -363,7 +363,23 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Mode      : {automation.get('visual_ocr_detection_mode', 'strict')}")
     lines.append(f"  Visual OCR SELL Grid Fallback: {automation.get('visual_ocr_sell_grid_fallback', False)}")
     lines.append(f"  Visual OCR SELL Grid Rows    : {automation.get('visual_ocr_sell_grid_rows', 0)}")
+    lines.append(f"  Visual OCR SELL Grid Attempts: {automation.get('visual_ocr_sell_grid_attempts', 0)}")
     lines.append(f"  Visual OCR SELL Grid Strong  : {automation.get('visual_ocr_sell_grid_strong', 0)}")
+    
+    # Fix 1: Timeout/Abort
+    lines.append(f"  Visual OCR Abort Reason: {automation.get('visual_ocr_abort_reason', 'N/A')}")
+    lines.append(f"  Visual OCR OCR Calls: {automation.get('visual_ocr_ocr_calls', 0)}")
+    lines.append(f"  Visual OCR Max OCR Calls: {m_reg_cfg.get('visual_ocr_max_total_ocr_calls_per_detection', 'N/A')}")
+    lines.append(f"  Visual OCR Elapsed Ms: {automation.get('visual_ocr_elapsed_ms', 0)} ms")
+    
+    # Fix 2: Tick propagation
+    lines.append(f"  Visual OCR Price Tick: {automation.get('visual_ocr_price_tick', 0.0)}")
+    lines.append(f"  Visual OCR Price Tick Source: {automation.get('visual_ocr_price_tick_source', 'N/A')}")
+    
+    # Fix 4: Header skip
+    lines.append(f"  Visual OCR SELL Grid Header Skip: {automation.get('visual_ocr_sell_grid_header_skip', 'N/A')} px")
+    lines.append(f"  Visual OCR SELL Grid Y Min: {automation.get('visual_ocr_sell_grid_y_min', 'N/A')}")
+    lines.append(f"  Visual OCR SELL Grid Y Max: {automation.get('visual_ocr_sell_grid_y_max', 'N/A')}")
     lines.append(f"  Visual OCR Candidates: {_b(automation.get('visual_ocr_candidates_count'))}")
     lines.append(f"  Visual OCR Price     : {_b(automation.get('visual_ocr_matched_price'))}")
     lines.append(f"  Visual OCR Quantity  : {_b(automation.get('visual_ocr_matched_quantity'))}")

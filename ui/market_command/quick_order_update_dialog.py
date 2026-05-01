@@ -605,6 +605,7 @@ class QuickOrderUpdateDialog(QDialog):
             "volume_total":  getattr(self.order, "volume_total", 0),
             "is_buy_order":  getattr(self.order, "is_buy_order", False),
             "location_id":   getattr(self.order, "location_id", None),
+            "tick":          self.recommendation.get("tick", 0.0),
         }
 
         self._status_lbl.setText("Ejecutando automatización experimental...")
@@ -801,6 +802,9 @@ class QuickOrderUpdateDialog(QDialog):
         elif status == "error":
             err_summary = errors[0] if errors else "error desconocido"
             msg   = f"Error en automatización: {err_summary}"
+            color = "#ef4444"
+        elif status == "aborted":
+            msg   = "Automatización abortada por límites OCR"
             color = "#ef4444"
         else:
             msg   = f"Estado: {status}"

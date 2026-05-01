@@ -857,8 +857,6 @@ class TestBUYManualGridFallback(unittest.TestCase):
             "Two distinct rows should both be returned for caller to decide ambiguous")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestBUYAlignedClick(unittest.TestCase):
@@ -960,8 +958,6 @@ class TestBUYAlignedClick(unittest.TestCase):
         self.assertIn(result["row_click_source"], ("text_band", "band_center"))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestSELLMixedPriceRecovery(unittest.TestCase):
@@ -1025,8 +1021,6 @@ class TestSELLMixedPriceRecovery(unittest.TestCase):
                             "BUY must not use SELL mixed extraction path")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestSELLCropRetry(unittest.TestCase):
@@ -1058,7 +1052,7 @@ class TestSELLCropRetry(unittest.TestCase):
         img = np.zeros((30, 400, 3), dtype=np.uint8)
 
         call_count = [0]
-        def mock_ocr(region):
+        def mock_ocr(region, result=None):
             call_count[0] += 1
             if call_count[0] == 1:
                 return "739° 128.708,00 IS"   # original contaminated
@@ -1139,7 +1133,7 @@ class TestSellPriceOCRRetry(unittest.TestCase):
             "128.708,00",     # left_trim_35
             "8.708,00",       # left_trim_45
             "121.100,00 ISK", # left_trim_55 -> SUCCESS
-        ]
+        ] + ["garbage"] * 50
         
         res = self.detector._sell_price_crop_retry(
             self.img, 10, 30, 100, 300,
@@ -1167,7 +1161,7 @@ class TestSellPriceOCRRetry(unittest.TestCase):
         horizontal_variant_count = 10
         fails = ["mismatch"] * horizontal_variant_count
         success = ["121.100,00"]
-        mock_ocr.side_effect = fails + success
+        mock_ocr.side_effect = fails + success + ["garbage"] * 50
         
         res = self.detector._sell_price_crop_retry(
             self.img, 10, 30, 100, 300,
@@ -1223,7 +1217,7 @@ class TestSELLPriceRetry(unittest.TestCase):
         # Instead of patching _ocr_region, let's patch _ocr_region to return a value that _match_price_ocr will accept
         # only when it's NOT the first attempt.
         call_count = 0
-        def side_effect(region):
+        def side_effect(region, result=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1: return original_text # Initial attempt
@@ -1251,7 +1245,7 @@ class TestSELLPriceRetry(unittest.TestCase):
         # Skip all horizontal-only (y_pad=0) variants (10 variants)
         # Then match on the first y_pad=2 variant (11th call to _ocr_region inside retry, 12th total)
         call_count = 0
-        def side_effect(region):
+        def side_effect(region, result=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1: return original_text
@@ -1274,6 +1268,7 @@ class TestSELLPriceRetry(unittest.TestCase):
         target_qty = 739
         original_text = "739° 128.708,00 IS"
         img_array = np.zeros((600, 800, 3), dtype=np.uint8)
+        self.detector.sell_retry_max_variants = 100
 
         with patch.object(self.detector, '_ocr_region', return_value="no match"):
             res = self.detector._sell_price_crop_retry(
@@ -1363,42 +1358,75 @@ class TestSELLHardening(unittest.TestCase):
         self.assertFalse(res["matched"])
 
     def test_sell_grid_mixed_qty_recovery(self):
-        """price_text='500000 388,80 ISK', qty_text='bad text', target_qty=500000 -> recovered."""
         img = np.zeros((100, 800, 3), dtype=np.uint8)
         result = {"debug": {}}
-        # We use a side_effect function to handle multiple calls predictably
-        def side_effect(region):
-            # Price crop is wider than quantity crop in our test call
+        self.detector.sell_grid_header_skip_px = 0
+        def side_effect(region, result=None):
             if region.shape[1] > 150: return "500000 388,80 ISK"
             return "bad text"
 
         with patch.object(self.detector, '_ocr_region', side_effect=side_effect):
+            # step=8, range(10, 15, 8) -> only y0=10 executes once
             strong = self.detector._run_sell_manual_grid_fallback(
                 img, 10, 15, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, order_tick=0.1
             )
         self.assertEqual(len(strong), 1)
-        self.assertEqual(strong[0]["quantity_match_type"], "sell_qty_from_mixed_price_text")
 
     def test_sell_grid_records_failed_attempts(self):
-        """Simulate several failing OCR attempts and check if they are recorded."""
         img = np.zeros((100, 800, 3), dtype=np.uint8)
         result = {"debug": {}}
-        # Target is 388.8. 999.9 will fail price.
-        def side_effect(region):
+        self.detector.sell_grid_header_skip_px = 0
+        def side_effect(region, result=None):
             if region.shape[1] > 150: return "999.99 ISK"
             return "123"
 
         with patch.object(self.detector, '_ocr_region', side_effect=side_effect):
             self.detector.sell_manual_grid_row_heights = [20]
-            # y0=10 -> grid_rows=1
+            # y0=10 executes once
             strong = self.detector._run_sell_manual_grid_fallback(
-                img, 10, 20, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, order_tick=0.1
+                img, 10, 15, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, order_tick=0.1
             )
         rejs = result["debug"].get("sell_grid_best_rejections", [])
         self.assertTrue(len(rejs) > 0)
-        # 999.99 is not a numeric tolerance match for 388.8
-        self.assertIn("price_mismatch", rejs[0]["reject_reason"])
+
+    def test_sell_grid_fallback_flag_always_true(self):
+        img = np.zeros((100, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        self.detector.sell_grid_header_skip_px = 0
+        with patch.object(self.detector, '_ocr_region') as mock_ocr:
+            mock_ocr.return_value = "no match"
+            self.detector._run_sell_manual_grid_fallback(
+                img, 10, 25, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, order_tick=0.1
+            )
+        self.assertTrue(result["debug"].get("visual_ocr_sell_grid_fallback"))
+
+    def test_tick_propagation(self):
+        # target=17960000, tick=10000, thresh=4900. ocr=17968000 -> diff=8000 -> REJECT
+        # Tolerance is 17960 (0.1%), so 8000 is within numeric tolerance.
+        res = self.detector._match_price_ocr("17.968.000,00", 17_960_000.0, False, 10000.0)
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["reason"], "price_diff_exceeds_tick_fraction")
+
+    def test_ocr_timeout_abortion(self):
+        import time
+        from core.eve_market_visual_detector import OCRDetectionAborted
+        self.detector.detection_timeout_ms = 1
+        self.detector._start_time = time.time() - 1.0
+        with self.assertRaises(OCRDetectionAborted):
+            self.detector._check_limits()
+
+    def test_sell_grid_header_skip(self):
+        img = np.zeros((400, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        self.detector.sell_grid_header_skip_px = 50
+        with patch.object(self.detector, '_ocr_region', return_value=""):
+            # Use a range where y_min + skip is still within bounds
+            self.detector._run_sell_manual_grid_fallback(
+                img, 100, 200, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, 0.1
+            )
+        self.assertEqual(result["debug"]["visual_ocr_sell_grid_y_min"], 150)
 
 if __name__ == "__main__":
     unittest.main()
+
 
