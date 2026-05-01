@@ -283,17 +283,50 @@ def replace_or_append_config_section(report: str, config_section: str) -> str:
         tail = ""
         if next_section_idx != -1:
             tail = "\n\n" + report[next_section_idx:].lstrip()
-        return head + "\n\n" + config_section + tail
             
+        return head + "\n\n" + config_section + tail
+
     return report.rstrip() + "\n\n" + config_section
 
+def _add_retry_diag_lines(lines: list, diag: dict):
+    """Add SELL price retry diagnostics lines."""
+    if not diag:
+        return
+    
+    lines.append(f"    Visual OCR Sell Price Retry Attempted: {diag.get('sell_price_retry_attempted')}")
+    lines.append(f"    Visual OCR Sell Price Retry Triggered: {diag.get('sell_price_retry_triggered')}")
+    
+    if not diag.get("sell_price_retry_triggered"):
+        lines.append(f"    Visual OCR Sell Price Retry Skip Reason: {diag.get('sell_price_retry_skip_reason')}")
+        return
+
+    lines.append(f"    Visual OCR Sell Price Retry Success: {diag.get('sell_price_retry_success')}")
+    lines.append(f"    Visual OCR Sell Price Retry Original: '{diag.get('sell_price_retry_original_text')}'")
+    
+    if diag.get("sell_price_retry_success"):
+        # Find the successful variant
+        variants = diag.get("sell_price_retry_variants") or []
+        for v in variants:
+            if v.get("matched"):
+                lines.append(f"    Visual OCR Sell Price Retry Variant: {v.get('name')}")
+                lines.append(f"    Visual OCR Sell Price Retry Text: '{v.get('text')}'")
+                break
+
+    variants = diag.get("sell_price_retry_variants") or []
+    if variants:
+        lines.append(f"    Visual OCR Sell Price Retry Variants ({len(variants)}):")
+        # Show first 10 variants per user requirement (they said "limit to first 10 or relevant")
+        for v in variants[:10]:
+            lines.append(f"      - {v.get('name')}: text='{v.get('text')}' norm={v.get('normalized')} matched={v.get('matched')} reason={v.get('reason')}")
+        if len(variants) > 10:
+            lines.append(f"      ... and {len(variants) - 10} more variants")
+
+def _b(val) -> str:
+    if val is None:
+        return "N/A"
+    return str(val)
 
 def _format_automation_section(automation: dict) -> list:
-    def _b(val) -> str:
-        if val is None:
-            return "N/A"
-        return str(val)
-
     lines = []
     lines.append("[AUTOMATION]")
     lines.append(f"  Automation Run ID    : {_b(automation.get('automation_run_id'))}")
@@ -472,6 +505,9 @@ def _format_automation_section(automation: dict) -> list:
         lines.append(f"  Visual OCR Sell Price Retry: True")
         lines.append(f"  Visual OCR Sell Price Retry Variant: {dbg.get('sell_price_retry_variant', 'N/A')}")
         lines.append(f"  Visual OCR Sell Price Retry Text: {dbg.get('sell_price_retry_text', 'N/A')}")
+    
+    # If we have top-level retry diagnostics (from the unique match if any)
+    # But usually it's in the attempts.
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
     lines.append(f"  Visual OCR Qty Type  : {automation.get('visual_ocr_quantity_match_type', 'none')}")
 
@@ -546,6 +582,9 @@ def _format_automation_section(automation: dict) -> list:
         lines.append(f"    Visual OCR Best Candidate Score : {best_score}")
         lines.append(f"    Visual OCR Best Candidate Reason: {best_rej.get('reject_reason', 'unknown')}")
         lines.append(f"    p_match={best_rej.get('price_match')} q_match={best_rej.get('quantity_match')} reason={best_rej.get('reject_reason')}")
+        
+        # SELL retry diagnostics for best rejected
+        _add_retry_diag_lines(lines, best_rej.get("sell_price_retry_diagnostics"))
         aln_off_rej = best_rej.get('alignment_offset', 0)
         if aln_off_rej != 0:
             lines.append(f"    Visual OCR Marker Band : {best_rej.get('marker_band')}")

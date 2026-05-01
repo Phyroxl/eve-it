@@ -1,5 +1,12 @@
 # EVE iT Market Command / Performance Task List
 
+- [x] Implementación de motor de retry Visual OCR para SELL.
+- [x] Diagnóstico detallado de reintentos en reporte de Quick Order Update.
+- [x] Ampliación de variantes de crop agresivas y vertical padding.
+- [x] Validación estricta de token de cantidad líder en SELL.
+- [x] Protección contra recuperación de cantidad si el precio falla.
+
+
 - [x] Unificación de iconos y nombres con placeholders.
 - [x] Optimización de Performance (Lazy Loading y Carga Diferida).
 - [x] Resolución de crash en EveIconService por firma de callback.
@@ -3190,6 +3197,41 @@ Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or 
 - **Tests**: 4 new tests in `TestSELLMixedPriceRecovery` (A-D). 226 total passing (73+3+107+43).
 
 ## Phase 3P: SELL Visual OCR Contaminated Price Crop Retry
+
+---
+
+## Sesión 34 — 2026-05-01
+
+### STATUS: COMPLETADO ✅
+
+### FASE COMPLETADA: Microfix — SELL Visual OCR Retry & Diagnostics
+
+### RESUMEN
+Se ha implementado un sistema robusto de reintento para la detección de precios en órdenes de venta (SELL) cuando el OCR se ve contaminado por la cantidad adyacente (ej: "739° 128.708,00 IS").
+
+**Mejoras clave:**
+1. **Activación Estricta**: El retry solo se activa si el texto extraído comienza con un token numérico que coincide exactamente con la `target_quantity`. Se usa el regex `^\s*(\d{1,9})\D+`.
+2. **Variantes de Crop Agresivas**: Se añadieron 10 variantes de recorte horizontal (left_trim_15..65, right_half, right_60/70, center_right) para aislar el precio.
+3. **Vertical Padding Retry**: Si los recortes horizontales fallan, se reintenta automáticamente con expansiones verticales de 2, 4 y 6 píxeles (y-pad) para capturar caracteres cortados.
+4. **Protección de Sufijos**: Se garantiza que el sistema no acepte precios "sucios" si el sufijo extraído no coincide con el target dentro de la tolerancia.
+5. **Quantity Recovery Seguro**: La recuperación de cantidad desde el crop de precio solo se permite si el precio ya ha sido validado (`price_ok=True`) y el token líder coincide con el target.
+6. **Telemetría Detallada**: El reporte de diagnóstico ahora desglosa cada intento, variante probada, texto extraído y motivo de fallo/éxito.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `core/eve_market_visual_detector.py` | Implementación de `_sell_price_crop_retry` con variantes y y-pad. Refinado de lógica de activación y quantity recovery. |
+| `core/quick_order_update_diagnostics.py` | Actualización de `_add_retry_diag_lines` para mostrar variantes detalladas y skip reasons. |
+| `tests/test_visual_ocr_matching.py` | Añadidos tests para `TestSELLPriceRetry` cubriendo activación, éxito con variantes, y-pad y diagnósticos. |
+
+### CHECKS
+- [x] `pytest tests/test_visual_ocr_matching.py` -> 87 passed.
+- [x] `pytest tests/test_visual_ocr_stability.py` -> passed.
+- [x] Verificado que el retry NO se activa si la cantidad líder no coincide.
+- [x] Verificado que las variantes y-pad se ejecutan secuencialmente.
+- [x] Conservada política `NOT_EXECUTED_BY_DESIGN` en confirmaciones.
+
+*Estado: Motor de Visual OCR SELL optimizado para casos de alta densidad de dígitos.*
 
 - **Bug**: `'739° 128.708,00 IS'` — degree/OCR-punct separator not handled; suffix 128708 ≠ 121100 so even suffix extraction couldn't save it.
 - **Fix 1**: `_sell_price_crop_retry()` — when SELL+own_marker+price_fail and price_text leads with target_qty token, re-OCR with left_trim_15/25/35 crops; returns first that matches.

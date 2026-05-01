@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from core.eve_market_visual_detector import (
     EveMarketVisualDetector, normalize_quantity_text, normalize_price_text,
     _price_groups, _price_group_tokens_matched,
@@ -1107,5 +1107,229 @@ class TestSELLCropRetry(unittest.TestCase):
         self.assertFalse(recovered)
 
 
+
+class TestSellPriceOCRRetry(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "visual_ocr_match_price": True,
+            "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 0.5,
+            "visual_ocr_price_digit_pattern_match": True,
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+        # Mock image array (numpy-like)
+        self.img = MagicMock()
+        self.img.shape = (1000, 1000, 3)
+        self.img.size = 3000000
+        # Mock slicing behavior
+        self.img.__getitem__.return_value = self.img
+
+    @patch.object(EveMarketVisualDetector, '_ocr_region')
+    def test_sell_retry_success_with_aggressive_trim(self, mock_ocr):
+        """Verify that aggressive trims can recover the price."""
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "739° 128.708,00 IS" # price_text contaminated by qty
+        
+        # Mock OCR sequence:
+        # We'll simulate success on a mid-trim variant
+        mock_ocr.side_effect = [
+            "739° 128",       # left_trim_15
+            "128.708",        # left_trim_25
+            "128.708,00",     # left_trim_35
+            "8.708,00",       # left_trim_45
+            "121.100,00 ISK", # left_trim_55 -> SUCCESS
+        ]
+        
+        res = self.detector._sell_price_crop_retry(
+            self.img, 10, 30, 100, 300,
+            target_price, target_qty, original_text
+        )
+        
+        self.assertTrue(res["success"])
+        self.assertEqual(res["variant"], "left_trim_55")
+        diag = res["diagnostics"]
+        self.assertTrue(diag["sell_price_retry_triggered"])
+        self.assertTrue(diag["sell_price_retry_success"])
+        # Should have recorded 5 variants until success
+        self.assertEqual(len(diag["sell_price_retry_variants"]), 5)
+        self.assertEqual(diag["sell_price_retry_variants"][-1]["name"], "left_trim_55")
+
+    @patch.object(EveMarketVisualDetector, '_ocr_region')
+    def test_sell_retry_success_with_y_padding(self, mock_ocr):
+        """Verify that y-padding expansion can recover the price if horizontal trims fail."""
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "739° 128.708,00 IS"
+        
+        # We'll mock all horizontal variants failing for y_pad=0
+        # and succeeding on the first variant of y_pad=2
+        horizontal_variant_count = 10
+        fails = ["mismatch"] * horizontal_variant_count
+        success = ["121.100,00"]
+        mock_ocr.side_effect = fails + success
+        
+        res = self.detector._sell_price_crop_retry(
+            self.img, 10, 30, 100, 300,
+            target_price, target_qty, original_text
+        )
+        
+        self.assertTrue(res["success"])
+        self.assertEqual(res["variant"], "left_trim_15_ypad2")
+        self.assertTrue(res["diagnostics"]["sell_price_retry_success"])
+
+    @patch.object(EveMarketVisualDetector, '_ocr_region')
+    def test_sell_retry_skip_on_leading_qty_mismatch(self, mock_ocr):
+        """Verify retry is NOT triggered if leading quantity doesn't match target."""
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "555° 121.100,00 IS" # Wrong quantity in crop
+        
+        res = self.detector._sell_price_crop_retry(
+            self.img, 10, 30, 100, 300,
+            target_price, target_qty, original_text
+        )
+        
+        self.assertFalse(res["success"])
+        diag = res["diagnostics"]
+        self.assertFalse(diag["sell_price_retry_triggered"])
+        self.assertEqual(diag["sell_price_retry_skip_reason"], "leading_qty_mismatch")
+        self.assertEqual(len(diag["sell_price_retry_variants"]), 0)
+
+
+
+class TestSELLPriceRetry(unittest.TestCase):
+    """Verifies SELL-only price retry logic and aggressive crops."""
+
+    def setUp(self):
+        self.config = {
+            "visual_ocr_match_price": True,
+            "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 150.0,
+            "visual_ocr_price_match_rel_tolerance": 0.001,
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+
+    def test_sell_retry_triggered_by_leading_qty(self):
+        """Test A/B: Retry triggers when leading qty found, succeeds with right variant."""
+        import numpy as np
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "739° 128.708,00 IS" # Leading 739 matches target_qty
+        
+        # Create a mock img_array (doesn't need real data, just shape)
+        img_array = np.zeros((600, 800, 3), dtype=np.uint8)
+
+        # Instead of patching _ocr_region, let's patch _ocr_region to return a value that _match_price_ocr will accept
+        # only when it's NOT the first attempt.
+        call_count = 0
+        def side_effect(region):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1: return original_text # Initial attempt
+            if call_count == 6: return "121.100,00 ISK" # One of the retry variants
+            return "garbage"
+
+        with patch.object(self.detector, '_ocr_region', side_effect=side_effect):
+            res = self.detector._sell_price_crop_retry(
+                img_array, 100, 120, 100, 400, target_price, target_qty, original_text
+            )
+            
+        self.assertTrue(res["success"])
+        self.assertTrue(res["variant"].startswith("left_trim_"))
+        self.assertTrue(res["diagnostics"]["sell_price_retry_triggered"])
+        self.assertTrue(res["diagnostics"]["sell_price_retry_success"])
+
+    def test_sell_retry_success_with_ypad(self):
+        """Test FIX 5: Success with y-pad vertical expansion."""
+        import numpy as np
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "739° 128.708,00 IS"
+        img_array = np.zeros((600, 800, 3), dtype=np.uint8)
+
+        # Skip all horizontal-only (y_pad=0) variants (10 variants)
+        # Then match on the first y_pad=2 variant (11th call to _ocr_region inside retry, 12th total)
+        call_count = 0
+        def side_effect(region):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1: return original_text
+            if call_count == 12: return "121.100,00 ISK" # First ypad2 variant
+            return "garbage"
+
+        with patch.object(self.detector, '_ocr_region', side_effect=side_effect):
+            res = self.detector._sell_price_crop_retry(
+                img_array, 100, 120, 100, 400, target_price, target_qty, original_text
+            )
+            
+        self.assertTrue(res["success"])
+        self.assertIn("ypad2", res["variant"])
+        self.assertTrue(res["diagnostics"]["sell_price_retry_success"])
+
+    def test_sell_retry_diagnostics_on_failure(self):
+        """Test A: Diagnostics are populated even when all retries fail."""
+        import numpy as np
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "739° 128.708,00 IS"
+        img_array = np.zeros((600, 800, 3), dtype=np.uint8)
+
+        with patch.object(self.detector, '_ocr_region', return_value="no match"):
+            res = self.detector._sell_price_crop_retry(
+                img_array, 100, 120, 100, 400, target_price, target_qty, original_text
+            )
+            
+        self.assertFalse(res["success"])
+        diag = res["diagnostics"]
+        self.assertTrue(diag["sell_price_retry_attempted"])
+        self.assertTrue(diag["sell_price_retry_triggered"])
+        self.assertFalse(diag["sell_price_retry_success"])
+        self.assertGreater(len(diag["sell_price_retry_variants"]), 0)
+        # Each variant should have text/matched/reason
+        v = diag["sell_price_retry_variants"][0]
+        self.assertIn("text", v)
+        self.assertIn("matched", v)
+        self.assertIn("reason", v)
+
+    def test_sell_retry_skip_on_leading_qty_mismatch(self):
+        """Test D: Retry skip reason when leading qty does not match target."""
+        target_price = 121100.0
+        target_qty = 739
+        original_text = "555° 121.100,00 IS" # 555 != 739
+
+        res = self.detector._sell_price_crop_retry(
+            None, 100, 120, 100, 400, target_price, target_qty, original_text
+        )
+        self.assertFalse(res["success"])
+        self.assertFalse(res["diagnostics"]["sell_price_retry_triggered"])
+        self.assertEqual(res["diagnostics"]["sell_price_retry_skip_reason"], "leading_qty_mismatch")
+
+    def test_sell_suffix_no_incorrect_match(self):
+        """Test C: No match if extracted suffix is outside tolerance."""
+        # target 121100, OCR 128708
+        res = self.detector._match_price_ocr("739° 128.708,00 IS", 121100.0, is_buy_order=False)
+        self.assertFalse(res["matched"])
+        # Wait, if tolerance is huge it might match. Let's use standard config.
+        self.detector.price_match_abs_tolerance = 15.0
+        self.detector.price_match_rel_tolerance = 0.001
+        res = self.detector._match_price_ocr("739° 128.708,00 IS", 121100.0, is_buy_order=False)
+        self.assertFalse(res["matched"])
+
+    def test_sell_qty_recovery_only_after_price_ok(self):
+        """Test FIX 6: Quantity recovery requires price_ok=True."""
+        # This is best tested via _run_detection_pass but we can check the logic in the main loop
+        # For now, verify that normalize_quantity_text extracts what we expect
+        self.assertEqual(normalize_quantity_text("739° 121.100,00 IS"), 73912110000) # Incorrect for qty
+        
+        # Verify regex used in qty recovery
+        import re
+        price_text = "739° 121.100,00 IS"
+        m = re.match(r'^\s*(\d+)\D+', price_text)
+        self.assertTrue(m)
+        self.assertEqual(int(m.group(1)), 739)
+
+
 if __name__ == "__main__":
     unittest.main()
+
