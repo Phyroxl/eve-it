@@ -339,7 +339,7 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Mod Offset: {automation.get('visual_ocr_mod_offset', 'N/A')}")
     lines.append(f"  Visual OCR Right Clk : {automation.get('visual_ocr_right_clk', 'N/A')}")
     lines.append(f"  Visual OCR Mod Clk   : {automation.get('visual_ocr_mod_clk', 'N/A')}")
-    lines.append(f"  Visual OCR Off Source: {automation.get('visual_ocr_offset_source', 'fallback')}")
+    lines.append(f"  Visual OCR Off Source: {automation.get('visual_ocr_offset_source', 'generic_fallback')}")
     
     # Phase 3E: Manual region diagnostics
     # Read from config dict in automation data if available

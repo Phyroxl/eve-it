@@ -913,7 +913,17 @@ class EVEWindowAutomation:
         
         result["visual_ocr_rc_offset"] = (rc_off_x, rc_off_y)
         result["visual_ocr_mod_offset"] = (mod_off_x, mod_off_y)
-        result["visual_ocr_offset_source"] = "side_specific"
+
+        # Detect source for diagnostics
+        user_keys = set(self.config.get("_user_keys", []))
+        source = "side_specific"
+        if is_buy:
+            if "visual_ocr_buy_modify_menu_offset_x" not in user_keys:
+                source = "generic_fallback"
+        else:
+            if "visual_ocr_sell_modify_menu_offset_x" not in user_keys:
+                source = "generic_fallback"
+        result["visual_ocr_offset_source"] = source
 
         # Build side-aware candidate list
         run_candidates = list(self.visual_ocr_rc_candidate_offsets)

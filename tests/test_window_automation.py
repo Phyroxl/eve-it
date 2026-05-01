@@ -1331,7 +1331,7 @@ class TestEVEWindowAutomationSideOffsets(unittest.TestCase):
         result = auto.execute_quick_order_update(order, "100.00", selected_window=self._SELECTED)
         
         self.assertEqual(result["visual_ocr_mod_offset"], (10, 15))
-        self.assertEqual(result["visual_ocr_offset_source"], "side_specific")
+        self.assertEqual(result["visual_ocr_offset_source"], "generic_fallback")
 
 if __name__ == "__main__":
     unittest.main()

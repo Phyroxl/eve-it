@@ -235,30 +235,23 @@ def load_quick_order_update_config() -> dict:
 def validate_quick_order_update_config(config: dict) -> dict:
     """Validate and sanitize config. Returns a complete, sanitized dict."""
     result = dict(_DEFAULT_CONFIG)
+    user_keys = set()
 
     for key in ("enabled", "dry_run", "confirm_required",
                 "restore_clipboard_after", "use_pywinauto", "use_pyautogui_fallback",
                 "require_window_selection", "allow_title_fallback_without_selection",
-                "exclude_self_app_windows"):
-        if key in config:
-            result[key] = bool(config[key])
-
-    for key in ("experimental_paste_enabled", "paste_into_focused_window",
-                "clear_price_field_before_paste",
-                "modify_order_step_enabled", "require_modify_dialog_ready",
-                "paste_without_modify_dialog_verification",
-                "allow_unverified_modify_order_paste",
-                "visual_ocr_enabled", "visual_ocr_require_unique_match",
-                "visual_ocr_match_price", "visual_ocr_match_quantity",
-                "visual_ocr_require_own_order_marker", "visual_ocr_side_section_required",
-                "visual_ocr_allow_unverified_paste", "visual_ocr_debug_save_screenshot",
-                "visual_ocr_marker_required", "visual_ocr_debug_save_crops",
+                "exclude_self_app_windows", "experimental_paste_enabled",
+                "paste_into_focused_window", "clear_price_field_before_paste",
+                "never_confirm_final_order", "modify_order_step_enabled",
+                "visual_ocr_enabled", "visual_ocr_debug_save_crops",
                 "visual_ocr_manual_region_enabled", "visual_ocr_manual_region_prompt_each_time",
-                "visual_ocr_manual_region_save_profile",
-                "visual_ocr_paste_after_unverified_modify_click",
-                "visual_ocr_modify_click_retry_if_menu_closed"):
+                "visual_ocr_manual_region_save_profile", "visual_ocr_marker_required",
+                "visual_ocr_verify_context_menu_open", "visual_ocr_paste_after_unverified_modify_click",
+                "visual_ocr_allow_unverified_paste", "visual_ocr_modify_click_retry_if_menu_closed",
+                "visual_ocr_pre_right_click_left_click"):
         if key in config:
             result[key] = bool(config[key])
+            user_keys.add(key)
 
     # Safety: always TRUE
     result["never_confirm_final_order"] = True
@@ -318,12 +311,54 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_quantity_suffix_min_digits", "visual_ocr_modify_menu_offset_x",
                 "visual_ocr_modify_menu_offset_y", "visual_ocr_context_menu_verify_region_w",
                 "visual_ocr_context_menu_verify_region_h", "visual_ocr_context_menu_min_changed_pixels",
-                "visual_ocr_modify_click_max_retries"):
+                "visual_ocr_modify_click_max_retries",
+                "visual_ocr_sell_right_click_x_offset", "visual_ocr_sell_right_click_y_offset",
+                "visual_ocr_sell_modify_menu_offset_x", "visual_ocr_sell_modify_menu_offset_y",
+                "visual_ocr_buy_right_click_x_offset", "visual_ocr_buy_right_click_y_offset",
+                "visual_ocr_buy_modify_menu_offset_x", "visual_ocr_buy_modify_menu_offset_y"):
         if key in config:
             try:
                 result[key] = int(config[key])
+                user_keys.add(key)
             except (TypeError, ValueError):
                 pass
+
+    result["_user_keys"] = list(user_keys)
+
+    # Side-specific fallbacks (Phase 3G)
+    # If side-specific keys are NOT in the input config, they should inherit from the generic ones
+    # (which are already in 'result' at this point, either from 'config' or from '_DEFAULT_CONFIG')
+    
+    if "visual_ocr_sell_right_click_x_offset" not in config:
+        result["visual_ocr_sell_right_click_x_offset"] = result["visual_ocr_right_click_x_offset"]
+    if "visual_ocr_sell_right_click_y_offset" not in config:
+        result["visual_ocr_sell_right_click_y_offset"] = result["visual_ocr_right_click_y_offset"]
+    if "visual_ocr_sell_modify_menu_offset_x" not in config:
+        result["visual_ocr_sell_modify_menu_offset_x"] = result["visual_ocr_modify_menu_offset_x"]
+    if "visual_ocr_sell_modify_menu_offset_y" not in config:
+        result["visual_ocr_sell_modify_menu_offset_y"] = result["visual_ocr_modify_menu_offset_y"]
+
+    if "visual_ocr_buy_right_click_x_offset" not in config:
+        result["visual_ocr_buy_right_click_x_offset"] = result["visual_ocr_right_click_x_offset"]
+    if "visual_ocr_buy_right_click_y_offset" not in config:
+        result["visual_ocr_buy_right_click_y_offset"] = result["visual_ocr_right_click_y_offset"]
+    
+    # Special defaults for BUY modify menu if not specified in JSON (even if generic is specified)
+    # But wait, the user said "Else use old generic key". 
+    # So if "visual_ocr_modify_menu_offset_x" is in JSON, we use it as fallback.
+    # If NOT, we use the safe default (50, 20).
+    
+    if "visual_ocr_buy_modify_menu_offset_x" not in config:
+        if "visual_ocr_modify_menu_offset_x" in config:
+            result["visual_ocr_buy_modify_menu_offset_x"] = result["visual_ocr_modify_menu_offset_x"]
+        else:
+            result["visual_ocr_buy_modify_menu_offset_x"] = 50
+            
+    if "visual_ocr_buy_modify_menu_offset_y" not in config:
+        if "visual_ocr_modify_menu_offset_y" in config:
+            result["visual_ocr_buy_modify_menu_offset_y"] = result["visual_ocr_modify_menu_offset_y"]
+        else:
+            result["visual_ocr_buy_modify_menu_offset_y"] = 20
 
     for key in ("visual_ocr_price_match_abs_tolerance", "visual_ocr_price_match_rel_tolerance"):
         if key in config:
