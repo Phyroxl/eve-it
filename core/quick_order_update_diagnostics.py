@@ -468,6 +468,10 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
     lines.append(f"  Visual OCR Price Type: {automation.get('visual_ocr_price_match_confidence', 'none')}")
     lines.append(f"  Visual OCR Price Reason: {automation.get('visual_ocr_price_match_reason', 'none')}")
+    if dbg.get("sell_price_retry_used"):
+        lines.append(f"  Visual OCR Sell Price Retry: True")
+        lines.append(f"  Visual OCR Sell Price Retry Variant: {dbg.get('sell_price_retry_variant', 'N/A')}")
+        lines.append(f"  Visual OCR Sell Price Retry Text: {dbg.get('sell_price_retry_text', 'N/A')}")
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
     lines.append(f"  Visual OCR Qty Type  : {automation.get('visual_ocr_quantity_match_type', 'none')}")
 

@@ -733,9 +733,11 @@ class EveMarketVisualDetector:
             }
 
             # Price Match
+            _sell_orig_price_text = ""  # preserved for SELL qty recovery below
             if self.match_price and target_price > 0:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
+                _sell_orig_price_text = price_text
 
                 p_match_res = self._match_price_ocr(price_text, target_price, is_buy_order, order_tick)
                 price_ok = p_match_res["matched"]
@@ -744,6 +746,23 @@ class EveMarketVisualDetector:
                 if self.debug_save_crops and idx < 20: # Save more crops for BUY debugging
                     suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
                     self._save_debug_crop(price_region, f"visual_ocr_{ts}_p{suffix}_fb{is_fallback}.png")
+
+            # SELL: retry with right-biased crops when price crop is contaminated by qty column
+            if (not price_ok and not is_buy_order and own_marker
+                    and self.match_price and target_price > 0 and target_quantity > 0):
+                retry = self._sell_price_crop_retry(
+                    img_array, ocr_y0, ocr_y1,
+                    price_x0_padded, price_x1_padded,
+                    target_price, target_quantity, price_text
+                )
+                if retry:
+                    price_text  = retry["price_text"]
+                    p_match_res = retry["p_match"]
+                    price_ok    = True
+                    ocr_price   = p_match_res["normalized"]
+                    result["debug"]["sell_price_retry_used"]    = True
+                    result["debug"]["sell_price_retry_variant"] = retry["variant"]
+                    result["debug"]["sell_price_retry_text"]    = retry["price_text"]
 
             # Phase 3K: Vertical OCR search for BUY marker/text misalignment.
             # When a band has own_marker=True but standard OCR fails on the exact
@@ -804,8 +823,9 @@ class EveMarketVisualDetector:
                         qty_reason     = orig_m["reason"]
 
                 # SELL: recover qty from mixed price-crop text (e.g. '739, 121.108,08 IS')
+                # Use _sell_orig_price_text so qty is read even when retry replaced price_text
                 if not qty_ok and not is_buy_order and own_marker and price_ok:
-                    m = re.match(r'^\s*(\d+)\s*[,\s]', price_text)
+                    m = re.match(r'^\s*(\d+)\s*[,°\s]', _sell_orig_price_text or price_text)
                     if m and int(m.group(1)) == target_quantity:
                         qty_ok         = True
                         qty_match_type = "sell_qty_from_mixed_price_text"
@@ -1041,7 +1061,7 @@ class EveMarketVisualDetector:
 
         # SELL: mixed qty+price crop — try suffix after first "NNN, " leading group
         if not is_buy_order:
-            parts = re.split(r',\s+', price_text, maxsplit=1)
+            parts = re.split(r'[,°]\s*|\s+', price_text, maxsplit=1)
             if len(parts) == 2 and re.match(r'^\s*\d+\s*$', parts[0]):
                 suffix_price = normalize_price_text(parts[1])
                 diff_s = abs(suffix_price - target_price)
@@ -1121,6 +1141,44 @@ class EveMarketVisualDetector:
                     return res
 
         return res
+
+    def _sell_price_crop_retry(self, img_array, ocr_y0: int, ocr_y1: int,
+                               price_x0: int, price_x1: int,
+                               target_price: float, target_quantity: int,
+                               original_text: str) -> Optional[dict]:
+        """
+        SELL-only: retry OCR with right-biased crops when the price crop is
+        contaminated by a leading quantity token (e.g. '739° 128.708,00 IS').
+        Tries progressively trimmed left edges; returns first crop that matches.
+        """
+        m = re.match(r'^\s*(\d+)\s*[,°\s]', original_text)
+        if not m:
+            return None
+        leading = int(m.group(1))
+        if not (leading == target_quantity or
+                abs(leading - target_quantity) <= max(2, int(target_quantity * 0.05))):
+            return None
+
+        w = price_x1 - price_x0
+        if w < 10:
+            return None
+
+        variants = [
+            ("left_trim_15", price_x0 + max(1, int(w * 0.15)), price_x1),
+            ("left_trim_25", price_x0 + max(1, int(w * 0.25)), price_x1),
+            ("left_trim_35", price_x0 + max(1, int(w * 0.35)), price_x1),
+        ]
+        for name, x0, x1 in variants:
+            if x1 - x0 < 8:
+                continue
+            region = img_array[ocr_y0:ocr_y1, x0:x1]
+            if region.size == 0:
+                continue
+            text = self._ocr_region(region)
+            p_match = self._match_price_ocr(text, target_price, False, 0.0)
+            if p_match["matched"]:
+                return {"price_text": text, "p_match": p_match, "variant": name}
+        return None
 
     def _ocr_vertical_search(self, img_array, y_center: int, row_height: int,
                               price_x0: int, price_x1: int,

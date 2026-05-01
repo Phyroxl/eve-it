@@ -3188,3 +3188,12 @@ Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or 
 - **Fix 2**: Main loop SELL qty recovery — if standard qty match fails, own_marker=True, price_ok, and price_text starts with target_qty, accept with `sell_qty_from_mixed_price_text`.
 - **Fix 3**: Suggested action is now side-specific: SELL failures show `improve_sell_ocr_price_or_scroll`.
 - **Tests**: 4 new tests in `TestSELLMixedPriceRecovery` (A-D). 226 total passing (73+3+107+43).
+
+## Phase 3P: SELL Visual OCR Contaminated Price Crop Retry
+
+- **Bug**: `'739° 128.708,00 IS'` — degree/OCR-punct separator not handled; suffix 128708 ≠ 121100 so even suffix extraction couldn't save it.
+- **Fix 1**: `_sell_price_crop_retry()` — when SELL+own_marker+price_fail and price_text leads with target_qty token, re-OCR with left_trim_15/25/35 crops; returns first that matches.
+- **Fix 2**: Expanded separator regex in `_match_price_ocr` SELL suffix path to `[,°]\s*|\s+` (covers comma, degree, spaces).
+- **Fix 3**: SELL qty recovery uses `_sell_orig_price_text` (pre-retry) with expanded separator, so qty is found even after retry replaced price_text.
+- **Diagnostics**: `sell_price_retry_used/variant/text` added to debug; shown after Price Reason in report.
+- **Tests**: 5 new tests in `TestSELLCropRetry` (A-E). 231 total passing (78+3+107+43).

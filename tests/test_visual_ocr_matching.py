@@ -1027,3 +1027,85 @@ class TestSELLMixedPriceRecovery(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSELLCropRetry(unittest.TestCase):
+    """Phase 3P: SELL contaminated price crop retry."""
+
+    def _det(self):
+        from core.eve_market_visual_detector import EveMarketVisualDetector
+        return EveMarketVisualDetector({})
+
+    def test_A_sell_comma_separator_still_works(self):
+        """Test A: '739, 121.108,08 IS' still matches via sell_mixed_price_extraction."""
+        det = self._det()
+        res = det._match_price_ocr("739, 121.108,08 IS", 121100.0, is_buy_order=False)
+        self.assertTrue(res["matched"], f"Should match: {res}")
+        self.assertEqual(res["confidence"], "sell_mixed_price_extraction")
+
+    def test_B_sell_wrong_suffix_does_not_match_directly(self):
+        """Test B: '739° 128.708,00 IS' suffix 128708 != 121100 → no direct match."""
+        det = self._det()
+        res = det._match_price_ocr("739° 128.708,00 IS", 121100.0, is_buy_order=False)
+        self.assertFalse(res["matched"],
+            f"128708 should NOT match target 121100 directly, got: {res}")
+
+    def test_C_sell_crop_retry_with_mocked_ocr(self):
+        """Test C: crop retry with left_trim returns correct price."""
+        import numpy as np
+        from unittest.mock import patch
+        det = self._det()
+        img = np.zeros((30, 400, 3), dtype=np.uint8)
+
+        call_count = [0]
+        def mock_ocr(region):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return "739° 128.708,00 IS"   # original contaminated
+            return "121.100,00 ISK"            # trimmed crop = clean price
+
+        with patch.object(det, '_ocr_region', side_effect=mock_ocr):
+            retry = det._sell_price_crop_retry(
+                img, 5, 25, 10, 390, 121100.0, 739, "739° 128.708,00 IS"
+            )
+
+        self.assertIsNotNone(retry, "Retry should return a result")
+        self.assertTrue(retry["p_match"]["matched"])
+        self.assertIn("left_trim", retry["variant"])
+
+    def test_D_sell_qty_recovered_after_retry(self):
+        """Test D: qty recovery from leading token after price retry succeeds."""
+        import re
+        from core.eve_market_visual_detector import normalize_quantity_text
+        det = self._det()
+        orig_price_text = "739° 128.708,00 IS"
+        qty_text = "stacén 7"
+        target_qty = 739
+        price_ok = True  # simulating post-retry state
+
+        ocr_qty = normalize_quantity_text(qty_text)
+        q_match = det._match_quantity(ocr_qty, target_qty, True, True, False, qty_text)
+        qty_ok  = q_match["matched"]
+        qty_type = q_match["confidence"]
+
+        if not qty_ok and price_ok:
+            m = re.match(r'^\s*(\d+)\s*[,°\s]', orig_price_text)
+            if m and int(m.group(1)) == target_qty:
+                qty_ok   = True
+                qty_type = "sell_qty_from_mixed_price_text"
+
+        self.assertTrue(qty_ok)
+        self.assertEqual(qty_type, "sell_qty_from_mixed_price_text")
+
+    def test_E_wrong_leading_qty_not_recovered(self):
+        """Test E: leading 555 != target 739 → no qty recovery."""
+        import re
+        orig_price_text = "555° 121.100,00 IS"
+        target_qty = 739
+        m = re.match(r'^\s*(\d+)\s*[,°\s]', orig_price_text)
+        recovered = m is not None and int(m.group(1)) == target_qty
+        self.assertFalse(recovered)
+
+
+if __name__ == "__main__":
+    unittest.main()
