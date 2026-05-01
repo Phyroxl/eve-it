@@ -595,6 +595,22 @@ class MarketContractsView(QWidget):
         report.append(f"Generated At: {now}")
         report.append(f"Region: {self.combo_region.currentText()} ({self.config.region_id})")
         report.append(f"Category: {self.combo_category.currentText()} ({self.config.category_filter})")
+        
+        if not self.last_diag:
+            report.append("\n[ESI FETCH]")
+            report.append("  No hay diagnóstico disponible todavía. Ejecuta un escaneo.")
+            
+            report.append("\n[OPEN IN-GAME]")
+            report.append(f"  Last Open Attempt: {self._last_open_attempt if self._last_open_attempt > 0 else 'None'}")
+            report.append(f"  Last Open Source: {self._last_open_source}")
+            report.append(f"  Selected Contract ID: {getattr(self, '_current_contract_id', 'None')}")
+            report.append(f"  Open Method: ESI UI (POST /ui/openwindow/contract/)")
+            report.append(f"  Open Success: {self._last_open_success}")
+            if self._last_open_error:
+                report.append(f"  Open Error: {self._last_open_error}")
+            return "\n".join(report)
+
+        d = self.last_diag
         report.append("\n[ESI FETCH]")
         report.append(f"  Region ID: {self.config.region_id}")
         report.append(f"  ESI X-Pages: {d.esi_total_pages}")
@@ -641,11 +657,6 @@ class MarketContractsView(QWidget):
         if self._last_open_error:
             report.append(f"  Open Error: {self._last_open_error}")
 
-        if not self.last_diag:
-            report.append("\nNo hay diagnóstico disponible todavía. Ejecuta un escaneo.")
-            return "\n".join(report)
-
-        d = self.last_diag
         report.append("\n[PIPELINE]")
         report.append(f"  Total Scanned (Candidates): {len(self._all_results)}")
         report.append(f"  Profitable (Strict): {d.profitable}")
@@ -1176,10 +1187,10 @@ class MarketContractsView(QWidget):
         
         # Tracking para diagnóstico
         self._last_open_attempt = contract_id
-        if self._last_open_source != "double_click":
+        if self._last_open_source == "none":
             self._last_open_source = "button"
             
-        logger.info(f"[CONTRACT OPEN] Attempting source={self._last_open_source} contract_id={contract_id}")
+        logger.info(f"[CONTRACT OPEN] source={self._last_open_source} contract_id={contract_id}")
         
         def feedback(msg, color):
             # Reconocemos éxito por el color verde del helper

@@ -3544,3 +3544,12 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Mejora: Implementada logica de copia masiva TSV que maneja rangos no contiguos y todas las columnas visibles.
 - Proteccion: Aadido bloque try-except en keyPressEvent para evitar crashes por eventos de teclado.
 - Estado: Operacional y verificado con tests.
+
+## FIX: Audit contract ESI pagination and hidden limits - 2026-05-01
+
+- Problema: Los contratos estaban limitados por una paginacion incompleta (solo pogina 1) y un lomite de 1000 items en el trabajador.
+- Fix Paginacion: Implementado fetch completo de todas las poginas de ESI usando ThreadPoolExecutor en client.public_contracts.
+- Fix Lomites: Permitido lomite 0 (Sin lomite) en la UI y el trabajador para auditoroas completas de region.
+- Diagnosticos: Aadida seccion [ESI FETCH] y [PIPELINE COUNTS] detallada al reporte de escaneo para total transparencia.
+- Verificacion: Deduplicacion por contract_id implementada y testeada con tests/test_contract_pagination.py.
+- Estado: Auditoroa completa operacional.
