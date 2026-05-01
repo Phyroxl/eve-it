@@ -37,6 +37,26 @@ class ScoreBreakdown:
 
 
 @dataclass
+class ScanDiagnostics:
+    total_scanned: int = 0
+    after_basic_filters: int = 0
+    excluded_by_price: int = 0
+    excluded_by_complexity: int = 0
+    excluded_by_no_price: int = 0
+    excluded_by_blueprint: int = 0
+    excluded_by_bpc: int = 0
+    excluded_by_category: int = 0
+    excluded_by_low_profit: int = 0
+    excluded_by_low_roi: int = 0
+    profitable: int = 0
+
+    def to_summary(self) -> str:
+        return (f"Total: {self.total_scanned} | Profitable: {self.profitable} | "
+                f"Low Profit/ROI: {self.excluded_by_low_profit}/{self.excluded_by_low_roi} | "
+                f"BP/BPC: {self.excluded_by_blueprint}/{self.excluded_by_bpc}")
+
+
+@dataclass
 class ContractArbitrageResult:
     contract_id: int
     region_id: int
@@ -59,6 +79,7 @@ class ContractArbitrageResult:
     valuation_warning: Optional[str] = None
     score: float = 0.0
     score_breakdown: Optional[ScoreBreakdown] = None
+    filter_reason: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> ContractArbitrageResult:
@@ -74,14 +95,14 @@ class ContractsFilterConfig:
     region_id: int = 10000002
     capital_max_isk: float = 1_000_000_000.0
     capital_min_isk: float = 1_000_000.0
-    profit_min_isk: float = 10_000_000.0
-    roi_min_pct: float = 5.0
+    profit_min_isk: float = 0.0
+    roi_min_pct: float = 1.0
     item_types_max: int = 50
     broker_fee_pct: float = 3.0
     sales_tax_pct: float = 8.0
     max_contracts_to_scan: int = 1000
     price_reference: str = "sell"
     exclude_no_price: bool = True
-    exclude_blueprints: bool = True
-    exclude_bpcs: bool = True
+    exclude_blueprints: bool = False
+    exclude_bpcs: bool = False
     category_filter: str = "all"  # ships, modules, etc.

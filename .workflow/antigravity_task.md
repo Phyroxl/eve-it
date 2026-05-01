@@ -3416,3 +3416,19 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Aadido import de logging y definicion de logger en contracts_worker.py.
 - Archivos: ui/market_command/contracts_worker.py.
 - Verificacion: py_compile exitoso y tests de contratos (7 passed).
+
+## FIX: Contract Item Details and Profitability Transparency - 2026-05-01
+
+- Bug: El panel inferior no mostraba items de contratos.
+- Solucion: 
+  - Corregidos indices de columnas en la tabla de items.
+  - Aadida robustez en populate_detail_panel para manejar items sin valor.
+- Mejora de Transparencia: 
+  - Implementada clase ScanDiagnostics para rastrear por quo se descartan contratos (ROI bajo, profit bajo, BP/BPC, etc.).
+  - Aadido campo filter_reason a ContractArbitrageResult para explicar el descarte en tooltips.
+  - La barra de estado ahora muestra un resumen del diagnostico de escaneo.
+- Ajustes de Criterio: 
+  - Filtros predeterminados mos inclusivos (ROI 1%, Profit 0 ISK, BP/BPC visibles por defecto).
+  - Corregido manejo de la categoroa " Todas las categoroas\.
+- Archivos: core/contracts_models.py, core/contracts_engine.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
+- Verificacion: 9 tests pasados (incluyendo nuevos tests de serializacion y preservacion de items).

@@ -373,10 +373,10 @@ class MarketContractsView(QWidget):
         self.items_table.setHorizontalHeaderLabels(["Item", "Cant", "Precio Jita", "Valor", "% Total"])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.items_table.setColumnWidth(2, 60)
+        self.items_table.setColumnWidth(1, 60)
+        self.items_table.setColumnWidth(2, 100)
         self.items_table.setColumnWidth(3, 100)
-        self.items_table.setColumnWidth(4, 100)
-        self.items_table.setColumnWidth(5, 60)
+        self.items_table.setColumnWidth(4, 60)
         self.items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.items_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.items_table.setShowGrid(False)
@@ -476,8 +476,7 @@ class MarketContractsView(QWidget):
             self.status_label.setText("Cancelando...")
 
     def add_contract_row(self, c):
-        # Insertar fila si cumple filtro (aunque en worker ya deberia cumplir algo, 
-        # pero es útil re-chequear si se cambian filtros locales)
+        # Insertar fila si cumple filtro
         from core.contracts_engine import apply_contracts_filters
         filtered_single = apply_contracts_filters([c], self.config)
         if not filtered_single:
@@ -488,6 +487,8 @@ class MarketContractsView(QWidget):
 
         i_num = QTableWidgetItem(str(row + 1))
         i_num.setTextAlignment(Qt.AlignCenter)
+        if c.filter_reason:
+            i_num.setToolTip(f"Motivo: {c.filter_reason}")
         
         items_txt = str(c.item_type_count)
         if c.has_unresolved_items or c.valuation_warning:
@@ -517,11 +518,7 @@ class MarketContractsView(QWidget):
         exp_txt = _format_expiry(c.date_expired)
         i_exp = QTableWidgetItem(exp_txt)
         i_exp.setTextAlignment(Qt.AlignCenter)
-        if "m" in exp_txt and "d" not in exp_txt and "h" not in exp_txt:
-            i_exp.setForeground(QColor("#ef4444"))
-        elif "h" in exp_txt and "d" not in exp_txt:
-            i_exp.setForeground(QColor("#ef4444"))
-            
+        
         i_score = QTableWidgetItem(f"{c.score:.1f}")
         i_score.setTextAlignment(Qt.AlignCenter)
         
@@ -546,22 +543,6 @@ class MarketContractsView(QWidget):
         # Guardar ref oculta en la fila
         i_num.setData(Qt.UserRole, c)
 
-    def on_scan_finished(self, results):
-        self._all_results = results
-        self.btn_scan.setVisible(True)
-        self.btn_cancel.setVisible(False)
-        self.progress_widget.setVisible(False)
-        self.insights_widget.setVisible(True)
-        
-        self.apply_filters_locally() # Re-render final ordenado
-
-    def on_scan_error(self, msg):
-        self.btn_scan.setVisible(True)
-        self.btn_cancel.setVisible(False)
-        self.progress_widget.setVisible(False)
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.critical(self, "Error de Escaneo", msg)
-
     def apply_filters_locally(self):
         if not self._all_results:
             return
@@ -569,8 +550,9 @@ class MarketContractsView(QWidget):
         self.results_table.setRowCount(0)
         self._image_generation += 1
         
-        from core.contracts_engine import apply_contracts_filters
-        filtered = apply_contracts_filters(self._all_results, self.config)
+        from core.contracts_engine import apply_contracts_filters, ScanDiagnostics
+        diag = ScanDiagnostics()
+        filtered = apply_contracts_filters(self._all_results, self.config, diag)
         
         for c in filtered:
             self.add_contract_row(c)
@@ -588,6 +570,33 @@ class MarketContractsView(QWidget):
         else:
             self.lbl_ins_roi.setText("-")
             self.lbl_ins_top.setText("-")
+
+        # Mostrar diagnóstico en la barra de estado
+        self.status_label.setText(f"Diagnóstico: {diag.to_summary()}")
+        self.status_label.setToolTip(
+            f"Excluidos por:\n"
+            f"- Profit bajo: {diag.excluded_by_low_profit}\n"
+            f"- ROI bajo: {diag.excluded_by_low_roi}\n"
+            f"- Sin precio: {diag.excluded_by_no_price}\n"
+            f"- BP/BPC: {diag.excluded_by_blueprint}/{diag.excluded_by_bpc}\n"
+            f"- Categoría/Otros: {diag.excluded_by_category + diag.excluded_by_complexity}"
+        )
+
+    def on_scan_finished(self, results):
+        self._all_results = results
+        self.btn_scan.setVisible(True)
+        self.btn_cancel.setVisible(False)
+        self.progress_widget.setVisible(False)
+        self.insights_widget.setVisible(True)
+        
+        self.apply_filters_locally() # Re-render final ordenado
+
+    def on_scan_error(self, msg):
+        self.btn_scan.setVisible(True)
+        self.btn_cancel.setVisible(False)
+        self.progress_widget.setVisible(False)
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Error de Escaneo", msg)
 
     def on_row_selected(self, row, col):
         item = self.results_table.item(row, 0)
@@ -608,7 +617,7 @@ class MarketContractsView(QWidget):
         self._current_contract_id = c.contract_id
         
         # Guardar top item para poder abrir su mercado
-        items = sorted(c.items, key=lambda x: x.line_sell_value, reverse=True)
+        items = sorted(c.items, key=lambda x: getattr(x, 'line_sell_value', 0), reverse=True)
         self._current_main_item_id = items[0].type_id if items else 0
         
         self.lbl_det_title.setText(f"CONTRATO {c.contract_id} — SCORE: {c.score:.1f}")
@@ -624,6 +633,8 @@ class MarketContractsView(QWidget):
         self.lbl_det_roi.setText(f"<b>ROI:</b> <span style='color:{color_r};'>{c.roi_pct:.1f}%</span>")
         
         risk_msgs = []
+        if c.filter_reason:
+            risk_msgs.append(f"Criterio: {c.filter_reason}")
         if c.has_unresolved_items:
             risk_msgs.append(f"{c.unresolved_count} item(s) sin precio")
         if c.value_concentration > 0.80:
@@ -632,9 +643,9 @@ class MarketContractsView(QWidget):
             risk_msgs.append(c.valuation_warning)
             
         if risk_msgs:
-            self.lbl_det_risk.setText(f"<b>AVISOS:</b> <span style='color:#f59e0b;'>{' | '.join(risk_msgs)}</span>")
+            self.lbl_det_risk.setText(f"<b>INFO:</b> <span style='color:#f59e0b;'>{' | '.join(risk_msgs)}</span>")
         else:
-            self.lbl_det_risk.setText(f"<b>AVISOS:</b> <span style='color:#10b981;'>Ninguno</span>")
+            self.lbl_det_risk.setText(f"<b>INFO:</b> <span style='color:#10b981;'>Ninguno</span>")
             
         self.detail_frame.setVisible(True)
         

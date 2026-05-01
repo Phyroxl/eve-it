@@ -146,6 +146,9 @@ class ContractsScanWorker(QThread):
             
             resolve_done_time = time.time()
             
+            from core.contracts_models import ScanDiagnostics
+            diag = ScanDiagnostics()
+
             # 6. Análisis Final
             self.status.emit("Calculando profit y aplicando filtros...")
             processed_count = 0
@@ -176,7 +179,7 @@ class ContractsScanWorker(QThread):
                 self._scanned_count = processed_count
                 
                 # Filtros
-                filtered_single = apply_contracts_filters([result], self.config)
+                filtered_single = apply_contracts_filters([result], self.config, diag)
                 if filtered_single:
                     all_results.append(result)
                     self.batch_ready.emit(result)
@@ -193,6 +196,7 @@ class ContractsScanWorker(QThread):
                 f"resolve={resolve_done_time-fetch_done_time:.2f}s | "
                 f"cache_hits={cache_hits}/{processed_count}"
             )
+            logger.info(f"[DIAG] {diag.to_summary()}")
 
             # 7. Finalización
             if self._cancelled:
@@ -202,7 +206,9 @@ class ContractsScanWorker(QThread):
 
             self.progress.emit(95)
             self.status.emit("Ordenando por Score...")
-            final = apply_contracts_filters(all_results, self.config)
+            # Re-aplicar filtros para asegurar consistencia final (especialmente categoría)
+            final_diag = ScanDiagnostics()
+            final = apply_contracts_filters(all_results, self.config, final_diag)
             self.progress.emit(100)
             self.finished.emit(final)
 

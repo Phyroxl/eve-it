@@ -204,34 +204,60 @@ def score_contract(c: ContractArbitrageResult) -> float:
 
 def apply_contracts_filters(
     contracts: List[ContractArbitrageResult],
-    config: ContractsFilterConfig
+    config: ContractsFilterConfig,
+    diagnostics: Optional[ScanDiagnostics] = None
 ) -> List[ContractArbitrageResult]:
     """Filtra y devuelve top 1000 ordenados por score DESC."""
     result = []
+    
+    if diagnostics:
+        diagnostics.total_scanned += len(contracts)
+        
     for c in contracts:
         # 1. Profit & ROI
-        if c.net_profit < config.profit_min_isk: continue
-        if c.roi_pct < config.roi_min_pct: continue
+        # Aseguramos que el ROI en config y en el contrato estén en la misma escala (ej. 1.0 = 1%)
+        if c.net_profit < config.profit_min_isk:
+            c.filter_reason = f"Profit {c.net_profit/1e6:.1f}M < {config.profit_min_isk/1e6:.1f}M"
+            if diagnostics: diagnostics.excluded_by_low_profit += 1
+            continue
+            
+        if c.roi_pct < config.roi_min_pct:
+            c.filter_reason = f"ROI {c.roi_pct:.1f}% < {config.roi_min_pct:.1f}%"
+            if diagnostics: diagnostics.excluded_by_low_roi += 1
+            continue
         
         # 2. Complexity
-        if c.item_type_count > config.item_types_max: continue
+        if c.item_type_count > config.item_types_max:
+            c.filter_reason = f"Items {c.item_type_count} > {config.item_types_max}"
+            if diagnostics: diagnostics.excluded_by_complexity += 1
+            continue
         
         # 3. Prices
-        if config.exclude_no_price and c.has_unresolved_items: continue
+        if config.exclude_no_price and c.has_unresolved_items:
+            c.filter_reason = f"Items sin precio ({c.unresolved_count})"
+            if diagnostics: diagnostics.excluded_by_no_price += 1
+            continue
         
         # 4. Blueprints
         if config.exclude_blueprints and c.has_blueprints:
+            c.filter_reason = "Contiene Blueprints"
+            if diagnostics: diagnostics.excluded_by_blueprint += 1
             continue
         
         if config.exclude_bpcs:
             has_copy = any(i.is_copy for i in c.items)
             if has_copy:
+                c.filter_reason = "Contiene Copias BPC"
+                if diagnostics: diagnostics.excluded_by_bpc += 1
                 continue
-                
+        
+        # Si llega aquí, es un candidato rentable
+        c.filter_reason = "Rentable"
+        if diagnostics: diagnostics.profitable += 1
         result.append(c)
     
     # Filtro por categoría (basado en el item de mayor valor)
-    if config.category_filter != "all":
+    if config.category_filter != "all" and config.category_filter != "Todas las categorías":
         from core.item_metadata import ItemMetadataHelper
         final_filtered = []
         for c in result:
@@ -247,6 +273,10 @@ def apply_contracts_filters(
                 item_cat = ItemMetadataHelper.resolve_category(main_item.item_name)
                 if item_cat == config.category_filter:
                     final_filtered.append(c)
+                else:
+                    if diagnostics: diagnostics.excluded_by_category += 1
+            else:
+                if diagnostics: diagnostics.excluded_by_category += 1
         result = final_filtered
 
     result.sort(key=lambda x: x.score, reverse=True)

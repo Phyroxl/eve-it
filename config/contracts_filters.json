@@ -9,8 +9,8 @@
   "sales_tax_pct": 8.0,
   "max_contracts_to_scan": 1000,
   "price_reference": "sell",
-  "exclude_no_price": true,
+  "exclude_no_price": false,
   "exclude_blueprints": true,
   "exclude_bpcs": true,
-  "category_filter": "ships"
+  "category_filter": "all"
 }
