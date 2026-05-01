@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QComboBox, QScrollArea, QGridLayout, 
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy, QCheckBox,
-    QAbstractItemView
+    QAbstractItemView, QDialog
 )
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPixmap, QIcon
