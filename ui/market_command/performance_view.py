@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPixmap, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer, QUrl
 import sqlite3
 import logging
+import time
 from datetime import datetime, timedelta
 
 from core.performance_engine import PerformanceEngine
@@ -194,14 +195,22 @@ class MarketPerformanceView(QWidget):
     def activate_view(self):
         """Llamado por el contenedor principal cuando esta pestaña se hace visible."""
         if not self._initial_refresh_done:
-            _log.info("[PERF] Activación inicial de la vista Performance")
-            self.discover_characters()
-            if self.config.auto_refresh_enabled:
-                self.start_auto_refresh()
-            self.refresh_view()
+            _log.info("[PERF] Activación inicial de la vista Performance (deferred)")
             self._initial_refresh_done = True
+            self._diag_label.setText("▸ CARGANDO PERFORMANCE...")
+            QTimer.singleShot(0, self._perform_initial_refresh)
         else:
             _log.debug("[PERF] Vista ya estaba activa, saltando refresh automático")
+
+    def _perform_initial_refresh(self):
+        """Ejecuta el refresh inicial de forma diferida para no bloquear el cambio de pestaña."""
+        t_start = time.perf_counter()
+        self.discover_characters()
+        if self.config.auto_refresh_enabled:
+            self.start_auto_refresh()
+        self.refresh_view()
+        t_end = time.perf_counter()
+        _log.info(f"[PERF] Initial deferred refresh completed in {(t_end - t_start)*1000:.2f} ms")
 
     def _purge_fake_char0(self):
         """Elimina datos demo/fallback con character_id=0 que contaminan la vista."""
@@ -221,17 +230,24 @@ class MarketPerformanceView(QWidget):
 
     def discover_characters(self):
         """Busca personajes en los logs y llena el combo, ignorando fallbacks con id=0."""
+        t_start = time.perf_counter()
         chars = self.engine.find_active_characters()
-        self.combo_char.clear()
-        # Filtrar estrictamente: solo aceptar personajes con ID real (>0)
-        valid = [c for c in chars if isinstance(c.get('id'), int) and c['id'] > 0]
-        if not valid:
-            self.combo_char.addItem("Haz login ESI para sincronizar", -1)
-        else:
-            for c in valid:
-                self.combo_char.addItem(c['name'], c['id'])
-
-        self.combo_char.currentIndexChanged.connect(self.refresh_view)
+        
+        self.combo_char.blockSignals(True)
+        try:
+            self.combo_char.clear()
+            # Filtrar estrictamente: solo aceptar personajes con ID real (>0)
+            valid = [c for c in chars if isinstance(c.get('id'), int) and c['id'] > 0]
+            if not valid:
+                self.combo_char.addItem("Haz login ESI para sincronizar", -1)
+            else:
+                for c in valid:
+                    self.combo_char.addItem(c['name'], c['id'])
+        finally:
+            self.combo_char.blockSignals(False)
+            
+        t_end = time.perf_counter()
+        _log.info(f"[PERF] discover_characters completed in {(t_end - t_start)*1000:.2f} ms")
         
     def setup_ui(self):
         self.main_layout = QVBoxLayout(self)
@@ -290,6 +306,7 @@ class MarketPerformanceView(QWidget):
         self.combo_char.addItem("Sincroniza para ver personajes")
         self.combo_char.setFixedWidth(200)
         self.combo_char.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 5px;")
+        self.combo_char.currentIndexChanged.connect(self.refresh_view)
         
         self.combo_range = QComboBox()
         self.combo_range.addItems(["Hoy", "7 días", "30 días", "90 días"])
@@ -661,6 +678,7 @@ class MarketPerformanceView(QWidget):
 
     def refresh_view(self):
         """Entry point público — captura cualquier excepción y la hace visible."""
+        t_start = time.perf_counter()
         self._initial_refresh_done = True
         try:
             self._do_refresh()
@@ -670,8 +688,12 @@ class MarketPerformanceView(QWidget):
             _log.error(f"[REFRESH] EXCEPCIÓN:\n{tb}")
             self._diag_label.setText(f"▸ ERROR CRÍTICO: {exc}")
             self._diag_label.setStyleSheet("color: #ef4444; font-size: 9px; font-weight: 700; padding: 4px 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 3px;")
+        finally:
+            t_end = time.perf_counter()
+            _log.info(f"[PERF] refresh_view completed in {(t_end - t_start)*1000:.2f} ms")
 
     def _do_refresh(self):
+        t_start = time.perf_counter()
         self._image_generation += 1
         gen = self._image_generation
         self.detail_frame.setVisible(False)
@@ -798,6 +820,8 @@ class MarketPerformanceView(QWidget):
         self.chart.set_data([(d.date, d.profit_net) for d in daily_pnl])
 
         # ── Top Items ─────────────────────────────────────────────────────
+        t_end = time.perf_counter()
+        _log.info(f"[PERF] _do_refresh internal logic completed in {(t_end - t_start)*1000:.2f} ms")
         self.current_items = items
         self.top_items_table.setRowCount(len(items[:15]))
         status_colors = {

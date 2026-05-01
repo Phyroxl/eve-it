@@ -206,8 +206,9 @@ class MarketCommandMain(QWidget):
         self.stack.setCurrentIndex(index)
         
         # 3. Notificar a la vista que se ha activado (para refrescos diferidos)
+        from PySide6.QtCore import QTimer
         if hasattr(view, 'activate_view'):
-            view.activate_view()
+            QTimer.singleShot(0, view.activate_view)
             
         self.btn_simple.setChecked(index == 0)
         self.btn_advanced.setChecked(index == 1)

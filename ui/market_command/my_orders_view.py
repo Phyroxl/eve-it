@@ -1703,11 +1703,17 @@ class MarketMyOrdersView(QWidget):
     def activate_view(self):
         """Llamado cuando esta pestaña se hace visible."""
         if not self._initial_activation_done:
-            _log.info("[MY ORDERS] Activación inicial de la vista")
-            self.try_auto_login()
-            if AuthManager.instance().current_token:
-                self.do_sync()
+            _log.info("[MY ORDERS] Activación inicial de la vista (deferred)")
             self._initial_activation_done = True
+            QTimer.singleShot(0, self._perform_initial_activation)
+
+    def _perform_initial_activation(self):
+        t_start = time.perf_counter()
+        self.try_auto_login()
+        if AuthManager.instance().current_token:
+            self.do_sync()
+        t_end = time.perf_counter()
+        _log.info(f"[MY ORDERS] Initial deferred activation completed in {(t_end - t_start)*1000:.2f} ms")
 
     def update_taxes_info(self):
         auth = AuthManager.instance()
