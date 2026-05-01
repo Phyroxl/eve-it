@@ -3045,3 +3045,32 @@ EVE Online highlights the entire "Buyer" section of the market window with a con
     *   SELL behavior unchanged.
 
 **Commit Hash**: 2cedb4e
+
+## Phase 3I: Target-Aware Visual OCR Matching (BUY Optimization)
+
+**Objective**: Fix BUY order identification failures caused by green-background OCR noise and missing punctuation.
+
+### Changes Implemented:
+- **Target-Aware Price Matching**:
+    - Implemented _match_price_ocr with digit-pattern extraction.
+    - Added support for mapping common OCR artifacts (O->0, I->1, S->5, B->8).
+    - Introduced digit_pattern and scaled_digit_pattern confidence tiers.
+- **Robust Quantity Matching**:
+    - Added single-digit safety to prevent target '8' from matching '18'.
+    - Specialized mapping for BUY artifact 'g' -> '8'.
+- **Price Anchor Logic**:
+    - Implemented visual_ocr_buy_allow_price_anchor_quantity_weak.
+    - Allows unique row selection if price matches with high confidence (digit_pattern or numeric), even if quantity is noisy.
+- **Diagnostic Upgrades**:
+    - Added Visual OCR Price Type to diagnostics.
+    - Fixed Visual OCR Filtered count to reflect total OCR attempts.
+    - Improved visual_ocr_suggested_action to avoid generic recalibration prompts when split-rows are active.
+- **Test Coverage**:
+    - Added test_match_price_digit_patterns, test_match_quantity_single_digit_safety, and test_match_quantity_buy_artifacts to tests/test_visual_ocr_matching.py.
+
+### Verification Results:
+- **Unit Tests**: 158 passed (including new target-aware matching cases).
+- **Noisy Input Handling**: Confirmed that messy strings like '29.66O.OOO @@ ISK' correctly match the target 29660000.0.
+- **Safety**: NOT_EXECUTED_BY_DESIGN invariant preserved.
+
+**Status**: Phase 3I Complete. BUY order automation is now resilient to typical green-background OCR artifacts.

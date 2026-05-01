@@ -130,6 +130,8 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_buy_expected_row_height_px":    18,
     "visual_ocr_buy_large_band_min_height_px":  40,
     "visual_ocr_buy_row_split_overlap_px":      2,
+    "visual_ocr_buy_allow_price_anchor_quantity_weak": True,
+    "visual_ocr_price_digit_pattern_match":     True,
 }
 
 _RATIO_KEYS = (
@@ -253,7 +255,9 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_verify_context_menu_open", "visual_ocr_paste_after_unverified_modify_click",
                 "visual_ocr_allow_unverified_paste", "visual_ocr_modify_click_retry_if_menu_closed",
                 "visual_ocr_pre_right_click_left_click",
-                "visual_ocr_buy_split_large_bands"):
+                "visual_ocr_buy_split_large_bands",
+                "visual_ocr_buy_allow_price_anchor_quantity_weak",
+                "visual_ocr_price_digit_pattern_match"):
         if key in config:
             result[key] = bool(config[key])
             user_keys.add(key)

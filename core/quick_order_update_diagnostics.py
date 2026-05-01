@@ -399,7 +399,7 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Rej Offset: {len(dbg.get('rejected_bands_by_offset') or [])}")
     lines.append(f"  Visual OCR Rej Top   : {dbg.get('visual_ocr_rej_top', len(dbg.get('rejected_bands_by_top_edge') or []))}")
     lines.append(f"  Visual OCR Rej Bot   : {dbg.get('visual_ocr_rej_bot', len(dbg.get('rejected_bands_by_bottom_edge') or []))}")
-    lines.append(f"  Visual OCR Filtered  : {len(dbg.get('filtered_candidate_bands') or [])}")
+    lines.append(f"  Visual OCR Filtered  : {dbg.get('filtered_candidate_bands_count', len(dbg.get('filtered_candidate_bands') or []))}")
     
     # BUY splitting diagnostics
     lines.append(f"  Visual OCR BUY Split : {dbg.get('visual_ocr_buy_large_bands_split', 0)}")
@@ -454,6 +454,7 @@ def _format_automation_section(automation: dict) -> list:
             lines.append(f"    y={tr.get('y')} pix={tr.get('blue_pixels')}")
     lines.append(f"  Visual OCR Own Marker: {_b(automation.get('visual_ocr_own_marker_matched'))}")
     lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
+    lines.append(f"  Visual OCR Price Type: {automation.get('visual_ocr_price_match_confidence', 'none')}")
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
     lines.append(f"  Visual OCR Qty Type  : {automation.get('visual_ocr_quantity_match_type', 'none')}")
     

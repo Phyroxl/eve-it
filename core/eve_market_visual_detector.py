@@ -133,6 +133,7 @@ def _base_detection_result() -> dict:
         "row_center_x":         None,
         "row_center_y":         None,
         "matched_price":        False,
+        "visual_ocr_price_match_confidence": "none",
         "matched_quantity":     False,
         "matched_own_marker":   False,
         "matched_side_section": False,
@@ -277,6 +278,9 @@ class EveMarketVisualDetector:
         self.buy_expected_row_height     = int(config.get("visual_ocr_buy_expected_row_height_px", 18))
         self.buy_large_band_min_height   = int(config.get("visual_ocr_buy_large_band_min_height_px", 40))
         self.buy_row_split_overlap       = int(config.get("visual_ocr_buy_row_split_overlap_px", 2))
+        
+        self.buy_allow_price_anchor      = bool(config.get("visual_ocr_buy_allow_price_anchor_quantity_weak", True))
+        self.price_digit_pattern_match   = bool(config.get("visual_ocr_price_digit_pattern_match", True))
         
         if _PYTESSERACT_AVAILABLE:
             if not self.tesseract_cmd:
@@ -476,6 +480,7 @@ class EveMarketVisualDetector:
                     result["debug"]["detection_mode"] = "fallback_full_region"
         
         result["candidates_count"] = len(verified)
+        result["debug"]["filtered_candidate_bands_count"] = len(result["debug"].get("ocr_attempts") or [])
 
         if not verified:
             result["status"] = "not_found"
@@ -483,11 +488,18 @@ class EveMarketVisualDetector:
             if not candidate_bands:
                 result["visual_ocr_suggested_action"] = "recalibrate_side"
             else:
-                best_rej = result["debug"].get("best_rejected_row")
-                if best_rej and best_rej.get("marker_matched") and best_rej.get("price_match"):
-                    result["visual_ocr_suggested_action"] = "improve_quantity_crop_or_scroll"
+                # Phase 3I: Do not suggest recalibration if we found split rows and had OCR attempts
+                split_found = result["debug"].get("visual_ocr_buy_large_bands_split")
+                ocr_attempts = len(result["debug"].get("ocr_attempts") or [])
+                
+                if split_found or ocr_attempts > 0:
+                    result["visual_ocr_suggested_action"] = "improve_buy_ocr_price_or_scroll"
                 else:
-                    result["visual_ocr_suggested_action"] = "recalibrate_side"
+                    best_rej = result["debug"].get("best_rejected_row")
+                    if best_rej and best_rej.get("marker_matched") and best_rej.get("price_match"):
+                        result["visual_ocr_suggested_action"] = "improve_quantity_crop_or_scroll"
+                    else:
+                        result["visual_ocr_suggested_action"] = "recalibrate_side"
             return result
 
         if len(verified) > 1:
@@ -629,16 +641,23 @@ class EveMarketVisualDetector:
             ocr_qty    = 0
             price_ok   = True
             qty_ok     = True
+            
+            p_match_res = {
+                "matched": True,
+                "confidence": "disabled",
+                "reason": "none",
+                "digits": "",
+                "target_digits": ""
+            }
 
             # Price Match
             if self.match_price and target_price > 0:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
-                ocr_price  = normalize_price_text(price_text)
                 
-                price_diff = abs(ocr_price - target_price)
-                max_tol = max(self.price_match_abs_tolerance, target_price * self.price_match_rel_tolerance)
-                price_ok = price_diff <= max_tol
+                p_match_res = self._match_price_ocr(price_text, target_price, is_buy_order)
+                price_ok = p_match_res["matched"]
+                ocr_price = p_match_res["normalized"]
                 
                 if self.debug_save_crops and idx < 20: # Save more crops for BUY debugging
                     suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
@@ -654,12 +673,22 @@ class EveMarketVisualDetector:
                 qty_text = self._ocr_region(qty_region)
                 ocr_qty  = normalize_quantity_text(qty_text)
                 
-                match_res = self._match_quantity(ocr_qty, target_quantity, price_ok, effective_marker)
+                match_res = self._match_quantity(ocr_qty, target_quantity, price_ok, effective_marker, is_buy_order, qty_text)
                 qty_ok = match_res["matched"]
                 qty_match_type = match_res["confidence"]
                 qty_confidence = match_res["confidence"]
                 qty_reason = match_res["reason"]
                 
+                # Phase 3I: BUY Price Anchor Logic
+                # If price is strong (digit_pattern or numeric) and row is within buy background
+                if not qty_ok and self.buy_allow_price_anchor and is_buy_order and is_background_band:
+                    if p_match_res["confidence"] in ["digit_pattern", "numeric_tolerance"]:
+                        # Treat as weak match (will only be accepted if unique or best)
+                        qty_ok = True
+                        qty_match_type = "weak_price_anchor"
+                        qty_confidence = "weak_price_anchor"
+                        qty_reason = "price_anchor_override"
+
                 if self.debug_save_crops and idx < 20:
                     suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
                     self._save_debug_crop(qty_region, f"visual_ocr_{ts}_q{suffix}_fb{is_fallback}.png")
@@ -670,12 +699,16 @@ class EveMarketVisualDetector:
             elif is_buy_order and is_background_band: score += 60 # Weak marker evidence for BUY background
             else:          score -= 100
             
-            if price_ok:   score += 80
+            if price_ok:
+                if p_match_res["confidence"] == "numeric_tolerance": score += 80
+                elif p_match_res["confidence"] == "digit_pattern":   score += 70
+                else:                                                score += 50
             else:          score -= 80
             
             if qty_match_type == "exact":    score += 50
             elif qty_match_type == "suffix": score += 35
             elif qty_match_type == "near_ocr": score += 25
+            elif qty_match_type == "weak_price_anchor": score += 10
             else:                            score -= 30
 
             # Record attempt
@@ -684,6 +717,10 @@ class EveMarketVisualDetector:
                 "marker_matched": own_marker,
                 "is_background_band": is_background_band,
                 "price_match": price_ok,
+                "price_confidence": p_match_res["confidence"],
+                "price_reason": p_match_res["reason"],
+                "price_digits": p_match_res["digits"],
+                "target_digits": p_match_res["target_digits"],
                 "quantity_match": qty_ok,
                 "score": score,
                 "is_fallback": is_fallback,
@@ -702,6 +739,7 @@ class EveMarketVisualDetector:
                 "row_center_x":       (panel_x0 + panel_x1) // 2 + window_rect.get("left", 0),
                 "row_center_y":       (y_min + y_max) // 2 + window_rect.get("top",  0),
                 "matched_price":      price_ok,
+                "price_confidence":   p_match_res["confidence"],
                 "matched_quantity":   qty_ok,
                 "quantity_match_type": qty_match_type,
                 "quantity_match_confidence": qty_confidence,
@@ -738,7 +776,86 @@ class EveMarketVisualDetector:
 
         return result
 
-    def _match_quantity(self, ocr_qty: int, target_qty: int, price_match: bool, marker_match: bool) -> dict:
+    def _match_price_ocr(self, price_text: str, target_price: float, is_buy_order: bool = False) -> dict:
+        """
+        Evaluate price match using numeric tolerance and digit-pattern similarity.
+        Target-aware: compares OCR digits against expected target digits.
+        """
+        res = {
+            "matched":      False,
+            "normalized":   0.0,
+            "confidence":   "none",
+            "diff":         0.0,
+            "reason":       "mismatch",
+            "digits":       "",
+            "target_digits": str(int(target_price))
+        }
+        
+        if not price_text:
+            res["reason"] = "empty_text"
+            return res
+
+        # 1. Numeric check (current behavior)
+        ocr_price = normalize_price_text(price_text)
+        max_tol = max(self.price_match_abs_tolerance, target_price * self.price_match_rel_tolerance)
+        diff = abs(ocr_price - target_price)
+        
+        if diff <= max_tol:
+            res["matched"] = True
+            res["normalized"] = ocr_price
+            res["confidence"] = "numeric_tolerance"
+            res["diff"] = diff
+            res["reason"] = "within_tolerance"
+            return res
+
+        # 2. Digit pattern match (New Phase 3I)
+        if self.price_digit_pattern_match:
+            # Clean OCR text: O->0, remove non-digits
+            clean_text = price_text.upper().replace("O", "0")
+            # Also common numeric artifacts
+            clean_text = clean_text.replace("I", "1").replace("L", "1").replace("|", "1")
+            clean_text = clean_text.replace("S", "5").replace("B", "8")
+            
+            ocr_digits = "".join(c for c in clean_text if c.isdigit())
+            res["digits"] = ocr_digits
+            target_digits = res["target_digits"]
+            
+            if ocr_digits == target_digits:
+                res["matched"] = True
+                res["normalized"] = target_price
+                res["confidence"] = "digit_pattern"
+                res["reason"] = "exact_digit_pattern"
+                return res
+            
+            # Substring/Containment match
+            if ocr_digits and target_digits:
+                if target_digits in ocr_digits or ocr_digits in target_digits:
+                    # Allow if enough digits matched (at least 5 or half of target)
+                    min_len = max(5, len(target_digits) // 2)
+                    if len(ocr_digits) >= min_len:
+                        res["matched"] = True
+                        res["normalized"] = target_price
+                        res["confidence"] = "digit_pattern"
+                        res["reason"] = "partial_digit_pattern_match"
+                        return res
+                
+                # Scaled digit pattern (missing zeros/groups)
+                if is_buy_order and len(ocr_digits) >= 5:
+                    # If target is "29660000" and OCR is "29660" (lost last group)
+                    if target_digits.startswith(ocr_digits):
+                        res["matched"] = True
+                        res["normalized"] = target_price
+                        res["confidence"] = "scaled_digit_pattern"
+                        res["reason"] = "target_prefix_digits_match"
+                        return res
+
+        res["normalized"] = ocr_price
+        res["diff"] = diff
+        res["reason"] = "insufficient_digit_similarity"
+        return res
+
+    def _match_quantity(self, ocr_qty: int, target_qty: int, price_match: bool, marker_match: bool, 
+                        is_buy_order: bool = False, ocr_text: str = "") -> dict:
         """Evaluate quantity match and return confidence tier."""
         res = {
             "matched": False,
@@ -749,34 +866,50 @@ class EveMarketVisualDetector:
         if ocr_qty == target_qty:
             res["matched"] = True
             res["confidence"] = "exact"
-            res["reason"] = "exact_match"
+            res["reason"] = "exact_numeric_match"
             return res
+
+        # Phase 3I: Common BUY OCR artifact: 'g' for '8'
+        if is_buy_order and target_qty == 8:
+            clean_q = ocr_text.lower().strip()
+            # If text is "g" or "in g" or similar
+            if "g" in clean_q and ("in" in clean_q or len(clean_q.replace(" ", "")) <= 4):
+                res["matched"] = True
+                res["confidence"] = "suffix"
+                res["reason"] = "buy_artifact_g_for_8"
+                return res
+
+        # Suffix matching (e.g., target 1000, OCR reads "000")
+        if self.allow_qty_suffix_match:
+            s_ocr = str(ocr_qty)
+            s_target = str(target_qty)
             
-        # Suffix match
-        s_target = str(target_qty)
-        s_ocr = str(ocr_qty)
-        if self.allow_qty_suffix_match and len(s_ocr) >= self.qty_suffix_min_digits and s_target.endswith(s_ocr):
-            res["matched"] = True
-            res["confidence"] = "suffix"
-            res["reason"] = "suffix_match"
-            return res
-            
-        # Near OCR artifact (only if price + marker match)
+            # Phase 3I Safety: For single-digit targets, do NOT match if it's part of a larger number
+            if target_qty < 10:
+                if s_ocr.endswith(s_target):
+                    # Check if the preceding digit exists
+                    if len(s_ocr) > len(s_target):
+                        # Preceding digit exists, e.g. target 8, OCR 18. This is NOT a suffix match for single digit.
+                        pass 
+                    else:
+                        # Isolated single digit (though exact match should have caught it)
+                        res["matched"] = True
+                        res["confidence"] = "suffix"
+                        res["reason"] = "isolated_single_digit_suffix"
+                        return res
+            elif len(s_ocr) >= self.qty_suffix_min_digits and s_target.endswith(s_ocr):
+                res["matched"] = True
+                res["confidence"] = "suffix"
+                res["reason"] = "numeric_suffix_match"
+                return res
+
+        # Near miss (OCR slightly off)
         if self.allow_qty_near_ocr and price_match and marker_match:
             diff = abs(ocr_qty - target_qty)
-            allowed = False
-            
-            if target_qty <= 100:
-                if diff <= 10: allowed = True
-            elif target_qty <= 1000:
-                if diff <= max(10, int(target_qty * 0.03)): allowed = True
-            else:
-                if diff <= int(target_qty * 0.02): allowed = True
-                
-            if allowed:
+            if diff <= 2 or (target_qty > 10 and diff <= (target_qty * 0.1)):
                 res["matched"] = True
                 res["confidence"] = "near_ocr"
-                res["reason"] = "near_ocr_allowed_price_marker_match"
+                res["reason"] = "near_numeric_match"
                 return res
 
         return res
@@ -787,6 +920,7 @@ class EveMarketVisualDetector:
         result["row_center_x"]       = candidate["row_center_x"]
         result["row_center_y"]       = candidate["row_center_y"]
         result["matched_price"]      = candidate["matched_price"]
+        result["visual_ocr_price_match_confidence"] = candidate.get("price_confidence", "none")
         result["matched_quantity"]   = candidate["matched_quantity"]
         result["visual_ocr_quantity_match_type"] = candidate["quantity_match_type"]
         result["visual_ocr_quantity_match_confidence"] = candidate["quantity_match_confidence"]

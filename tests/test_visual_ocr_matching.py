@@ -44,5 +44,64 @@ class TestVisualOCRMatching(unittest.TestCase):
         self.assertFalse(res["matched"])
         self.assertEqual(res["confidence"], "none")
 
+    def test_match_price_digit_patterns(self):
+        """Verify target-aware digit pattern matching for prices."""
+        # 1. Numeric tolerance (normal match)
+        res = self.detector._match_price_ocr("29 660.000", 29660000.0)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "numeric_tolerance")
+        
+        # 2. Digit pattern (messy punctuation and junk digits like ISK -> 15K)
+        res = self.detector._match_price_ocr("29.66O.OOO @@ ISK", 29660000.0)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "digit_pattern")
+        self.assertEqual(res["reason"], "partial_digit_pattern_match")
+        
+        # 3. Partial digit pattern (lost leading or trailing)
+        res = self.detector._match_price_ocr("9.660.000", 29660000.0)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "digit_pattern")
+        
+        # 4. Scaled digit pattern (lost last group in BUY) - caught by substring first
+        res = self.detector._match_price_ocr("29660", 29660000.0, is_buy_order=True)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "digit_pattern")
+        
+        # 5. Competitor price rejected (digits do not match target pattern)
+        res = self.detector._match_price_ocr("29 708.000", 29660000.0)
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["reason"], "insufficient_digit_similarity")
+
+    def test_match_quantity_single_digit_safety(self):
+        """Verify that single-digit targets do not incorrectly match larger numbers."""
+        target_qty = 8
+        
+        # Isolated 8 works
+        res = self.detector._match_quantity(8, target_qty, True, True)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "exact")
+        
+        # 18 should NOT match suffix 8 for target 8
+        res = self.detector._match_quantity(18, target_qty, True, True)
+        self.assertFalse(res["matched"])
+        
+        # Suffix matching for large numbers still works
+        res = self.detector._match_quantity(100, 1100, True, True)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "suffix")
+
+    def test_match_quantity_buy_artifacts(self):
+        """Verify common BUY OCR artifacts like 'g' for '8'."""
+        target_qty = 8
+        
+        # 'g' mapping for BUY
+        res = self.detector._match_quantity(0, target_qty, True, True, is_buy_order=True, ocr_text="in g")
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["reason"], "buy_artifact_g_for_8")
+        
+        # 'g' should NOT map for SELL
+        res = self.detector._match_quantity(0, target_qty, True, True, is_buy_order=False, ocr_text="in g")
+        self.assertFalse(res["matched"])
+
 if __name__ == "__main__":
     unittest.main()
