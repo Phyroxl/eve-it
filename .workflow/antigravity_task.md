@@ -3171,3 +3171,12 @@ Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or 
 - **Config**: `visual_ocr_buy_manual_grid_fallback_enabled`, `_row_heights`, `_step_px`, `_min_score` (all defaulted).
 - **Tests**: 228 passed (60+3+107+43+...). 8 new tests: `TestBUYDedupe` (4) + `TestBUYManualGridFallback` (4).
 - **Safety**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` invariant preserved.
+
+## Phase 3N: BUY Visual OCR Aligned Click Band
+
+- **Bug**: Right-click used marker_band center; when vertical search found text in a shifted window (alignment_offset != 0), click landed on the wrong row (order below).
+- **Fix**: `_populate_match` computes click Y from `text_band` center when `is_buy and alignment_offset != 0`; delta applied to existing screen-coord `row_center_y`. SELL unchanged.
+- **Fields added**: `click_band`, `click_center_y`, `row_click_source` ("text_band_aligned" / "text_band" / "band_center") in result; `matched_marker_band`, `matched_text_band`, `alignment_offset_used` in debug.
+- **Diagnostics**: Visual OCR Marker Band / Text Band / Click Band / Click Source / Align Offset shown after Row Y.
+- **Tests**: 4 new tests in `TestBUYAlignedClick` (A: misaligned→text_band, B: aligned→band, C: SELL unchanged, D: grid fallback).
+- **All tests**: 222 passed (69+3+107+43).

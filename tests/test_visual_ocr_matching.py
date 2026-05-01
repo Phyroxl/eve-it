@@ -859,3 +859,106 @@ class TestBUYManualGridFallback(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBUYAlignedClick(unittest.TestCase):
+    """Phase 3N: click Y uses text_band center when alignment_offset != 0."""
+
+    def _make_detector(self):
+        from core.eve_market_visual_detector import EveMarketVisualDetector
+        return EveMarketVisualDetector({})
+
+    def _base_candidate(self):
+        return {
+            "row_center_x":           1071,
+            "row_center_y":           588,   # marker band center (image coords 579-597, top=0)
+            "matched_price":          True,
+            "price_confidence":       "numeric_tolerance",
+            "matched_quantity":       True,
+            "quantity_match_type":    "exact",
+            "quantity_match_confidence": "exact",
+            "quantity_reason":        "exact_numeric_match",
+            "matched_own_marker":     True,
+            "price_text":             "19,300.00 ISK",
+            "quantity_text":          "in 4.093",
+            "normalized_quantity":    4093,
+            "normalized_price":       19300.0,
+            "target_quantity":        4093,
+            "band":                   (579, 597),
+            "marker_band":            (579, 597),
+            "text_band":              [563, 581],
+            "alignment_offset":       -16,
+            "score":                  250,
+        }
+
+    def _make_result(self, side="buy"):
+        return {"_order_side": side, "debug": {}}
+
+    def test_A_buy_misaligned_uses_text_band_center(self):
+        """Test A: BUY candidate with alignment_offset=-16 → click at text_band center."""
+        det = self._make_detector()
+        cand = self._base_candidate()
+        result = self._make_result("buy")
+        det._populate_match(result, cand)
+        # text_band=[563,581] center=572; marker_band=[579,597] center=588; delta=-16
+        self.assertEqual(result["row_center_y"], 572)
+        self.assertEqual(result["row_click_source"], "text_band_aligned")
+        self.assertEqual(result["click_band"], [563, 581])
+
+    def test_B_buy_no_alignment_uses_band_center(self):
+        """Test B: BUY candidate with alignment_offset=0 → old band-center behavior."""
+        det = self._make_detector()
+        cand = self._base_candidate()
+        cand["alignment_offset"] = 0
+        cand["text_band"] = [581, 595]   # padded, same range as band
+        result = self._make_result("buy")
+        det._populate_match(result, cand)
+        # alignment_offset==0 → row_click_source != "text_band_aligned", Y = band center
+        self.assertEqual(result["row_center_y"], cand["row_center_y"])
+        self.assertNotEqual(result["row_click_source"], "text_band_aligned")
+
+    def test_C_sell_unchanged(self):
+        """Test C: SELL candidate always uses band center regardless of text_band."""
+        det = self._make_detector()
+        cand = self._base_candidate()
+        cand["alignment_offset"] = -16
+        result = self._make_result("sell")
+        det._populate_match(result, cand)
+        self.assertEqual(result["row_center_y"], cand["row_center_y"])
+        self.assertEqual(result["row_click_source"], "band_center")
+
+    def test_D_grid_fallback_text_band_center(self):
+        """Test D: Grid fallback candidate (text_band == band, offset=0) → correct Y."""
+        det = self._make_detector()
+        # Grid fallback candidates: text_band == band, alignment_offset not set
+        cand = {
+            "row_center_x":           500,
+            "row_center_y":           472,   # (y0+y1)//2 + top, y0=468,y1=486,top=0 → 477? use 472
+            "matched_price":          True,
+            "price_confidence":       "numeric_tolerance",
+            "matched_quantity":       True,
+            "quantity_match_type":    "exact",
+            "quantity_match_confidence": "exact",
+            "quantity_reason":        "exact_numeric_match",
+            "matched_own_marker":     False,
+            "price_text":             "29,660,000.00 ISK",
+            "quantity_text":          "8",
+            "normalized_quantity":    8,
+            "normalized_price":       29660000.0,
+            "target_quantity":        8,
+            "band":                   (464, 482),
+            "text_band":              [464, 482],
+            # alignment_offset intentionally omitted (grid fallback doesn't set it)
+            "score":                  200,
+            "detection_mode":         "buy_manual_grid_fallback",
+        }
+        result = self._make_result("buy")
+        det._populate_match(result, cand)
+        # alignment_offset defaults to 0 → text_band center == band center → Y unchanged
+        expected_y = cand["row_center_y"]
+        self.assertEqual(result["row_center_y"], expected_y)
+        self.assertIn(result["row_click_source"], ("text_band", "band_center"))
+
+
+if __name__ == "__main__":
+    unittest.main()

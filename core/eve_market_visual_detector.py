@@ -899,7 +899,9 @@ class EveMarketVisualDetector:
                 "normalized_price":   ocr_price,
                 "target_quantity":    target_quantity,
                 "band":               (y_min, y_max),
+                "marker_band":        (y_min, y_max),
                 "text_band":          text_band,
+                "alignment_offset":   alignment_offset,
                 "score":              score
             }
             
@@ -1300,9 +1302,31 @@ class EveMarketVisualDetector:
 
     def _populate_match(self, result: dict, candidate: dict):
         """Fill result dict with successful match data."""
+        # For BUY orders: when vertical search found text in a different band,
+        # click at text_band center to avoid hitting the order below/above.
+        is_buy = result.get("_order_side") == "buy"
+        text_band = candidate.get("text_band")
+        alignment_offset = candidate.get("alignment_offset", 0)
+        marker_band = candidate.get("marker_band") or candidate["band"]
+
+        if is_buy and text_band and alignment_offset != 0:
+            mb = marker_band
+            tb = text_band
+            delta = (tb[0] + tb[1]) // 2 - (mb[0] + mb[1]) // 2
+            click_y = candidate["row_center_y"] + delta
+            click_band = list(tb)
+            row_click_source = "text_band_aligned"
+        else:
+            click_y = candidate["row_center_y"]
+            click_band = list(candidate["band"])
+            row_click_source = "text_band" if (is_buy and text_band) else "band_center"
+
         result["status"]             = "unique_match"
         result["row_center_x"]       = candidate["row_center_x"]
-        result["row_center_y"]       = candidate["row_center_y"]
+        result["row_center_y"]       = click_y
+        result["click_center_y"]     = click_y
+        result["click_band"]         = click_band
+        result["row_click_source"]   = row_click_source
         result["matched_price"]      = candidate["matched_price"]
         result["visual_ocr_price_match_confidence"] = candidate.get("price_confidence", "none")
         result["matched_quantity"]   = candidate["matched_quantity"]
@@ -1315,7 +1339,10 @@ class EveMarketVisualDetector:
         result["matched_own_marker"] = candidate["matched_own_marker"]
         result["price_text"]         = candidate["price_text"]
         result["quantity_text"]      = candidate["quantity_text"]
-        result["debug"]["matched_band"] = candidate["band"]
+        result["debug"]["matched_band"]       = candidate["band"]
+        result["debug"]["matched_marker_band"] = list(marker_band)
+        result["debug"]["matched_text_band"]   = list(text_band) if text_band else None
+        result["debug"]["alignment_offset_used"] = alignment_offset
 
         return result
 

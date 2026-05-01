@@ -888,8 +888,14 @@ class EVEWindowAutomation:
 
         row_x = detection["row_center_x"]
         row_y = detection["row_center_y"]
-        result["visual_ocr_row_x"] = row_x
-        result["visual_ocr_row_y"] = row_y
+        result["visual_ocr_row_x"]          = row_x
+        result["visual_ocr_row_y"]          = row_y
+        _dbg = detection.get("debug", {})
+        result["visual_ocr_marker_band"]    = _dbg.get("matched_marker_band")
+        result["visual_ocr_text_band"]      = _dbg.get("matched_text_band")
+        result["visual_ocr_click_band"]     = detection.get("click_band")
+        result["visual_ocr_click_source"]   = detection.get("row_click_source", "band_center")
+        result["visual_ocr_align_offset"]   = _dbg.get("alignment_offset_used")
         result["steps_executed"].append(f"visual_ocr_unique_match_found: ({row_x}, {row_y})")
         _log.info(f"[AUTOMATION] visual_ocr: unique match at ({row_x}, {row_y})")
 
