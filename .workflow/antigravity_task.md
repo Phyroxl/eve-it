@@ -3152,3 +3152,12 @@ Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or 
 - **SELL behavior**: Unchanged. No SELL tests broken. BUY offsets (50,20) intact.
 
 **Status**: Phase 3I Complete. BUY order automation is now resilient to typical green-background OCR artifacts.
+
+## Phase 3L: BUY Visual OCR Strict Own-Order Disambiguation
+
+- **Fix 1**: Tick-fraction price rejection — BUY price diff ≥ `tick × 0.49` rejected as `price_diff_exceeds_tick_fraction`. Competitor one tick above target no longer passes numeric_tolerance. SELL and tick=0 cases unaffected.
+- **Fix 2**: `near_ocr` blocked for `target_qty ≤ 10` — qty=10 no longer matches target=8; reason `quantity_small_target_near_ocr_blocked`.
+- **Fix 3**: `weak_price_anchor` blocked when `ocr_qty > 0 and ocr_qty != target_qty` — clear wrong qty (e.g. 10 vs target 8) prevents false anchor; reason `weak_anchor_blocked_clear_wrong_qty`.
+- **Diagnostics**: `price_tick`, `price_tick_fraction`, new reason codes added to result dicts.
+- **Config**: `visual_ocr_buy_price_max_tick_fraction: 0.49` (default).
+- **Tests**: 210 passed (57+3+107+43). 13 new tests in `TestBUYTickDisambiguation`.

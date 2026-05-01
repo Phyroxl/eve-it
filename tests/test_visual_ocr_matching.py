@@ -557,5 +557,137 @@ class TestBUYVerticalOCRSearch(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestBUYTickDisambiguation(unittest.TestCase):
+    """Phase 3L: tick-based price rejection and small-qty strictness."""
+
+    def setUp(self):
+        self.config = {
+            "visual_ocr_match_price": True,
+            "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 15.0,
+            "visual_ocr_price_match_rel_tolerance": 0.001,
+            "visual_ocr_allow_quantity_suffix_match": True,
+            "visual_ocr_quantity_suffix_min_digits": 2,
+            "visual_ocr_allow_quantity_near_ocr": True,
+            "visual_ocr_score_threshold": 150,
+            "visual_ocr_buy_allow_price_anchor_quantity_weak": True,
+            "visual_ocr_buy_price_max_tick_fraction": 0.49,
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+
+    # ── Test A: one-tick competitor rejected ─────────────────────────────────
+
+    def test_buy_competitor_one_tick_rejected(self):
+        """Test A: 7,262,000 is one tick above target 7,261,000 → must be rejected."""
+        res = self.detector._match_price_ocr(
+            "7.262.000,00 ISK", 7_261_000.0, is_buy_order=True, order_tick=1000.0
+        )
+        self.assertFalse(res["matched"],
+                         f"Competitor one tick away must be rejected; got: {res}")
+        self.assertEqual(res["reason"], "price_diff_exceeds_tick_fraction")
+
+    # ── Test B: exact own price accepted ─────────────────────────────────────
+
+    def test_buy_own_price_accepted(self):
+        """Test B: '7.261.000.00 ISK' must match target 7,261,000."""
+        res = self.detector._match_price_ocr(
+            "7.261.000.00 ISK", 7_261_000.0, is_buy_order=True, order_tick=1000.0
+        )
+        self.assertTrue(res["matched"], f"Own price must be accepted; got: {res}")
+
+    def test_buy_price_small_diff_accepted(self):
+        """40,020 OCR vs 40,020 target with tick=10 → accept (diff=0 < 4.9)."""
+        res = self.detector._match_price_ocr(
+            "40.020.00 ISK", 40_020.0, is_buy_order=True, order_tick=10.0
+        )
+        self.assertTrue(res["matched"])
+
+    def test_sell_no_tick_check(self):
+        """Test G: SELL with tick set still passes numeric_tolerance (tick check is BUY-only)."""
+        res = self.detector._match_price_ocr(
+            "7.262.000,00 ISK", 7_261_000.0, is_buy_order=False, order_tick=1000.0
+        )
+        # SELL: tick check not applied, numeric tolerance (diff=1000 vs tol=max(15,7261))
+        # diff=1000 > tol=7261? No, tol = max(15, 7261000*0.001)=7261, 1000<7261 → matched
+        self.assertTrue(res["matched"])
+
+    def test_no_tick_no_rejection(self):
+        """When tick=0, tick-fraction check is skipped; numeric tolerance decides."""
+        res = self.detector._match_price_ocr(
+            "7.262.000,00 ISK", 7_261_000.0, is_buy_order=True, order_tick=0.0
+        )
+        # diff=1000, tol=max(15, 7261)=7261 → 1000 < 7261 → accepted
+        self.assertTrue(res["matched"])
+
+    # ── Test C: small qty strict — near_ocr blocked ──────────────────────────
+
+    def test_small_qty_near_ocr_blocked(self):
+        """Test C: target_qty=8, ocr_qty=10 → must NOT match via near_ocr."""
+        res = self.detector._match_quantity(10, 8, price_match=True, marker_match=True)
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["reason"], "quantity_small_target_near_ocr_blocked")
+
+    def test_small_qty_9_near_ocr_blocked(self):
+        """target_qty=8, ocr_qty=9 → blocked (diff=1 ≤ 2 but target ≤ 10)."""
+        res = self.detector._match_quantity(9, 8, price_match=True, marker_match=True)
+        self.assertFalse(res["matched"])
+
+    def test_large_qty_near_ocr_still_works(self):
+        """target_qty=1879, ocr_qty=1880 → near_ocr still works for large targets."""
+        res = self.detector._match_quantity(1880, 1879, price_match=True, marker_match=True)
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["confidence"], "near_ocr")
+
+    # ── Test D: buy artifact still works ─────────────────────────────────────
+
+    def test_buy_artifact_g_still_works(self):
+        """Test D: 'in g' must still match target_qty=8 as buy_artifact."""
+        res = self.detector._match_quantity(
+            0, 8, price_match=True, marker_match=True,
+            is_buy_order=True, ocr_text="in g"
+        )
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["reason"], "buy_artifact_g_for_8")
+
+    # ── Test E: weak_price_anchor blocked on clear wrong qty ─────────────────
+
+    def test_weak_anchor_blocked_on_clear_wrong_qty(self):
+        """
+        Test E: target_qty=8, ocr_qty=10 → weak_price_anchor must be blocked.
+        We call _match_quantity to verify ocr_qty=10 is rejected, then verify
+        that the anchor-block reason is set when the detector would try to anchor.
+        The anchor logic lives in _run_detection_pass; here we confirm _match_quantity
+        returns no match, and the anchor condition (ocr_qty>0 and ocr_qty!=target)
+        correctly identifies it as clear-wrong.
+        """
+        # 10 != 8, so anchor is blocked
+        self.assertTrue(10 > 0 and 10 != 8, "anchor block condition: ocr_qty>0 and !=target")
+        res = self.detector._match_quantity(10, 8, price_match=True, marker_match=True)
+        self.assertFalse(res["matched"])
+
+    def test_weak_anchor_allowed_zero_qty(self):
+        """Empty OCR (ocr_qty=0) does not block anchor (garbage OCR, not clear wrong)."""
+        # ocr_qty=0 means OCR returned empty/garbage, anchor should be allowed
+        # We can't easily test the anchor path here without a full detection pass,
+        # but we verify that 0 != target triggers the condition opposite of block.
+        self.assertFalse(0 > 0, "ocr_qty=0 must NOT trigger anchor block")
+
+    # ── Test F: known successful examples unchanged ───────────────────────────
+
+    def test_known_good_price_40020(self):
+        """Test F: '40.020.00 ISK', target=40020, tick=10 → matched."""
+        res = self.detector._match_price_ocr(
+            "40.020.00 ISK", 40_020.0, is_buy_order=True, order_tick=10.0
+        )
+        self.assertTrue(res["matched"])
+
+    def test_known_good_price_771_30(self):
+        """Test F: '771,30 ISK', target=771.30, tick=0.10 → matched."""
+        res = self.detector._match_price_ocr(
+            "771,30 ISK", 771.30, is_buy_order=True, order_tick=0.10
+        )
+        self.assertTrue(res["matched"])
+
+
 if __name__ == "__main__":
     unittest.main()

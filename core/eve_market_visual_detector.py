@@ -324,6 +324,7 @@ class EveMarketVisualDetector:
         
         self.buy_allow_price_anchor      = bool(config.get("visual_ocr_buy_allow_price_anchor_quantity_weak", True))
         self.price_digit_pattern_match   = bool(config.get("visual_ocr_price_digit_pattern_match", True))
+        self.buy_price_max_tick_fraction = float(config.get("visual_ocr_buy_price_max_tick_fraction", 0.49))
 
         # Phase 3K: vertical OCR search for BUY marker/text misalignment
         self.buy_vertical_search_enabled = bool(config.get("visual_ocr_buy_vertical_search_enabled", True))
@@ -397,6 +398,7 @@ class EveMarketVisualDetector:
         target_price    = float(order_data.get("price", 0))
         target_quantity = int(order_data.get("volume_remain", 0))
         is_buy_order    = bool(order_data.get("is_buy_order", False))
+        order_tick      = float(order_data.get("tick", 0.0))
         result["_order_side"] = "buy" if is_buy_order else "sell"
 
         h, w = img_array.shape[:2]
@@ -502,14 +504,14 @@ class EveMarketVisualDetector:
             (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
             section_y_min, section_y_max,
             result, window_rect, manual_region=(manual_region is not None),
-            is_fallback=False
+            is_fallback=False, order_tick=order_tick
         )
-        
+
         mode = "strict"
         if verified and result["debug"].get("visual_ocr_buy_large_bands_split"):
             mode = "buy_split_large_band"
         result["debug"]["detection_mode"] = mode
-        
+
         # Pass 2: Fallback (if enabled and strict pass failed to find a unique match)
         if not verified and self.manual_full_height_scan and manual_region:
             result["debug"]["fallback_mode_used"] = True
@@ -518,7 +520,7 @@ class EveMarketVisualDetector:
                 (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
                 section_y_min, section_y_max,
                 result, window_rect, manual_region=True,
-                is_fallback=True
+                is_fallback=True, order_tick=order_tick
             )
             if verified:
                 if result["debug"].get("visual_ocr_buy_large_bands_split"):
@@ -573,7 +575,8 @@ class EveMarketVisualDetector:
 
     def _run_detection_pass(self, img_array, candidate_bands, target_price, target_quantity,
                              panel_bounds, col_coords, section_y_min, section_y_max,
-                             result, window_rect, manual_region=False, is_fallback=False) -> list:
+                             result, window_rect, manual_region=False, is_fallback=False,
+                             order_tick: float = 0.0) -> list:
         """
         Run a single detection pass (strict or fallback) over candidate bands.
         Returns list of verified candidates.
@@ -708,7 +711,7 @@ class EveMarketVisualDetector:
                 price_region = img_array[ocr_y0:ocr_y1, price_x0_padded:price_x1_padded]
                 price_text = self._ocr_region(price_region)
 
-                p_match_res = self._match_price_ocr(price_text, target_price, is_buy_order)
+                p_match_res = self._match_price_ocr(price_text, target_price, is_buy_order, order_tick)
                 price_ok = p_match_res["matched"]
                 ocr_price = p_match_res["normalized"]
 
@@ -728,7 +731,7 @@ class EveMarketVisualDetector:
                     img_array, cy, rh,
                     price_x0_padded, price_x1_padded,
                     qty_x0_padded, qty_x1_padded,
-                    target_price, is_buy_order
+                    target_price, is_buy_order, order_tick
                 )
                 if vs:
                     price_text        = vs["price_text"]
@@ -775,14 +778,18 @@ class EveMarketVisualDetector:
                         qty_reason     = orig_m["reason"]
 
                 # Phase 3K: Tightened price anchor.
-                # Requires own_marker=True (not just background band) to prevent
-                # competitor false-positives from background-only split rows.
+                # Requires own_marker=True and OCR qty must not be a clear different number.
                 if not qty_ok and self.buy_allow_price_anchor and is_buy_order and own_marker:
                     if p_match_res["confidence"] in ["digit_pattern", "numeric_tolerance"]:
-                        qty_ok         = True
-                        qty_match_type = "weak_price_anchor"
-                        qty_confidence = "weak_price_anchor"
-                        qty_reason     = "price_anchor_override"
+                        # Block anchor if we have a readable qty that differs from target
+                        anchor_blocked = (ocr_qty > 0 and ocr_qty != target_quantity)
+                        if anchor_blocked:
+                            qty_reason = "weak_anchor_blocked_clear_wrong_qty"
+                        else:
+                            qty_ok         = True
+                            qty_match_type = "weak_price_anchor"
+                            qty_confidence = "weak_price_anchor"
+                            qty_reason     = "price_anchor_override"
 
                 if self.debug_save_crops and idx < 20:
                     suffix = f"b{idx+1}" if is_background_band else f"{idx+1}"
@@ -890,7 +897,8 @@ class EveMarketVisualDetector:
 
         return verified
 
-    def _match_price_ocr(self, price_text: str, target_price: float, is_buy_order: bool = False) -> dict:
+    def _match_price_ocr(self, price_text: str, target_price: float,
+                          is_buy_order: bool = False, order_tick: float = 0.0) -> dict:
         """
         Evaluate price match using numeric tolerance, digit-pattern similarity,
         and (BUY only) corrupted-million group matching.
@@ -918,6 +926,16 @@ class EveMarketVisualDetector:
         diff = abs(ocr_price - target_price)
 
         if diff <= max_tol:
+            # Fix 1: For BUY, reject prices >= one tick away (competitor one tick above)
+            if is_buy_order and order_tick > 0:
+                tick_threshold = order_tick * self.buy_price_max_tick_fraction
+                if diff >= tick_threshold:
+                    res["normalized"] = ocr_price
+                    res["diff"] = diff
+                    res["reason"] = "price_diff_exceeds_tick_fraction"
+                    res["price_tick"] = order_tick
+                    res["price_tick_fraction"] = round(diff / order_tick, 4)
+                    return res
             res["matched"] = True
             res["normalized"] = ocr_price
             res["confidence"] = "numeric_tolerance"
@@ -1035,21 +1053,26 @@ class EveMarketVisualDetector:
                 res["reason"] = "numeric_suffix_match"
                 return res
 
-        # Near miss (OCR slightly off)
+        # Near miss (OCR slightly off) — blocked for small targets (≤10) to avoid
+        # qty=10 matching target=8, etc.
         if self.allow_qty_near_ocr and price_match and marker_match:
-            diff = abs(ocr_qty - target_qty)
-            if diff <= 2 or (target_qty > 10 and diff <= (target_qty * 0.1)):
-                res["matched"] = True
-                res["confidence"] = "near_ocr"
-                res["reason"] = "near_numeric_match"
-                return res
+            if target_qty <= 10:
+                res["reason"] = "quantity_small_target_near_ocr_blocked"
+            else:
+                diff = abs(ocr_qty - target_qty)
+                if diff <= 2 or diff <= (target_qty * 0.1):
+                    res["matched"] = True
+                    res["confidence"] = "near_ocr"
+                    res["reason"] = "near_numeric_match"
+                    return res
 
         return res
 
     def _ocr_vertical_search(self, img_array, y_center: int, row_height: int,
                               price_x0: int, price_x1: int,
                               qty_x0: int, qty_x1: int,
-                              target_price: float, is_buy_order: bool) -> Optional[dict]:
+                              target_price: float, is_buy_order: bool,
+                              order_tick: float = 0.0) -> Optional[dict]:
         """
         Try multiple vertical y-offset windows around y_center to find a price match.
         Used when the standard OCR crop for a BUY marker band fails — the marker pixels
@@ -1079,7 +1102,7 @@ class EveMarketVisualDetector:
             if price_region.size == 0:
                 continue
             price_text = self._ocr_region(price_region)
-            p_match = self._match_price_ocr(price_text, target_price, is_buy_order)
+            p_match = self._match_price_ocr(price_text, target_price, is_buy_order, order_tick)
             rank = _conf_rank.get(p_match["confidence"], -1)
             if p_match["matched"] and rank > best_rank:
                 qty_region = img_array[y0:y1, qty_x0:qty_x1]
