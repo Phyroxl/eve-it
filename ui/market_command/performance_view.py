@@ -195,22 +195,21 @@ class MarketPerformanceView(QWidget):
     def activate_view(self):
         """Llamado por el contenedor principal cuando esta pestaña se hace visible."""
         if not self._initial_refresh_done:
-            _log.info("[PERF] Activación inicial de la vista Performance (deferred)")
+            _log.info("[PERF] Activación inicial de la vista Performance (lightweight)")
             self._initial_refresh_done = True
-            self._diag_label.setText("▸ CARGANDO PERFORMANCE...")
-            QTimer.singleShot(0, self._perform_initial_refresh)
+            self._diag_label.setText("▸ Performance listo — pulsa SINCRONIZAR ESI para cargar datos")
+            QTimer.singleShot(100, self._safe_lightweight_discover_characters)
         else:
-            _log.debug("[PERF] Vista ya estaba activa, saltando refresh automático")
+            _log.debug("[PERF] Vista ya estaba activa")
 
-    def _perform_initial_refresh(self):
-        """Ejecuta el refresh inicial de forma diferida para no bloquear el cambio de pestaña."""
+    def _safe_lightweight_discover_characters(self):
+        """Ejecuta el descubrimiento de personajes de forma diferida pero sin refresco pesado."""
         t_start = time.perf_counter()
+        # discover_characters bloquea señales, por lo que no disparará refresh_view
         self.discover_characters()
-        if self.config.auto_refresh_enabled:
-            self.start_auto_refresh()
-        self.refresh_view()
         t_end = time.perf_counter()
-        _log.info(f"[PERF] Initial deferred refresh completed in {(t_end - t_start)*1000:.2f} ms")
+        _log.info(f"[PERF] _safe_lightweight_discover_characters completed in {(t_end - t_start)*1000:.2f} ms")
+
 
     def _purge_fake_char0(self):
         """Elimina datos demo/fallback con character_id=0 que contaminan la vista."""
@@ -322,6 +321,13 @@ class MarketPerformanceView(QWidget):
         self.btn_refresh.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; border-radius: 4px;")
         self.btn_refresh.clicked.connect(self.on_sync_clicked)
         
+        self.btn_local_refresh = QPushButton("REFRESCAR")
+        self.btn_local_refresh.setFixedWidth(100)
+        self.btn_local_refresh.setFixedHeight(30)
+        self.btn_local_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_local_refresh.setStyleSheet("background: #1e293b; color: #f1f5f9; font-weight: 800; border-radius: 4px; border: 1px solid #334155;")
+        self.btn_local_refresh.clicked.connect(lambda: self.refresh_view(user_initiated=True))
+        
         self.btn_diag_fees = QPushButton("DIAGNÓSTICO FEES")
         self.btn_diag_fees.setFixedWidth(120)
         self.btn_diag_fees.setFixedHeight(30)
@@ -335,6 +341,7 @@ class MarketPerformanceView(QWidget):
         header.addWidget(self.combo_range)
         header.addLayout(auto_group)
         header.addWidget(self.btn_diag_fees)
+        header.addWidget(self.btn_local_refresh)
         header.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header)
 
@@ -676,8 +683,13 @@ class MarketPerformanceView(QWidget):
             self.check_auto.setChecked(False)
             _log.warning("[SYNC] Auto-refresh desactivado por error de token.")
 
-    def refresh_view(self):
+    def refresh_view(self, user_initiated=False):
         """Entry point público — captura cualquier excepción y la hace visible."""
+        # Fix 6: Guard against background refresh while not visible
+        if not user_initiated and not self.isVisible():
+            _log.debug("[PERF] Ignorando refresh automático/background porque la vista no es visible")
+            return
+
         t_start = time.perf_counter()
         self._initial_refresh_done = True
         try:
@@ -1057,15 +1069,19 @@ class MarketPerformanceView(QWidget):
             return
             
         if self._sync_in_progress:
-            return # Esperamos a que termine la actual antes de descontar
+            return
 
         self._next_sync_seconds -= 1
         
-        # Actualizar feedback visual (re-usamos refresh_view que actualiza diag label)
-        self.refresh_view()
+        # FIX: NO llamar a refresh_view() cada segundo (es muy pesado)
+        # Solo actualizar el label de diagnóstico con el tiempo restante
+        if self.isVisible():
+            m, s = divmod(max(0, self._next_sync_seconds), 60)
+            self._diag_label.setText(f"▸ Siguiente sincronización en: {m:02d}:{s:02d}")
         
         if self._next_sync_seconds <= 0:
-            self.auto_timer.stop() # Pausar mientras sincroniza
+            self.auto_timer.stop()
+            _log.info("[PERF] Auto-refresh timer disparado")
             self.on_sync_clicked(is_auto=True)
 
     def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):

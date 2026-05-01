@@ -1,3 +1,4 @@
+import logging
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QPushButton, QFrame, QLabel
 from PySide6.QtCore import Qt
 from ui.market_command.simple_view import MarketSimpleView
@@ -5,6 +6,8 @@ from ui.market_command.advanced_view import MarketAdvancedView
 from ui.market_command.performance_view import MarketPerformanceView
 from ui.market_command.my_orders_view import MarketMyOrdersView
 from ui.market_command.contracts_view import MarketContractsView
+
+_log = logging.getLogger('eve.market_command')
 
 class MarketCommandMain(QWidget):
     def __init__(self, parent=None):
@@ -208,7 +211,14 @@ class MarketCommandMain(QWidget):
         # 3. Notificar a la vista que se ha activado (para refrescos diferidos)
         from PySide6.QtCore import QTimer
         if hasattr(view, 'activate_view'):
+            t_act_start = time.perf_counter()
             QTimer.singleShot(0, view.activate_view)
+            t_act_end = time.perf_counter()
+            _log.info(f"[UI PERF] activate_view scheduled for {self._view_names[index]} in {(t_act_end - t_act_start)*1000:.4f} ms")
+            
+        end_t = time.perf_counter()
+        ms = (end_t - start_t) * 1000
+        _log.info(f"[UI PERF] Switched to index {index} ({self._view_names[index]}) in {ms:.2f} ms")
             
         self.btn_simple.setChecked(index == 0)
         self.btn_advanced.setChecked(index == 1)

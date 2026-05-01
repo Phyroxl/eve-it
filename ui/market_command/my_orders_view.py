@@ -686,6 +686,7 @@ class MarketMyOrdersView(QWidget):
         self.load_layouts()
         self._init_diagnostics()
         self._initial_activation_done = False
+        self._manual_login_requested = False
         AuthManager.instance().authenticated.connect(self.on_authenticated)
 
     def _init_diagnostics(self):
@@ -952,8 +953,14 @@ class MarketMyOrdersView(QWidget):
     def on_authenticated(self, name, tokens):
         self.btn_esi.setText(f"SALIR ({name.upper()})")
         self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#3b82f6", "#1e293b"))
-        if self._initial_activation_done:
+        
+        # FIX: Solo sincronizar automáticamente si el usuario pulsó VINCULAR ESI manualmente
+        if getattr(self, '_manual_login_requested', False):
+            _log.info("[MY ORDERS] Login manual detectado, iniciando sync")
+            self._manual_login_requested = False
             self.do_sync()
+        else:
+            _log.info("[MY ORDERS] Restauración de sesión detectada, omitiendo sync automático")
 
     def try_auto_login(self):
         auth = AuthManager.instance()
@@ -996,6 +1003,7 @@ class MarketMyOrdersView(QWidget):
             self.table_buy.setRowCount(0)
         else:
             # Login
+            self._manual_login_requested = True
             self.lbl_status.setText("INICIANDO SSO EN NAVEGADOR...")
             auth.login()
 
@@ -1703,17 +1711,21 @@ class MarketMyOrdersView(QWidget):
     def activate_view(self):
         """Llamado cuando esta pestaña se hace visible."""
         if not self._initial_activation_done:
-            _log.info("[MY ORDERS] Activación inicial de la vista (deferred)")
+            _log.info("[MY ORDERS] Activación inicial de la vista (lightweight)")
             self._initial_activation_done = True
-            QTimer.singleShot(0, self._perform_initial_activation)
+            self.lbl_status.setText("● LISTO — PULSA ACTUALIZAR PARA CARGAR PEDIDOS")
+            self.lbl_status.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            QTimer.singleShot(100, self._safe_lightweight_auth_restore)
+        else:
+            _log.debug("[MY ORDERS] Vista ya estaba activa")
 
-    def _perform_initial_activation(self):
+    def _safe_lightweight_auth_restore(self):
+        """Intenta restaurar la sesión de forma diferida pero sin sincronización pesada."""
         t_start = time.perf_counter()
         self.try_auto_login()
-        if AuthManager.instance().current_token:
-            self.do_sync()
         t_end = time.perf_counter()
-        _log.info(f"[MY ORDERS] Initial deferred activation completed in {(t_end - t_start)*1000:.2f} ms")
+        _log.info(f"[MY ORDERS] _safe_lightweight_auth_restore completed in {(t_end - t_start)*1000:.2f} ms")
+
 
     def update_taxes_info(self):
         auth = AuthManager.instance()
