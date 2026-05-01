@@ -326,6 +326,12 @@ class EveMarketVisualDetector:
         self.price_digit_pattern_match   = bool(config.get("visual_ocr_price_digit_pattern_match", True))
         self.buy_price_max_tick_fraction = float(config.get("visual_ocr_buy_price_max_tick_fraction", 0.49))
 
+        # Phase 3M: duplicate dedupe and manual grid fallback
+        self.buy_manual_grid_fallback_enabled  = bool(config.get("visual_ocr_buy_manual_grid_fallback_enabled", True))
+        self.buy_manual_grid_row_heights       = list(config.get("visual_ocr_buy_manual_grid_row_heights", [18, 20, 22]))
+        self.buy_manual_grid_step_px           = int(config.get("visual_ocr_buy_manual_grid_step_px", 8))
+        self.buy_manual_grid_min_score         = int(config.get("visual_ocr_buy_manual_grid_min_score", 180))
+
         # Phase 3K: vertical OCR search for BUY marker/text misalignment
         self.buy_vertical_search_enabled = bool(config.get("visual_ocr_buy_vertical_search_enabled", True))
         self.buy_vertical_search_offsets = list(config.get("visual_ocr_buy_vertical_search_offsets", [-16, -12, -8, -4, 0, 4, 8]))
@@ -528,6 +534,18 @@ class EveMarketVisualDetector:
                 else:
                     result["debug"]["detection_mode"] = "fallback_full_region"
         
+        # Phase 3M: manual BUY grid fallback when both passes found nothing
+        grid_candidates = []
+        if (not verified and is_buy_order and manual_region and
+                self.buy_manual_grid_fallback_enabled):
+            grid_candidates = self._run_buy_manual_grid_fallback(
+                img_array, section_y_min, section_y_max,
+                panel_x0, panel_x1,
+                price_x0, price_x1, qty_x0, qty_x1,
+                target_price, target_quantity, window_rect, result, order_tick
+            )
+            verified = grid_candidates
+
         result["candidates_count"] = len(verified)
         result["debug"]["filtered_candidate_bands_count"] = len(result["debug"].get("ocr_attempts") or [])
 
@@ -535,13 +553,15 @@ class EveMarketVisualDetector:
             result["status"] = "not_found"
             # Suggested action logic
             if not candidate_bands:
-                result["visual_ocr_suggested_action"] = "recalibrate_side"
+                # If manual_region exists and we made OCR attempts, don't ask for recalibration
+                if manual_region and len(result["debug"].get("ocr_attempts") or []) > 0:
+                    result["visual_ocr_suggested_action"] = "improve_buy_ocr_price_or_scroll"
+                else:
+                    result["visual_ocr_suggested_action"] = "recalibrate_side"
             else:
-                # Phase 3I: Do not suggest recalibration if we found split rows and had OCR attempts
                 split_found = result["debug"].get("visual_ocr_buy_large_bands_split")
                 ocr_attempts = len(result["debug"].get("ocr_attempts") or [])
-                
-                if split_found or ocr_attempts > 0:
+                if split_found or ocr_attempts > 0 or manual_region:
                     result["visual_ocr_suggested_action"] = "improve_buy_ocr_price_or_scroll"
                 else:
                     best_rej = result["debug"].get("best_rejected_row")
@@ -551,20 +571,25 @@ class EveMarketVisualDetector:
                         result["visual_ocr_suggested_action"] = "recalibrate_side"
             return result
 
+        # Phase 3M: deduplicate candidates that represent the same physical row
+        if len(verified) > 1 and is_buy_order:
+            verified, dedupe_count = self._dedupe_verified_candidates(verified)
+            if dedupe_count > 0:
+                result["debug"]["visual_ocr_deduped_candidates"] = dedupe_count
+                result["debug"]["visual_ocr_duplicate_reason"] = "same_text_band"
+
         if len(verified) > 1:
             # Sort by score descending
             verified.sort(key=lambda x: x["score"], reverse=True)
             best = verified[0]
             second = verified[1]
-            
+
             # Check for ambiguity margin
             if (best["score"] - second["score"]) >= self.score_ambiguity_margin:
-                # Best is significantly better
                 self._populate_match(result, best)
             else:
                 result["status"] = "ambiguous"
         else:
-            # Single candidate
             best = verified[0]
             if best["score"] >= (self.score_threshold - 50) or (best["matched_own_marker"] and best["matched_price"]):
                 self._populate_match(result, best)
@@ -871,8 +896,10 @@ class EveMarketVisualDetector:
                 "price_text":         price_text,
                 "quantity_text":      qty_text,
                 "normalized_quantity": ocr_qty,
+                "normalized_price":   ocr_price,
                 "target_quantity":    target_quantity,
                 "band":               (y_min, y_max),
+                "text_band":          text_band,
                 "score":              score
             }
             
@@ -1118,6 +1145,158 @@ class EveMarketVisualDetector:
                 best_rank = rank
 
         return best
+
+    def _dedupe_verified_candidates(self, candidates: list) -> tuple:
+        """
+        Remove duplicate BUY candidates that represent the same physical row.
+        Two candidates are duplicates when their text_bands overlap >= 70%,
+        their normalized prices are equal, and their quantity texts match.
+        Returns (deduped_list, removed_count).
+        """
+        if len(candidates) <= 1:
+            return candidates, 0
+
+        deduped = []
+        used: set = set()
+
+        for i, c in enumerate(candidates):
+            if i in used:
+                continue
+            tb_i = c.get("text_band") or list(c["band"])
+            best_in_group = c
+
+            for j, d in enumerate(candidates):
+                if j <= i or j in used:
+                    continue
+                tb_j = d.get("text_band") or list(d["band"])
+                overlap = max(0, min(tb_i[1], tb_j[1]) - max(tb_i[0], tb_j[0]))
+                min_h   = min(tb_i[1] - tb_i[0], tb_j[1] - tb_j[0])
+                if min_h > 0 and (overlap / min_h) >= 0.7:
+                    same_price = abs(c.get("normalized_price", 0) - d.get("normalized_price", 0)) < 1.0
+                    same_qty   = c.get("quantity_text", "") == d.get("quantity_text", "")
+                    if same_price and same_qty:
+                        used.add(j)
+                        if d["score"] > best_in_group["score"]:
+                            best_in_group = d
+
+            deduped.append(best_in_group)
+
+        return deduped, len(candidates) - len(deduped)
+
+    def _run_buy_manual_grid_fallback(self, img_array, section_y_min: int, section_y_max: int,
+                                       panel_x0: int, panel_x1: int,
+                                       price_x0: int, price_x1: int,
+                                       qty_x0: int, qty_x1: int,
+                                       target_price: float, target_quantity: int,
+                                       window_rect: dict, result: dict,
+                                       order_tick: float = 0.0) -> list:
+        """
+        Phase 3M: scan the manual BUY region with a dense grid when no blue-band
+        or marker was detected. Stricter acceptance than the normal pass:
+          - price: numeric_tolerance, digit_pattern, or corrupted_million_pattern
+          - qty:   exact match or buy_artifact_g_for_8 only (no weak_price_anchor)
+          - unique: exactly one window must qualify; if two+, returns all (→ ambiguous)
+        """
+        h = img_array.shape[0]
+        strong: list = []
+        seen_text_bands: list = []
+
+        _good_price_confs = {"numeric_tolerance", "digit_pattern",
+                              "scaled_digit_pattern", "corrupted_million_pattern"}
+
+        price_x0_p = max(panel_x0, price_x0 - self.price_left_padding)
+        price_x1_p = min(panel_x1, price_x1 + self.price_right_padding)
+        qty_x0_p   = max(panel_x0, qty_x0   - self.qty_left_padding)
+        qty_x1_p   = min(panel_x1, qty_x1   + self.qty_right_padding)
+
+        grid_rows = 0
+        for y0 in range(section_y_min, section_y_max, self.buy_manual_grid_step_px):
+            for rh in self.buy_manual_grid_row_heights:
+                y1 = min(h, y0 + rh)
+                if y1 - y0 < 6:
+                    continue
+                grid_rows += 1
+
+                pr = img_array[y0:y1, price_x0_p:price_x1_p]
+                if pr.size == 0:
+                    continue
+                price_text = self._ocr_region(pr)
+                p_match    = self._match_price_ocr(price_text, target_price, True, order_tick)
+                if p_match["confidence"] not in _good_price_confs:
+                    continue
+
+                qr       = img_array[y0:y1, qty_x0_p:qty_x1_p]
+                qty_text = self._ocr_region(qr) if qr.size > 0 else ""
+                ocr_qty  = normalize_quantity_text(qty_text)
+                q_match  = self._match_quantity(ocr_qty, target_quantity, True, True, True, qty_text)
+                if not q_match["matched"]:
+                    continue
+                if q_match["confidence"] not in ("exact", "suffix"):
+                    continue
+                if q_match["reason"] not in ("exact_numeric_match", "buy_artifact_g_for_8",
+                                              "numeric_suffix_match", "isolated_single_digit_suffix"):
+                    continue
+
+                # Dedupe overlapping windows that found the same text
+                tb = [y0, y1]
+                dup = False
+                for prev_tb in seen_text_bands:
+                    overlap = max(0, min(tb[1], prev_tb[1]) - max(tb[0], prev_tb[0]))
+                    if overlap / max(1, min(tb[1]-tb[0], prev_tb[1]-prev_tb[0])) >= 0.7:
+                        dup = True
+                        break
+                if dup:
+                    continue
+                seen_text_bands.append(tb)
+
+                cy = (y0 + y1) // 2 + window_rect.get("top", 0)
+                cx = (panel_x0 + panel_x1) // 2 + window_rect.get("left", 0)
+                score = 70 + (80 if p_match["confidence"] == "numeric_tolerance" else 60) + \
+                        (50 if q_match["confidence"] == "exact" else 35)
+                strong.append({
+                    "row_center_x":        cx,
+                    "row_center_y":        cy,
+                    "matched_price":       True,
+                    "price_confidence":    p_match["confidence"],
+                    "matched_quantity":    True,
+                    "quantity_match_type": q_match["confidence"],
+                    "quantity_match_confidence": q_match["confidence"],
+                    "quantity_reason":     q_match["reason"],
+                    "matched_own_marker":  False,
+                    "price_text":          price_text,
+                    "quantity_text":       qty_text,
+                    "normalized_quantity": ocr_qty,
+                    "normalized_price":    p_match["normalized"],
+                    "target_quantity":     target_quantity,
+                    "band":               (y0, y1),
+                    "text_band":          tb,
+                    "score":              score,
+                    "detection_mode":     "buy_manual_grid_fallback",
+                })
+                result["debug"].setdefault("ocr_attempts", []).append({
+                    "band": [y0, y1], "marker_matched": False,
+                    "is_background_band": False,
+                    "price_match": True, "price_confidence": p_match["confidence"],
+                    "price_reason": p_match["reason"],
+                    "price_text": price_text, "quantity_text": qty_text,
+                    "normalized_price": p_match["normalized"],
+                    "target_price": target_price,
+                    "normalized_quantity": ocr_qty, "target_quantity": target_quantity,
+                    "quantity_match": True, "quantity_match_type": q_match["confidence"],
+                    "quantity_reason": q_match["reason"],
+                    "score": score, "is_fallback": False,
+                    "marker_band": [y0, y1], "text_band": tb, "alignment_offset": 0,
+                    "price_digits": p_match.get("digits", ""),
+                    "target_digits": p_match.get("target_digits", ""),
+                    "price_target_groups": p_match.get("target_groups", []),
+                    "price_ocr_groups": p_match.get("ocr_groups", []),
+                })
+
+        result["debug"]["visual_ocr_buy_grid_fallback"] = True
+        result["debug"]["visual_ocr_buy_grid_rows"] = grid_rows
+        result["debug"]["visual_ocr_buy_grid_strong"] = len(strong)
+        result["debug"]["detection_mode"] = "buy_manual_grid_fallback"
+        return strong
 
     def _populate_match(self, result: dict, candidate: dict):
         """Fill result dict with successful match data."""

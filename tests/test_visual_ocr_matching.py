@@ -689,5 +689,173 @@ class TestBUYTickDisambiguation(unittest.TestCase):
         self.assertTrue(res["matched"])
 
 
+class TestBUYDedupe(unittest.TestCase):
+    """Phase 3M: duplicate candidate deduplication."""
+
+    def setUp(self):
+        self.config = {
+            "visual_ocr_match_price": True, "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 15.0,
+            "visual_ocr_allow_quantity_suffix_match": True,
+            "visual_ocr_quantity_suffix_min_digits": 2,
+            "visual_ocr_allow_quantity_near_ocr": True,
+            "visual_ocr_score_threshold": 150,
+            "visual_ocr_buy_manual_grid_fallback_enabled": True,
+            "visual_ocr_buy_manual_grid_row_heights": [18, 20, 22],
+            "visual_ocr_buy_manual_grid_step_px": 8,
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+
+    def _make_candidate(self, text_band, price_text, qty_text, score=185):
+        return {
+            "row_center_x": 400, "row_center_y": 540,
+            "matched_price": True, "price_confidence": "numeric_tolerance",
+            "matched_quantity": True, "quantity_match_type": "weak_price_anchor",
+            "quantity_match_confidence": "weak_price_anchor",
+            "quantity_reason": "price_anchor_override",
+            "matched_own_marker": True,
+            "price_text": price_text, "quantity_text": qty_text,
+            "normalized_quantity": 0, "normalized_price": 60_110_000.0,
+            "target_quantity": 9, "band": (text_band[0], text_band[1]),
+            "text_band": text_band, "score": score,
+        }
+
+    def test_dedupes_same_text_band(self):
+        """Test A: two candidates with same text_band, same price/qty → deduped to 1."""
+        c1 = self._make_candidate([534, 552], "60.110.000,08 ISK", "nm g", score=185)
+        c2 = self._make_candidate([534, 552], "60.110.000,08 ISK", "nm g", score=185)
+        deduped, count = self.detector._dedupe_verified_candidates([c1, c2])
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(count, 1)
+
+    def test_dedupes_overlapping_text_bands(self):
+        """Two candidates with overlapping text bands (marker offset ±8) → deduped."""
+        # [526,544] → text_band=[534,552]; [542,560] → text_band=[534,552] overlap
+        c1 = self._make_candidate([534, 552], "60.110.000,08 ISK", "nm g", score=185)
+        c2 = self._make_candidate([534, 552], "60.110.000,08 ISK", "nm g", score=185)
+        c2["band"] = (542, 560)
+        deduped, count = self.detector._dedupe_verified_candidates([c1, c2])
+        self.assertEqual(len(deduped), 1)
+
+    def test_does_not_dedupe_different_rows(self):
+        """Test B: different text_band, different price → both kept."""
+        c1 = self._make_candidate([500, 518], "60.110.000,08 ISK", "nm g", score=185)
+        c2 = self._make_candidate([540, 558], "61.040.000,00 ISK", "nm g", score=120)
+        c2["normalized_price"] = 61_040_000.0
+        deduped, count = self.detector._dedupe_verified_candidates([c1, c2])
+        self.assertEqual(len(deduped), 2)
+        self.assertEqual(count, 0)
+
+    def test_dedupes_keeps_highest_score(self):
+        """When deduping, the higher-score candidate is kept."""
+        c1 = self._make_candidate([534, 552], "60.110.000,08 ISK", "nm g", score=185)
+        c2 = self._make_candidate([534, 552], "60.110.000,08 ISK", "nm g", score=200)
+        deduped, _ = self.detector._dedupe_verified_candidates([c1, c2])
+        self.assertEqual(deduped[0]["score"], 200)
+
+
+class TestBUYManualGridFallback(unittest.TestCase):
+    """Phase 3M: manual BUY grid fallback."""
+
+    def setUp(self):
+        self.config = {
+            "visual_ocr_match_price": True, "visual_ocr_match_quantity": True,
+            "visual_ocr_price_match_abs_tolerance": 15.0,
+            "visual_ocr_price_match_rel_tolerance": 0.001,
+            "visual_ocr_allow_quantity_suffix_match": True,
+            "visual_ocr_quantity_suffix_min_digits": 2,
+            "visual_ocr_allow_quantity_near_ocr": True,
+            "visual_ocr_score_threshold": 150,
+            "visual_ocr_buy_allow_price_anchor_quantity_weak": True,
+            "visual_ocr_buy_manual_grid_fallback_enabled": True,
+            "visual_ocr_buy_manual_grid_row_heights": [18, 20, 22],
+            "visual_ocr_buy_manual_grid_step_px": 8,
+            "visual_ocr_buy_price_max_tick_fraction": 0.49,
+        }
+        self.detector = EveMarketVisualDetector(self.config)
+
+    def test_grid_creates_rows(self):
+        """Test C: grid iterates the manual region and creates candidate windows."""
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+        img   = _np.zeros((700, 600, 3), dtype=_np.uint8)
+        result = {"debug": {}}
+        with patch.object(self.detector, '_ocr_region', return_value=""):
+            cands = self.detector._run_buy_manual_grid_fallback(
+                img, 460, 670, 0, 600, 100, 300, 20, 80,
+                29_660_000.0, 8, {}, result, order_tick=10_000.0
+            )
+        self.assertGreater(result["debug"]["visual_ocr_buy_grid_rows"], 0)
+
+    def test_grid_requires_qty_match(self):
+        """Test D: price matches but qty does not → no strong candidate."""
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+        img   = _np.zeros((700, 600, 3), dtype=_np.uint8)
+        result = {"debug": {}}
+        ocr_iter = iter(["29.660.000,00 ISK", "bad qty text"] * 200)
+        with patch.object(self.detector, '_ocr_region', side_effect=ocr_iter):
+            cands = self.detector._run_buy_manual_grid_fallback(
+                img, 460, 520, 0, 600, 100, 300, 20, 80,
+                29_660_000.0, 8, {}, result, order_tick=10_000.0
+            )
+        self.assertEqual(len(cands), 0)
+
+    def test_grid_accepts_exact_price_and_qty(self):
+        """Test E: price and qty both match → one strong candidate returned."""
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+        img    = _np.zeros((700, 600, 3), dtype=_np.uint8)
+        result = {"debug": {}}
+
+        def mock_ocr(region):
+            if region.shape[1] > 100:   # price column is wider
+                return "29.660.000,00 ISK"
+            return "in g"              # qty column
+
+        with patch.object(self.detector, '_ocr_region', side_effect=mock_ocr):
+            cands = self.detector._run_buy_manual_grid_fallback(
+                img, 460, 480, 0, 600, 100, 300, 20, 80,
+                29_660_000.0, 8, {}, result, order_tick=10_000.0
+            )
+        self.assertGreater(len(cands), 0)
+        self.assertTrue(cands[0]["matched_price"])
+        self.assertTrue(cands[0]["matched_quantity"])
+
+    def test_grid_ambiguous_if_two_rows(self):
+        """Test F: two distinct rows match → both returned (caller marks ambiguous)."""
+        try:
+            import numpy as _np
+        except ImportError:
+            self.skipTest("numpy not available")
+        img    = _np.zeros((700, 600, 3), dtype=_np.uint8)
+        result = {"debug": {}}
+        call   = [0]
+
+        def mock_ocr(region):
+            call[0] += 1
+            if region.shape[1] > 100:
+                return "29.660.000,00 ISK"
+            return "8"
+
+        with patch.object(self.detector, '_ocr_region', side_effect=mock_ocr):
+            # Two non-overlapping y windows: 460-478 and 550-568
+            # We manually call _run_buy_manual_grid_fallback with a range
+            # that covers those two bands only
+            cands = self.detector._run_buy_manual_grid_fallback(
+                img, 460, 570, 0, 600, 100, 300, 20, 80,
+                29_660_000.0, 8, {}, result, order_tick=10_000.0
+            )
+        # Two non-overlapping rows should both be accepted
+        self.assertGreaterEqual(len(cands), 2,
+            "Two distinct rows should both be returned for caller to decide ambiguous")
+
+
 if __name__ == "__main__":
     unittest.main()

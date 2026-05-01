@@ -3161,3 +3161,13 @@ Band [516,534], own_marker=True: base=+100, numeric_tolerance (via [524,542] or 
 - **Diagnostics**: `price_tick`, `price_tick_fraction`, new reason codes added to result dicts.
 - **Config**: `visual_ocr_buy_price_max_tick_fraction: 0.49` (default).
 - **Tests**: 210 passed (57+3+107+43). 13 new tests in `TestBUYTickDisambiguation`.
+
+## Phase 3M: BUY Visual OCR Duplicate Candidate Dedupe and Manual Grid Fallback
+
+- **Fix 1**: `_dedupe_verified_candidates()` — same physical row detected twice from different marker bands (text_band overlap ≥ 70% + same price + same qty) → keep highest-score; rest discarded. Prevents false `ambiguous` result.
+- **Fix 2**: `_run_buy_manual_grid_fallback()` — when manual region is set but no blue bands detected, dense y-scan (step=8px, heights=[18,20,22]) locates own-order row. Strict accept: price must be `good_conf` and qty must be `exact` or `artifact` only.
+- **Fix 3**: Suggested action corrected — manual_region + failed OCR now returns `improve_buy_ocr_price_or_scroll` instead of `recalibrate_side`.
+- **Diagnostics**: Grid fallback stats (`visual_ocr_buy_grid_fallback`, `_grid_rows`, `_grid_strong`) and dedupe stats (`visual_ocr_deduped_candidates`, `visual_ocr_duplicate_reason`) added.
+- **Config**: `visual_ocr_buy_manual_grid_fallback_enabled`, `_row_heights`, `_step_px`, `_min_score` (all defaulted).
+- **Tests**: 228 passed (60+3+107+43+...). 8 new tests: `TestBUYDedupe` (4) + `TestBUYManualGridFallback` (4).
+- **Safety**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` invariant preserved.

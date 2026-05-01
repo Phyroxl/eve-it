@@ -401,10 +401,17 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Rej Bot   : {dbg.get('visual_ocr_rej_bot', len(dbg.get('rejected_bands_by_bottom_edge') or []))}")
     lines.append(f"  Visual OCR Filtered  : {dbg.get('filtered_candidate_bands_count', len(dbg.get('filtered_candidate_bands') or []))}")
     
-    # BUY splitting diagnostics
+    # BUY splitting / grid diagnostics
     lines.append(f"  Visual OCR BUY Split : {dbg.get('visual_ocr_buy_large_bands_split', 0)}")
     lines.append(f"  Visual OCR BUY Rows  : {dbg.get('visual_ocr_buy_split_rows_count', 0)}")
     lines.append(f"  Visual OCR BUY Backgr: {_b(dbg.get('visual_ocr_buy_background_band', False))}")
+    if dbg.get("visual_ocr_buy_grid_fallback"):
+        lines.append(f"  Visual OCR BUY Grid Fallback: True")
+        lines.append(f"  Visual OCR BUY Grid Rows    : {dbg.get('visual_ocr_buy_grid_rows', 0)}")
+        lines.append(f"  Visual OCR BUY Grid Strong  : {dbg.get('visual_ocr_buy_grid_strong', 0)}")
+    if dbg.get("visual_ocr_deduped_candidates", 0) > 0:
+        lines.append(f"  Visual OCR Deduped Candidates: {dbg.get('visual_ocr_deduped_candidates')}")
+        lines.append(f"  Visual OCR Duplicate Reason  : {dbg.get('visual_ocr_duplicate_reason', 'unknown')}")
     
     # Click diagnostics
     rc_attempts = automation.get("visual_ocr_rc_attempts", 0)
