@@ -3561,3 +3561,14 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Fix Reporte: Corregido generate_diagnostic_report para manejar d = self.last_diag al principio del bloque.
 - Fix Interaccion: Re-conectadas y estabilizadas las se馻les de apertura in-game con seguimiento de origen (boton vs doble click).
 - Estado: Reporte e interacciones in-game restauradas y verificadas.
+
+## FIX: Prevent my orders ESI sync crash on missing char id - 2026-05-01
+
+- Bug: La sincronizaci贸n ESI en "Mis Pedidos" crasheaba con AttributeError: MarketMyOrdersView object has no attribute char_id.
+- Causa: Se intentaba acceder a self.char_id para diagn贸sticos de WAC, pero la vista no almacena ese atributo.
+- Fix UI: Implementado helper _get_char_id() que recupera el ID desde los diagn贸sticos de la sesi贸n o el AuthManager.
+- Resiliencia: Envuelto el bloque de diagn贸sticos WAC en un 	ry-except para asegurar que un error en la anal铆tica de promedios nunca bloquee la carga principal de pedidos.
+- Promedios: A帽adido indicador "N/A" con tooltip descriptivo cuando el historial de transacciones es incompleto.
+- Tests: Actualizado 	ests/test_my_orders_state_transition.py para mockear el CostBasisService y ajustar estados esperados (Liderando vs Empate).
+- Archivos: ui/market_command/my_orders_view.py, core/cost_basis_service.py, core/my_orders_diagnostics.py, tests/test_my_orders_state_transition.py.
+- Verificaci贸n: 13 tests aprobados (incluyendo WAC y transiciones de estado). Compilaci贸n exitosa.

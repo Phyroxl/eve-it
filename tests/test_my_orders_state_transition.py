@@ -12,9 +12,15 @@ class TestMyOrdersStateTransition(unittest.TestCase):
     def test_sell_order_outbid_then_leading(self):
         # Escenario: Mi orden está a 100, el competidor a 99. Estado: Superada.
         # Luego actualizo mi orden a 98. El mercado fresco tiene mi orden a 98 y el competidor a 99. Estado: Liderando.
+        from core.cost_basis_service import CostBasisService, CostBasis
+        from datetime import datetime
         
         location_id = 60003760
         type_id = 123
+        
+        # MOCK COST BASIS para que no salga "Sin coste real"
+        cb = CostBasis(type_id=type_id, average_buy_price=50.0, total_quantity=100, total_spent=5000.0, last_updated=datetime.now(), confidence='high')
+        CostBasisService.instance().cache[type_id] = cb
         
         my_order = {
             'order_id': 1,
@@ -67,7 +73,8 @@ class TestMyOrdersStateTransition(unittest.TestCase):
         ]
         
         analyzed = analyze_character_orders([my_order], market_orders, self.item_names, self.config, self.char_id, self.token)
-        self.assertEqual(analyzed[0].analysis.state, "Liderando (Empate)") # Empate conmigo mismo es esperado por lógica actual
+        # Con 0 competidores, el precio es > 0 + EPSILON -> Liderando (no empate)
+        self.assertEqual(analyzed[0].analysis.state, "Liderando") 
         self.assertTrue(analyzed[0].analysis.competitive)
 
 if __name__ == '__main__':

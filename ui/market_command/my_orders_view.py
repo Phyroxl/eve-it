@@ -1105,6 +1105,13 @@ class MarketMyOrdersView(QWidget):
             self.table_sell.blockSignals(False)
             self.table_buy.blockSignals(False)
 
+    def _get_char_id(self):
+        """Helper seguro para obtener el character id activo."""
+        cid = self._orders_diag.get("char_id")
+        if cid and cid != 0:
+            return cid
+        return AuthManager.instance().char_id
+
     def do_sync(self):
         auth = AuthManager.instance()
         t = auth.get_valid_access_token()
@@ -1272,16 +1279,28 @@ class MarketMyOrdersView(QWidget):
         self._orders_diag["rows_buy_table"] = len(buys)
         
         # WAC Diagnostics
-        wac = CostBasisService.instance()
-        self._orders_diag["wac_item_count"] = len(wac.stock_map)
-        self._orders_diag["wac_last_tx_id"] = wac.last_transaction_id
-        self._orders_diag["wac_cache_file"] = os.path.basename(wac._get_cache_path(self.char_id))
-        missing_wac = sum(1 for o in sells if wac.get_cost_basis(o.type_id) is None)
-        self._orders_diag["wac_missing_count"] = missing_wac
-        if len(sells) > 0:
-            self._orders_diag["wac_hit_rate"] = ((len(sells) - missing_wac) / len(sells)) * 100
-        else:
-            self._orders_diag["wac_hit_rate"] = 100.0
+        try:
+            wac = CostBasisService.instance()
+            char_id = self._get_char_id()
+            self._orders_diag["wac_item_count"] = len(wac.stock_map)
+            self._orders_diag["wac_last_tx_id"] = wac.last_transaction_id
+            
+            if char_id:
+                self._orders_diag["wac_cache_file"] = os.path.basename(wac._get_cache_path(char_id))
+            else:
+                self._orders_diag["wac_cache_file"] = "N/A (No Char ID)"
+                self._orders_diag["notes"].append("Warning: char_id not found for WAC diagnostics.")
+
+            missing_wac = sum(1 for o in sells if wac.get_cost_basis(o.type_id) is None)
+            self._orders_diag["wac_missing_count"] = missing_wac
+            if len(sells) > 0:
+                self._orders_diag["wac_hit_rate"] = ((len(sells) - missing_wac) / len(sells)) * 100
+            else:
+                self._orders_diag["wac_hit_rate"] = 100.0
+        except Exception as e:
+            _log.warning(f"[WAC DIAG ERR] Failed to collect WAC stats: {e}")
+            self._orders_diag["wac_cache_file"] = "ERROR"
+            self._orders_diag["notes"].append(f"WAC Diagnostic Error: {e}")
         
         self._image_generation += 1
         gen = self._image_generation
