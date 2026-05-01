@@ -7,10 +7,12 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, 
-    QGridLayout, QDialog, QMessageBox, QProgressBar, QLineEdit, QComboBox, QMenu
+    QGridLayout, QDialog, QMessageBox, QProgressBar, QLineEdit, QComboBox, QMenu,
+    QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter
+from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter, QBrush
+from PySide6.QtCharts import QChart, QChartView, QBarSet, QBarSeries, QBarCategoryAxis, QValueAxis
 from core.eve_icon_service import EveIconService
 
 from core.esi_client import ESIClient
@@ -579,7 +581,21 @@ class TradeProfitsDialog(QDialog):
         fl.addWidget(QLabel("FILTRAR:")); fl.addWidget(self.txt_filter)
         fl.addSpacing(20); fl.addWidget(QLabel("MODO:")); fl.addWidget(self.cmb_mode)
         fl.addStretch()
+        
+        self.btn_global = QPushButton("VISTA GLOBAL")
+        self.btn_global.setFixedWidth(120)
+        self.btn_global.setStyleSheet("background: #334155; color: white; padding: 8px; border-radius: 4px; font-weight: bold;")
+        self.btn_global.clicked.connect(self.toggle_global_view)
+        fl.addWidget(self.btn_global)
+        
         layout.addWidget(f_frame)
+        
+        self.stack = QStackedWidget()
+        
+        # Página 1: Tabla de Transacciones (Original)
+        self.table_page = QWidget()
+        table_layout = QVBoxLayout(self.table_page)
+        table_layout.setContentsMargins(0, 0, 0, 0)
         
         self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(["FECHA", "ÍTEM", "UNIDADES", "P. COMPRA", "P. VENTA", "TOTAL COMPRA", "TOTAL VENTA", "FEES + TAX", "MARGEN %", "PROFIT NETO"])
@@ -595,14 +611,21 @@ class TradeProfitsDialog(QDialog):
         self.table.itemDoubleClicked.connect(self.on_double_click)
         layout.addWidget(self.table)
         
-        nav = QHBoxLayout()
-        self.btn_prev = QPushButton("ANTERIOR")
-        self.btn_next = QPushButton("SIGUIENTE")
-        self.lbl_page = QLabel("Página 1")
-        self.btn_prev.clicked.connect(self.prev_page)
-        self.btn_next.clicked.connect(self.next_page)
         nav.addWidget(self.btn_prev); nav.addStretch(); nav.addWidget(self.lbl_page); nav.addStretch(); nav.addWidget(self.btn_next)
-        layout.addLayout(nav)
+        table_layout.addLayout(nav)
+        
+        self.stack.addWidget(self.table_page)
+        
+        # Página 2: Vista Global (Chart)
+        self.global_page = QWidget()
+        global_layout = QVBoxLayout(self.global_page)
+        self.chart_view = QChartView()
+        self.chart_view.setRenderHint(QPainter.Antialiasing)
+        global_layout.addWidget(self.chart_view)
+        
+        self.stack.addWidget(self.global_page)
+        
+        layout.addWidget(self.stack)
 
     def load_data(self):
         self.worker = TradeProfitsWorker(self.char_id, self.token)
@@ -612,6 +635,83 @@ class TradeProfitsDialog(QDialog):
     def on_data(self, data):
         self.all_trades = data
         self.apply_filters()
+        if self.stack.currentIndex() == 1:
+            self.update_chart()
+
+    def toggle_global_view(self):
+        if self.stack.currentIndex() == 0:
+            # Ir a Global
+            self.stack.setCurrentIndex(1)
+            self.btn_global.setText("TABLA TRADES")
+            self.update_chart()
+        else:
+            # Ir a Tabla
+            self.stack.setCurrentIndex(0)
+            self.btn_global.setText("VISTA GLOBAL")
+
+    def update_chart(self):
+        if not self.all_trades:
+            return
+
+        # Agrupar por item
+        stats = {}
+        for t in self.all_trades:
+            tid = t['type_id']
+            if tid not in stats:
+                stats[tid] = {'name': t['name'], 'net_profit': 0.0}
+            stats[tid]['net_profit'] += t['profit']
+
+        # Ordenar por profit neto DESC (incluye los más negativos al final)
+        sorted_stats = sorted(stats.values(), key=lambda x: x['net_profit'], reverse=True)
+        
+        # Tomar los 10 mejores y los 10 peores (o top 20 si hay pocos)
+        if len(sorted_stats) > 20:
+            top_items = sorted_stats[:10] + sorted_stats[-10:]
+        else:
+            top_items = sorted_stats
+
+        if not top_items:
+            return
+
+        chart = QChart()
+        chart.setTitle("RENTABILIDAD POR ÍTEM (NET PROFIT)")
+        chart.setAnimationOptions(QChart.SeriesAnimations)
+        chart.setBackgroundVisible(False)
+        chart.setTitleBrush(QBrush(QColor("#f1f5f9")))
+
+        series = QBarSeries()
+        
+        profit_set = QBarSet("Net Profit")
+        profit_set.setColor(QColor("#10b981")) # Emerald para positivos por defecto
+        
+        categories = []
+        for item in top_items:
+            val = item['net_profit']
+            profit_set.append(val)
+            name = item['name']
+            if len(name) > 12: name = name[:10] + ".."
+            categories.append(name)
+
+        series.append(profit_set)
+        chart.addSeries(series)
+
+        axisX = QBarCategoryAxis()
+        axisX.append(categories)
+        axisX.setLabelsColor(QColor("#94a3b8"))
+        axisX.setLabelsAngle(-45)
+        chart.addAxis(axisX, Qt.AlignBottom)
+        series.attachAxis(axisX)
+
+        axisY = QValueAxis()
+        axisY.setLabelsColor(QColor("#94a3b8"))
+        chart.addAxis(axisY, Qt.AlignLeft)
+        series.attachAxis(axisY)
+
+        chart.legend().setVisible(True)
+        chart.legend().setAlignment(Qt.AlignBottom)
+        chart.legend().setLabelColor(QColor("#94a3b8"))
+
+        self.chart_view.setChart(chart)
 
     def apply_filters(self):
         txt = self.txt_filter.text().lower()

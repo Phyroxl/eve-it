@@ -129,6 +129,7 @@ class MarketContractsView(QWidget):
         self._last_open_source = "none"
         self._last_open_success = False
         self._last_open_error = ""
+        self.current_location_id = None
         self.setup_ui()
         self._load_config()
 
@@ -214,6 +215,23 @@ class MarketContractsView(QWidget):
         v_cat.addWidget(lbl_cat)
         v_cat.addWidget(self.combo_category)
         fl.addLayout(v_cat)
+
+        v_avail = QVBoxLayout()
+        v_avail.setSpacing(2)
+        lbl_avail = QLabel("DISPONIBILIDAD")
+        lbl_avail.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
+        self.availability_combo = QComboBox()
+        self.availability_combo.setStyleSheet("QComboBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }")
+        self.availability_combo.addItem("Público", "public")
+        self.availability_combo.addItem("Alianza/Personal", "alliance")
+        self.availability_combo.addItem("Público + Alianza", "both")
+        v_avail.addWidget(lbl_avail)
+        v_avail.addWidget(self.availability_combo)
+        fl.addLayout(v_avail)
+
+        self.current_station_check = QCheckBox("Solo estación actual")
+        self.current_station_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
+        fl.addWidget(self.current_station_check)
 
         self.capital_max_spin = create_dspin("CAPITAL MAX", 1, 100000, 100, " M ISK")
         self.capital_min_spin = create_dspin("CAPITAL MIN", 0, 100000, 1, " M ISK")
@@ -503,6 +521,11 @@ class MarketContractsView(QWidget):
         idx = self.combo_category.findData(self.config.category_filter)
         if idx >= 0: self.combo_category.setCurrentIndex(idx)
 
+        idx_avail = self.availability_combo.findData(self.config.availability_filter)
+        if idx_avail >= 0: self.availability_combo.setCurrentIndex(idx_avail)
+        
+        self.current_station_check.setChecked(self.config.only_current_station)
+
     def _save_config(self):
         self.config.region_id = self.combo_region.currentData()
         self.config.capital_max_isk = self.capital_max_spin.value() * 1_000_000
@@ -516,6 +539,8 @@ class MarketContractsView(QWidget):
         self.config.exclude_bpcs = self.check_bpcs.isChecked()
         self.config.exclude_abyssal = self.check_abyssal.isChecked()
         self.config.category_filter = self.combo_category.currentData() or "all"
+        self.config.only_current_station = self.current_station_check.isChecked()
+        self.config.availability_filter = self.availability_combo.currentData() or "public"
         save_contracts_filters(self.config)
 
     def _clear_table(self):
@@ -636,6 +661,19 @@ class MarketContractsView(QWidget):
         report.append("  Hidden Expire Filter: > 1 hour remaining (HARDCODED)")
         report.append(f"  Hidden Max Contracts: {self.config.max_contracts_to_scan if self.config.max_contracts_to_scan > 0 else 'None'}")
 
+        report.append("\n[LOCATION FILTER]")
+        report.append(f"  Only Current Station: {self.config.only_current_station}")
+        report.append(f"  Excluded by Location: {d.excluded_by_location}")
+        
+        report.append("\n[AVAILABILITY FILTER]")
+        report.append(f"  Availability Mode: {self.config.availability_filter}")
+        report.append(f"  Excluded by Availability: {d.excluded_by_availability}")
+
+        report.append("\n[PLEX VALUATION]")
+        report.append(f"  PLEX Items Seen: {d.plex_items_seen}")
+        report.append(f"  PLEX Total Value: {d.plex_total_value:,.0f} ISK")
+        report.append(f"  PLEX Missing Price: {d.plex_missing_price}")
+
         report.append("\n[FILTERS (UI)]")
         report.append(f"  capital_min: {self.config.capital_min_isk:,.0f} ISK")
         report.append(f"  capital_max: {self.config.capital_max_isk:,.0f} ISK")
@@ -647,6 +685,8 @@ class MarketContractsView(QWidget):
         report.append(f"  exclude_blueprints: {self.config.exclude_blueprints}")
         report.append(f"  exclude_bpcs: {self.config.exclude_bpcs}")
         report.append(f"  exclude_abyssal: {self.config.exclude_abyssal}")
+        report.append(f"  only_current_station: {self.config.only_current_station}")
+        report.append(f"  availability_filter: {self.config.availability_filter}")
 
         report.append("\n[OPEN IN-GAME]")
         report.append(f"  Last Open Attempt: {self._last_open_attempt if self._last_open_attempt > 0 else 'None'}")
@@ -944,14 +984,14 @@ class MarketContractsView(QWidget):
                 diag.contract_cache_hits = self.last_diag.contract_cache_hits
                 diag.contract_cache_misses = self.last_diag.contract_cache_misses
             
-            filtered = apply_contracts_filters(self._all_results, self.config, diag)
+            filtered = apply_contracts_filters(self._all_results, self.config, diag, current_location_id=self.current_location_id)
             self.last_diag = diag # Actualizar con el último filtrado local
             self._scan_events.append(f"filters_applied input={len(self._all_results)} output={len(filtered)}")
         except Exception as e:
             logger.error(f"[CONTRACTS] Error in local diagnostic/filter pass: {e}")
             self._scan_events.append(f"error_in_filtering: {e}")
             # Fallback: intentar filtrar sin diagnóstico si diag falló
-            filtered = apply_contracts_filters(self._all_results, self.config)
+            filtered = apply_contracts_filters(self._all_results, self.config, current_location_id=self.current_location_id)
 
         self._scan_events.append(f"table_rendered rows={len(filtered)}")
         
@@ -992,6 +1032,7 @@ class MarketContractsView(QWidget):
         logger.info(f"[CONTRACTS] Scan finished with {len(results)} results.")
         self._all_results = results
         self.last_diag = getattr(self.worker, 'diag', None)
+        self.current_location_id = getattr(self.worker, 'current_location_id', None)
         
         # Si el worker tiene diagnóstico, lo preservamos
         if self.last_diag:

@@ -59,6 +59,15 @@ def analyze_contract_items(
         classification = classify_blueprint_item(raw, item_name, cat_id)
         strategy = get_valuation_strategy(classification)
         
+        # PLEX VALUATION (Type ID: 4499)
+        if type_id == 4499:
+            # PLEX always ok if price exists
+            if sell_price > 0:
+                strategy = "plex" # Use as tag
+                val_status = "ok"
+            else:
+                val_status = "ok" # Let it fall to unresolved later but keep as ok for now
+            
         val_status = "ok"
         if strategy == "zero":
             val_status = "bpc_ignored"
@@ -205,7 +214,8 @@ def score_contract(c: ContractArbitrageResult) -> float:
 def apply_contracts_filters(
     contracts: List[ContractArbitrageResult],
     config: ContractsFilterConfig,
-    diagnostics: Optional[ScanDiagnostics] = None
+    diagnostics: Optional[ScanDiagnostics] = None,
+    current_location_id: Optional[int] = None
 ) -> List[ContractArbitrageResult]:
     """Filtra y devuelve top 1000 ordenados por score DESC."""
     result = []
@@ -227,8 +237,23 @@ def apply_contracts_filters(
                 diagnostics.val_partial_pricing += 1
             else:
                 diagnostics.val_no_priced += 1
+            
+            # PLEX Telemetry
+            for it in c.items:
+                if it.type_id == 4499:
+                    diagnostics.plex_items_seen += 1
+                    diagnostics.plex_total_value += it.line_sell_value
+                    if it.jita_sell_price <= 0:
+                        diagnostics.plex_missing_price = True
 
         # --- FILTROS DE EXCLUSIÓN EXPLÍCITA (OCULTAN RESULTADOS) ---
+        
+        # -1. Location Filter
+        if config.only_current_station and current_location_id:
+            if c.location_id != current_location_id:
+                c.filter_reason = f"Ubicación distinta ({c.location_id})"
+                if diagnostics: diagnostics.excluded_by_location += 1
+                continue
         
         # 0. Sanity Checks
         if c.item_type_count == 0:

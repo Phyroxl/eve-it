@@ -412,6 +412,20 @@ class ESIClient:
             return "missing_scope"
         return None
 
+    def character_location(self, char_id: int, token: str):
+        """GET /characters/{character_id}/location/"""
+        res = self._request_auth("GET", f"/characters/{char_id}/location/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        return None
+
+    def character_contracts(self, char_id: int, token: str):
+        """GET /characters/{character_id}/contracts/"""
+        res = self._request_auth("GET", f"/characters/{char_id}/contracts/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        return None
+
     def open_market_window(self, type_id: int, access_token: str):
         """
         Abre la ventana de mercado regional en el cliente de EVE Online.

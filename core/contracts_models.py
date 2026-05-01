@@ -82,6 +82,14 @@ class ScanDiagnostics:
     esi_unique_contracts: int = 0
     esi_limit_hit: bool = False
     esi_fetch_stopped_reason: str = ""
+    
+    # Location & Availability Diagnostics
+    excluded_by_location: int = 0
+    excluded_by_availability: int = 0
+    
+    # PLEX Telemetry
+    plex_items_seen: int = 0
+    plex_total_value: float = 0.0
 
     def to_summary(self) -> str:
         return (f"Total: {self.total_scanned} | Profitable: {self.profitable} | "
@@ -141,3 +149,5 @@ class ContractsFilterConfig:
     exclude_bpcs: bool = False
     exclude_abyssal: bool = False
     category_filter: str = "all"  # ships, modules, etc.
+    only_current_station: bool = False
+    availability_filter: str = "public" # "public", "alliance", "both"

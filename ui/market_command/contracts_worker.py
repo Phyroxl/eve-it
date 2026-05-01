@@ -29,6 +29,7 @@ class ContractsScanWorker(QThread):
         self.force_refresh = force_refresh
         self._cancelled = False
         self._scanned_count = 0
+        self.current_location_id = None
 
     def cancel(self):
         """Activación de bandera de cancelación para detención inmediata."""
@@ -38,18 +39,47 @@ class ContractsScanWorker(QThread):
         try:
             client = ESIClient()
             all_results: List[ContractArbitrageResult] = []
-
-            # 1. Inicio
-            if self._cancelled: return
-            self.status.emit("Conectando con ESI (Public Contracts)...")
-            self.progress.emit(5)
-            
-            # Inicializar diagnóstico si no existe
+            # Inicializar diagnóstico
             from core.contracts_models import ScanDiagnostics
-            if not hasattr(self, 'diag') or self.diag is None:
-                self.diag = ScanDiagnostics()
-                
-            contracts_raw = client.public_contracts(self.config.region_id, diagnostics=self.diag, force_refresh=self.force_refresh)
+            self.diag = ScanDiagnostics()
+
+            # 1. Fetch Location & Availability Setup
+            self.current_location_id = None
+            auth = AuthManager.instance()
+            char_id = auth.char_id
+            token = auth.get_token()
+
+            if self.config.only_current_station and char_id and token:
+                self.status.emit("Sincronizando ubicación del personaje...")
+                loc_data = client.character_location(char_id, token)
+                if loc_data:
+                    self.current_location_id = loc_data.get('station_id') or loc_data.get('structure_id')
+                    logger.info(f"[CONTRACTS] Character current location: {self.current_location_id}")
+
+            contracts_raw = []
+            
+            # PUBLIC FETCH
+            if self.config.availability_filter in ("public", "both"):
+                self.status.emit("Conectando con ESI (Public Contracts)...")
+                self.progress.emit(5)
+                public_raw = client.public_contracts(self.config.region_id, diagnostics=self.diag, force_refresh=self.force_refresh)
+                if public_raw:
+                    contracts_raw.extend(public_raw)
+
+            # ALLIANCE / PERSONAL FETCH
+            if self.config.availability_filter in ("alliance", "both") and char_id and token:
+                self.status.emit("Obteniendo contratos de Alianza/Personales...")
+                personal_raw = client.character_contracts(char_id, token)
+                if personal_raw:
+                    # Filter for item_exchange and outstanding
+                    valid_personal = [c for c in personal_raw if c.get('type') == 'item_exchange' and c.get('status') == 'outstanding']
+                    # Deduplicate against public
+                    existing_ids = {c.get('contract_id') for c in contracts_raw}
+                    for c in valid_personal:
+                        if c.get('contract_id') not in existing_ids:
+                            contracts_raw.append(c)
+                    if self.diag:
+                        self.diag.excluded_by_availability = 0 # Tracked if we want
             
             if self._cancelled: return
             if not contracts_raw:
@@ -195,7 +225,7 @@ class ContractsScanWorker(QThread):
                 all_results.append(result)
                 
                 # Emitir para UI inmediata solo si es rentable
-                filtered_single = apply_contracts_filters([result], self.config, self.diag)
+                filtered_single = apply_contracts_filters([result], self.config, self.diag, current_location_id=self.current_location_id)
                 if filtered_single:
                     self.batch_ready.emit(result)
                 

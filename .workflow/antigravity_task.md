@@ -3553,3 +3553,11 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Diagnosticos: Aadida seccion [ESI FETCH] y [PIPELINE COUNTS] detallada al reporte de escaneo para total transparencia.
 - Verificacion: Deduplicacion por contract_id implementada y testeada con tests/test_contract_pagination.py.
 - Estado: Auditoroa completa operacional.
+
+## FIX: Restore contracts report and in-game open actions - 2026-05-01
+
+- Bug: El boton REPORTE no abroa por error de scope de variable d.
+- Bug: ABRIR IN-GAME y doble click no funcionaban correctamente.
+- Fix Reporte: Corregido generate_diagnostic_report para manejar d = self.last_diag al principio del bloque.
+- Fix Interaccion: Re-conectadas y estabilizadas las señales de apertura in-game con seguimiento de origen (boton vs doble click).
+- Estado: Reporte e interacciones in-game restauradas y verificadas.
