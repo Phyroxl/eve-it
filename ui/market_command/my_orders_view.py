@@ -199,7 +199,7 @@ class InventoryWorker(QThread):
             item_names = {n['id']: n['name'] for n in names_data}
             
             self.status_update.emit("CALCULANDO WAC...", 90)
-            CostBasisService.instance().refresh_from_esi(self.char_id, self.token)
+            CostBasisService.instance().refresh_from_esi(self.char_id, self.token, current_assets=assets)
                 
             analyzed = analyze_inventory(
                 filtered, all_mo, item_names, load_market_filters(), 
@@ -609,8 +609,14 @@ class TradeProfitsDialog(QDialog):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.itemDoubleClicked.connect(self.on_double_click)
-        layout.addWidget(self.table)
+        table_layout.addWidget(self.table)
         
+        nav = QHBoxLayout()
+        self.btn_prev = QPushButton("ANTERIOR")
+        self.btn_next = QPushButton("SIGUIENTE")
+        self.lbl_page = QLabel("Página 1")
+        self.btn_prev.clicked.connect(self.prev_page)
+        self.btn_next.clicked.connect(self.next_page)
         nav.addWidget(self.btn_prev); nav.addStretch(); nav.addWidget(self.lbl_page); nav.addStretch(); nav.addWidget(self.btn_next)
         table_layout.addLayout(nav)
         
@@ -1265,6 +1271,18 @@ class MarketMyOrdersView(QWidget):
         self._orders_diag["rows_sell_table"] = len(sells)
         self._orders_diag["rows_buy_table"] = len(buys)
         
+        # WAC Diagnostics
+        wac = CostBasisService.instance()
+        self._orders_diag["wac_item_count"] = len(wac.stock_map)
+        self._orders_diag["wac_last_tx_id"] = wac.last_transaction_id
+        self._orders_diag["wac_cache_file"] = os.path.basename(wac._get_cache_path(self.char_id))
+        missing_wac = sum(1 for o in sells if wac.get_cost_basis(o.type_id) is None)
+        self._orders_diag["wac_missing_count"] = missing_wac
+        if len(sells) > 0:
+            self._orders_diag["wac_hit_rate"] = ((len(sells) - missing_wac) / len(sells)) * 100
+        else:
+            self._orders_diag["wac_hit_rate"] = 100.0
+        
         self._image_generation += 1
         gen = self._image_generation
         _log.info(f"[MY ORDERS] Starting fill_table with gen={gen}")
@@ -1356,7 +1374,12 @@ class MarketMyOrdersView(QWidget):
             i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
             
             i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
-            i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)
+            if not o.is_buy_order and avg <= 0:
+                i_avg = NumericTableWidgetItem("N/A", 0)
+                i_avg.setToolTip("Promedio no disponible: historial incompleto o fuera del rango de 2500 transacciones.")
+                i_avg.setForeground(QColor("#64748b"))
+            else:
+                i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)
             
             # MEJOR: Mostrar el mejor precio absoluto del mercado
             ref_v = a.best_buy if o.is_buy_order else a.best_sell

@@ -84,12 +84,27 @@ class CostBasisService:
         self.cache = new_cache
         self.last_fetch_time = now
 
-    def refresh_from_esi(self, char_id: int, token: str):
+    def get_item_diagnostics(self, type_id: int) -> dict:
+        tid_str = str(type_id)
+        data = self.stock_map.get(tid_str, {})
+        cb = self.get_cost_basis(type_id)
+        
+        return {
+            "type_id": type_id,
+            "stock_map_qty": data.get("qty", 0),
+            "stock_map_cost": data.get("cost", 0.0),
+            "average_buy_price": cb.average_buy_price if cb else 0.0,
+            "last_transaction_id": self.last_transaction_id,
+            "in_cache": cb is not None,
+            "source": "persistent_store" if tid_str in self.stock_map else "none"
+        }
+
+    def refresh_from_esi(self, char_id: int, token: str, current_assets: List[dict] = None):
         """
         Calcula el Coste Medio Ponderado (WAC) persistente.
         Solo procesa transacciones nuevas no vistas anteriormente.
         """
-        logger.info(f"Refrescando WAC persistente para char={char_id}...")
+        logger.info(f"Refrescando WAC persistente para char={char_id} (assets_provided={current_assets is not None})...")
         try:
             self.load_from_file(char_id)
             
@@ -98,47 +113,60 @@ class CostBasisService:
                 logger.warning("Falta permiso esi-wallet.read_character_wallet.v1")
                 return False
                 
-            if not transactions:
-                self._rebuild_cache_from_map()
-                return True
-
-            # Filtrar solo transacciones nuevas
-            new_txs = [t for t in transactions if t['transaction_id'] > self.last_transaction_id]
-            if not new_txs:
-                self._rebuild_cache_from_map()
-                return True
-
-            logger.info(f"Procesando {len(new_txs)} nuevas transacciones...")
-            
-            # Ordenar por ID ascendente para flujo cronológico correcto
-            sorted_tx = sorted(new_txs, key=lambda x: x['transaction_id'])
-            
-            for t in sorted_tx:
-                tid_str = str(t['type_id'])
-                qty = t['quantity']
-                price = t['unit_price']
-                is_buy = t.get('is_buy', False)
-                
-                if tid_str not in self.stock_map:
-                    self.stock_map[tid_str] = {'qty': 0, 'cost': 0.0}
-                
-                curr = self.stock_map[tid_str]
-                
-                if is_buy:
-                    curr['qty'] += qty
-                    curr['cost'] += (qty * price)
-                else:
-                    if curr['qty'] > 0:
-                        avg_unit = curr['cost'] / curr['qty']
-                        curr['qty'] -= qty
-                        if curr['qty'] <= 0:
-                            curr['qty'] = 0
-                            curr['cost'] = 0.0 # REINICIO AL VENDER TODO
+            # 1. Procesar nuevas transacciones si existen
+            if transactions:
+                new_txs = [t for t in transactions if t['transaction_id'] > self.last_transaction_id]
+                if new_txs:
+                    logger.info(f"Procesando {len(new_txs)} nuevas transacciones...")
+                    # Ordenar por ID ascendente para flujo cronológico correcto
+                    sorted_tx = sorted(new_txs, key=lambda x: x['transaction_id'])
+                    
+                    for t in sorted_tx:
+                        tid_str = str(t['type_id'])
+                        qty = t['quantity']
+                        price = t['unit_price']
+                        is_buy = t.get('is_buy', False)
+                        
+                        if tid_str not in self.stock_map:
+                            self.stock_map[tid_str] = {'qty': 0, 'cost': 0.0}
+                        
+                        curr = self.stock_map[tid_str]
+                        
+                        if is_buy:
+                            curr['qty'] += qty
+                            curr['cost'] += (qty * price)
                         else:
-                            curr['cost'] = curr['qty'] * avg_unit
-                    # Si qty era 0 y vendemos, ignoramos (venta sin compra previa conocida)
+                            if curr['qty'] > 0:
+                                avg_unit = curr['cost'] / curr['qty']
+                                curr['qty'] -= qty
+                                if curr['qty'] <= 0:
+                                    curr['qty'] = 0
+                                    curr['cost'] = 0.0
+                                    logger.info(f"Position closed for {tid_str} (sold all stock)")
+                                else:
+                                    curr['cost'] = curr['qty'] * avg_unit
+                        
+                        self.last_transaction_id = max(self.last_transaction_id, t['transaction_id'])
 
-                self.last_transaction_id = max(self.last_transaction_id, t['transaction_id'])
+            # 2. Reconciliación opcional con activos reales
+            if current_assets is not None:
+                asset_qty_map = {}
+                for a in current_assets:
+                    tid = str(a['type_id'])
+                    asset_qty_map[tid] = asset_qty_map.get(tid, 0) + a['quantity']
+                
+                reconciled_count = 0
+                for tid_str, data in self.stock_map.items():
+                    if data['qty'] > 0:
+                        real_qty = asset_qty_map.get(tid_str, 0)
+                        if real_qty == 0:
+                            # RESET: No hay stock real del item, forzamos cierre de posición
+                            logger.info(f"Reconcile RESET {tid_str}: item not in assets.")
+                            data['qty'] = 0
+                            data['cost'] = 0.0
+                            reconciled_count += 1
+                if reconciled_count > 0:
+                    logger.info(f"Reconciled {reconciled_count} items (stock 0 in assets).")
 
             self.save_to_file(char_id)
             self._rebuild_cache_from_map()

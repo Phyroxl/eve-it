@@ -32,6 +32,13 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         f"Source:      {diag.get('tax_source', '---')}",
         f"Location ID: {diag.get('location_id', '---')}",
         "",
+        "[COST BASIS (WAC)]",
+        f"Cache File:      {diag.get('wac_cache_file', '---')}",
+        f"Analyzed Items:  {diag.get('wac_item_count', 0)}",
+        f"Last Tx ID:      {diag.get('wac_last_tx_id', 0)}",
+        f"Cache Hit Rate:  {diag.get('wac_hit_rate', 0):.1f}%",
+        f"Items Without Cost: {diag.get('wac_missing_count', 0)}",
+        "",
         "[MARKET SYNCHRONIZATION]",
     ]
     
