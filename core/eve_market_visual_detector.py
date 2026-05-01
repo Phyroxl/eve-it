@@ -524,73 +524,77 @@ class EveMarketVisualDetector:
         result["debug"]["qty_col_x_min"]   = qty_x0
         result["debug"]["qty_col_x_max"]   = qty_x1
 
-        candidate_bands = self._find_blue_row_bands(
-            img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"],
-            is_buy_order=is_buy_order
-        )
-        result["debug"]["raw_candidate_bands"] = list(candidate_bands)
-
         # Enhanced backend diagnostics (always provided)
         result["debug"]["pytesseract_module_available"] = _PYTESSERACT_AVAILABLE
         result["debug"]["tesseract_executable_ready"]    = self._is_tesseract_available()
         result["debug"]["tesseract_cmd_used"]           = self.tesseract_cmd or "N/A"
         result["debug"]["tesseract_suggested_path"]     = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        
-        # Phase 3G: Pass-based detection
-        # Pass 1: Strict (normal height and offset constraints)
-        verified = self._run_detection_pass(
-            img_array, candidate_bands, target_price, target_quantity,
-            (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
-            section_y_min, section_y_max,
-            result, window_rect, manual_region=(manual_region is not None),
-            is_fallback=False, order_tick=order_tick
-        )
 
-        mode = "strict"
-        if verified and result["debug"].get("visual_ocr_buy_large_bands_split"):
-            mode = "buy_split_large_band"
-        result["debug"]["detection_mode"] = mode
+        candidate_bands = []
+        verified        = []
 
-        # Pass 2: Fallback (if enabled and strict pass failed to find a unique match)
-        if not verified and self.manual_full_height_scan and manual_region:
-            result["debug"]["fallback_mode_used"] = True
+        if not is_buy_order and manual_region and self.sell_manual_grid_fallback_enabled:
+            # SELL + manual_region: primary path is the dedicated grid scan.
+            # Skip detection passes entirely so OCR calls are not wasted on blue-band
+            # scanning before the grid even starts.
+            result["debug"]["raw_candidate_bands"] = []
+            result["debug"]["visual_ocr_sell_grid_fallback"] = True
+            result["debug"]["detection_mode"] = "sell_manual_grid_fallback"
+            verified = self._run_sell_manual_grid_fallback(
+                img_array, section_y_min, section_y_max,
+                panel_x0, panel_x1,
+                price_x0, price_x1, qty_x0, qty_x1,
+                target_price, target_quantity, window_rect, result, order_tick
+            )
+
+        else:
+            # BUY or SELL-without-manual_region: original detection flow.
+            candidate_bands = self._find_blue_row_bands(
+                img_array, section_y_min, section_y_max, panel_x0, panel_x1, result["debug"],
+                is_buy_order=is_buy_order
+            )
+            result["debug"]["raw_candidate_bands"] = list(candidate_bands)
+
+            # Phase 3G: Pass-based detection
+            # Pass 1: Strict (normal height and offset constraints)
             verified = self._run_detection_pass(
                 img_array, candidate_bands, target_price, target_quantity,
                 (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
                 section_y_min, section_y_max,
-                result, window_rect, manual_region=True,
-                is_fallback=True, order_tick=order_tick
+                result, window_rect, manual_region=(manual_region is not None),
+                is_fallback=False, order_tick=order_tick
             )
-            if verified:
-                if result["debug"].get("visual_ocr_buy_large_bands_split"):
-                    result["debug"]["detection_mode"] = "buy_split_large_band"
-                else:
-                    result["debug"]["detection_mode"] = "fallback_full_region"
-        
-        # Phase 3M: manual BUY grid fallback when both passes found nothing
-        grid_candidates = []
-        if (not verified and is_buy_order and manual_region and
-                self.buy_manual_grid_fallback_enabled):
-            grid_candidates = self._run_buy_manual_grid_fallback(
-                img_array, section_y_min, section_y_max,
-                panel_x0, panel_x1,
-                price_x0, price_x1, qty_x0, qty_x1,
-                target_price, target_quantity, window_rect, result, order_tick
-            )
-            verified = grid_candidates
 
-        # Phase 3P: manual SELL grid fallback
-        if (not verified and not is_buy_order and manual_region and
-                self.sell_manual_grid_fallback_enabled):
-            # Flag MUST be True even if it finds 0
-            result["debug"]["visual_ocr_sell_grid_fallback"] = True
-            grid_candidates = self._run_sell_manual_grid_fallback(
-                img_array, section_y_min, section_y_max,
-                panel_x0, panel_x1,
-                price_x0, price_x1, qty_x0, qty_x1,
-                target_price, target_quantity, window_rect, result, order_tick
-            )
-            verified = grid_candidates
+            mode = "strict"
+            if verified and result["debug"].get("visual_ocr_buy_large_bands_split"):
+                mode = "buy_split_large_band"
+            result["debug"]["detection_mode"] = mode
+
+            # Pass 2: Fallback (if enabled and strict pass failed to find a unique match)
+            if not verified and self.manual_full_height_scan and manual_region:
+                result["debug"]["fallback_mode_used"] = True
+                verified = self._run_detection_pass(
+                    img_array, candidate_bands, target_price, target_quantity,
+                    (panel_x0, panel_x1, panel_w), (price_x0, price_x1, qty_x0, qty_x1),
+                    section_y_min, section_y_max,
+                    result, window_rect, manual_region=True,
+                    is_fallback=True, order_tick=order_tick
+                )
+                if verified:
+                    if result["debug"].get("visual_ocr_buy_large_bands_split"):
+                        result["debug"]["detection_mode"] = "buy_split_large_band"
+                    else:
+                        result["debug"]["detection_mode"] = "fallback_full_region"
+
+            # Phase 3M: manual BUY grid fallback when both passes found nothing
+            if (not verified and is_buy_order and manual_region and
+                    self.buy_manual_grid_fallback_enabled):
+                verified = self._run_buy_manual_grid_fallback(
+                    img_array, section_y_min, section_y_max,
+                    panel_x0, panel_x1,
+                    price_x0, price_x1, qty_x0, qty_x1,
+                    target_price, target_quantity, window_rect, result, order_tick
+                )
 
         result["candidates_count"] = len(verified)
         result["debug"]["filtered_candidate_bands_count"] = len(result["debug"].get("ocr_attempts") or [])

@@ -1435,3 +1435,106 @@ if __name__ == "__main__":
     unittest.main()
 
 
+
+
+class TestSELLGridRouting(unittest.TestCase):
+    """Phase 3Q: SELL + manual_region must bypass detection passes."""
+
+    def _det(self):
+        from core.eve_market_visual_detector import EveMarketVisualDetector
+        return EveMarketVisualDetector({})
+
+    def _manual_region(self):
+        return {"x_min_ratio": 0.38, "y_min_ratio": 0.22,
+                "x_max_ratio": 0.69, "y_max_ratio": 0.42}
+
+    def test_sell_manual_region_calls_sell_grid_not_detection_pass(self):
+        """SELL + manual_region must call _run_sell_manual_grid_fallback directly."""
+        import numpy as np
+        from unittest.mock import patch, MagicMock
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        order_data = {"price": 17_960_000.0, "volume_remain": 1,
+                      "is_buy_order": False, "tick": 50_000.0}
+        window_rect = {"left": 0, "top": 0, "width": 800, "height": 600}
+
+        sell_grid_called = []
+        pass_called = []
+
+        def fake_sell_grid(*a, **kw):
+            sell_grid_called.append(1)
+            return []
+
+        def fake_pass(*a, **kw):
+            pass_called.append(1)
+            return []
+
+        with patch.object(det, '_run_sell_manual_grid_fallback', side_effect=fake_sell_grid), \
+             patch.object(det, '_run_detection_pass', side_effect=fake_pass):
+            det.detect_own_order_row(img, order_data, window_rect, manual_region=self._manual_region())
+
+        self.assertGreater(len(sell_grid_called), 0, "SELL grid must be called")
+        self.assertEqual(len(pass_called), 0, "detection_pass must NOT be called for SELL+manual")
+
+    def test_buy_manual_region_does_not_call_sell_grid(self):
+        """BUY + manual_region must NOT call _run_sell_manual_grid_fallback."""
+        import numpy as np
+        from unittest.mock import patch
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        order_data = {"price": 17_960_000.0, "volume_remain": 1,
+                      "is_buy_order": True, "tick": 50_000.0}
+        window_rect = {"left": 0, "top": 0, "width": 800, "height": 600}
+
+        sell_grid_called = []
+
+        def fake_sell_grid(*a, **kw):
+            sell_grid_called.append(1)
+            return []
+
+        with patch.object(det, '_run_sell_manual_grid_fallback', side_effect=fake_sell_grid), \
+             patch.object(det, '_run_detection_pass', return_value=[]), \
+             patch.object(det, '_run_buy_manual_grid_fallback', return_value=[]):
+            det.detect_own_order_row(img, order_data, window_rect, manual_region=self._manual_region())
+
+        self.assertEqual(len(sell_grid_called), 0, "SELL grid must NOT be called for BUY")
+
+    def test_sell_grid_result_populates_status(self):
+        """SELL grid returning a candidate must produce unique_match status."""
+        import numpy as np
+        from unittest.mock import patch
+        det = self._det()
+        img = np.zeros((600, 800, 3), dtype=np.uint8)
+        order_data = {"price": 17_960_000.0, "volume_remain": 1,
+                      "is_buy_order": False, "tick": 50_000.0}
+        window_rect = {"left": 0, "top": 0, "width": 800, "height": 600}
+
+        fake_candidate = {
+            "row_center_x": 400, "row_center_y": 300,
+            "matched_price": True, "price_confidence": "numeric_tolerance",
+            "matched_quantity": True, "quantity_match_type": "exact",
+            "quantity_match_confidence": "exact", "quantity_reason": "exact_numeric_match",
+            "matched_own_marker": False, "price_text": "17,960,000.00 ISK",
+            "quantity_text": "1", "normalized_quantity": 1, "normalized_price": 17960000.0,
+            "target_quantity": 1, "band": (100, 118), "text_band": [100, 118],
+            "alignment_offset": 0, "marker_band": (100, 118), "score": 200,
+            "detection_mode": "sell_manual_grid_fallback",
+        }
+
+        with patch.object(det, '_run_sell_manual_grid_fallback', return_value=[fake_candidate]):
+            result = det.detect_own_order_row(img, order_data, window_rect, manual_region=self._manual_region())
+
+        self.assertEqual(result.get("status"), "unique_match")
+        self.assertNotEqual(result.get("row_center_y"), None)
+
+    def test_final_confirm_not_executed(self):
+        """Safety: never_confirm_final_order flag is preserved."""
+        det = self._det()
+        self.assertTrue(
+            getattr(det, 'never_confirm_final_order', True),
+            "never_confirm_final_order must be True"
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

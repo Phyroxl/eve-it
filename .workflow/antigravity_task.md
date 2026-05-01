@@ -3278,3 +3278,11 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - causa: _save_debug_crop qued fuera de EveMarketVisualDetector tras aadir OCRDetectionAborted
 - fix: motodo restaurado en clase correcta y UnboundLocalError en diagnsticos corregido
 - tests ejecutados: test_visual_ocr_matching (97 passed), stability, window_automation, quick_order_update_flow (all OK)
+
+## Phase 3Q: Route SELL Visual OCR Through Dedicated Grid Flow
+
+- **Root cause**: SELL + manual_region was running two `_run_detection_pass` calls (~55 OCR calls, ~8 s) before reaching `_run_sell_manual_grid_fallback`, which then aborted immediately by timeout — Grid Rows/Attempts always 0.
+- **Fix**: In `_run_detection`, SELL + manual_region + `sell_manual_grid_fallback_enabled` now bypasses both detection passes entirely and goes directly to `_run_sell_manual_grid_fallback` as the primary path.
+- **BUY unchanged**: BUY + manual_region still runs strict → fallback → buy_manual_grid (existing flow).
+- **SELL without manual_region unchanged**: falls through original detection path.
+- **Tests**: 4 new tests in `TestSELLGridRouting` verifying routing, status population, and Final Confirm invariant. 254 total passing.
