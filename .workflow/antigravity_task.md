@@ -3370,3 +3370,15 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 
 ### SEGURIDAD QUICK ORDER UPDATE
 **Final Confirm Action : NOT_EXECUTED_BY_DESIGN** — No tocado. Ningún cambio en lógica OCR, window automation, ni confirmación final.
+
+## FIX: Contract Filters and BPC Valuation - 2026-05-01
+
+- Problema: Los filtros de contratos no se aplicaban correctamente al resultado final y las copias (BPC) se valoraban como originales (BPO), inflando el profit.
+- Solucion: 
+  - Implementado core/contract_blueprint_utils.py para clasificacion robusta.
+  - Actualizado contracts_engine.py para excluir BPCs de la valoracion automotica.
+  - Aadido prefetch de metadata en el worker para deteccion por categora.
+  - Aadido filtro especfico para BPCs en la UI.
+  - Asegurada la aplicacion de filtros en cada fase (worker y vista).
+- Archivos: core/contracts_engine.py, core/contracts_models.py, core/contract_blueprint_utils.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
+- Tests: tests/test_contract_blueprint_filters.py (4 passed).

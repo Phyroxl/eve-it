@@ -16,6 +16,7 @@ class ContractItem:
     pct_of_total: float         # line_sell_value / jita_sell_value * 100
     is_blueprint: bool = False
     is_copy: bool = False
+    valuation_status: str = "ok" # "ok", "bpc_ignored", "uncertain_ignored"
 
 
 @dataclass
@@ -47,6 +48,7 @@ class ContractArbitrageResult:
     has_unresolved_items: bool
     unresolved_count: int
     has_blueprints: bool = False
+    valuation_warning: Optional[str] = None
     score: float = 0.0
     score_breakdown: Optional[ScoreBreakdown] = None
 
@@ -65,4 +67,5 @@ class ContractsFilterConfig:
     price_reference: str = "sell"
     exclude_no_price: bool = True
     exclude_blueprints: bool = True
+    exclude_bpcs: bool = True
     category_filter: str = "all"  # ships, modules, etc.

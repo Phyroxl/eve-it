@@ -4,18 +4,7 @@ from core.contracts_models import (
     ContractItem, ContractArbitrageResult, ScoreBreakdown, ContractsFilterConfig
 )
 
-# Blueprint / BPC detection helpers
-_BP_KEYWORDS = ("Blueprint",)
-_BPC_KEYWORDS = ("Blueprint Copy", " BPC", "Blueprint (Copy)")
-
-
-def _is_blueprint_name(name: str) -> bool:
-    return any(kw in name for kw in _BP_KEYWORDS)
-
-
-def _is_blueprint_copy_name(name: str) -> bool:
-    return any(kw in name for kw in _BPC_KEYWORDS)
-
+from core.contract_blueprint_utils import classify_blueprint_item, get_valuation_strategy
 
 def build_price_index(market_orders: List[dict]) -> Dict[int, dict]:
     """
@@ -43,17 +32,16 @@ def build_price_index(market_orders: List[dict]) -> Dict[int, dict]:
             index[tid]['best_buy'] = 0.0
     return index
 
-
 def analyze_contract_items(
     items_raw: List[dict],
     price_index: Dict[int, dict],
     name_map: Dict[int, str],
-    config: ContractsFilterConfig
+    config: ContractsFilterConfig,
+    metadata_map: Optional[Dict[int, dict]] = None
 ) -> List[ContractItem]:
     """
     Convierte items ESI en ContractItem.
     Items sin precio en Jita → jita_sell_price=0.0.
-    pct_of_total se calcula después en calculate_contract_metrics().
     """
     items = []
     for raw in items_raw:
@@ -63,9 +51,23 @@ def analyze_contract_items(
         prices = price_index.get(type_id, {'best_sell': 0.0, 'best_buy': 0.0})
         sell_price = prices['best_sell']
         buy_price = prices['best_buy']
+        
+        item_name = name_map.get(type_id, f"Unknown [{type_id}]")
+        meta = metadata_map.get(type_id, {}) if metadata_map else {}
+        cat_id = meta.get('category_id')
+        
+        classification = classify_blueprint_item(raw, item_name, cat_id)
+        strategy = get_valuation_strategy(classification)
+        
+        val_status = "ok"
+        if strategy == "zero":
+            val_status = "bpc_ignored"
+        elif strategy == "uncertain":
+            val_status = "uncertain_ignored"
+            
         items.append(ContractItem(
             type_id=type_id,
-            item_name=name_map.get(type_id, f"Unknown [{type_id}]"),
+            item_name=item_name,
             quantity=quantity,
             is_included=is_included,
             jita_sell_price=sell_price,
@@ -73,8 +75,9 @@ def analyze_contract_items(
             line_sell_value=quantity * sell_price,
             line_buy_value=quantity * buy_price,
             pct_of_total=0.0,
-            is_blueprint=_is_blueprint_name(name_map.get(type_id, "")),
-            is_copy=raw.get('is_blueprint_copy', False) or _is_blueprint_copy_name(name_map.get(type_id, ""))
+            is_blueprint=classification in ("bpo", "bpc", "unknown_blueprint"),
+            is_copy=(classification == "bpc"),
+            valuation_status=val_status
         ))
     return items
 
@@ -86,22 +89,40 @@ def calculate_contract_metrics(
 ) -> ContractArbitrageResult:
     """
     Construye ContractArbitrageResult.
-    Solo items con is_included=True cuentan para el valor.
-    Fees se aplican sobre la reventa:
-        fees = jita_sell_value * (broker_fee_pct + sales_tax_pct) / 100
-        net_profit = jita_sell_value - fees - contract_cost
+    Solo items con is_included=True y valuation_status='ok' cuentan para el valor.
     """
     included = [i for i in items if i.is_included]
-    jita_sell_value = sum(i.line_sell_value for i in included)
-    jita_buy_value = sum(i.line_buy_value for i in included)
+    
+    # Valuation logic: ignore BPCs and uncertain items
+    jita_sell_value = 0.0
+    jita_buy_value = 0.0
+    has_ignored_items = False
+    warning = None
+    
+    for i in included:
+        if i.valuation_status == "ok":
+            jita_sell_value += i.line_sell_value
+            jita_buy_value += i.line_buy_value
+        else:
+            has_ignored_items = True
+            
+    if any(i.valuation_status == "bpc_ignored" for i in included):
+        warning = "Contiene BPC: valoración automática desactivada para copias"
+    elif any(i.valuation_status == "uncertain_ignored" for i in included):
+        warning = "Blueprint no clasificado: valoración desactivada"
 
     if jita_sell_value > 0:
         for item in included:
-            item.pct_of_total = (item.line_sell_value / jita_sell_value) * 100.0
+            if item.valuation_status == "ok":
+                item.pct_of_total = (item.line_sell_value / jita_sell_value) * 100.0
+            else:
+                item.pct_of_total = 0.0
 
     value_concentration = 0.0
     if included and jita_sell_value > 0:
-        value_concentration = max(i.line_sell_value for i in included) / jita_sell_value
+        valid_items = [i for i in included if i.valuation_status == "ok"]
+        if valid_items:
+            value_concentration = max(i.line_sell_value for i in valid_items) / jita_sell_value
 
     contract_cost = contract_raw.get('price', 0.0)
     gross_profit = jita_sell_value - contract_cost
@@ -109,7 +130,7 @@ def calculate_contract_metrics(
     net_profit = jita_sell_value - fees - contract_cost
     roi_pct = (net_profit / contract_cost * 100.0) if contract_cost > 0 else 0.0
 
-    unresolved = [i for i in included if i.jita_sell_price == 0.0]
+    unresolved = [i for i in included if i.jita_sell_price == 0.0 and i.valuation_status == "ok"]
     type_ids = list({i.type_id for i in included})
     total_units = sum(i.quantity for i in included)
 
@@ -131,7 +152,8 @@ def calculate_contract_metrics(
         value_concentration=value_concentration,
         has_unresolved_items=len(unresolved) > 0,
         unresolved_count=len(unresolved),
-        has_blueprints=any(i.is_blueprint or i.is_copy for i in items),
+        has_blueprints=any(i.is_blueprint for i in items),
+        valuation_warning=warning
     )
 
 
@@ -185,14 +207,28 @@ def apply_contracts_filters(
     config: ContractsFilterConfig
 ) -> List[ContractArbitrageResult]:
     """Filtra y devuelve top 1000 ordenados por score DESC."""
-    result = [
-        c for c in contracts
-        if c.net_profit >= config.profit_min_isk
-        and c.roi_pct >= config.roi_min_pct
-        and c.item_type_count <= config.item_types_max
-        and not (config.exclude_no_price and c.has_unresolved_items)
-        and not (config.exclude_blueprints and c.has_blueprints)
-    ]
+    result = []
+    for c in contracts:
+        # 1. Profit & ROI
+        if c.net_profit < config.profit_min_isk: continue
+        if c.roi_pct < config.roi_min_pct: continue
+        
+        # 2. Complexity
+        if c.item_type_count > config.item_types_max: continue
+        
+        # 3. Prices
+        if config.exclude_no_price and c.has_unresolved_items: continue
+        
+        # 4. Blueprints
+        if config.exclude_blueprints and c.has_blueprints:
+            continue
+        
+        if config.exclude_bpcs:
+            has_copy = any(i.is_copy for i in c.items)
+            if has_copy:
+                continue
+                
+        result.append(c)
     
     # Filtro por categoría (basado en el item de mayor valor)
     if config.category_filter != "all":

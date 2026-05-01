@@ -150,9 +150,13 @@ class MarketContractsView(QWidget):
         self.exclude_no_price_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
         fl.addWidget(self.exclude_no_price_check)
 
-        self.exclude_blueprints_check = QCheckBox("Excluir Blueprints / BPCs")
+        self.exclude_blueprints_check = QCheckBox("Excluir Blueprints (BPOs)")
         self.exclude_blueprints_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
         fl.addWidget(self.exclude_blueprints_check)
+
+        self.exclude_bpcs_check = QCheckBox("Excluir Copias (BPCs)")
+        self.exclude_bpcs_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
+        fl.addWidget(self.exclude_bpcs_check)
 
         fl.addStretch()
 
@@ -383,7 +387,7 @@ class MarketContractsView(QWidget):
         )
         dl.addWidget(self.items_table, 1)
 
-        self.main_layout.addWidget(content_panel, 1)
+        self.main_layout.addWidget(content_panel)
 
     def _load_config(self):
         index = self.combo_region.findData(self.config.region_id)
@@ -397,6 +401,7 @@ class MarketContractsView(QWidget):
         self.scan_max_spin.setValue(self.config.max_contracts_to_scan)
         self.exclude_no_price_check.setChecked(self.config.exclude_no_price)
         self.exclude_blueprints_check.setChecked(self.config.exclude_blueprints)
+        self.exclude_bpcs_check.setChecked(self.config.exclude_bpcs)
         
         idx = self.combo_category.findData(self.config.category_filter)
         if idx >= 0: self.combo_category.setCurrentIndex(idx)
@@ -411,6 +416,7 @@ class MarketContractsView(QWidget):
         self.config.max_contracts_to_scan = self.scan_max_spin.value()
         self.config.exclude_no_price = self.exclude_no_price_check.isChecked()
         self.config.exclude_blueprints = self.exclude_blueprints_check.isChecked()
+        self.config.exclude_bpcs = self.exclude_bpcs_check.isChecked()
         self.config.category_filter = self.combo_category.currentData() or "all"
         save_contracts_filters(self.config)
 
@@ -461,10 +467,10 @@ class MarketContractsView(QWidget):
 
     def add_contract_row(self, c):
         # Insertar fila si cumple filtro (aunque en worker ya deberia cumplir algo, 
-        # pero es útil re-chequear si se cambian filtros locales? Worker ya lo manda si profit > 0)
-        if c.net_profit < self.config.profit_min_isk or c.roi_pct < self.config.roi_min_pct or c.item_type_count > self.config.item_types_max:
-            return
-        if self.config.exclude_no_price and c.has_unresolved_items:
+        # pero es útil re-chequear si se cambian filtros locales)
+        from core.contracts_engine import apply_contracts_filters
+        filtered_single = apply_contracts_filters([c], self.config)
+        if not filtered_single:
             return
 
         row = self.results_table.rowCount()
@@ -474,7 +480,7 @@ class MarketContractsView(QWidget):
         i_num.setTextAlignment(Qt.AlignCenter)
         
         items_txt = str(c.item_type_count)
-        if c.has_unresolved_items:
+        if c.has_unresolved_items or c.valuation_warning:
             items_txt += " ⚠"
         i_items = QTableWidgetItem(items_txt)
         i_items.setTextAlignment(Qt.AlignCenter)
@@ -527,10 +533,6 @@ class MarketContractsView(QWidget):
         self.results_table.setItem(row, 7, i_exp)
         self.results_table.setItem(row, 8, i_score)
         
-        for col in range(9):
-            it = self.results_table.item(row, col)
-            if it: it.setTextAlignment(Qt.AlignCenter)
-        
         # Guardar ref oculta en la fila
         i_num.setData(Qt.UserRole, c)
 
@@ -556,7 +558,6 @@ class MarketContractsView(QWidget):
         self._save_config()
         self.results_table.setRowCount(0)
         self._image_generation += 1
-        gen = self._image_generation
         
         from core.contracts_engine import apply_contracts_filters
         filtered = apply_contracts_filters(self._all_results, self.config)
@@ -617,24 +618,29 @@ class MarketContractsView(QWidget):
             risk_msgs.append(f"{c.unresolved_count} item(s) sin precio")
         if c.value_concentration > 0.80:
             risk_msgs.append(f"Alta concentración ({c.value_concentration*100:.0f}%)")
+        if c.valuation_warning:
+            risk_msgs.append(c.valuation_warning)
             
         if risk_msgs:
-            self.lbl_det_risk.setText(f"<b>RIESGO:</b> <span style='color:#f59e0b;'>{' | '.join(risk_msgs)}</span>")
+            self.lbl_det_risk.setText(f"<b>AVISOS:</b> <span style='color:#f59e0b;'>{' | '.join(risk_msgs)}</span>")
         else:
-            self.lbl_det_risk.setText(f"<b>RIESGO:</b> <span style='color:#10b981;'>Bajo</span>")
+            self.lbl_det_risk.setText(f"<b>AVISOS:</b> <span style='color:#10b981;'>Ninguno</span>")
             
         self.detail_frame.setVisible(True)
         
         self.items_table.setRowCount(0)
         self.items_table.setRowCount(len(items))
-        self._image_generation += 1 # Nuevo refresh de la tabla de detalles
+        self._image_generation += 1 
         gen = self._image_generation
         for r, item in enumerate(items):
             i_name = QTableWidgetItem(item.item_name)
             i_qty = QTableWidgetItem(f"{item.quantity:,}")
             i_qty.setTextAlignment(Qt.AlignCenter)
             
-            if not item.is_included:
+            if item.is_copy:
+                i_name.setText(i_name.text() + " (COPIA BPC)")
+                i_name.setForeground(QColor("#f59e0b"))
+            elif not item.is_included:
                 i_name.setText(i_name.text() + " (REQUERIDO)")
                 i_name.setForeground(QColor("#ef4444"))
                 
@@ -646,6 +652,11 @@ class MarketContractsView(QWidget):
             i_val = QTableWidgetItem(val_txt)
             i_val.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             
+            if item.valuation_status != "ok":
+                i_price.setText("-")
+                i_val.setText("-")
+                i_val.setForeground(QColor("#64748b"))
+
             i_pct = QTableWidgetItem(f"{item.pct_of_total:.1f}%")
             i_pct.setTextAlignment(Qt.AlignCenter)
             

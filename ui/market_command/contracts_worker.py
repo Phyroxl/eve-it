@@ -68,10 +68,12 @@ class ContractsScanWorker(QThread):
 
             # 4. Escaneo Profundo
             name_map: dict = {}
+            from core.item_resolver import ItemResolver
+            item_resolver = ItemResolver.instance()
+
             for i, contract in enumerate(candidates):
                 # CONTROL DE CANCELACIÓN EN CADA ITERACIÓN
                 if self._cancelled:
-                    _log_info = "Escaneo detenido por el usuario."
                     break
                 
                 pct = 20 + int((i / len(candidates)) * 75)
@@ -89,16 +91,16 @@ class ContractsScanWorker(QThread):
                 if self._cancelled: break
                 if not items_raw: continue
                 
-                # Resolución de Nombres (en bloques de 500 para ESI)
-                new_ids = [r['type_id'] for r in items_raw if r.get('type_id') not in name_map]
-                new_ids = list(set(new_ids))
+                # Recolectar IDs para nombres y metadata
+                item_ids = list({r['type_id'] for r in items_raw})
                 
+                # Resolución de Nombres (en bloques de 500 para ESI)
+                new_ids = [tid for tid in item_ids if tid not in name_map]
                 if new_ids:
                     for chunk_idx in range(0, len(new_ids), 500):
                         if self._cancelled: break
                         chunk = new_ids[chunk_idx:chunk_idx+500]
                         try:
-                            # Check dentro del loop de resolución
                             names_res = client.universe_names(chunk)
                             if self._cancelled: break
                             for n in names_res:
@@ -108,14 +110,21 @@ class ContractsScanWorker(QThread):
                 
                 if self._cancelled: break
                 
+                # Prefetch Metadata (para detección de Blueprints por categoría)
+                item_resolver.prefetch_type_metadata(item_ids)
+                metadata_map = {tid: item_resolver.get_type_info(tid, blocking=False) for tid in item_ids}
+                
                 # Cálculo de Métricas (CPU Bound)
-                items = analyze_contract_items(items_raw, price_index, name_map, self.config)
+                items = analyze_contract_items(items_raw, price_index, name_map, self.config, metadata_map)
                 result = calculate_contract_metrics(contract, items, self.config)
                 result.score = score_contract(result)
                 self._scanned_count = i + 1
                 
-                # Emisión en tiempo real si es rentable
-                if result.net_profit > self.config.profit_min_isk and result.roi_pct > self.config.roi_min_pct:
+                # Aplicar filtros antes de emitir o guardar
+                # Usamos una lista de uno para reutilizar apply_contracts_filters
+                filtered_single = apply_contracts_filters([result], self.config)
+                
+                if filtered_single:
                     all_results.append(result)
                     self.batch_ready.emit(result)
 
