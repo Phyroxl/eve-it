@@ -132,6 +132,10 @@ _DEFAULT_CONFIG: dict = {
     "visual_ocr_buy_row_split_overlap_px":      2,
     "visual_ocr_buy_allow_price_anchor_quantity_weak": True,
     "visual_ocr_price_digit_pattern_match":     True,
+    "visual_ocr_sell_manual_grid_fallback_enabled": True,
+    "visual_ocr_sell_manual_grid_row_heights": [18, 20, 22],
+    "visual_ocr_sell_manual_grid_step_px": 8,
+    "visual_ocr_sell_manual_grid_min_score": 180,
 }
 
 _RATIO_KEYS = (
@@ -257,7 +261,8 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_pre_right_click_left_click",
                 "visual_ocr_buy_split_large_bands",
                 "visual_ocr_buy_allow_price_anchor_quantity_weak",
-                "visual_ocr_price_digit_pattern_match"):
+                "visual_ocr_price_digit_pattern_match",
+                "visual_ocr_sell_manual_grid_fallback_enabled"):
         if key in config:
             result[key] = bool(config[key])
             user_keys.add(key)
@@ -326,13 +331,22 @@ def validate_quick_order_update_config(config: dict) -> dict:
                 "visual_ocr_buy_right_click_x_offset", "visual_ocr_buy_right_click_y_offset",
                 "visual_ocr_buy_modify_menu_offset_x", "visual_ocr_buy_modify_menu_offset_y",
                 "visual_ocr_buy_expected_row_height_px", "visual_ocr_buy_large_band_min_height_px",
-                "visual_ocr_buy_row_split_overlap_px"):
+                "visual_ocr_buy_row_split_overlap_px",
+                "visual_ocr_sell_manual_grid_step_px", "visual_ocr_sell_manual_grid_min_score"):
         if key in config:
             try:
                 result[key] = int(config[key])
                 user_keys.add(key)
             except (TypeError, ValueError):
                 pass
+
+    if "visual_ocr_sell_manual_grid_row_heights" in config:
+        try:
+            val = config["visual_ocr_sell_manual_grid_row_heights"]
+            if isinstance(val, list):
+                result["visual_ocr_sell_manual_grid_row_heights"] = [int(x) for x in val]
+        except (TypeError, ValueError):
+            pass
 
     result["_user_keys"] = list(user_keys)
 
