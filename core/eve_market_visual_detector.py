@@ -19,6 +19,7 @@ only; OS-level dialog verification is not possible.
 """
 import logging
 import re
+from typing import Optional
 
 _log = logging.getLogger('eve.market.visual_detector')
 
@@ -119,6 +120,43 @@ def normalize_quantity_text(text: str) -> int:
         return int(digits)
     except ValueError:
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Price group helpers (Phase 3J — corrupted million pattern)
+# ---------------------------------------------------------------------------
+
+def _price_groups(price: float) -> list:
+    """Split price into thousand-groups right-to-left: 29660000 → [29, 660, 0]"""
+    n = int(price)
+    if n == 0:
+        return [0]
+    groups = []
+    while n > 0:
+        groups.insert(0, n % 1000)
+        n //= 1000
+    return groups
+
+
+def _price_group_tokens_matched(ocr_tokens: list, target_groups: list,
+                                 tolerance_pct: float = 0.05) -> tuple:
+    """
+    Compare OCR numeric tokens against significant thousand-groups of target price.
+    Returns (matched_count, significant_count).
+    Significant groups are those > 0 (trailing zero-groups are lost in OCR and ignored).
+    Tolerance: max(10 ISK, group * tolerance_pct) per group.
+    """
+    significant = [g for g in target_groups if g > 0]
+    if not significant:
+        return 0, 0
+    matched = 0
+    for grp in significant:
+        tol = max(10, int(grp * tolerance_pct))
+        for tok in ocr_tokens:
+            if abs(tok - grp) <= tol:
+                matched += 1
+                break
+    return matched, len(significant)
 
 
 # ---------------------------------------------------------------------------
@@ -698,12 +736,23 @@ class EveMarketVisualDetector:
             if own_marker: score += 100
             elif is_buy_order and is_background_band: score += 60 # Weak marker evidence for BUY background
             else:          score -= 100
-            
+
             if price_ok:
-                if p_match_res["confidence"] == "numeric_tolerance": score += 80
-                elif p_match_res["confidence"] == "digit_pattern":   score += 70
-                else:                                                score += 50
-            else:          score -= 80
+                conf = p_match_res["confidence"]
+                if conf == "numeric_tolerance":
+                    score += 80
+                elif conf == "digit_pattern":
+                    score += 70
+                elif conf == "scaled_digit_pattern":
+                    score += 60
+                elif conf == "corrupted_million_pattern":
+                    # Only meaningful when the own-order marker is confirmed;
+                    # weaker evidence when relying solely on background band.
+                    score += 45 if own_marker else 15
+                else:
+                    score += 50
+            else:
+                score -= 80
             
             if qty_match_type == "exact":    score += 50
             elif qty_match_type == "suffix": score += 35
@@ -721,6 +770,8 @@ class EveMarketVisualDetector:
                 "price_reason": p_match_res["reason"],
                 "price_digits": p_match_res["digits"],
                 "target_digits": p_match_res["target_digits"],
+                "price_target_groups": p_match_res.get("target_groups", []),
+                "price_ocr_groups": p_match_res.get("ocr_groups", []),
                 "quantity_match": qty_ok,
                 "score": score,
                 "is_fallback": is_fallback,
@@ -774,32 +825,33 @@ class EveMarketVisualDetector:
 
         return verified
 
-        return result
-
     def _match_price_ocr(self, price_text: str, target_price: float, is_buy_order: bool = False) -> dict:
         """
-        Evaluate price match using numeric tolerance and digit-pattern similarity.
+        Evaluate price match using numeric tolerance, digit-pattern similarity,
+        and (BUY only) corrupted-million group matching.
         Target-aware: compares OCR digits against expected target digits.
         """
         res = {
-            "matched":      False,
-            "normalized":   0.0,
-            "confidence":   "none",
-            "diff":         0.0,
-            "reason":       "mismatch",
-            "digits":       "",
-            "target_digits": str(int(target_price))
+            "matched":       False,
+            "normalized":    0.0,
+            "confidence":    "none",
+            "diff":          0.0,
+            "reason":        "mismatch",
+            "digits":        "",
+            "target_digits": str(int(target_price)),
+            "target_groups": [],
+            "ocr_groups":    [],
         }
-        
+
         if not price_text:
             res["reason"] = "empty_text"
             return res
 
-        # 1. Numeric check (current behavior)
+        # 1. Numeric check
         ocr_price = normalize_price_text(price_text)
         max_tol = max(self.price_match_abs_tolerance, target_price * self.price_match_rel_tolerance)
         diff = abs(ocr_price - target_price)
-        
+
         if diff <= max_tol:
             res["matched"] = True
             res["normalized"] = ocr_price
@@ -808,29 +860,25 @@ class EveMarketVisualDetector:
             res["reason"] = "within_tolerance"
             return res
 
-        # 2. Digit pattern match (New Phase 3I)
+        # 2. Digit pattern match (Phase 3I)
         if self.price_digit_pattern_match:
-            # Clean OCR text: O->0, remove non-digits
             clean_text = price_text.upper().replace("O", "0")
-            # Also common numeric artifacts
             clean_text = clean_text.replace("I", "1").replace("L", "1").replace("|", "1")
             clean_text = clean_text.replace("S", "5").replace("B", "8")
-            
+
             ocr_digits = "".join(c for c in clean_text if c.isdigit())
             res["digits"] = ocr_digits
             target_digits = res["target_digits"]
-            
+
             if ocr_digits == target_digits:
                 res["matched"] = True
                 res["normalized"] = target_price
                 res["confidence"] = "digit_pattern"
                 res["reason"] = "exact_digit_pattern"
                 return res
-            
-            # Substring/Containment match
+
             if ocr_digits and target_digits:
                 if target_digits in ocr_digits or ocr_digits in target_digits:
-                    # Allow if enough digits matched (at least 5 or half of target)
                     min_len = max(5, len(target_digits) // 2)
                     if len(ocr_digits) >= min_len:
                         res["matched"] = True
@@ -838,16 +886,35 @@ class EveMarketVisualDetector:
                         res["confidence"] = "digit_pattern"
                         res["reason"] = "partial_digit_pattern_match"
                         return res
-                
-                # Scaled digit pattern (missing zeros/groups)
+
                 if is_buy_order and len(ocr_digits) >= 5:
-                    # If target is "29660000" and OCR is "29660" (lost last group)
                     if target_digits.startswith(ocr_digits):
                         res["matched"] = True
                         res["normalized"] = target_price
                         res["confidence"] = "scaled_digit_pattern"
                         res["reason"] = "target_prefix_digits_match"
                         return res
+
+        # 3. Group-based corrupted-million match (Phase 3J — BUY only)
+        # For million-range prices where OCR corrupts digit groupings.
+        # Strategy: split target into thousand-groups, extract numeric tokens from OCR,
+        # require ALL significant (>0) groups to have a matching token within tolerance.
+        # Example: target=29660000 → groups=[29,660,0]; OCR tokens=[20,669]
+        #   20≈29 (diff=9≤tol=10) ✓  669≈660 (diff=9≤tol=33) ✓  → 2/2 match → ACCEPT
+        # Competitor 29708000 OCR tokens=[29,708]: 29≈29 ✓ but 708 vs 660 diff=48>33 ✗ → REJECT
+        if is_buy_order and target_price >= 1_000_000:
+            tgt_groups = _price_groups(target_price)
+            raw_tokens = [int(m) for m in re.findall(r'\d+', price_text) if m and int(m) > 0]
+            res["target_groups"] = tgt_groups
+            res["ocr_groups"] = raw_tokens
+            matched_cnt, sig_cnt = _price_group_tokens_matched(raw_tokens, tgt_groups)
+            if sig_cnt >= 2 and matched_cnt >= sig_cnt:
+                res["matched"] = True
+                res["normalized"] = target_price
+                res["confidence"] = "corrupted_million_pattern"
+                res["reason"] = "price_group_all_significant_matched"
+                res["digits"] = ",".join(str(t) for t in raw_tokens)
+                return res
 
         res["normalized"] = ocr_price
         res["diff"] = diff

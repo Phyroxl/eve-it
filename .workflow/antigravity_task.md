@@ -3073,4 +3073,44 @@ EVE Online highlights the entire "Buyer" section of the market window with a con
 - **Noisy Input Handling**: Confirmed that messy strings like '29.66O.OOO @@ ISK' correctly match the target 29660000.0.
 - **Safety**: NOT_EXECUTED_BY_DESIGN invariant preserved.
 
+## Phase 3J: BUY Visual OCR Robust Candidate Ranking and Corrupted Price Matching
+
+**Objective**: Definitively fix BUY order detection for heavily corrupted OCR reads. Real-world case: Mid-grade Amulet Alpha (order_id=7317475994), price=29,660,000 ISK, qty=8 — OCR reads `"20 669 Gag aa ISK"` for price and `"in g"` for quantity. Previous phases rejected this as `price_mismatch`.
+
+### Root Cause:
+OCR on EVE's dark-blue BUY band produces garbled output that existing matchers (numeric tolerance, digit-pattern, prefix/substring) all fail. The only recoverable signal is the thousand-group structure of the price (29|660|000 → groups [29, 660, 0]), which survives even extreme corruption.
+
+### Changes Implemented:
+
+- **Module-level helpers** in `core/eve_market_visual_detector.py`:
+  - `_price_groups(price: float) -> list`: Splits price into thousand-groups right-to-left (29660000 → [29, 660, 0]).
+  - `_price_group_tokens_matched(ocr_tokens, target_groups, tol=0.05) -> (matched, sig)`: Compares extracted OCR numeric tokens to each significant (>0) group with per-group tolerance `max(10, int(group * 0.05))`.
+
+- **Phase 3J matcher** in `_match_price_ocr()`:
+  - Only activates for BUY orders with target price ≥ 1,000,000 and at least 2 significant groups.
+  - All significant groups must match; returns `confidence="corrupted_million_pattern"`, `normalized=target_price`.
+  - Scored at +45 (own_marker) / +15 (no marker) — below all clean matchers (+60/+70/+80).
+
+- **False-positive rejection** (all tested and verified):
+  - 29,708,000: group 708 vs target 660, diff=48 > tol=33 → rejected.
+  - 29,700,000: group 700 vs target 660, diff=40 > tol=33 → rejected.
+  - 32,990,000: group 990 vs target 660, diff=330 >> tol → rejected.
+
+- **Diagnostics enhancements** in `core/quick_order_update_diagnostics.py`:
+  - Per-attempt: `price_reason`, `target_groups`, `ocr_groups` in OCR attempts log.
+  - Best-rejected-row section: Price Type, Price Reason, Target Groups, OCR Groups, Best Candidate Score, Best Candidate Reason.
+  - New "BUY Top Candidates" section: top 3 attempts sorted by score with full p/q/score/reason/groups.
+
+- **Test coverage** in `tests/test_visual_ocr_matching.py`:
+  - `TestPriceGroupHelpers` (5 tests): _price_groups and _price_group_tokens_matched unit tests.
+  - `TestBUYCorruptedPriceMatching` (14 tests): full integration tests for the Mid-grade Amulet Alpha real-world case, including competitor rejection and quantity safety.
+
+### Score Math (real case):
+Band [574,592], own_marker=True: base=100 + corrupted_million_pattern=45 + buy_artifact_g_for_8=35 = **180 ≥ threshold 150** → UNIQUE_MATCH.
+
+### Verification Results:
+- **Unit Tests**: 178 passed (25 + 3 + 107 + 43 across all 4 suites).
+- **Safety**: `Final Confirm Action : NOT_EXECUTED_BY_DESIGN` invariant preserved — no Enter, no confirm click, no guard weakened.
+- **SELL behavior**: Unchanged. SELL offsets (65,37) intact. BUY offsets (50,20) intact.
+
 **Status**: Phase 3I Complete. BUY order automation is now resilient to typical green-background OCR artifacts.

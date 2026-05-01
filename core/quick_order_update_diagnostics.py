@@ -455,14 +455,23 @@ def _format_automation_section(automation: dict) -> list:
     lines.append(f"  Visual OCR Own Marker: {_b(automation.get('visual_ocr_own_marker_matched'))}")
     lines.append(f"  Visual OCR Price Txt : {_b(automation.get('visual_ocr_price_text'))}")
     lines.append(f"  Visual OCR Price Type: {automation.get('visual_ocr_price_match_confidence', 'none')}")
+    lines.append(f"  Visual OCR Price Reason: {automation.get('visual_ocr_price_match_reason', 'none')}")
     lines.append(f"  Visual OCR Qty Txt   : {_b(automation.get('visual_ocr_quantity_text'))}")
     lines.append(f"  Visual OCR Qty Type  : {automation.get('visual_ocr_quantity_match_type', 'none')}")
-    
+
     ocr_attempts = dbg.get("ocr_attempts") or []
     if ocr_attempts:
         lines.append(f"  Visual OCR OCR Attempts: {len(ocr_attempts)}")
         for i, att in enumerate(ocr_attempts[:3]):
+            p_conf = att.get('price_confidence', 'none')
+            p_reason = att.get('price_reason', '')
+            tgt_grps = att.get('price_target_groups', [])
+            ocr_grps = att.get('price_ocr_groups', [])
             lines.append(f"    #{i+1} band={att.get('band')} marker={att.get('marker_matched')} p='{att.get('price_text')}' q='{att.get('quantity_text')}' score={att.get('score', 0)}")
+            if p_conf != 'none':
+                lines.append(f"       price_type={p_conf} reason={p_reason}")
+            if tgt_grps:
+                lines.append(f"       target_groups={tgt_grps} ocr_groups={ocr_grps}")
     
     lines.append(f"  Visual OCR Qty Target: {automation.get('visual_ocr_quantity_target', 'N/A')}")
     lines.append(f"  Visual OCR Qty Norm  : {automation.get('visual_ocr_quantity_normalized', 'N/A')}")
@@ -493,18 +502,54 @@ def _format_automation_section(automation: dict) -> list:
     if best_rej and automation.get("status") != "unique_match":
         lines.append("  Visual OCR Best Rej. :")
         lines.append(f"    band={best_rej.get('band')} marker={best_rej.get('marker_matched')}")
-        
+
         p_norm   = best_rej.get('normalized_price', 0.0)
         p_target = best_rej.get('target_price', 0.0)
         p_diff   = abs(p_norm - p_target)
+        p_conf   = best_rej.get('price_confidence', 'none')
+        p_reason = best_rej.get('price_reason', '')
         lines.append(f"    p='{best_rej.get('price_text')}' norm={p_norm} target={p_target} diff={p_diff:.1f}")
-        
+        lines.append(f"    Visual OCR Price Type   : {p_conf}")
+        lines.append(f"    Visual OCR Price Reason : {p_reason}")
+        tgt_grps = best_rej.get('price_target_groups', [])
+        ocr_grps = best_rej.get('price_ocr_groups', [])
+        if tgt_grps:
+            lines.append(f"    Visual OCR Target Groups: {tgt_grps}")
+            lines.append(f"    Visual OCR Price Groups : {ocr_grps}")
+
         q_norm   = best_rej.get('normalized_quantity', 0)
         q_target = best_rej.get('target_quantity', 0)
         q_type   = best_rej.get('quantity_match_type', 'none')
         lines.append(f"    q='{best_rej.get('quantity_text')}' norm={q_norm} target={q_target} type={q_type}")
-        
+
+        best_score = best_rej.get('score', 0)
+        lines.append(f"    Visual OCR Best Candidate Score : {best_score}")
+        lines.append(f"    Visual OCR Best Candidate Reason: {best_rej.get('reject_reason', 'unknown')}")
         lines.append(f"    p_match={best_rej.get('price_match')} q_match={best_rej.get('quantity_match')} reason={best_rej.get('reject_reason')}")
+
+    # BUY: top-3 candidates sorted by score descending
+    is_buy_section = (dbg.get("section_used") in ("buy", "manual_override") and
+                      automation.get("_order_side") == "buy")
+    if (dbg.get("visual_ocr_buy_large_bands_split") or is_buy_section) and ocr_attempts:
+        sorted_attempts = sorted(ocr_attempts, key=lambda a: a.get("score", -9999), reverse=True)
+        lines.append(f"  Visual OCR BUY Top Candidates ({min(3, len(sorted_attempts))}):")
+        for rank, att in enumerate(sorted_attempts[:3], 1):
+            lines.append(
+                f"    #{rank} band={att.get('band')} score={att.get('score', 0)} "
+                f"marker={att.get('marker_matched')} bg={att.get('is_background_band', False)}"
+            )
+            lines.append(
+                f"       p='{att.get('price_text')}' type={att.get('price_confidence','none')} "
+                f"reason={att.get('price_reason','')}"
+            )
+            lines.append(
+                f"       q='{att.get('quantity_text')}' qty_type={att.get('quantity_match_type','none')} "
+                f"qty_reason={att.get('quantity_reason','')}"
+            )
+            tgt_g = att.get('price_target_groups', [])
+            ocr_g = att.get('price_ocr_groups', [])
+            if tgt_g:
+                lines.append(f"       target_groups={tgt_g} ocr_groups={ocr_g}")
     
     rej = dbg.get("marker_rejected_bands") or []
     if rej:
