@@ -3527,3 +3527,12 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Iconos: Refinados fallbacks de SKIN y diagnostico de iconos en el reporte.
 - Archivos: ui/market_command/contracts_view.py, core/contracts_engine.py, core/contracts_models.py, core/eve_icon_service.py.
 - Verificacion: Nuevos tests en tests/test_contract_abyssal.py aprobados.
+
+## FIX: Open contracts in game from table and button - 2026-05-01
+
+- Bug: El boton ABRIR IN-GAME y el doble click no funcionaban correctamente.
+- Causa: Falta de User-Agent en la cabecera ESI y logica de recuperacion de contract_id débil ante tablas ordenadas.
+- Fix: Refactorizado ESIClient para usar _request_auth (con User-Agent) en UI endpoints. Mejorada la recuperacion de contract_id en la UI con fallback de seleccion.
+- Diagnosticos: Aadida seccion [OPEN IN-GAME] al reporte de escaneo.
+- Tests: Verificado con tests/test_contract_interaction.py y tests/test_contract_abyssal.py.
+- Estado: Operacional y robusto ante ordenacion de tabla.

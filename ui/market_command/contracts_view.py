@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QComboBox, QSplitter, QTextEdit
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap, QPainter, QKeySequence
 
 logger = logging.getLogger(__name__)
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -759,35 +759,67 @@ class MarketContractsView(QWidget):
         return "\n".join(report)
 
     def keyPressEvent(self, event):
-        if event.matches(QGuiApplication.Copy):
-            if self.items_table.hasFocus():
-                self.copy_table_selection(self.items_table)
-                return
-            if self.results_table.hasFocus():
-                self.copy_table_selection(self.results_table)
-                return
+        try:
+            # Manejo de Copia (Ctrl+C)
+            if event.matches(QKeySequence.StandardKey.Copy):
+                if self.items_table.hasFocus():
+                    self.copy_table_selection(self.items_table)
+                    return
+                if self.results_table.hasFocus():
+                    self.copy_table_selection(self.results_table)
+                    return
+            
+            # Manejo de Seleccionar Todo (Ctrl+A)
+            elif event.matches(QKeySequence.StandardKey.SelectAll):
+                if self.items_table.hasFocus():
+                    self.items_table.selectAll()
+                    return
+                if self.results_table.hasFocus():
+                    self.results_table.selectAll()
+                    return
+                    
+        except Exception as e:
+            logger.warning(f"[CONTRACTS] Error in keyPressEvent: {e}")
+            
         super().keyPressEvent(event)
 
     def copy_table_selection(self, table):
-        selection = table.selectedRanges()
-        if not selection:
-            return
-        
-        rows = []
-        # Solo manejamos un rango por simplicidad, o concatenamos
-        for r in selection:
-            for row in range(r.topRow(), r.bottomRow() + 1):
-                row_data = []
-                for col in range(r.leftColumn(), r.rightColumn() + 1):
+        try:
+            selection = table.selectedRanges()
+            if not selection:
+                # Si no hay rangos (pero quizás hay selección por celdas individuales en otros modos)
+                # En QTableWidget con SelectRows/SingleSelection suele haber rangos.
+                return
+            
+            rows_data_list = []
+            
+            # Recolectar todas las filas únicas involucradas en la selección
+            # (El usuario puede seleccionar bloques no contiguos)
+            all_selected_rows = set()
+            for r in selection:
+                for row in range(r.topRow(), r.bottomRow() + 1):
+                    all_selected_rows.add(row)
+            
+            # Ordenar las filas para que el pegado sea coherente
+            sorted_rows = sorted(list(all_selected_rows))
+            
+            for row in sorted_rows:
+                row_cells = []
+                # Copiamos todas las columnas visibles del widget
+                for col in range(table.columnCount()):
                     it = table.item(row, col)
-                    row_data.append(it.text() if it else "")
-                rows.append("\t".join(row_data))
-        
-        if rows:
-            text = "\n".join(rows)
-            QGuiApplication.clipboard().setText(text)
-            self.status_label.setText(f"Copiado: {len(rows)} filas al portapapeles")
-            self.status_label.setStyleSheet("color: #10b981; font-size: 9px;")
+                    row_cells.append(it.text() if it else "")
+                rows_data_list.append("\t".join(row_cells))
+            
+            if rows_data_list:
+                text = "\n".join(rows_data_list)
+                QGuiApplication.clipboard().setText(text)
+                self.status_label.setText(f"Copiado: {len(rows_data_list)} filas al portapapeles")
+                self.status_label.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 800;")
+        except Exception as e:
+            logger.error(f"[CONTRACTS] Error copying table selection: {e}")
+            self.status_label.setText("Error al copiar")
+            self.status_label.setStyleSheet("color: #ef4444; font-size: 9px;")
 
     def add_contract_row(self, c):
         row = self.results_table.rowCount()
