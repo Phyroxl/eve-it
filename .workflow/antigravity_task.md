@@ -3044,4 +3044,4 @@ EVE Online highlights the entire "Buyer" section of the market window with a con
     *   Side-specific offsets (20,0) and (50,20) correctly applied after unique_match.
     *   SELL behavior unchanged.
 
-**Commit Hash**: [PENDING]
+**Commit Hash**: 2cedb4e
