@@ -18,6 +18,10 @@ class ContractItem:
     is_copy: bool = False
     valuation_status: str = "ok" # "ok", "bpc_ignored", "uncertain_ignored"
 
+    @classmethod
+    def from_dict(cls, d: dict) -> ContractItem:
+        return cls(**d)
+
 
 @dataclass
 class ScoreBreakdown:
@@ -26,6 +30,10 @@ class ScoreBreakdown:
     simplicity_component: float
     penalties_applied: List[str]
     final_score: float
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ScoreBreakdown:
+        return cls(**d)
 
 
 @dataclass
@@ -51,6 +59,14 @@ class ContractArbitrageResult:
     valuation_warning: Optional[str] = None
     score: float = 0.0
     score_breakdown: Optional[ScoreBreakdown] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ContractArbitrageResult:
+        items = [ContractItem.from_dict(i) for i in d.pop('items', [])]
+        score_bd = d.pop('score_breakdown', None)
+        if score_bd:
+            score_bd = ScoreBreakdown.from_dict(score_bd)
+        return cls(items=items, score_breakdown=score_bd, **d)
 
 
 @dataclass

@@ -220,6 +220,8 @@ class MarketContractsView(QWidget):
         self.btn_scan = QPushButton("ESCANEAR")
         self.btn_scan.setFixedHeight(35)
         self.btn_scan.setCursor(Qt.PointingHandCursor)
+        self.btn_scan.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.btn_scan.customContextMenuRequested.connect(self.on_scan_context_menu)
         self.btn_scan.setStyleSheet(
             "QPushButton { background-color: #3b82f6; color: white; font-size: 10px; font-weight: 900; border-radius: 4px; padding: 0 20px; } "
             "QPushButton:hover { background-color: #2563eb; }"
@@ -429,11 +431,14 @@ class MarketContractsView(QWidget):
         self.lbl_ins_roi.setText("-")
         self.lbl_ins_top.setText("-")
 
-    def reset_filters(self):
-        self.config = ContractsFilterConfig()
-        self._load_config()
+    def on_scan_context_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        force_act = menu.addAction("Forzar Recalcular Todo (Ignorar Cache)")
+        force_act.triggered.connect(lambda: self.on_scan_clicked(force_refresh=True))
+        menu.exec_(self.btn_scan.mapToGlobal(pos))
 
-    def on_scan_clicked(self):
+    def on_scan_clicked(self, force_refresh=False):
         if self.worker and self.worker.isRunning():
             return
         
@@ -452,7 +457,7 @@ class MarketContractsView(QWidget):
         self.insights_widget.setVisible(False)
         self.progress_bar.setValue(0)
 
-        self.worker = ContractsScanWorker(self.config)
+        self.worker = ContractsScanWorker(self.config, force_refresh=force_refresh)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.status.connect(self.status_label.setText)
         self.worker.batch_ready.connect(self.add_contract_row)

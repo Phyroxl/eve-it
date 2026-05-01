@@ -3382,3 +3382,16 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
   - Asegurada la aplicacion de filtros en cada fase (worker y vista).
 - Archivos: core/contracts_engine.py, core/contracts_models.py, core/contract_blueprint_utils.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
 - Tests: tests/test_contract_blueprint_filters.py (4 passed).
+
+## PERF: Optimization and Caching for Contracts - 2026-05-01
+
+- Problema: El escaneo de contratos tardaba ~5 minutos.
+- Solucion: 
+  - Implementado ContractsCache (JSON persistente) para reutilizar anolisis de contratos no modificados.
+  - Paralelizado el fetch de items (ThreadPoolExecutor) con semoforos para evitar saturar ESI.
+  - Deduplicacion masiva de metadata y nombres de items antes del anolisis.
+  - Implementado Early Filtering usando Light Cache para descartar blueprints conocidos antes de red.
+  - Aadida opcion de Forzar Recalcular Todo en la UI (clic derecho en Escanear).
+  - Mejorado el reporte de progreso y diagnosticos de performance.
+- Archivos: core/contracts_cache.py, core/contracts_models.py, ui/market_command/contracts_worker.py, ui/market_command/contracts_view.py.
+- Tests: tests/test_contract_performance.py (3 passed).

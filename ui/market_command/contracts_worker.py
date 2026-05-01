@@ -20,9 +20,10 @@ class ContractsScanWorker(QThread):
     finished = Signal(list)
     error = Signal(str)
 
-    def __init__(self, config: ContractsFilterConfig):
+    def __init__(self, config: ContractsFilterConfig, force_refresh: bool = False):
         super().__init__()
         self.config = config
+        self.force_refresh = force_refresh
         self._cancelled = False
         self._scanned_count = 0
 
@@ -66,69 +67,130 @@ class ContractsScanWorker(QThread):
             price_index = build_price_index(market_orders)
             self.progress.emit(20)
 
-            # 4. Escaneo Profundo
-            name_map: dict = {}
-            from core.item_resolver import ItemResolver
-            item_resolver = ItemResolver.instance()
+            import time
+            from concurrent.futures import ThreadPoolExecutor
+            from core.contracts_cache import ContractsCache
+            from dataclasses import asdict
 
+            start_time = time.time()
+            cache = ContractsCache.instance()
+            item_resolver = ItemResolver.instance()
+            name_map: dict = {}
+            contract_items_map: dict = {} # contract_id -> items_raw
+            
+            self.status.emit("Cargando detalles de items en paralelo...")
+            
+            from threading import Semaphore
+            esi_semaphore = Semaphore(10) # Max 10 concurrent ESI calls
+
+            def fetch_items_for_contract(c):
+                if self._cancelled: return None
+                cid = c['contract_id']
+                
+                # EARLY FILTERING (Cheap)
+                # Si el contrato ya está en cache y sabemos que es un blueprint, 
+                # y el usuario quiere excluirlos, lo descartamos ANTES de llamar a ESI.
+                if not self.force_refresh and self.config.exclude_blueprints:
+                    light = cache.get_light_entry(cid)
+                    if light and light.get('has_blueprints'):
+                        return None
+                
+                with esi_semaphore:
+                    try:
+                        items_raw = client.contract_items(cid)
+                        return cid, items_raw
+                    except Exception:
+                        return cid, []
+
+            # 4. Escaneo Profundo Paralelo
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = list(executor.map(fetch_items_for_contract, candidates))
+                for res in results:
+                    if res:
+                        cid, items = res
+                        contract_items_map[cid] = items
+
+            fetch_done_time = time.time()
+            
+            # 5. Deduplicación y Resolución Masiva
+            self.status.emit("Resolviendo metadata y precios de mercado...")
+            all_type_ids = set()
+            for items in contract_items_map.values():
+                for it in items:
+                    all_type_ids.add(it['type_id'])
+            
+            all_type_ids = list(all_type_ids)
+            
+            # Metadata prefetch
+            item_resolver.prefetch_type_metadata(all_type_ids)
+            metadata_map = {tid: item_resolver.get_type_info(tid, blocking=False) for tid in all_type_ids}
+            
+            # Nombres prefetch
+            new_ids = [tid for tid in all_type_ids if tid not in name_map]
+            if new_ids:
+                for chunk_idx in range(0, len(new_ids), 500):
+                    if self._cancelled: break
+                    chunk = new_ids[chunk_idx:chunk_idx+500]
+                    try:
+                        names_res = client.universe_names(chunk)
+                        for n in names_res:
+                            name_map[n['id']] = n['name']
+                    except Exception: pass
+
+            # Precios prefetch (Ya optimizado en ESIClient si pedimos por region)
+            # build_price_index usa el cache regional si ya se bajó.
+            
+            resolve_done_time = time.time()
+            
+            # 6. Análisis Final
+            self.status.emit("Calculando profit y aplicando filtros...")
+            processed_count = 0
+            cache_hits = 0
             for i, contract in enumerate(candidates):
-                # CONTROL DE CANCELACIÓN EN CADA ITERACIÓN
-                if self._cancelled:
-                    break
-                
-                pct = 20 + int((i / len(candidates)) * 75)
-                self.progress.emit(pct)
-                self.status.emit(
-                    f"Analizando contrato {i + 1}/{len(candidates)} — "
-                    f"{len(all_results)} oportunidades"
-                )
-                
-                # Check antes de red: Items
                 if self._cancelled: break
-                items_raw = client.contract_items(contract['contract_id'])
                 
-                # Check tras red
-                if self._cancelled: break
+                cid = contract['contract_id']
+                items_raw = contract_items_map.get(cid, [])
                 if not items_raw: continue
                 
-                # Recolectar IDs para nombres y metadata
-                item_ids = list({r['type_id'] for r in items_raw})
+                # Cache Check
+                cached_analysis = None
+                if not self.force_refresh:
+                    cached_analysis = cache.get_entry(cid, items_raw, contract['price'])
                 
-                # Resolución de Nombres (en bloques de 500 para ESI)
-                new_ids = [tid for tid in item_ids if tid not in name_map]
-                if new_ids:
-                    for chunk_idx in range(0, len(new_ids), 500):
-                        if self._cancelled: break
-                        chunk = new_ids[chunk_idx:chunk_idx+500]
-                        try:
-                            names_res = client.universe_names(chunk)
-                            if self._cancelled: break
-                            for n in names_res:
-                                name_map[n['id']] = n['name']
-                        except Exception:
-                            pass
+                if cached_analysis:
+                    result = ContractArbitrageResult.from_dict(cached_analysis)
+                    cache_hits += 1
+                else:
+                    items = analyze_contract_items(items_raw, price_index, name_map, self.config, metadata_map)
+                    result = calculate_contract_metrics(contract, items, self.config)
+                    result.score = score_contract(result)
+                    # Guardar en cache
+                    cache.set_entry(cid, items_raw, contract['price'], asdict(result))
                 
-                if self._cancelled: break
+                processed_count += 1
+                self._scanned_count = processed_count
                 
-                # Prefetch Metadata (para detección de Blueprints por categoría)
-                item_resolver.prefetch_type_metadata(item_ids)
-                metadata_map = {tid: item_resolver.get_type_info(tid, blocking=False) for tid in item_ids}
-                
-                # Cálculo de Métricas (CPU Bound)
-                items = analyze_contract_items(items_raw, price_index, name_map, self.config, metadata_map)
-                result = calculate_contract_metrics(contract, items, self.config)
-                result.score = score_contract(result)
-                self._scanned_count = i + 1
-                
-                # Aplicar filtros antes de emitir o guardar
-                # Usamos una lista de uno para reutilizar apply_contracts_filters
+                # Filtros
                 filtered_single = apply_contracts_filters([result], self.config)
-                
                 if filtered_single:
                     all_results.append(result)
                     self.batch_ready.emit(result)
+                
+                if i % 10 == 0:
+                    self.progress.emit(20 + int((i / len(candidates)) * 75))
 
-            # 5. Finalización
+            cache.save_cache()
+            end_time = time.time()
+            
+            logger.info(
+                f"[PERF] Scan complete: total_time={end_time-start_time:.2f}s | "
+                f"fetch_items={fetch_done_time-start_time:.2f}s | "
+                f"resolve={resolve_done_time-fetch_done_time:.2f}s | "
+                f"cache_hits={cache_hits}/{processed_count}"
+            )
+
+            # 7. Finalización
             if self._cancelled:
                 self.status.emit("ESCANEO CANCELADO")
                 self.finished.emit(all_results)
