@@ -602,14 +602,14 @@ class TestBUYTickDisambiguation(unittest.TestCase):
         )
         self.assertTrue(res["matched"])
 
-    def test_sell_no_tick_check(self):
-        """Test G: SELL with tick set still passes numeric_tolerance (tick check is BUY-only)."""
+    def test_sell_has_tick_check_hardened(self):
+        """Test G: SELL with tick set now uses tick strictness (harden Phase 3)."""
         res = self.detector._match_price_ocr(
             "7.262.000,00 ISK", 7_261_000.0, is_buy_order=False, order_tick=1000.0
         )
-        # SELL: tick check not applied, numeric tolerance (diff=1000 vs tol=max(15,7261))
-        # diff=1000 > tol=7261? No, tol = max(15, 7261000*0.001)=7261, 1000<7261 → matched
-        self.assertTrue(res["matched"])
+        # SELL: diff=1000, tick=1000, threshold=490 -> REJECT
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["reason"], "price_diff_exceeds_tick_fraction")
 
     def test_no_tick_no_rejection(self):
         """When tick=0, tick-fraction check is skipped; numeric tolerance decides."""
@@ -1329,6 +1329,75 @@ class TestSELLPriceRetry(unittest.TestCase):
         self.assertTrue(m)
         self.assertEqual(int(m.group(1)), 739)
 
+
+from unittest.mock import patch
+import numpy as np
+
+class TestSELLHardening(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "visual_ocr_sell_manual_grid_fallback_enabled": True,
+            "visual_ocr_sell_manual_grid_row_heights": [18],
+            "visual_ocr_sell_manual_grid_step_px": 8,
+            "visual_ocr_sell_manual_grid_min_score": 100,
+        }
+        from core.eve_market_visual_detector import EveMarketVisualDetector
+        self.detector = EveMarketVisualDetector(self.config)
+
+    def test_sell_price_tick_strict(self):
+        """target=388.8, ocr=394.0, tick=0.1 -> diff=5.2 > 0.049 -> REJECT."""
+        res = self.detector._match_price_ocr("394,00 ISK", 388.8, is_buy_order=False, order_tick=0.1)
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["reason"], "price_diff_exceeds_tick_fraction")
+
+    def test_sell_exact_decimal_accepted(self):
+        """target=388.8, ocr=388.8 -> accepted."""
+        res = self.detector._match_price_ocr("388,80 ISK", 388.8, is_buy_order=False, order_tick=0.1)
+        self.assertTrue(res["matched"])
+
+    def test_sell_grid_quantity_strict_without_marker(self):
+        """target_qty=500000, qty_text='statin 339.9' -> mismatch (marker_match=False)."""
+        from core.eve_market_visual_detector import normalize_quantity_text
+        ocr_qty = normalize_quantity_text("statin 339.9")
+        res = self.detector._match_quantity(ocr_qty, 500000, price_match=True, marker_match=False)
+        self.assertFalse(res["matched"])
+
+    def test_sell_grid_mixed_qty_recovery(self):
+        """price_text='500000 388,80 ISK', qty_text='bad text', target_qty=500000 -> recovered."""
+        img = np.zeros((100, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        # We use a side_effect function to handle multiple calls predictably
+        def side_effect(region):
+            # Price crop is wider than quantity crop in our test call
+            if region.shape[1] > 150: return "500000 388,80 ISK"
+            return "bad text"
+
+        with patch.object(self.detector, '_ocr_region', side_effect=side_effect):
+            strong = self.detector._run_sell_manual_grid_fallback(
+                img, 10, 15, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, order_tick=0.1
+            )
+        self.assertEqual(len(strong), 1)
+        self.assertEqual(strong[0]["quantity_match_type"], "sell_qty_from_mixed_price_text")
+
+    def test_sell_grid_records_failed_attempts(self):
+        """Simulate several failing OCR attempts and check if they are recorded."""
+        img = np.zeros((100, 800, 3), dtype=np.uint8)
+        result = {"debug": {}}
+        # Target is 388.8. 999.9 will fail price.
+        def side_effect(region):
+            if region.shape[1] > 150: return "999.99 ISK"
+            return "123"
+
+        with patch.object(self.detector, '_ocr_region', side_effect=side_effect):
+            self.detector.sell_manual_grid_row_heights = [20]
+            # y0=10 -> grid_rows=1
+            strong = self.detector._run_sell_manual_grid_fallback(
+                img, 10, 20, 0, 800, 400, 600, 200, 400, 388.8, 500000, {}, result, order_tick=0.1
+            )
+        rejs = result["debug"].get("sell_grid_best_rejections", [])
+        self.assertTrue(len(rejs) > 0)
+        # 999.99 is not a numeric tolerance match for 388.8
+        self.assertIn("price_mismatch", rejs[0]["reject_reason"])
 
 if __name__ == "__main__":
     unittest.main()

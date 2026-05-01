@@ -450,6 +450,19 @@ def _format_automation_section(automation: dict) -> list:
         lines.append(f"  Visual OCR BUY Grid Fallback: True")
         lines.append(f"  Visual OCR BUY Grid Rows    : {dbg.get('visual_ocr_buy_grid_rows', 0)}")
         lines.append(f"  Visual OCR BUY Grid Strong  : {dbg.get('visual_ocr_buy_grid_strong', 0)}")
+
+    # SELL grid rejections
+    best_rejections = automation.get("visual_ocr_sell_grid_best_rejections") or []
+    if best_rejections:
+        lines.append("  Visual OCR SELL Grid Best:")
+        for i, rej in enumerate(best_rejections, 1):
+            lines.append(f"    #{i} band={rej.get('band')}")
+            lines.append(f"       p={_b(rej.get('price_text'))} norm={rej.get('normalized_price')} target={rej.get('target_price')}")
+            lines.append(f"       diff={round(rej.get('price_diff', 0), 4)} tick={rej.get('tick', 0)} p_match={rej.get('price_match')} reason={rej.get('price_reason')}")
+            lines.append(f"       q={_b(rej.get('qty_text'))} qty_norm={rej.get('normalized_qty')} qty_target={rej.get('target_qty')}")
+            lines.append(f"       q_match={rej.get('qty_match')} reason={rej.get('qty_reason')}")
+            lines.append(f"       reject_reason={rej.get('reject_reason')}")
+
     if dbg.get("visual_ocr_deduped_candidates", 0) > 0:
         lines.append(f"  Visual OCR Deduped Candidates: {dbg.get('visual_ocr_deduped_candidates')}")
         lines.append(f"  Visual OCR Duplicate Reason  : {dbg.get('visual_ocr_duplicate_reason', 'unknown')}")

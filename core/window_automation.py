@@ -258,6 +258,9 @@ class EVEWindowAutomation:
         self.visual_ocr_sell_y_max_ratio   = float(config.get("visual_ocr_sell_section_y_max_ratio",  0.58))
         self.visual_ocr_buy_y_min_ratio    = float(config.get("visual_ocr_buy_section_y_min_ratio",   0.55))
         self.visual_ocr_buy_y_max_ratio    = float(config.get("visual_ocr_buy_section_y_max_ratio",   0.88))
+        self.buy_price_max_tick_fraction = float(config.get("visual_ocr_buy_price_max_tick_fraction", 0.49))
+        self.visual_ocr_buy_price_max_tick_fraction = self.buy_price_max_tick_fraction
+        self.visual_ocr_sell_price_max_tick_fraction = float(config.get("visual_ocr_sell_price_max_tick_fraction", 0.49))
         self.visual_ocr_price_x_min_ratio  = float(config.get("visual_ocr_price_col_x_min_ratio",    0.48))
         self.visual_ocr_price_x_max_ratio  = float(config.get("visual_ocr_price_col_x_max_ratio",    0.68))
         self.visual_ocr_qty_x_min_ratio    = float(config.get("visual_ocr_qty_col_x_min_ratio",      0.38))
@@ -863,6 +866,12 @@ class EVEWindowAutomation:
         result["visual_ocr_detection_mode"]   = dbg.get("detection_mode", "strict")
         result["visual_ocr_suggested_action"] = detection.get("visual_ocr_suggested_action", "none")
         
+        # Propagate SELL grid diagnostics from debug to top level for report
+        result["visual_ocr_sell_grid_fallback"] = dbg.get("visual_ocr_sell_grid_fallback", False)
+        result["visual_ocr_sell_grid_rows"]     = dbg.get("visual_ocr_sell_grid_rows", 0)
+        result["visual_ocr_sell_grid_strong"]   = dbg.get("visual_ocr_sell_grid_strong", 0)
+        result["visual_ocr_sell_grid_best_rejections"] = dbg.get("sell_grid_best_rejections", [])
+        
         # Phase 3D: Backend diagnostics
         result["visual_ocr_backend"]           = "pytesseract"
         result["visual_ocr_tesseract_cmd"]     = dbg.get("tesseract_cmd_used")
@@ -1286,6 +1295,8 @@ class EVEWindowAutomation:
             "visual_ocr_debug_save_crops":              self.visual_ocr_debug_save_crops,
             "visual_ocr_debug_max_crops":               self.visual_ocr_debug_max_crops,
             "visual_ocr_debug_dir":                     self.visual_ocr_debug_dir,
+            "visual_ocr_buy_price_max_tick_fraction":   self.visual_ocr_buy_price_max_tick_fraction,
+            "visual_ocr_sell_price_max_tick_fraction":  getattr(self, "visual_ocr_sell_price_max_tick_fraction", 0.49),
         }
 
     def _save_debug_screenshot(self, screenshot, result: dict) -> None:

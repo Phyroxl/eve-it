@@ -3239,3 +3239,36 @@ Se ha implementado un sistema robusto de reintento para la detecciÃ³n de precios
 - **Fix 3**: SELL qty recovery uses `_sell_orig_price_text` (pre-retry) with expanded separator, so qty is found even after retry replaced price_text.
 - **Diagnostics**: `sell_price_retry_used/variant/text` added to debug; shown after Price Reason in report.
 - **Tests**: 5 new tests in `TestSELLCropRetry` (A-E). 231 total passing (78+3+107+43).
+---
+
+## Sesión 35 — 2026-05-01
+
+### STATUS: COMPLETADO ?
+
+### FASE COMPLETADA: Hardening & Telemetría — SELL Manual Grid & Tick-Strict Matching
+
+### RESUMEN
+Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual grid)** y endurecido el matching de precios mediante la validación estricta de ticks de mercado, asegurando que el sistema localice con precisión la orden propia incluso en mercados densos.
+
+**Mejoras clave:**
+1. **Matching Estricto por Tick**: Tanto en la detección normal como en el fallback de rejilla, los precios SELL ahora se rechazan si la diferencia con el objetivo supera el **49% del tick** del mercado (price_diff_exceeds_tick_fraction). Esto previene falsos positivos con competidores cercanos.
+2. **Telemetría de Rechazos (Best Rejections)**: El reporte de diagnóstico ahora incluye el **Top 10 de mejores candidatos rechazados** en el grid manual. Se registran bandas, textos OCR, precios normalizados, ticks y razones detalladas de rechazo para facilitar la depuración en casos difíciles.
+3. **Conservadurismo en Cantidad (Grid)**: En modo rejilla (donde no hay marcador visual), se ha desactivado el matching permisivo de cantidad (marker_match=False). La recuperación de cantidad desde el texto de precio ahora requiere una coincidencia exacta del token líder con la 	arget_quantity.
+4. **Propagación de Diagnósticos**: Se añadieron campos de telemetría dedicados al reporte final (isual_ocr_sell_grid_fallback, isual_ocr_sell_grid_rows, isual_ocr_sell_grid_strong) que antes solo vivían en logs internos.
+5. **Hardening de Retry**: Se integró el soporte de order_tick en el motor de reintentos de recorte (_sell_price_crop_retry), garantizando coherencia en todo el pipeline de detección.
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| core/eve_market_visual_detector.py | Implementación de validación por tick en _match_price_ocr y _sell_price_crop_retry. Rediseño de _run_sell_manual_grid_fallback para capturar reyecciones y aplicar reglas estrictas de cantidad. |
+| core/quick_order_update_diagnostics.py | Visualización del Top 10 de rechazos del grid SELL en el reporte de automatización. |
+| core/window_automation.py | Configuración de sell_price_max_tick_fraction y propagación de telemetría de rejilla hacia el reporte. |
+| 	ests/test_visual_ocr_matching.py | Actualización de tests de ticks y adición de TestSELLHardening (matching estricto, recovery de cantidad y registro de reyecciones). |
+
+### CHECKS
+- [x] pytest tests/test_visual_ocr_matching.py -> 92 passed.
+- [x] Verificado que price_diff_exceeds_tick_fraction bloquea competidores a ±1 tick.
+- [x] Confirmado que el grid SELL reporta correctamente sus intentos fallidos.
+- [x] Mantenida la política NOT_EXECUTED_BY_DESIGN.
+
+*Estado: Localización de órdenes SELL altamente resistente a ruidos de precio y falsos positivos de rejilla.*

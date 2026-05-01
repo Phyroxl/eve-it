@@ -325,6 +325,7 @@ class EveMarketVisualDetector:
         self.buy_allow_price_anchor      = bool(config.get("visual_ocr_buy_allow_price_anchor_quantity_weak", True))
         self.price_digit_pattern_match   = bool(config.get("visual_ocr_price_digit_pattern_match", True))
         self.buy_price_max_tick_fraction = float(config.get("visual_ocr_buy_price_max_tick_fraction", 0.49))
+        self.sell_price_max_tick_fraction = float(config.get("visual_ocr_sell_price_max_tick_fraction", 0.49))
 
         # Phase 3M: duplicate dedupe and manual grid fallback
         self.buy_manual_grid_fallback_enabled  = bool(config.get("visual_ocr_buy_manual_grid_fallback_enabled", True))
@@ -559,7 +560,7 @@ class EveMarketVisualDetector:
                 img_array, section_y_min, section_y_max,
                 panel_x0, panel_x1,
                 price_x0, price_x1, qty_x0, qty_x1,
-                target_price, target_quantity, window_rect, result
+                target_price, target_quantity, window_rect, result, order_tick
             )
             verified = grid_candidates
 
@@ -1010,9 +1011,10 @@ class EveMarketVisualDetector:
         diff = abs(ocr_price - target_price)
 
         if diff <= max_tol:
-            # Fix 1: For BUY, reject prices >= one tick away (competitor one tick above)
-            if is_buy_order and order_tick > 0:
-                tick_threshold = order_tick * self.buy_price_max_tick_fraction
+            # Fix 1: For BUY/SELL, reject prices >= one tick away (competitor/own order diff)
+            if order_tick > 0:
+                tick_frac = self.buy_price_max_tick_fraction if is_buy_order else self.sell_price_max_tick_fraction
+                tick_threshold = order_tick * tick_frac
                 if diff >= tick_threshold:
                     res["normalized"] = ocr_price
                     res["diff"] = diff
@@ -1090,6 +1092,16 @@ class EveMarketVisualDetector:
                 suffix_price = normalize_price_text(parts[1])
                 diff_s = abs(suffix_price - target_price)
                 if diff_s <= max_tol:
+                    # Apply tick strictness for mixed extraction too
+                    if order_tick > 0:
+                        tick_threshold = order_tick * self.sell_price_max_tick_fraction
+                        if diff_s >= tick_threshold:
+                            res["normalized"] = suffix_price
+                            res["diff"] = diff_s
+                            res["reason"] = "price_diff_exceeds_tick_fraction"
+                            res["price_tick"] = order_tick
+                            return res
+
                     res["matched"]    = True
                     res["normalized"] = suffix_price
                     res["confidence"] = "sell_mixed_price_extraction"
@@ -1169,7 +1181,7 @@ class EveMarketVisualDetector:
     def _sell_price_crop_retry(self, img_array, ocr_y0: int, ocr_y1: int,
                                price_x0: int, price_x1: int,
                                target_price: float, target_quantity: int,
-                               original_text: str) -> dict:
+                               original_text: str, order_tick: float = 0.0) -> dict:
         """
         SELL-only: retry OCR with right-biased crops when the price crop is
         contaminated by a leading quantity token (e.g. '739° 128.708,00 IS').
@@ -1191,9 +1203,7 @@ class EveMarketVisualDetector:
             diag["sell_price_retry_skip_reason"] = "empty_text"
             return {"success": False, "diagnostics": diag}
 
-        # FIX REQUERIDO 3: Activation robusta del retry SELL
         # Token detection (leading quantity) with tolerance to separators
-        # Regex suggested: ^\s*(\d{1,9})\D+
         m = re.match(r'^\s*(\d{1,9})\D+', original_text)
         if not m:
             diag["sell_price_retry_skip_reason"] = "leading_qty_not_found"
@@ -1219,7 +1229,6 @@ class EveMarketVisualDetector:
             diag["sell_price_retry_skip_reason"] = "region_too_narrow"
             return {"success": False, "diagnostics": diag}
 
-        # FIX REQUERIDO 2 — Ampliar variantes de crop SELL
         base_h_variants = [
             ("left_trim_15", price_x0 + max(1, int(w * 0.15)), price_x1),
             ("left_trim_25", price_x0 + max(1, int(w * 0.25)), price_x1),
@@ -1233,7 +1242,7 @@ class EveMarketVisualDetector:
             ("center_right", price_x0 + max(1, int(w * 0.40)), price_x0 + max(1, int(w * 0.90))),
         ]
 
-        # FIX REQUERIDO 5 — Retry con y-band expandido si fallan crops horizontales
+        # Retry con y-band expandido si fallan crops horizontales
         y_paddings = [0, 2, 4, 6]
         img_h, img_w = img_array.shape[:2]
 
@@ -1256,30 +1265,25 @@ class EveMarketVisualDetector:
                     continue
 
                 text = self._ocr_region(region)
-                # FIX REQUERIDO 4: _match_price_ocr handles the tolerance check. 
-                # We do NOT match directly if the suffix is incorrect.
-                p_match = self._match_price_ocr(text, target_price, False, 0.0)
+                pm = self._match_price_ocr(text, target_price, False, order_tick)
                 
                 var_diag = {
                     "name": v_name,
-                    "x0": x0_c,
-                    "x1": x1_c,
-                    "y0": cur_y0,
-                    "y1": cur_y1,
+                    "x0": x0_c, "x1": x1_c, "y0": cur_y0, "y1": cur_y1,
                     "text": text,
-                    "normalized": p_match["normalized"],
-                    "matched": p_match["matched"],
-                    "reason": p_match["reason"],
-                    "confidence": p_match["confidence"]
+                    "normalized": pm["normalized"],
+                    "matched": pm["matched"],
+                    "reason": pm["reason"],
+                    "confidence": pm["confidence"]
                 }
                 diag["sell_price_retry_variants"].append(var_diag)
 
-                if p_match["matched"]:
+                if pm["matched"]:
                     diag["sell_price_retry_success"] = True
                     return {
                         "success": True,
                         "price_text": text,
-                        "p_match": p_match,
+                        "p_match": pm,
                         "variant": v_name,
                         "diagnostics": diag
                     }
@@ -1494,7 +1498,7 @@ class EveMarketVisualDetector:
                                        price_x0: int, price_x1: int,
                                        qty_x0: int, qty_x1: int,
                                        target_price: float, target_quantity: int,
-                                       window_rect: dict, result: dict) -> list:
+                                       window_rect: dict, result: dict, order_tick: float = 0.0) -> list:
         """
         Phase 3P: scan the manual SELL region with a dense grid when no blue-band
         or marker was detected. Requirement: unique match with price and qty.
@@ -1502,6 +1506,7 @@ class EveMarketVisualDetector:
         h = img_array.shape[0]
         strong: list = []
         seen_text_bands: list = []
+        all_attempts: list = []
 
         # Padded columns
         price_x0_p = max(panel_x0, price_x0 - self.price_left_padding)
@@ -1523,33 +1528,27 @@ class EveMarketVisualDetector:
                 price_text = self._ocr_region(pr)
                 
                 # Try standard price match
-                p_match = self._match_price_ocr(price_text, target_price, False, 0.0)
-                
-                # Apply SELL mixed recovery if needed
-                # (handled by _match_price_ocr automatically for SELL now? let's check)
-                # Actually _match_price_ocr at line 1066 has SELL suffix logic.
+                p_match = self._match_price_ocr(price_text, target_price, False, order_tick)
                 
                 # Apply SELL price crop retry if needed
                 if not p_match["matched"] and self.match_price and target_price > 0:
                     retry_res = self._sell_price_crop_retry(
                         img_array, y0, y1, price_x0_p, price_x1_p,
-                        target_price, target_quantity, price_text
+                        target_price, target_quantity, price_text, order_tick
                     )
                     if retry_res["success"]:
                         price_text = retry_res["price_text"]
                         p_match    = retry_res["p_match"]
 
-                if not p_match["matched"]:
-                    continue
-
                 qr       = img_array[y0:y1, qty_x0_p:qty_x1_p]
                 qty_text = self._ocr_region(qr) if qr.size > 0 else ""
                 ocr_qty  = normalize_quantity_text(qty_text)
                 
-                # Match quantity (marker_match=True to allow suffix/near matches in grid)
-                q_match  = self._match_quantity(ocr_qty, target_quantity, True, True, False, qty_text)
+                # Match quantity (Fix 4: marker_match=False for grid)
+                q_match  = self._match_quantity(ocr_qty, target_quantity, False, True, False, qty_text)
                 
                 # SELL mixed qty recovery from price_text
+                # Fix 4: ONLY if price_ok=True and leading token matches target exactly
                 if not q_match["matched"] and p_match["matched"]:
                     m_qty = re.match(r'^\s*(\d+)\D+', price_text)
                     if m_qty and int(m_qty.group(1)) == target_quantity:
@@ -1560,11 +1559,31 @@ class EveMarketVisualDetector:
                         }
                         ocr_qty = target_quantity
 
-                if not q_match["matched"]:
+                # Dedupe overlapping windows for strong candidates
+                tb = [y0, y1]
+                score = 60 + (80 if p_match["confidence"] == "numeric_tolerance" else 60) + \
+                        (50 if q_match["confidence"] == "exact" else 35)
+
+                reject_reason = None
+                if not p_match["matched"]:
+                    reject_reason = f"price_mismatch: {p_match.get('reason')}"
+                elif not q_match["matched"]:
+                    reject_reason = f"qty_mismatch: {q_match.get('reason')}"
+                elif score < self.sell_manual_grid_min_score:
+                    reject_reason = f"low_score: {score} < {self.sell_manual_grid_min_score}"
+
+                if reject_reason:
+                    all_attempts.append({
+                        "band": [y0, y1], "price_text": price_text, "qty_text": qty_text,
+                        "normalized_price": p_match["normalized"], "target_price": target_price,
+                        "price_diff": p_match.get("diff", 0.0), "tick": order_tick,
+                        "price_match": p_match["matched"], "price_reason": p_match["reason"],
+                        "normalized_qty": ocr_qty, "target_qty": target_quantity,
+                        "qty_match": q_match["matched"], "qty_reason": q_match.get("reason", "none"),
+                        "score": score, "reject_reason": reject_reason
+                    })
                     continue
 
-                # Dedupe overlapping windows
-                tb = [y0, y1]
                 dup = False
                 for prev_tb in seen_text_bands:
                     overlap = max(0, min(tb[1], prev_tb[1]) - max(tb[0], prev_tb[0]))
@@ -1577,11 +1596,6 @@ class EveMarketVisualDetector:
 
                 cy = (y0 + y1) // 2 + window_rect.get("top", 0)
                 cx = (panel_x0 + panel_x1) // 2 + window_rect.get("left", 0)
-                score = 60 + (80 if p_match["confidence"] == "numeric_tolerance" else 60) + \
-                        (50 if q_match["confidence"] == "exact" else 35)
-
-                if score < self.sell_manual_grid_min_score:
-                    continue
                 
                 strong.append({
                     "row_center_x":        cx,
@@ -1619,7 +1633,11 @@ class EveMarketVisualDetector:
                     "marker_band": [y0, y1], "text_band": tb, "alignment_offset": 0,
                 })
 
-        result["debug"]["visual_ocr_sell_grid_fallback"] = True
+        # Save top rejections for diagnostics
+        if all_attempts:
+            all_attempts.sort(key=lambda x: x["score"], reverse=True)
+            result["debug"]["sell_grid_best_rejections"] = all_attempts[:10]
+
         result["debug"]["visual_ocr_sell_grid_rows"] = grid_rows
         result["debug"]["visual_ocr_sell_grid_strong"] = len(strong)
         result["debug"]["detection_mode"] = "sell_manual_grid_fallback"
