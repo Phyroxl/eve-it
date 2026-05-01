@@ -1005,6 +1005,45 @@ class MarketPerformanceView(QWidget):
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error de Diagnóstico", f"No se pudo generar el reporte: {e}")
 
+
+
+    def start_auto_refresh(self):
+        self._next_sync_seconds = self.config.refresh_interval_min * 60
+        self.auto_timer.start(1000) # Tick cada segundo
+
+    def _on_auto_timer_tick(self):
+        if not self.config.auto_refresh_enabled:
+            self.auto_timer.stop()
+            return
+            
+        if self._sync_in_progress:
+            return # Esperamos a que termine la actual antes de descontar
+
+        self._next_sync_seconds -= 1
+        
+        # Actualizar feedback visual (re-usamos refresh_view que actualiza diag label)
+        self.refresh_view()
+        
+        if self._next_sync_seconds <= 0:
+            self.auto_timer.stop() # Pausar mientras sincroniza
+            self.on_sync_clicked(is_auto=True)
+
+    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
+        """Helper seguro para cargar iconos en tablas sin riesgo de RuntimeError."""
+        try:
+            if generation != self._image_generation:
+                return
+            if table is None or row < 0 or row >= table.rowCount():
+                return
+            if col < 0 or col >= table.columnCount():
+                return
+            item = table.item(row, col)
+            if item is None or item.data(Qt.UserRole) != type_id:
+                return
+            item.setIcon(QIcon(pixmap))
+        except RuntimeError:
+            return
+
 class FeeDiagnosticsDialog(QDialog):
     def __init__(self, report, parent=None):
         super().__init__(parent)
@@ -1068,40 +1107,3 @@ class FeeDiagnosticsDialog(QDialog):
     def _reset_copy_btn(self, btn, old_text):
         btn.setText(old_text)
         btn.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; padding: 8px; border-radius: 4px;")
-
-    def start_auto_refresh(self):
-        self._next_sync_seconds = self.config.refresh_interval_min * 60
-        self.auto_timer.start(1000) # Tick cada segundo
-
-    def _on_auto_timer_tick(self):
-        if not self.config.auto_refresh_enabled:
-            self.auto_timer.stop()
-            return
-            
-        if self._sync_in_progress:
-            return # Esperamos a que termine la actual antes de descontar
-
-        self._next_sync_seconds -= 1
-        
-        # Actualizar feedback visual (re-usamos refresh_view que actualiza diag label)
-        self.refresh_view()
-        
-        if self._next_sync_seconds <= 0:
-            self.auto_timer.stop() # Pausar mientras sincroniza
-            self.on_sync_clicked(is_auto=True)
-
-    def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation):
-        """Helper seguro para cargar iconos en tablas sin riesgo de RuntimeError."""
-        try:
-            if generation != self._image_generation:
-                return
-            if table is None or row < 0 or row >= table.rowCount():
-                return
-            if col < 0 or col >= table.columnCount():
-                return
-            item = table.item(row, col)
-            if item is None or item.data(Qt.UserRole) != type_id:
-                return
-            item.setIcon(QIcon(pixmap))
-        except RuntimeError:
-            return
