@@ -4,6 +4,18 @@ from core.contracts_models import (
     ContractItem, ContractArbitrageResult, ScoreBreakdown, ContractsFilterConfig
 )
 
+# Blueprint / BPC detection helpers
+_BP_KEYWORDS = ("Blueprint",)
+_BPC_KEYWORDS = ("Blueprint Copy", " BPC", "Blueprint (Copy)")
+
+
+def _is_blueprint_name(name: str) -> bool:
+    return any(kw in name for kw in _BP_KEYWORDS)
+
+
+def _is_blueprint_copy_name(name: str) -> bool:
+    return any(kw in name for kw in _BPC_KEYWORDS)
+
 
 def build_price_index(market_orders: List[dict]) -> Dict[int, dict]:
     """
@@ -61,8 +73,8 @@ def analyze_contract_items(
             line_sell_value=quantity * sell_price,
             line_buy_value=quantity * buy_price,
             pct_of_total=0.0,
-            is_blueprint="Blueprint" in name_map.get(type_id, ""),
-            is_copy=raw.get('is_blueprint_copy', False)
+            is_blueprint=_is_blueprint_name(name_map.get(type_id, "")),
+            is_copy=raw.get('is_blueprint_copy', False) or _is_blueprint_copy_name(name_map.get(type_id, ""))
         ))
     return items
 

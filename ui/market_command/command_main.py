@@ -114,6 +114,8 @@ class MarketCommandMain(QWidget):
             
         # El modo simple (index 0) lo cargamos inmediatamente para evitar parpadeo inicial
         self._ensure_view_loaded(0)
+        # After insert/remove the stack may drift from index 0; force it back
+        self.stack.setCurrentIndex(0)
         
         self.layout.addWidget(self.stack)
 

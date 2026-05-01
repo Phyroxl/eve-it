@@ -3296,3 +3296,77 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - **Fix 3**: `try/finally` wraps grid loop; stats (`grid_rows`, `grid_attempts`) written incrementally AND in `finally` block — persisted even on `OCRDetectionAborted`.
 - **Fix 4**: `manual_region_width_px` / `manual_region_height_px` written to `result["debug"]` in `_run_detection`. Forwarded from debug to `result["config"]` in `window_automation.py` so diagnostics line 406 shows real values instead of N/A.
 - **Tests**: 5 new tests in `TestSELLGridRowBuilding` (A: region dims in debug, B: grid_rows>0, C: no retry in grid, D: overlap guard, E: stats persisted on abort). 259 total passing.
+
+---
+
+## Sesión 36 — 2026-05-01
+
+### STATUS: COMPLETADO ✅
+
+### CAMBIOS REALIZADOS
+
+#### 1. Bug Modo Simple (command_main.py)
+- Causa: después de `removeWidget(placeholder[0])` + `insertWidget(0, view)`, QStackedWidget desplazaba el índice y mostraba "Cargando Modo Avanzado..."
+- Fix: `self.stack.setCurrentIndex(0)` añadido tras `_ensure_view_loaded(0)` en `setup_ui`
+
+#### 2. Inventario — No editable + Click derecho
+- `setEditTriggers(NoEditTriggers)` en tabla del inventario
+- `setContextMenuPolicy(CustomContextMenu)` + `_show_context_menu`: "Copiar celda" / "Copiar nombre del ítem"
+- Doble click en RECOMENDACIÓN col 6: VENDER abre mercado, MANTENER es no-op
+
+#### 3. Inventario — Colores de recomendación
+- VENDER: verde #10b981
+- MANTENER: azul #3b82f6
+
+#### 4. Inventario — Botón Actualizar
+- Botón "↻ Actualizar" en header del diálogo
+- Lanza InventoryWorker, actualiza tabla in-place sin cerrar diálogo
+- Tabla refactorizada en `_populate_table(items)` reutilizable
+
+#### 5. Panel inferior Mis Pedidos — Colores premium
+- Nombre item: dorado #f8c51c
+- Mejor compra: azul #60a5fa
+- Mejor venta: verde claro #86efac
+- Margen: verde/ámbar/rojo según valor (≥15% / ≥5% / <5%)
+- Profit/u y Profit total: verde si ≥0, rojo si <0
+- Estado LIDERANDO: verde; SUPERADA: rojo; ACTIVA: ámbar
+- Aviso manipulación en `lbl_det_cost_msg` si detectado
+
+#### 6. Detector de manipulación (nuevo módulo)
+- `core/market_manipulation_detector.py`: `detect_sell_manipulation`, `detect_buy_manipulation`, `get_safe_competitor_price`
+- SELL: detecta spread sell/buy < 5% o qty muy baja en primer nivel
+- BUY: detecta salto ≥50% respecto a siguiente nivel; permite update si margen ≥20%
+- Integrado en panel de detalles de Mis Pedidos (warning visual)
+- Campos: `manipulation_checked`, `manipulation_detected`, `manipulation_side`, `manipulation_reason`, `safe_competitor_price`, `original_competitor_price`, `blocked_auto_update`, `warning_level`
+
+#### 7. Contratos — Filtro Blueprint/BPC mejorado
+- Helpers `_is_blueprint_name` y `_is_blueprint_copy_name` en `contracts_engine.py`
+- Detecta: "Blueprint", "Blueprint Copy", " BPC", "Blueprint (Copy)"
+- Fallback `is_blueprint_copy` de ESI preservado
+
+### FILES_CHANGED
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/command_main.py` | Fix Simple mode blank screen |
+| `ui/market_command/my_orders_view.py` | Inventory: no-edit, ctx menu, colors, refresh btn; detail panel premium colors + manipulation warning |
+| `core/contracts_engine.py` | Blueprint/BPC detection helpers |
+| `core/market_manipulation_detector.py` | NUEVO: módulo detector de manipulación |
+| `tests/test_market_manipulation.py` | NUEVO: 18 tests (SELL, BUY, contratos, safe price) |
+| `.workflow/antigravity_task.md` | Actualizado |
+
+### TESTS EJECUTADOS
+- `test_market_manipulation.py` → 18 passed ✅
+- `test_market_order_pricing.py` → 1 failed (PRE-EXISTENTE, test busca `[CONFIG]` pero output tiene `[CONFIG DIAGNOSTICS]`, no relacionado con estos cambios)
+- `test_quick_order_update_flow.py` → passed ✅
+- `test_window_automation.py` → passed ✅
+- `test_quick_order_update_config.py` → passed ✅
+- `test_visual_ocr_matching.py` → 259 passed ✅
+- Total: 382 passed, 1 fallo pre-existente
+
+### RIESGOS CONOCIDOS
+- ESI global sync (objetivo 10) y persistencia auto-refresh (objetivo 9) no implementados — ya existía `save_session`/`try_restore_session` en `auth_manager.py` con TTL de 120s; se considera suficiente por ahora
+- Refresco inmediato de estados (objetivo 6) ya funciona: `on_data` repopula tablas inmediatamente tras sync
+- Colores premium en detalle: si label fue configurada con stylesheet fija, el `setStyleSheet` en `update_det` la sobreescribe correctamente
+
+### SEGURIDAD QUICK ORDER UPDATE
+**Final Confirm Action : NOT_EXECUTED_BY_DESIGN** — No tocado. Ningún cambio en lógica OCR, window automation, ni confirmación final.

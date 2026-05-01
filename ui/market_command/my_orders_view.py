@@ -320,7 +320,7 @@ class InventoryAnalysisDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
+
         # Header
         header = QFrame()
         header.setFixedHeight(85)
@@ -335,55 +335,87 @@ class InventoryAnalysisDialog(QDialog):
         title_v.addWidget(loc_lbl)
         hl.addLayout(title_v)
         hl.addStretch()
-        
+
         total_val = sum(item.analysis.est_total_value for item in self.items)
-        val_lbl = QLabel(format_isk(total_val))
-        val_lbl.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900;")
-        hl.addWidget(val_lbl)
+        self.val_lbl = QLabel(format_isk(total_val))
+        self.val_lbl.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900;")
+        hl.addWidget(self.val_lbl)
+
+        # Refresh button
+        self._refresh_btn = QPushButton("↻ Actualizar")
+        self._refresh_btn.setStyleSheet(
+            "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155; "
+            "border-radius: 4px; font-size: 9px; font-weight: 800; padding: 4px 10px; }"
+            "QPushButton:hover { background: #334155; color: #f1f5f9; }"
+            "QPushButton:disabled { color: #475569; }"
+        )
+        self._refresh_btn.clicked.connect(self._do_refresh)
+        hl.addWidget(self._refresh_btn)
         layout.addWidget(header)
 
         # Tabla
-        self.table = QTableWidget(len(self.items), 8)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(["ÍTEM", "CANTIDAD", "MI PROMEDIO", "P. UNIT NETO", "PROFIT DE VENTA", "VALOR %", "RECOMENDACIÓN", "MOTIVO"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setIconSize(QSize(32, 32))
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.itemDoubleClicked.connect(self.on_double_click)
+        self.table.horizontalHeader().sectionResized.connect(self.save_layout)
+        layout.addWidget(self.table)
+
+        self._populate_table(self.items)
+
+    def _populate_table(self, items):
+        total_val = sum(item.analysis.est_total_value for item in items)
+        self.val_lbl.setText(format_isk(total_val))
+
         self.table.setSortingEnabled(False)
-        
+        self.table.setRowCount(len(items))
+
         self._image_generation += 1
         gen = self._image_generation
-        
-        for row, item in enumerate(self.items):
+
+        for row, item in enumerate(items):
             a = item.analysis
             avg = getattr(item, "_avg_buy", 0.0)
             profit_t = getattr(item, "_net_profit_total", 0.0)
-            
-            # Calcular ROI real para ordenación y visualización
+
             cost_total = avg * item.quantity
             roi = (profit_t / cost_total * 100) if cost_total > 0 else -1e18
-            
+
             i_name = QTableWidgetItem(item.item_name)
             i_name.setData(Qt.UserRole, item.type_id)
-            
+
             pix = self.icon_service.get_icon(
                 item.type_id, 32,
                 callback=lambda p, tid=item.type_id, row=row, gen=gen: self._load_icon_into_table_item(self.table, row, 0, tid, p, gen)
             )
             i_name.setIcon(QIcon(pix.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
             _log.debug(f"[INVENTORY ICON] Requesting {item.type_id} for row {row}")
-            
+
             i_qty = NumericTableWidgetItem(f"{item.quantity:,}", item.quantity)
             i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "Sin registros", avg)
             i_price = NumericTableWidgetItem(format_isk(a.est_net_sell_unit), a.est_net_sell_unit)
-            
+
             i_profit = NumericTableWidgetItem(format_isk(profit_t) if avg > 0 else "Sin registros", profit_t if avg > 0 else -1e18)
             if avg > 0:
                 i_profit.setForeground(QColor("#10b981" if profit_t >= 0 else "#ef4444"))
-            
+
             pct = (a.est_total_value / total_val * 100) if total_val > 0 else 0
             i_pct = NumericTableWidgetItem(f"{pct:.1f}%", pct)
-            
-            i_rec = SemanticTableWidgetItem(a.recommendation.upper())
+
+            rec_text = a.recommendation.upper()
+            i_rec = SemanticTableWidgetItem(rec_text)
+            if "VEND" in rec_text:
+                i_rec.setForeground(QColor("#10b981"))  # green — VENDER
+            elif "MANT" in rec_text:
+                i_rec.setForeground(QColor("#3b82f6"))  # blue — MANTENER
+            else:
+                i_rec.setForeground(QColor("#94a3b8"))
+
             i_reason = SemanticTableWidgetItem(a.reason, roi=roi)
             r_txt = a.reason.lower()
             if "spread" in r_txt:
@@ -394,37 +426,83 @@ class InventoryAnalysisDialog(QDialog):
                 i_reason.setForeground(QColor("#ef4444"))
             else:
                 i_reason.setForeground(QColor("#64748b"))
-            
+
             for i, it in enumerate([i_name, i_qty, i_avg, i_price, i_profit, i_pct, i_rec, i_reason]):
                 it.setTextAlignment(Qt.AlignCenter)
-                it.setData(Qt.UserRole, item.type_id) # Redundancia
+                it.setData(Qt.UserRole, item.type_id)
                 self.table.setItem(row, i, it)
-            
+
         self.table.setSortingEnabled(True)
-        self.table.itemDoubleClicked.connect(self.on_double_click)
-        layout.addWidget(self.table)
-        
-        self.table.horizontalHeader().sectionResized.connect(self.save_layout)
 
     def on_double_click(self, item):
         row = item.row()
+        col = item.column()
         tid = None
         name = ""
-        
-        # Buscar type_id en la fila
-        for col in range(self.table.columnCount()):
-            it = self.table.item(row, col)
+
+        for c in range(self.table.columnCount()):
+            it = self.table.item(row, c)
             if it:
                 if not tid: tid = it.data(Qt.UserRole)
-                if col == 0: name = it.text() # Columna Ítem
+                if c == 0: name = it.text()
 
-        import logging
-        log = logging.getLogger('eve.interaction')
+        # RECOMENDACIÓN column (col 6): VENDER opens market; MANTENER is no-op
+        if col == 6:
+            rec_text = item.text().upper()
+            if "VEND" in rec_text and tid:
+                _log.info(f"[INVENTORY] VENDER action — opening market for type_id={tid}")
+                ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
+            elif "MANT" in rec_text:
+                _log.debug(f"[INVENTORY] MANTENER — no action required for type_id={tid}")
+            return
+
         if tid:
-            log.info(f"[OPEN MARKET] inventory double_clicked row={row} type_id={tid}")
+            _log.info(f"[OPEN MARKET] inventory double_clicked row={row} type_id={tid}")
             ItemInteractionHelper.open_market_with_fallback(ESIClient(), AuthManager.instance().char_id, tid, name, None)
         else:
-            log.warning(f"[OPEN MARKET] inventory double_clicked without type_id row={row}")
+            _log.warning(f"[OPEN MARKET] inventory double_clicked without type_id row={row}")
+
+    def _show_context_menu(self, pos):
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; }"
+            "QMenu::item:selected { background: #334155; }"
+        )
+        act_copy_cell = QAction("Copiar celda", self)
+        act_copy_cell.triggered.connect(lambda: QGuiApplication.clipboard().setText(item.text()))
+        menu.addAction(act_copy_cell)
+
+        name_item = self.table.item(row, 0)
+        if name_item and name_item.text():
+            act_copy_name = QAction("Copiar nombre del ítem", self)
+            act_copy_name.triggered.connect(lambda: QGuiApplication.clipboard().setText(name_item.text()))
+            menu.addAction(act_copy_name)
+
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _do_refresh(self):
+        auth = AuthManager.instance()
+        t = auth.get_token()
+        if not t:
+            return
+        self._refresh_btn.setEnabled(False)
+        self._refresh_btn.setText("Cargando...")
+        self._refresh_worker = InventoryWorker(auth.char_id, t)
+        self._refresh_worker.finished_data.connect(self._on_refresh_done)
+        self._refresh_worker.start()
+
+    def _on_refresh_done(self, data):
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("↻ Actualizar")
+        if data:
+            self.items = data
+            self._populate_table(data)
+        else:
+            _log.info("[INVENTORY] Refresh returned empty data")
 
     def save_layout(self):
         cfg = {"widths": [self.table.columnWidth(i) for i in range(self.table.columnCount())]}
@@ -1258,16 +1336,71 @@ class MarketMyOrdersView(QWidget):
         a = o.analysis
         cost = CostBasisService.instance().get_cost_basis(o.type_id)
         avg = cost.average_buy_price if cost else 0.0
-        
-        self.lbl_det_cost_msg.setText(f"Info: {a.state} | Order ID: {o.order_id}")
+
+        # Item name — golden premium
+        self.lbl_det_item.setStyleSheet("color:#f8c51c; font-size:14px; font-weight:900;")
+
+        # Manipulation detection warning
+        manip_warn = ""
+        try:
+            from core.market_manipulation_detector import detect_sell_manipulation, detect_buy_manipulation
+            if not o.is_buy_order and a.best_buy > 0 and a.best_sell > 0:
+                mres = detect_sell_manipulation(a.best_sell, a.best_buy)
+                if mres.manipulation_detected:
+                    manip_warn = f" ⚠ POSIBLE MANIP. SELL"
+            elif o.is_buy_order and a.best_buy > 0:
+                mres = detect_buy_manipulation(a.best_buy, buy_orders=None)
+                if mres.manipulation_detected:
+                    manip_warn = f" ⚠ POSIBLE MANIP. BUY"
+        except Exception:
+            pass
+
+        self.lbl_det_cost_msg.setText(f"{a.state} | ID: {o.order_id}{manip_warn}")
+        manip_color = "#f59e0b" if manip_warn else "#64748b"
+        self.lbl_det_cost_msg.setStyleSheet(f"color:{manip_color}; font-size:9px;")
+
+        _FMT = "font-size:11px; font-weight:900;"
         self.det_price.setText(format_isk(o.price))
+        self.det_price.setStyleSheet(f"color:#f1f5f9; {_FMT}")
+
         self.det_avg.setText(format_isk(avg) if avg > 0 else "---")
+        self.det_avg.setStyleSheet(f"color:#94a3b8; {_FMT}")
+
         self.det_best_buy.setText(format_isk(a.best_buy))
+        self.det_best_buy.setStyleSheet(f"color:#60a5fa; {_FMT}")  # blue — buy
+
         self.det_best_sell.setText(format_isk(a.best_sell))
-        self.det_margin.setText(f"{a.margin_pct:.1f}%")
-        self.det_profit_u.setText(format_isk(a.net_profit_per_unit))
-        self.det_profit_t.setText(format_isk(a.net_profit_total))
-        self.det_state.setText(a.state.upper())
+        self.det_best_sell.setStyleSheet(f"color:#86efac; {_FMT}")  # light-green — sell
+
+        margin = a.margin_pct
+        self.det_margin.setText(f"{margin:.1f}%")
+        if margin >= 15:
+            margin_color = "#10b981"
+        elif margin >= 5:
+            margin_color = "#f59e0b"
+        else:
+            margin_color = "#ef4444"
+        self.det_margin.setStyleSheet(f"color:{margin_color}; {_FMT}")
+
+        profit_u = a.net_profit_per_unit
+        self.det_profit_u.setText(format_isk(profit_u))
+        self.det_profit_u.setStyleSheet(f"color:{'#10b981' if profit_u >= 0 else '#ef4444'}; {_FMT}")
+
+        profit_t = a.net_profit_total
+        self.det_profit_t.setText(format_isk(profit_t))
+        self.det_profit_t.setStyleSheet(f"color:{'#10b981' if profit_t >= 0 else '#ef4444'}; {_FMT}")
+
+        state_upper = a.state.upper()
+        self.det_state.setText(state_upper)
+        if "LIDER" in state_upper:
+            state_color = "#10b981"   # green
+        elif "SUPERA" in state_upper:
+            state_color = "#ef4444"   # red
+        elif "ACTIV" in state_upper:
+            state_color = "#f59e0b"   # amber
+        else:
+            state_color = "#94a3b8"   # neutral
+        self.det_state.setStyleSheet(f"color:{state_color}; {_FMT}")
 
     # ------------------------------------------------------------------
     # Quick Order Update helpers
