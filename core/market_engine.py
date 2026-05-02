@@ -236,42 +236,44 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
         t_id = o['type_id']
         l_id = o.get('location_id', 0)
         is_buy = o.get('is_buy_order', False)
-        price = o['price']
+        price = o.get('price', 0.0)
         key = (t_id, l_id, is_buy)
         if key not in my_order_counts: my_order_counts[key] = {}
         my_order_counts[key][price] = my_order_counts[key].get(price, 0) + 1
 
+    all_comp_buys = {}
+    all_comp_sells = {}
+
     for (t_id, l_id), data in grouped_market.items():
-        # Para encontrar el mejor competidor en ESTA LOCALIZACIÓN:
-        # 1. Tomamos todas las órdenes del mercado en esta loc
-        # 2. Restamos mis órdenes en esta misma loc y precio.
+        m_key = (t_id, l_id)
         
         # BUY
         all_buys = sorted([o['price'] for o in data['buy']], reverse=True)
-        my_buys = my_order_counts.get((t_id, l_id, True), {})
+        my_buys_map = my_order_counts.get((t_id, l_id, True), {})
         comp_buys = []
-        temp_my_buys = my_buys.copy()
+        temp_my_buys = my_buys_map.copy()
         for p in all_buys:
             if p in temp_my_buys and temp_my_buys[p] > 0:
                 temp_my_buys[p] -= 1
             else:
                 comp_buys.append(p)
+        all_comp_buys[m_key] = comp_buys
         
         # SELL
         all_sells = sorted([o['price'] for o in data['sell']])
-        my_sells = my_order_counts.get((t_id, l_id, False), {})
+        my_sells_map = my_order_counts.get((t_id, l_id, False), {})
         comp_sells = []
-        temp_my_sells = my_sells.copy()
+        temp_my_sells = my_sells_map.copy()
         for p in all_sells:
             if p in temp_my_sells and temp_my_sells[p] > 0:
                 temp_my_sells[p] -= 1
             else:
                 comp_sells.append(p)
+        all_comp_sells[m_key] = comp_sells
         
         abs_best_buy = all_buys[0] if all_buys else 0.0
         abs_best_sell = all_sells[0] if all_sells else 0.0
         
-        m_key = (t_id, l_id)
         best_prices[m_key] = (abs_best_buy, abs_best_sell)
         best_competitor_buy[m_key] = comp_buys[0] if comp_buys else 0.0
         best_competitor_sell[m_key] = comp_sells[0] if comp_sells else 999999999999.0
@@ -280,7 +282,9 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
     EPSILON = 0.01
 
     for eo in esi_orders:
-        t_id = eo['type_id']; price = eo['price']; is_buy = eo.get('is_buy_order', False)
+        t_id = eo['type_id']
+        price = eo.get('price', 0.0)
+        is_buy = eo.get('is_buy_order', False)
         loc_id = eo.get('location_id', 0)
         item_name = item_names.get(t_id, f"Type {t_id}")
         
@@ -361,8 +365,8 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             "difference_to_best": difference,
             "market_orders_loc_buy_count": len(grouped_market.get(m_key, {}).get('buy', [])),
             "market_orders_loc_sell_count": len(grouped_market.get(m_key, {}).get('sell', [])),
-            "own_orders_excluded_count": my_buys.get(price, 0) if is_buy else my_sells.get(price, 0),
-            "comp_raw_list_len": len(comp_buys) if is_buy else len(comp_sells)
+            "own_orders_excluded_count": my_order_counts.get((t_id, loc_id, is_buy), {}).get(price, 0),
+            "comp_raw_list_len": len(all_comp_buys.get(m_key, [])) if is_buy else len(all_comp_sells.get(m_key, []))
         }
 
         analysis = OpenOrderAnalysis(
