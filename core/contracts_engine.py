@@ -346,7 +346,7 @@ def apply_contracts_filters(
             continue
 
         # Si llegamos aquí, el contrato es visible
-        if c.net_profit > 0 and c.jita_sell_value > 0:
+        if c.net_profit >= 0 and c.jita_sell_value > 0:
             if diagnostics: diagnostics.profitable += 1
         
         result.append(c)

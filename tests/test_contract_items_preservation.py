@@ -18,7 +18,7 @@ def test_apply_filters_preserves_items():
         unresolved_count=0, score=85.0
     )
     
-    config = ContractsFilterConfig(profit_min_isk=0, roi_min_pct=0)
+    config = ContractsFilterConfig(profit_min_isk=0, roi_min_pct=0, capital_min_isk=0)
     filtered = apply_contracts_filters([result], config)
     
     assert len(filtered) == 1

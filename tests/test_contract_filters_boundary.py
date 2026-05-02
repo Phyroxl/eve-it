@@ -20,7 +20,7 @@ def test_apply_filters_inclusive_boundary():
     )
     
     # Boundary case: 0 vs 0
-    config = ContractsFilterConfig(profit_min_isk=0, roi_min_pct=0, exclude_blueprints=False, exclude_bpcs=False)
+    config = ContractsFilterConfig(profit_min_isk=0, roi_min_pct=0, capital_min_isk=0, exclude_blueprints=False, exclude_bpcs=False)
     diag = ScanDiagnostics()
     filtered = apply_contracts_filters([result], config, diag)
     
@@ -44,7 +44,7 @@ def test_category_filter_normalization():
     )
     
     # Test "Todas las categorías" case
-    config = ContractsFilterConfig(category_filter="Todas las categorías", profit_min_isk=0, roi_min_pct=0)
+    config = ContractsFilterConfig(category_filter="Todas las categorías", profit_min_isk=0, roi_min_pct=0, capital_min_isk=0)
     filtered = apply_contracts_filters([result], config)
     assert len(filtered) == 1, "Category filter should be bypassed for 'Todas las categorías'"
     

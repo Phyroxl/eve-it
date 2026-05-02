@@ -408,7 +408,7 @@ class TestSectionBasedDetection(unittest.TestCase):
         calls = []
 
         orig = det._find_blue_row_bands
-        def spy(arr, y0, y1, x0, x1, debug):
+        def spy(arr, y0, y1, x0, x1, debug, **kwargs):
             calls.append((y0, y1))
             return []
         det._find_blue_row_bands = spy

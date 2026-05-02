@@ -12,7 +12,10 @@ class MockOpp:
         self.score_breakdown = None
         self.liquidity = MockLiquidity()
         self.margin_net_pct = 10.0
+        self.profit_per_unit = 500000.0
         self.profit_day_est = 1000000
+        self.best_buy_price = 1000000.0
+        self.best_sell_price = 1200000.0
         self.spread_pct = 5.0
         self.risk_level = "Bajo"
         self.tags = ["sólida"]

@@ -19,6 +19,7 @@ from ui.common.theme import Theme
 class MarketSimpleView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("SimpleViewRoot")
         self.worker = None
         self.all_opportunities = []
         self.last_scan_diagnostics = None
@@ -26,15 +27,24 @@ class MarketSimpleView(QWidget):
         self.current_config = load_market_filters()
         self.setup_ui()
         
+    def refresh_theme(self):
+        """Re-applies the current theme QSS to this view and refreshes dynamic data."""
+        self.setStyleSheet(Theme.get_qss("simple"))
+        if hasattr(self, 'table'):
+            self.table.setStyleSheet(Theme.get_qss("simple"))
+        # Force refresh of table items to update QColor foregrounds
+        self.apply_and_display()
+        
     def activate_view(self):
         """Hook para activación de pestaña."""
         pass
         
-    def create_insight_box(self, title, color):
-        f = QFrame(); f.setObjectName("MetricCard")
+    def create_insight_box(self, title, object_name=None):
+        f = QFrame(); f.setObjectName("SummaryMetricCard")
         l = QVBoxLayout(f); l.setContentsMargins(10, 8, 10, 8); l.setSpacing(2)
-        t = QLabel(title); t.setObjectName("MetricTitle"); t.setStyleSheet(f"color: {color};")
-        v = QLabel("---"); v.setObjectName("MetricValue")
+        t = QLabel(title); t.setObjectName("SummaryMetricTitle")
+        v = QLabel("---"); v.setObjectName("SummaryMetricValue")
+        if object_name: v.setObjectName(object_name)
         l.addWidget(t); l.addWidget(v)
         return f, v
 
@@ -45,12 +55,16 @@ class MarketSimpleView(QWidget):
         self.main_layout.setSpacing(15)
         
         # 1. Header Area
-        header = QHBoxLayout()
+        header_frame = QFrame()
+        header_frame.setObjectName("SimpleActionBar")
+        header = QHBoxLayout(header_frame)
+        header.setContentsMargins(0, 0, 0, 0)
+        
         title_v = QVBoxLayout()
         title_lbl = QLabel("MARKET COMMAND")
         title_lbl.setObjectName("SectionTitle")
         self.lbl_status = QLabel("● SISTEMA OPERATIVO")
-        self.lbl_status.setObjectName("StatusReady")
+        self.lbl_status.setObjectName("ModeLabel")
         title_v.addWidget(title_lbl)
         title_v.addWidget(self.lbl_status)
         
@@ -58,21 +72,21 @@ class MarketSimpleView(QWidget):
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
         self.btn_refresh.setMinimumWidth(220)
         self.btn_refresh.setFixedHeight(35)
-        self.btn_refresh.setObjectName("PrimaryButton")
+        self.btn_refresh.setObjectName("RefreshButton")
         self.btn_refresh.clicked.connect(self.on_refresh_clicked)
         
         self.btn_customize = QPushButton("PERSONALIZAR")
         self.btn_customize.setCursor(Qt.PointingHandCursor)
-        self.btn_customize.setFixedWidth(100)
+        self.btn_customize.setMinimumWidth(110)
         self.btn_customize.setFixedHeight(35)
-        self.btn_customize.setObjectName("SecondaryButton")
+        self.btn_customize.setObjectName("CustomizeButton")
         self.btn_customize.clicked.connect(self.on_customize_clicked)
         
         header.addLayout(title_v)
         header.addStretch()
         header.addWidget(self.btn_customize)
         header.addWidget(self.btn_refresh)
-        self.main_layout.addLayout(header)
+        self.main_layout.addWidget(header_frame)
         
         # 2. Main Content Split
         content_split = QHBoxLayout()
@@ -80,37 +94,33 @@ class MarketSimpleView(QWidget):
         
         # LEFT: Tactical Configuration
         filter_panel = QFrame()
-        filter_panel.setObjectName("AnalyticBox")
+        filter_panel.setObjectName("TacticalPanel")
         filter_panel.setFixedWidth(220)
         filter_l = QVBoxLayout(filter_panel)
-        filter_l.setContentsMargins(12, 12, 12, 12)
-        filter_l.setSpacing(12)
+        filter_l.setContentsMargins(0, 0, 0, 10)
+        filter_l.setSpacing(10)
         
-        filter_l.addWidget(QLabel("CONFIGURACIÓN TÁCTICA", objectName="ModuleHeader"))
+        header_lbl = QLabel("CONFIGURACIÓN TÁCTICA")
+        header_lbl.setObjectName("ModuleHeader")
+        filter_l.addWidget(header_lbl)
         
         scroll = QScrollArea()
+        scroll.setObjectName("TacticalScrollArea")
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background: transparent; border: none;")
         scroll_content = QWidget()
+        scroll_content.setObjectName("TacticalScrollContent")
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 5, 0)
         scroll_layout.setSpacing(10)
 
         def add_compact_input(layout, label, widget):
             card = QFrame()
-            card.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {Theme.BG_PANEL_ALT};
-                    border: 1px solid {Theme.BORDER};
-                    border-radius: 4px;
-                }}
-                QFrame:hover {{ border-color: {Theme.ACCENT}; }}
-            """)
+            card.setObjectName("TacticalFilterCard")
             v = QVBoxLayout(card)
             v.setContentsMargins(8, 6, 8, 6)
             v.setSpacing(1)
             lbl = QLabel(label.upper())
-            lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 7px; font-weight: 800; border: none; background: transparent;")
+            lbl.setObjectName("TacticalFilterLabel")
             v.addWidget(lbl)
             v.addWidget(widget)
             layout.addWidget(card)
@@ -182,14 +192,14 @@ class MarketSimpleView(QWidget):
         add_compact_input(scroll_layout, "Historial mín. días", self.spin_history_days)
 
         self.chk_require_buy_sell = QCheckBox("REQUERIR BUY Y SELL")
+        self.chk_require_buy_sell.setObjectName("TacticalCheckbox")
         self.chk_require_buy_sell.setChecked(self.current_config.require_buy_sell)
         self.chk_require_buy_sell.setToolTip("Excluir items sin órdenes de compra Y venta activas simultáneamente.")
-        self.chk_require_buy_sell.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700; margin-top: 3px;")
         scroll_layout.addWidget(self.chk_require_buy_sell)
 
         self.chk_plex = QCheckBox("EXCLUIR PLEX / VOLÁTILES")
+        self.chk_plex.setObjectName("TacticalCheckbox")
         self.chk_plex.setChecked(self.current_config.exclude_plex)
-        self.chk_plex.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700; margin-top: 5px;")
         scroll_layout.addWidget(self.chk_plex)
 
         scroll_layout.addStretch()
@@ -198,13 +208,13 @@ class MarketSimpleView(QWidget):
 
         self.btn_apply = QPushButton("APLICAR FILTROS")
         self.btn_apply.setFixedHeight(32)
-        self.btn_apply.setStyleSheet("background: #3b82f6; color: white; font-weight: 800; border-radius: 4px; font-size: 10px;")
+        self.btn_apply.setObjectName("PrimaryButton")
         self.btn_apply.clicked.connect(self.on_apply_filters)
         
         self.btn_reset = QPushButton("RESET")
         self.btn_reset.setFixedHeight(24)
         self.btn_reset.setFixedWidth(60)
-        self.btn_reset.setStyleSheet("background: #1e293b; color: #64748b; font-size: 9px; font-weight: 800; border-radius: 4px;")
+        self.btn_reset.setObjectName("SecondaryButton")
         self.btn_reset.clicked.connect(self.on_reset_filters)
 
         btn_row = QHBoxLayout()
@@ -220,11 +230,11 @@ class MarketSimpleView(QWidget):
         
         insights_l = QHBoxLayout()
         insights_l.setSpacing(8)
-        self.box_top, self.lbl_sum_top = self.create_insight_box("Mejor", "#fbbf24")
-        self.box_liq, self.lbl_sum_liquid = self.create_insight_box("Líquida", "#60a5fa")
-        self.box_mar, self.lbl_sum_margin = self.create_insight_box("Margen", "#34d399")
-        self.box_cnt, self.lbl_sum_count = self.create_insight_box("Filtrados", "#a78bfa")
-        self.box_ins, self.lbl_sum_insight = self.create_insight_box("Lectura", "#94a3b8")
+        self.box_top, self.lbl_sum_top = self.create_insight_box("Mejor")
+        self.box_liq, self.lbl_sum_liquid = self.create_insight_box("Líquida")
+        self.box_mar, self.lbl_sum_margin = self.create_insight_box("Margen")
+        self.box_cnt, self.lbl_sum_count = self.create_insight_box("Filtrados")
+        self.box_ins, self.lbl_sum_insight = self.create_insight_box("Lectura")
         
         for b in [self.box_top, self.box_liq, self.box_mar, self.box_cnt, self.box_ins]:
             insights_l.addWidget(b)
@@ -232,17 +242,17 @@ class MarketSimpleView(QWidget):
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(2); self.progress_bar.setTextVisible(False); self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { background: #1e293b; border: none; } QProgressBar::chunk { background: #3b82f6; }")
         right_panel.addWidget(self.progress_bar)
 
         self.table = MarketTableWidget()
+        self.table.setObjectName("MarketResultsTable")
         self.table.itemSelectionChanged.connect(self.on_table_selection)
         self.table.item_action_triggered.connect(self.on_item_action)
         right_panel.addWidget(self.table, 1)
         
         self.detail_panel = QFrame()
         self.detail_panel.setFixedHeight(99)
-        self.detail_panel.setStyleSheet("background-color: #000000; border: 1px solid #1e293b; border-radius: 4px;")
+        self.detail_panel.setObjectName("MarketDetailPanel")
         self.setup_detail_layout()
         right_panel.addWidget(self.detail_panel)
         
@@ -256,61 +266,62 @@ class MarketSimpleView(QWidget):
 
         self.lbl_det_icon = QLabel()
         self.lbl_det_icon.setFixedSize(52, 52)
-        self.lbl_det_icon.setStyleSheet("background: #0f172a; border-radius: 4px;")
+        self.lbl_det_icon.setObjectName("IconFrame")
         dl.addWidget(self.lbl_det_icon)
         
         name_v = QVBoxLayout()
         self.lbl_det_item = QLabel("SELECCIONA ITEM")
         self.lbl_det_item.setFixedHeight(20)
-        self.lbl_det_item.setFixedWidth(280) # Ancho fijo para evitar que crezca la grid
-        self.lbl_det_item.setStyleSheet("color: #f1f5f9; font-size: 13px; font-weight: 900; border: none;")
+        self.lbl_det_item.setFixedWidth(280) 
+        self.lbl_det_item.setObjectName("DetailName")
         self.lbl_det_tags = QLabel("---")
         self.lbl_det_tags.setFixedHeight(12)
         self.lbl_det_tags.setFixedWidth(280)
-        self.lbl_det_tags.setStyleSheet("color: #3b82f6; font-size: 9px; font-weight: 700; border: none;")
+        self.lbl_det_tags.setObjectName("DetailTagline")
         name_v.addWidget(self.lbl_det_item); name_v.addWidget(self.lbl_det_tags); name_v.addStretch()
         
         dl.addLayout(name_v)
 
         m_g = QGridLayout()
         m_g.setSpacing(5)
-        def add_det_metric(layout, row, col, lbl_txt, val_obj, color="#e2e8f0"):
-            lbl = QLabel(lbl_txt, styleSheet="color: #475569; font-size: 7px; font-weight: 800;")
+        def add_det_metric(layout, row, col, lbl_txt, val_obj):
+            lbl = QLabel(lbl_txt); lbl.setObjectName("DetailMetricTitle")
             lbl.setFixedWidth(80)
             layout.addWidget(lbl, row*2, col)
-            val_obj.setFixedWidth(80)
-            val_obj.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 800;")
+            val_obj.setFixedWidth(80); val_obj.setObjectName("DetailMetricValue")
             layout.addWidget(val_obj, row*2+1, col)
 
         self.lbl_det_buy = QLabel("---"); self.lbl_det_sell = QLabel("---")
         self.lbl_det_profit = QLabel("---"); self.lbl_det_margin = QLabel("---")
         add_det_metric(m_g, 0, 0, "BUY PRICE", self.lbl_det_buy)
         add_det_metric(m_g, 0, 1, "SELL PRICE", self.lbl_det_sell)
-        add_det_metric(m_g, 1, 0, "NET PROFIT/U", self.lbl_det_profit, "#10b981")
-        add_det_metric(m_g, 1, 1, "MARGIN %", self.lbl_det_margin, "#3b82f6")
+        add_det_metric(m_g, 1, 0, "NET PROFIT/U", self.lbl_det_profit)
+        add_det_metric(m_g, 1, 1, "MARGIN %", self.lbl_det_margin)
         dl.addLayout(m_g)
 
         s_v = QVBoxLayout()
-        s_v.addWidget(QLabel("SCORE & RISK", styleSheet="color: #475569; font-size: 7px; font-weight: 800;"))
-        self.lbl_det_score = QLabel("0.0"); self.lbl_det_score.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900;")
-        self.lbl_det_pens = QLabel("---"); self.lbl_det_pens.setStyleSheet("color: #64748b; font-size: 8px; font-weight: 600;")
+        header_score = QLabel("SCORE & RISK")
+        header_score.setObjectName("DetailMetricTitle")
+        s_v.addWidget(header_score)
+        self.lbl_det_score = QLabel("0.0"); self.lbl_det_score.setObjectName("DetailMetricValue")
+        self.lbl_det_score.setAlignment(Qt.AlignCenter)
+        self.lbl_det_pens = QLabel("---"); self.lbl_det_pens.setObjectName("DetailTagline")
         s_v.addWidget(self.lbl_det_score); s_v.addWidget(self.lbl_det_pens); s_v.addStretch()
         dl.addLayout(s_v, 1)
 
         r_v = QVBoxLayout()
-        r_v.addWidget(QLabel("RECOMMENDED QTY", styleSheet="color: #475569; font-size: 7px; font-weight: 800;"))
-        self.lbl_det_rec_qty = QLabel("0 uds"); self.lbl_det_rec_qty.setStyleSheet("color: #fbbf24; font-size: 14px; font-weight: 900;")
-        self.lbl_det_rec_cost = QLabel("Cost: 0 ISK"); self.lbl_det_rec_cost.setStyleSheet("color: #64748b; font-size: 8px; font-weight: 600;")
+        header_rec = QLabel("RECOMMENDED QTY"); header_rec.setObjectName("DetailMetricTitle")
+        r_v.addWidget(header_rec)
+        self.lbl_det_rec_qty = QLabel("0 uds"); self.lbl_det_rec_qty.setObjectName("DetailMetricValue")
+        self.lbl_det_rec_cost = QLabel("Cost: 0 ISK"); self.lbl_det_rec_cost.setObjectName("DetailTagline")
         r_v.addWidget(self.lbl_det_rec_qty); r_v.addWidget(self.lbl_det_rec_cost); r_v.addStretch()
         dl.addLayout(r_v, 1)
 
     def on_item_action(self, action, item_name, type_id):
         if action == "copied":
             self.lbl_status.setText(f"● PORTAPAPELES: {item_name.upper()}")
-            self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif action == "opened_in_game":
             self.lbl_status.setText(f"● EVE ONLINE: MERCADO ABIERTO ({item_name.upper()})")
-            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif action == "double_clicked":
             from ui.market_command.widgets import ItemInteractionHelper
             from core.esi_client import ESIClient
@@ -318,7 +329,7 @@ class MarketSimpleView(QWidget):
             auth = AuthManager.instance()
             def feedback(msg, color):
                 self.lbl_status.setText(f"● {msg.upper()}")
-                self.lbl_status.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+                self.lbl_status.setObjectName("ModeLabel")
             ItemInteractionHelper.open_market_with_fallback(ESIClient(), auth.char_id, type_id, item_name, feedback)
 
     def on_refresh_clicked(self):
@@ -329,7 +340,7 @@ class MarketSimpleView(QWidget):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setText("● OBTENIENDO MERCADO (ESI)...")
-        self.lbl_status.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        self.lbl_status.setObjectName("ModeLabel")
         self.worker = MarketRefreshWorker(region_id=10000002, config=copy.deepcopy(self.current_config))
         self.worker.progress_changed.connect(self.on_progress)
         self.worker.initial_data_ready.connect(self.on_initial_data_ready)
@@ -345,7 +356,8 @@ class MarketSimpleView(QWidget):
     def on_customize_clicked(self):
         from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
         dialog = ThemeCustomizerDialog(view_scope="simple", parent=self)
-        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("simple")))
+        # Full refresh on theme update
+        dialog.themeUpdated.connect(self.refresh_theme)
         dialog.exec()
 
     def on_initial_data_ready(self, opps):
@@ -360,7 +372,7 @@ class MarketSimpleView(QWidget):
         else:
             msg = f"● BUSCANDO {cat.upper()}... DESCARGANDO METADATA" if cat != "Todos" else "● ENRIQUECIENDO..."
         self.lbl_status.setText(msg)
-        self.lbl_status.setStyleSheet("color: #fbbf24; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        self.lbl_status.setObjectName("ModeLabel")
         self.btn_refresh.setText("ENRIQUECIENDO...")
 
     def on_enriched_data_ready(self, opps):
@@ -371,7 +383,7 @@ class MarketSimpleView(QWidget):
             self.all_opportunities = opps
             self.apply_and_display()
             self.lbl_status.setText("● ESCANEO COMPLETADO — DATOS ENRIQUECIDOS")
-            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            self.lbl_status.setObjectName("ModeLabel")
         except Exception as e:
             logging.getLogger('eve.market.simple').exception(f"Error in on_enriched_data_ready: {e}")
             self.on_error(str(e))
@@ -384,7 +396,7 @@ class MarketSimpleView(QWidget):
         self.btn_refresh.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")
-        self.lbl_status.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        self.lbl_status.setObjectName("ModeLabel")
 
     def on_diagnostics_ready(self, diagnostics):
         from PySide6.QtCore import QTimer
@@ -587,17 +599,17 @@ class MarketSimpleView(QWidget):
         if total_raw == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
             self.lbl_sum_insight.setText("SIN DATOS DEL ESCANEO")
-            self.lbl_sum_insight.setStyleSheet("color: #94a3b8; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+            self.lbl_sum_insight.setObjectName("MetricValueInfo")
             self.lbl_status.setText("● SIN DATOS DISPONIBLES — REALIZA UN ESCANEO")
-            self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            self.lbl_status.setObjectName("ModeLabel")
         elif len(filtered) == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
             dom = diag.get("dominant_filter", "DESCONOCIDO")
             count = diag["removed"].get(dom, total_raw)
             self.lbl_sum_insight.setText(f"FILTRO DOMINANTE: {dom.upper()} ({count})")
-            self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 11px; font-weight: 800; border: none; background: transparent;")
+            self.lbl_sum_insight.setObjectName("MetricValueDanger")
             self.lbl_status.setText(f"● {total_raw} ITEMS ENCONTRADOS PERO 0 PASAN FILTRO: {dom.upper()}")
-            self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            self.lbl_status.setObjectName("ModeLabel")
         else:
             self.lbl_sum_top.setText(filtered[0].item_name)
             liquid_opp = max(filtered, key=lambda x: x.liquidity.volume_5d)
@@ -610,12 +622,23 @@ class MarketSimpleView(QWidget):
                 self.lbl_sum_margin.setText("Ninguna")
             if len(filtered) > 50:
                 self.lbl_sum_insight.setText("MERCADO SALUDABLE")
-                self.lbl_sum_insight.setStyleSheet("color: #34d399; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+                self.lbl_sum_insight.setObjectName("MetricValueSuccess")
             else:
                 self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
-                self.lbl_sum_insight.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+                self.lbl_sum_insight.setObjectName("MetricValueWarning")
+            
+            # Apply semantic classes to top summary boxes if they show real items
+            self.lbl_sum_top.setObjectName("MetricValueInfo")
+            self.lbl_sum_liquid.setObjectName("MetricValueInfo")
+            self.lbl_sum_margin.setObjectName("MetricValueSuccess")
+            
             self.lbl_status.setText(f"● MOSTRANDO {len(filtered)} RESULTADOS")
-            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+            self.lbl_status.setObjectName("ModeLabel")
+            
+            # Refresh style to apply new ObjectNames
+            for lbl in [self.lbl_sum_top, self.lbl_sum_liquid, self.lbl_sum_margin, self.lbl_sum_insight]:
+                lbl.style().unpolish(lbl)
+                lbl.style().polish(lbl)
 
     def on_table_selection(self):
         sel = self.table.selectedItems()
@@ -643,7 +666,17 @@ class MarketSimpleView(QWidget):
             self.lbl_det_buy.setText(f"{format_isk(opp.best_buy_price, short=True)} ISK")
             self.lbl_det_sell.setText(f"{format_isk(opp.best_sell_price, short=True)} ISK")
             self.lbl_det_profit.setText(f"{format_isk(opp.profit_per_unit, short=False)} ISK")
+            
+            # Margin coloring logic
             self.lbl_det_margin.setText(f"{opp.margin_net_pct:.1f}%")
+            if opp.margin_net_pct > 10.0:
+                self.lbl_det_margin.setObjectName("MetricValueSuccess")
+            elif opp.margin_net_pct >= 0.0:
+                self.lbl_det_margin.setObjectName("MetricValueWarning")
+            else:
+                self.lbl_det_margin.setObjectName("MetricValueDanger")
+            self.lbl_det_margin.style().unpolish(self.lbl_det_margin)
+            self.lbl_det_margin.style().polish(self.lbl_det_margin)
             # Profit breakdown tooltip
             bd = compute_profit_breakdown(
                 opp.best_buy_price, opp.best_sell_price,
@@ -653,10 +686,10 @@ class MarketSimpleView(QWidget):
                 f"[PROFIT BREAKDOWN]\n"
                 f"  buy_price:       {format_isk(opp.best_buy_price, short=False)} ISK\n"
                 f"  sell_price:      {format_isk(opp.best_sell_price, short=False)} ISK\n"
-                f"  gross_spread:    {format_isk(bd['gross_spread'], short=False)} ISK\n"
-                f"  sales_tax_pct:   {bd['sales_tax_pct']:.2f}%\n"
+                f"  Gross Spread:    {format_isk(bd['gross_spread'], short=False)} ISK\n"
+                f"  Sales Tax pct:   {bd['sales_tax_pct']:.2f}%\n"
                 f"  broker_fee_pct:  {bd['broker_fee_pct']:.2f}%\n"
-                f"  sales_tax_isk:   -{format_isk(bd['sales_tax_isk'], short=False)} ISK\n"
+                f"  Sales Tax ISK:   -{format_isk(bd['sales_tax_isk'], short=False)} ISK\n"
                 f"  broker_sell_isk: -{format_isk(bd['broker_fee_sell_isk'], short=False)} ISK\n"
                 f"  broker_buy_isk:  -{format_isk(bd['broker_fee_buy_isk'], short=False)} ISK\n"
                 f"  {'-' * 40}\n"
@@ -667,9 +700,11 @@ class MarketSimpleView(QWidget):
             sb = opp.score_breakdown
             if sb:
                 self.lbl_det_score.setText(f"{sb.final_score:.1f}")
-                if sb.final_score > 70: self.lbl_det_score.setStyleSheet("color: #34d399; font-size: 18px; font-weight: 900;")
-                elif sb.final_score > 40: self.lbl_det_score.setStyleSheet("color: #fbbf24; font-size: 18px; font-weight: 900;")
-                else: self.lbl_det_score.setStyleSheet("color: #f87171; font-size: 18px; font-weight: 900;")
+                if sb.final_score > 70: self.lbl_det_score.setObjectName("MetricValueSuccess")
+                elif sb.final_score > 40: self.lbl_det_score.setObjectName("MetricValueWarning")
+                else: self.lbl_det_score.setObjectName("MetricValueDanger")
+                self.lbl_det_score.style().unpolish(self.lbl_det_score)
+                self.lbl_det_score.style().polish(self.lbl_det_score)
                 penalties = ", ".join([f"x{p:.2f}" for p in sb.penalties]) if sb.penalties else "Ninguna"
                 self.lbl_det_pens.setText(f"Riesgo: {opp.risk_level.upper()} | {penalties}")
             

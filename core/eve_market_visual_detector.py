@@ -562,6 +562,23 @@ class EveMarketVisualDetector:
             )
             result["debug"]["raw_candidate_bands"] = list(candidate_bands)
 
+            # Early OCR backend check: report bands found before failing on missing backend
+            if candidate_bands:
+                _need_ocr = (self.match_price and target_price > 0) or (self.match_quantity and target_quantity > 0)
+                if _need_ocr:
+                    if not _PYTESSERACT_AVAILABLE:
+                        result["error"] = "ocr_backend_unavailable_module_missing"
+                        result["status"] = "error"
+                        result["debug"]["blue_bands_found"] = len(candidate_bands)
+                        result["candidates_count"] = len(candidate_bands)
+                        return result
+                    if not self._is_tesseract_available():
+                        result["error"] = "ocr_backend_unavailable_tesseract_executable_missing"
+                        result["status"] = "error"
+                        result["debug"]["blue_bands_found"] = len(candidate_bands)
+                        result["candidates_count"] = len(candidate_bands)
+                        return result
+
             # Phase 3G: Pass-based detection
             # Pass 1: Strict (normal height and offset constraints)
             verified = self._run_detection_pass(
@@ -653,7 +670,8 @@ class EveMarketVisualDetector:
                 result["status"] = "ambiguous"
         else:
             best = verified[0]
-            if best["score"] >= (self.score_threshold - 50) or (best["matched_own_marker"] and best["matched_price"]):
+            marker_waived = not self.marker_required and best["matched_price"]
+            if best["score"] >= (self.score_threshold - 50) or (best["matched_own_marker"] and best["matched_price"]) or marker_waived:
                 self._populate_match(result, best)
             else:
                 result["status"] = "not_found"
@@ -716,6 +734,7 @@ class EveMarketVisualDetector:
             filtered.append((y0, y1))
             
         result["debug"]["blue_bands_found"] = len(filtered)
+        result["debug"]["filtered_candidate_bands"] = filtered
         result["debug"]["visual_ocr_rej_top"] = len(result["debug"].get("rejected_bands_by_top_edge", []))
         result["debug"]["visual_ocr_rej_bot"] = len(result["debug"].get("rejected_bands_by_bottom_edge", []))
         result["debug"]["visual_ocr_rej_height"] = len(result["debug"].get("rejected_bands_by_height", []))
@@ -1001,7 +1020,8 @@ class EveMarketVisualDetector:
             }
             
             # Acceptance criteria for verified candidates
-            if (own_marker or (is_buy_order and is_background_band)) and price_ok:
+            marker_ok = (own_marker or (is_buy_order and is_background_band)) or not self.marker_required
+            if marker_ok and price_ok:
                 if qty_ok or (is_fallback and qty_match_type in ["suffix", "near_ocr"]):
                     verified.append(candidate)
                 

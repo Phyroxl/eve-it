@@ -20,8 +20,9 @@ def test_full_cycle_consistency():
     )
     
     config = ContractsFilterConfig(
-        profit_min_isk=0, 
-        roi_min_pct=0, 
+        profit_min_isk=0,
+        roi_min_pct=0,
+        capital_min_isk=0,
         category_filter="all",
         exclude_blueprints=True,
         exclude_bpcs=True
@@ -45,14 +46,22 @@ def test_full_cycle_consistency():
 
 def test_config_mutation_check():
     # Verify that changing config values (like from UI spinboxes) behaves as expected
-    config = ContractsFilterConfig(profit_min_isk=0)
+    config = ContractsFilterConfig(profit_min_isk=0, capital_min_isk=0)
     
     item = ContractItem(
         type_id=1, item_name="X", quantity=1, line_sell_value=100,
         is_included=True, jita_sell_price=100, jita_buy_price=90, 
         line_buy_value=90, pct_of_total=100
     )
-    res = ContractArbitrageResult(contract_id=1, net_profit=10.0, items=[item]) # Profit 10
+    res = ContractArbitrageResult(
+        contract_id=1, region_id=10000002, issuer_id=1, contract_cost=50.0,
+        date_expired="2026-05-01T00:00:00Z", location_id=60003760,
+        item_type_count=1, total_units=1, items=[item],
+        jita_sell_value=100.0, jita_buy_value=90.0,
+        gross_profit=50.0, net_profit=10.0, roi_pct=20.0,
+        value_concentration=1.0, has_unresolved_items=False,
+        unresolved_count=0, score=60.0
+    )
     
     assert len(apply_contracts_filters([res], config)) == 1
     

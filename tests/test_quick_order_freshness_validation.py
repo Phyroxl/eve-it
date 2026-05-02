@@ -302,11 +302,20 @@ class TestLaunchWithFreshness(unittest.TestCase):
     def _launch(self, freshness_result):
         """Launch with mocked freshness, dialog, and market."""
         mock_dlg = MagicMock()
+        _fresh_market = {
+            "checked": True, "is_fresh": True, "used_fresh_price": False,
+            "old_competitor_price": 1596.0, "fresh_competitor_price": 1596.0,
+            "fresh_recommended_price": 1595.9, "fresh_best_buy": 1000.0,
+            "fresh_best_sell": 1596.0, "price_source": "local_market",
+            "warnings": [],
+        }
         with patch("ui.market_command.my_orders_view.QuickOrderUpdateDialog",
                    return_value=mock_dlg), \
              patch.object(self.view, "_open_market_for_order", return_value=True), \
              patch.object(self.view, "_revalidate_order_freshness",
-                          return_value=freshness_result):
+                          return_value=freshness_result), \
+             patch.object(self.view, "_revalidate_market_competitor",
+                          return_value=_fresh_market):
             self.view._launch_quick_order_update(self.order)
         return mock_dlg
 
