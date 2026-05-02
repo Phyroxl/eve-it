@@ -24,7 +24,9 @@ class IndustrialBadge(QLabel):
     """
     Un badge de estado simple y profesional.
     """
-    def __init__(self, text, color="#3182ce", parent=None):
+    def __init__(self, text, color=None, parent=None):
+        from ui.common.theme import Theme
+        if color is None: color = Theme.ACCENT
         super().__init__(text, parent)
         rgb = self._hex_to_rgb(color)
         self.setStyleSheet(f"""
@@ -34,8 +36,9 @@ class IndustrialBadge(QLabel):
                 border: 1px solid rgba({rgb}, 0.3);
                 padding: 2px 8px;
                 font-size: 10px;
-                font-weight: 600;
+                font-weight: 800;
                 border-radius: 10px;
+                text-transform: uppercase;
             }}
         """)
 
@@ -78,23 +81,24 @@ class TelemetryChart(QFrame):
                 points.append(QPointF(x, y))
                 
             # 1. Dibujar Área de Relleno (Gradient)
+            from ui.common.theme import Theme
             poly = QPolygonF(points)
             poly.append(QPointF(w, h))
             poly.append(QPointF(0, h))
             
             grad = QLinearGradient(0, 0, 0, h)
-            grad.setColorAt(0, QColor(37, 99, 235, 60)) # Blue-600
-            grad.setColorAt(1, QColor(37, 99, 235, 0))
+            grad.setColorAt(0, QColor(0, 200, 255, 60)) # Cian
+            grad.setColorAt(1, QColor(0, 200, 255, 0))
             p.setBrush(grad); p.setPen(Qt.NoPen)
             p.drawPolygon(poly)
             
             # 2. Dibujar Línea Principal
-            pen = QPen(QColor("#60a5fa"), 1.5) # Blue-400
+            pen = QPen(QColor(Theme.ACCENT), 1.5)
             p.setPen(pen); p.setBrush(Qt.NoBrush)
             for i in range(len(points) - 1):
                 p.drawLine(points[i], points[i+1])
                 
             # 3. Punto Final (Efecto "Active")
             last = points[-1]
-            p.setBrush(QColor("#60a5fa")); p.setPen(Qt.NoPen)
+            p.setBrush(QColor(Theme.SUCCESS)); p.setPen(Qt.NoPen)
             p.drawEllipse(last, 2.5, 2.5)

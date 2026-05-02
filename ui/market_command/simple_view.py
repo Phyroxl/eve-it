@@ -14,6 +14,7 @@ from core.market_models import FilterConfig
 from core.market_scan_diagnostics import MarketScanDiagnostics
 from core.config_manager import save_market_filters, load_market_filters
 from core.eve_icon_service import EveIconService
+from ui.common.theme import Theme
 
 class MarketSimpleView(QWidget):
     def __init__(self, parent=None):
@@ -30,26 +31,15 @@ class MarketSimpleView(QWidget):
         pass
         
     def create_insight_box(self, title, color):
-        f = QFrame()
-        f.setStyleSheet("""
-            QFrame {
-                background-color: #1a1e23;
-                border: 1px solid #2d3748;
-                border-radius: 4px;
-            }
-        """)
-        l = QVBoxLayout(f)
-        l.setContentsMargins(10, 8, 10, 8)
-        l.setSpacing(2)
-        t = QLabel(title)
-        t.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; border: none; background: transparent;")
-        v = QLabel("---")
-        v.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 800; border: none; background: transparent;")
-        l.addWidget(t)
-        l.addWidget(v)
+        f = QFrame(); f.setObjectName("MetricCard")
+        l = QVBoxLayout(f); l.setContentsMargins(10, 8, 10, 8); l.setSpacing(2)
+        t = QLabel(title); t.setObjectName("MetricTitle"); t.setStyleSheet(f"color: {color};")
+        v = QLabel("---"); v.setObjectName("MetricValue")
+        l.addWidget(t); l.addWidget(v)
         return f, v
 
     def setup_ui(self):
+        self.setStyleSheet(Theme.get_qss("simple"))
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(15, 15, 15, 15)
         self.main_layout.setSpacing(15)
@@ -57,10 +47,10 @@ class MarketSimpleView(QWidget):
         # 1. Header Area
         header = QHBoxLayout()
         title_v = QVBoxLayout()
-        title_lbl = QLabel("MARKET COMMAND — MODO SIMPLE")
-        title_lbl.setStyleSheet("color: #f1f5f9; font-size: 16px; font-weight: 900; letter-spacing: 1px;")
-        self.lbl_status = QLabel("● SISTEMA LISTO")
-        self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
+        title_lbl = QLabel("MARKET COMMAND")
+        title_lbl.setObjectName("SectionTitle")
+        self.lbl_status = QLabel("● SISTEMA OPERATIVO")
+        self.lbl_status.setObjectName("StatusReady")
         title_v.addWidget(title_lbl)
         title_v.addWidget(self.lbl_status)
         
@@ -68,18 +58,19 @@ class MarketSimpleView(QWidget):
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
         self.btn_refresh.setMinimumWidth(220)
         self.btn_refresh.setFixedHeight(35)
-        self.btn_refresh.setStyleSheet("""
-            QPushButton {
-                background-color: transparent; color: #3b82f6; border: 2px solid #3b82f6;
-                font-size: 10px; font-weight: 900; border-radius: 4px; letter-spacing: 1px;
-            }
-            QPushButton:hover { background-color: rgba(59, 130, 246, 0.1); }
-            QPushButton:disabled { color: #334155; border-color: #334155; }
-        """)
+        self.btn_refresh.setObjectName("PrimaryButton")
         self.btn_refresh.clicked.connect(self.on_refresh_clicked)
+        
+        self.btn_customize = QPushButton("PERSONALIZAR")
+        self.btn_customize.setCursor(Qt.PointingHandCursor)
+        self.btn_customize.setFixedWidth(100)
+        self.btn_customize.setFixedHeight(35)
+        self.btn_customize.setObjectName("SecondaryButton")
+        self.btn_customize.clicked.connect(self.on_customize_clicked)
         
         header.addLayout(title_v)
         header.addStretch()
+        header.addWidget(self.btn_customize)
         header.addWidget(self.btn_refresh)
         self.main_layout.addLayout(header)
         
@@ -90,13 +81,12 @@ class MarketSimpleView(QWidget):
         # LEFT: Tactical Configuration
         filter_panel = QFrame()
         filter_panel.setObjectName("AnalyticBox")
-        filter_panel.setFixedWidth(240)
-        filter_panel.setStyleSheet("background-color: #0f172a; border-right: 1px solid #1e293b; border-radius: 4px;")
+        filter_panel.setFixedWidth(220)
         filter_l = QVBoxLayout(filter_panel)
         filter_l.setContentsMargins(12, 12, 12, 12)
         filter_l.setSpacing(12)
         
-        filter_l.addWidget(QLabel("CONFIGURACIÓN TÁCTICA", styleSheet="color: #64748b; font-size: 9px; font-weight: 900; letter-spacing: 1px;"))
+        filter_l.addWidget(QLabel("CONFIGURACIÓN TÁCTICA", objectName="ModuleHeader"))
         
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -107,17 +97,23 @@ class MarketSimpleView(QWidget):
         scroll_layout.setSpacing(10)
 
         def add_compact_input(layout, label, widget):
-            w = QWidget()
-            v = QVBoxLayout(w)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(2)
+            card = QFrame()
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {Theme.BG_PANEL_ALT};
+                    border: 1px solid {Theme.BORDER};
+                    border-radius: 4px;
+                }}
+                QFrame:hover {{ border-color: {Theme.ACCENT}; }}
+            """)
+            v = QVBoxLayout(card)
+            v.setContentsMargins(8, 6, 8, 6)
+            v.setSpacing(1)
             lbl = QLabel(label.upper())
-            lbl.setStyleSheet("color: #475569; font-size: 8px; font-weight: 800;")
-            widget.setStyleSheet("background: #000000; color: #f1f5f9; border: 1px solid #1e293b; padding: 4px; border-radius: 2px;")
-            widget.setFixedHeight(28)
+            lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 7px; font-weight: 800; border: none; background: transparent;")
             v.addWidget(lbl)
             v.addWidget(widget)
-            layout.addWidget(w)
+            layout.addWidget(card)
 
         from core.item_categories import get_all_categories
         self.combo_category = QComboBox()
@@ -345,6 +341,12 @@ class MarketSimpleView(QWidget):
     def on_progress(self, pct, text):
         self.progress_bar.setValue(pct)
         self.lbl_status.setText(f"● {text.upper()}")
+
+    def on_customize_clicked(self):
+        from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
+        dialog = ThemeCustomizerDialog(view_scope="simple", parent=self)
+        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("simple")))
+        dialog.exec()
 
     def on_initial_data_ready(self, opps):
         import logging

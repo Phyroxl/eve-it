@@ -5,6 +5,7 @@ from ui.market_command.simple_view import MarketSimpleView
 from ui.market_command.performance_view import MarketPerformanceView
 from ui.market_command.my_orders_view import MarketMyOrdersView
 from ui.market_command.contracts_view import MarketContractsView
+from ui.common.theme import Theme
 
 _log = logging.getLogger('eve.market_command')
 
@@ -29,11 +30,17 @@ class MarketCommandMain(QWidget):
             3: "Contratos",
         }
 
+        self.setObjectName("MarketCommandRoot")
         self.setup_ui()
         from PySide6.QtCore import QTimer
         QTimer.singleShot(100, self.try_auto_restore)
 
     def setup_ui(self):
+        try:
+            self.setStyleSheet(Theme.get_qss())
+        except Exception as e:
+            _log.exception(f"[THEME] Failed to apply Market Command theme: {e}")
+            self.setStyleSheet("")
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
@@ -41,13 +48,7 @@ class MarketCommandMain(QWidget):
         # 1. Navigation Header
         self.nav_frame = QFrame()
         self.nav_frame.setObjectName("NavBar")
-        self.nav_frame.setFixedHeight(40)
-        self.nav_frame.setStyleSheet("""
-            QFrame#NavBar {
-                background-color: #0f172a;
-                border-bottom: 1px solid #1e293b;
-            }
-        """)
+        self.nav_frame.setFixedHeight(45)
         nav_layout = QHBoxLayout(self.nav_frame)
         nav_layout.setContentsMargins(20, 0, 20, 0)
         nav_layout.setSpacing(10)
@@ -71,21 +72,7 @@ class MarketCommandMain(QWidget):
         # SSO Section
         self.btn_sso = QPushButton("VINCULAR PERSONAJE")
         self.btn_sso.setCursor(Qt.PointingHandCursor)
-        self.btn_sso.setStyleSheet("""
-            QPushButton {
-                background: #1e293b;
-                color: #94a3b8;
-                border: 1px solid #334155;
-                border-radius: 4px;
-                font-size: 8px;
-                font-weight: 800;
-                padding: 4px 10px;
-            }
-            QPushButton:hover {
-                background: #334155;
-                color: #f1f5f9;
-            }
-        """)
+        self.btn_sso.setObjectName("SecondaryButton")
         from core.auth_manager import AuthManager
         self.btn_sso.clicked.connect(AuthManager.instance().login)
         AuthManager.instance().authenticated.connect(self.on_auth_success)
@@ -130,40 +117,18 @@ class MarketCommandMain(QWidget):
 
     def create_tab_button(self, text, active=False):
         btn = QPushButton(text)
+        btn.setObjectName("TabButton")
         btn.setCheckable(True)
         btn.setChecked(active)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setFixedHeight(40)
+        btn.setFixedHeight(45)
         self.update_btn_style(btn, active)
         return btn
 
     def update_btn_style(self, btn, active):
-        if active:
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #3b82f6;
-                    border: none;
-                    border-bottom: 2px solid #3b82f6;
-                    font-weight: 900;
-                    font-size: 10px;
-                    padding: 0 15px;
-                }
-            """)
-        else:
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #64748b;
-                    border: none;
-                    font-weight: 700;
-                    font-size: 10px;
-                    padding: 0 15px;
-                }
-                QPushButton:hover {
-                    color: #f1f5f9;
-                }
-            """)
+        btn.setProperty("active", "true" if active else "false")
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
 
     def _ensure_view_loaded(self, index):
         if self._views[index] is not None:

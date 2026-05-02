@@ -15,5 +15,5 @@
   "exclude_abyssal": true,
   "category_filter": "all",
   "only_current_station": true,
-  "availability_filter": "both"
+  "availability_filter": "public"
 }

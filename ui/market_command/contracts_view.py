@@ -21,6 +21,7 @@ from core.esi_client import ESIClient
 from core.auth_manager import AuthManager
 from core.item_metadata import ItemMetadataHelper, MARKET_CATEGORIES
 from ui.market_command.widgets import ItemInteractionHelper
+from ui.common.theme import Theme
 
 
 def _format_isk(value: float) -> str:
@@ -138,146 +139,114 @@ class MarketContractsView(QWidget):
         pass
 
     def setup_ui(self):
+        self.setStyleSheet(Theme.get_qss("contracts"))
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
         # Panel izquierdo: Filtros (230px fijo)
         filter_panel = QFrame()
-        filter_panel.setFixedWidth(230)
-        filter_panel.setStyleSheet("background: #0f172a; border-right: 1px solid #1e293b;")
+        filter_panel.setObjectName("AnalyticBox")
+        filter_panel.setFixedWidth(210)
+        filter_panel.setStyleSheet(f"border-right: 1px solid {Theme.BORDER}; border-radius: 0px;")
         fl = QVBoxLayout(filter_panel)
         fl.setContentsMargins(15, 15, 15, 15)
         fl.setSpacing(12)
 
-        lbl_filters = QLabel("FILTROS")
-        lbl_filters.setStyleSheet("color: #f1f5f9; font-size: 14px; font-weight: 900; letter-spacing: 1px; border: none;")
+        lbl_filters = QLabel("PARÁMETROS DE ESCANEO")
+        lbl_filters.setObjectName("ModuleHeader")
         fl.addWidget(lbl_filters)
 
         def create_dspin(label, min_v, max_v, step, suffix):
-            v_l = QVBoxLayout()
-            v_l.setSpacing(2)
-            lbl = QLabel(label)
-            lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 800; border: none;")
-            spin = QDoubleSpinBox()
-            spin.setRange(min_v, max_v)
-            spin.setSingleStep(step)
-            spin.setSuffix(suffix)
-            spin.setDecimals(1)
-            spin.setStyleSheet(
-                "QDoubleSpinBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }"
-            )
-            v_l.addWidget(lbl)
-            v_l.addWidget(spin)
+            v_l = QVBoxLayout(); v_l.setSpacing(2)
+            lbl = QLabel(label.upper()); lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+            spin = QDoubleSpinBox(); spin.setRange(min_v, max_v); spin.setSingleStep(step); spin.setSuffix(suffix); spin.setDecimals(1)
+            v_l.addWidget(lbl); v_l.addWidget(spin)
             fl.addLayout(v_l)
             return spin
 
         def create_spin(label, min_v, max_v, step):
-            v_l = QVBoxLayout()
-            v_l.setSpacing(2)
-            lbl = QLabel(label)
-            lbl.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
-            spin = QSpinBox()
-            spin.setRange(min_v, max_v)
-            spin.setSingleStep(step)
-            spin.setStyleSheet(
-                "QSpinBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }"
-            )
-            v_l.addWidget(lbl)
-            v_l.addWidget(spin)
+            v_l = QVBoxLayout(); v_l.setSpacing(2)
+            lbl = QLabel(label.upper()); lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+            spin = QSpinBox(); spin.setRange(min_v, max_v); spin.setSingleStep(step)
+            v_l.addWidget(lbl); v_l.addWidget(spin)
             fl.addLayout(v_l)
             return spin
 
-        v_reg = QVBoxLayout()
-        v_reg.setSpacing(2)
-        lbl_reg = QLabel("REGIÓN")
-        lbl_reg.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
+        # Región
+        v_reg = QVBoxLayout(); v_reg.setSpacing(2)
+        lbl_reg = QLabel("REGIÓN"); lbl_reg.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
         self.combo_region = QComboBox()
-        self.combo_region.setStyleSheet("QComboBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }")
         self.combo_region.addItem("The Forge (Jita)", 10000002)
         self.combo_region.addItem("Domain (Amarr)", 10000043)
         self.combo_region.addItem("Sinq Laison (Dodixie)", 10000032)
-        self.combo_region.addItem("Heimatar (Rens)", 10000030)
-        self.combo_region.addItem("Metropolis (Hek)", 10000042)
-        v_reg.addWidget(lbl_reg)
-        v_reg.addWidget(self.combo_region)
-        fl.addLayout(v_reg)
+        v_reg.addWidget(lbl_reg); v_reg.addWidget(self.combo_region); fl.addLayout(v_reg)
 
-        v_cat = QVBoxLayout()
-        v_cat.setSpacing(2)
-        lbl_cat = QLabel("CATEGORÍA")
-        lbl_cat.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
-        self.combo_category = QComboBox()
-        self.combo_category.setStyleSheet("QComboBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }")
-        self.combo_category.addItem("Todas las categorías", "all")
-        for cat in MARKET_CATEGORIES:
-            self.combo_category.addItem(cat.name, cat.id)
-        v_cat.addWidget(lbl_cat)
-        v_cat.addWidget(self.combo_category)
-        fl.addLayout(v_cat)
-
-        v_avail = QVBoxLayout()
-        v_avail.setSpacing(2)
-        lbl_avail = QLabel("DISPONIBILIDAD")
-        lbl_avail.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800; border: none;")
-        self.availability_combo = QComboBox()
-        self.availability_combo.setStyleSheet("QComboBox { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; padding: 4px; border-radius: 2px; }")
-        self.availability_combo.addItem("Público", "public")
-        self.availability_combo.addItem("Alianza/Personal", "alliance")
-        self.availability_combo.addItem("Público + Alianza", "both")
-        v_avail.addWidget(lbl_avail)
-        v_avail.addWidget(self.availability_combo)
-        fl.addLayout(v_avail)
+        # Categoría
+        v_cat = QVBoxLayout(); v_cat.setSpacing(2)
+        lbl_cat = QLabel("CATEGORÍA"); lbl_cat.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+        self.combo_category = QComboBox(); self.combo_category.addItem("Todas las categorías", "all")
+        for cat in MARKET_CATEGORIES: self.combo_category.addItem(cat.name, cat.id)
+        v_cat.addWidget(lbl_cat); v_cat.addWidget(self.combo_category); fl.addLayout(v_cat)
 
         self.current_station_check = QCheckBox("Solo estación actual")
-        self.current_station_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
+        self.current_station_check.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
         fl.addWidget(self.current_station_check)
 
+        self.capital_min_spin = create_dspin("CAPITAL MIN", 0, 100000, 100, " M ISK")
         self.capital_max_spin = create_dspin("CAPITAL MAX", 1, 100000, 100, " M ISK")
-        self.capital_min_spin = create_dspin("CAPITAL MIN", 0, 100000, 1, " M ISK")
-        self.profit_min_spin = create_dspin("PROFIT MINIMO", 0, 10000, 10, " M ISK")
-        self.roi_min_spin = create_dspin("ROI MINIMO", 0, 500, 1, " %")
-        self.items_max_spin = create_spin("MAX TIPOS ITEM", 1, 500, 1)
-        self.scan_max_spin = create_spin("MAX CONTRATOS A ESCANEAR", 0, 10000, 10)
-        self.scan_max_spin.setSpecialValueText("0 (Sin límite)")
+        self.profit_min_spin = create_dspin("PROFIT MIN", 0, 10000, 10, " M ISK")
+        self.roi_min_spin = create_dspin("ROI MIN", 0, 500, 1, " %")
+        self.items_max_spin = create_spin("MAX TIPOS ITEM", 0, 1000, 1)
+        self.scan_max_spin = create_spin("MAX CONTRATOS", 0, 10000, 10)
 
-        self.exclude_no_price_check = QCheckBox("Excluir items sin precio")
-        self.exclude_no_price_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
+        self.exclude_no_price_check = QCheckBox("Excluir sin precio")
+        self.exclude_no_price_check.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
         fl.addWidget(self.exclude_no_price_check)
 
-        self.exclude_blueprints_check = QCheckBox("Excluir Blueprints (BPOs)")
-        self.exclude_blueprints_check.setStyleSheet("color: #94a3b8; font-size: 10px; border: none;")
+        self.exclude_blueprints_check = QCheckBox("Excluir planos (BPO)")
+        self.exclude_blueprints_check.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
         fl.addWidget(self.exclude_blueprints_check)
 
-        self.check_bpcs = QCheckBox("Excluir Copias (BPCs)")
-        self.check_bpcs.setChecked(self.config.exclude_bpcs)
-        self.check_bpcs.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        self.check_bpcs = QCheckBox("Excluir copias (BPC)")
+        self.check_bpcs.setChecked(True)
+        self.check_bpcs.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
         fl.addWidget(self.check_bpcs)
 
-        self.check_abyssal = QCheckBox("Excluir Abyssal")
-        self.check_abyssal.setChecked(self.config.exclude_abyssal)
-        self.check_abyssal.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        self.check_abyssal = QCheckBox("Excluir Abyssal/Mut")
+        self.check_abyssal.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
         fl.addWidget(self.check_abyssal)
+        
+        # Disponibilidad
+        v_avail = QVBoxLayout(); v_avail.setSpacing(2)
+        lbl_avail = QLabel("DISPONIBILIDAD"); lbl_avail.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+        self.availability_combo = QComboBox()
+        self.availability_combo.addItem("Públicos", "public")
+        self.availability_combo.addItem("Corporación", "corporation")
+        self.availability_combo.addItem("Alianza", "alliance")
+        v_avail.addWidget(lbl_avail); v_avail.addWidget(self.availability_combo); fl.addLayout(v_avail)
 
         fl.addStretch()
 
         self.btn_apply = QPushButton("APLICAR FILTROS")
         self.btn_apply.setFixedHeight(30)
         self.btn_apply.setCursor(Qt.PointingHandCursor)
-        self.btn_apply.setStyleSheet(
-            "QPushButton { background-color: #334155; color: white; font-size: 10px; font-weight: 800; border-radius: 4px; border: none; } "
-            "QPushButton:hover { background-color: #475569; }"
-        )
+        self.btn_apply.setObjectName("PrimaryButton")
         self.btn_apply.clicked.connect(self.apply_filters_locally)
+        
+        self.btn_customize = QPushButton("PERSONALIZAR")
+        self.btn_customize.setFixedHeight(30)
+        self.btn_customize.setCursor(Qt.PointingHandCursor)
+        self.btn_customize.setObjectName("SecondaryButton")
+        self.btn_customize.clicked.connect(self.on_customize_clicked)
+        
         fl.addWidget(self.btn_apply)
+        fl.addWidget(self.btn_customize)
 
         self.btn_reset = QPushButton("RESET")
         self.btn_reset.setFixedHeight(25)
         self.btn_reset.setCursor(Qt.PointingHandCursor)
-        self.btn_reset.setStyleSheet(
-            "QPushButton { background-color: transparent; color: #64748b; font-size: 10px; font-weight: 800; border: 1px solid #334155; border-radius: 4px; } "
-            "QPushButton:hover { background-color: #1e293b; color: #f1f5f9; }"
-        )
+        self.btn_reset.setStyleSheet(f"background-color: transparent; color: {Theme.TEXT_DIM}; font-size: 10px; font-weight: 800; border: 1px solid {Theme.BORDER};")
         self.btn_reset.clicked.connect(self.reset_filters)
         fl.addWidget(self.btn_reset)
 
@@ -301,8 +270,8 @@ class MarketContractsView(QWidget):
         self.btn_clear.setFixedHeight(35)
         self.btn_clear.setCursor(Qt.PointingHandCursor)
         self.btn_clear.setStyleSheet(
-            "QPushButton { background-color: transparent; color: #64748b; font-size: 10px; font-weight: 800; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; } "
-            "QPushButton:hover { background-color: #1e293b; color: #f1f5f9; }"
+            f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_DIM}; font-size: 10px; font-weight: 800; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 0 15px; }} "
+            f"QPushButton:hover {{ background-color: {Theme.BG_PANEL_ALT}; color: {Theme.TEXT_MAIN}; }}"
         )
         self.btn_clear.clicked.connect(self.on_clear_clicked)
         header_l.addWidget(self.btn_clear)
@@ -311,8 +280,8 @@ class MarketContractsView(QWidget):
         self.btn_report.setFixedHeight(35)
         self.btn_report.setCursor(Qt.PointingHandCursor)
         self.btn_report.setStyleSheet(
-            "QPushButton { background-color: #1e293b; color: #94a3b8; font-size: 10px; font-weight: 800; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; } "
-            "QPushButton:hover { background-color: #334155; color: #f1f5f9; }"
+            f"QPushButton {{ background-color: {Theme.BG_PANEL_ALT}; color: {Theme.NEUTRAL}; font-size: 10px; font-weight: 800; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 0 15px; }} "
+            f"QPushButton:hover {{ background-color: {Theme.ACCENT_LOW}; color: {Theme.ACCENT}; }}"
         )
         self.btn_report.clicked.connect(self.on_report_clicked)
         header_l.addWidget(self.btn_report)
@@ -321,8 +290,8 @@ class MarketContractsView(QWidget):
         self.btn_cancel.setFixedHeight(35)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
         self.btn_cancel.setStyleSheet(
-            "QPushButton { background-color: #ef4444; color: white; font-size: 10px; font-weight: 800; border-radius: 4px; padding: 0 15px; } "
-            "QPushButton:hover { background-color: #dc2626; }"
+            f"QPushButton {{ background-color: {Theme.DANGER}; color: black; font-size: 10px; font-weight: 800; border-radius: 4px; padding: 0 15px; }} "
+            f"QPushButton:hover {{ background-color: {Theme.BG_PANEL_ALT}; color: {Theme.DANGER}; border: 1px solid {Theme.DANGER}; }}"
         )
         self.btn_cancel.setVisible(False)
         self.btn_cancel.clicked.connect(self.on_cancel_clicked)
@@ -564,6 +533,12 @@ class MarketContractsView(QWidget):
         force_act = menu.addAction("Forzar Recalcular Todo (Ignorar Cache)")
         force_act.triggered.connect(lambda: self.on_scan_clicked(force_refresh=True))
         menu.exec_(self.btn_scan.mapToGlobal(pos))
+
+    def on_customize_clicked(self):
+        from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
+        dialog = ThemeCustomizerDialog(view_scope="contracts", parent=self)
+        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("contracts")))
+        dialog.exec()
 
     def on_scan_clicked(self, force_refresh=False):
         if self.worker and self.worker.isRunning():

@@ -138,6 +138,18 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
+    # [NUEVO] Icono de Aplicación y Taskbar ID
+    from PySide6.QtGui import QIcon
+    icon_path = str(PROJECT_ROOT / 'assets' / 'icon.png')
+    if os.path.exists(icon_path):
+        app_icon = QIcon(icon_path)
+        app.setWindowIcon(app_icon)
+
+    if os.name == 'nt':
+        import ctypes
+        myappid = 'EVEiT.EliteSuite.v1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
     # --- Pantalla de Carga (Splash) ---
     splash_pix = QPixmap(str(PROJECT_ROOT / 'assets' / 'fondo_pantalla.png'))
     if splash_pix.isNull():

@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QIcon, QPixmap, QColor, QFont, QClipboard, QPainter
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from core.eve_icon_service import EveIconService
+from ui.common.theme import Theme
 
 class CustomTableWidgetItem(QTableWidgetItem):
     def __init__(self, display_text, sort_value):
@@ -153,32 +154,35 @@ class MarketTableWidget(QTableWidget):
         from PySide6.QtCore import QSize
         self.setIconSize(QSize(32, 32))
         
-        self.setStyleSheet("""
-            QTableWidget {
-                background-color: #000000;
-                border: none;
-                color: #e2e8f0;
+        self.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {Theme.BG_PANEL};
+                border: 1px solid {Theme.BORDER};
+                border-radius: {Theme.RADIUS};
+                color: {Theme.TEXT_MAIN};
+                gridline-color: transparent;
                 font-size: 11px;
-            }
-            QTableWidget::item {
-                padding: 2px 4px;
-                border-bottom: 1px solid #0f172a;
-            }
-            QTableWidget::item:selected {
-                background-color: rgba(59, 130, 246, 0.1);
-                border-left: 2px solid #3b82f6;
-            }
-            QHeaderView::section {
-                background-color: #000000;
-                color: #475569;
+            }}
+            QTableWidget::item {{
                 padding: 4px;
+                border-bottom: 1px solid {Theme.BORDER};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {Theme.ACCENT_LOW};
+                color: white;
+                border-left: 2px solid {Theme.ACCENT};
+            }}
+            QHeaderView::section {{
+                background-color: {Theme.BG_NAV};
+                color: {Theme.TEXT_DIM};
+                padding: 6px;
                 border: none;
-                border-bottom: 1px solid #1e293b;
+                border-bottom: 1px solid {Theme.BORDER};
                 font-weight: 800;
                 font-size: 9px;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
-            }
+            }}
         """)
         
         self.icon_service = EveIconService.instance()
@@ -218,7 +222,18 @@ class MarketTableWidget(QTableWidget):
             type_id = self.item(row, 1).data(Qt.UserRole)
             
             menu = QMenu(self)
-            menu.setStyleSheet("QMenu { background-color: #1e293b; color: #f8fafc; border: 1px solid #3b82f6; } QMenu::item:selected { background-color: #3b82f6; }")
+            menu.setStyleSheet(f"""
+                QMenu {{ 
+                    background-color: {Theme.BG_PANEL}; 
+                    color: {Theme.TEXT_MAIN}; 
+                    border: 1px solid {Theme.ACCENT}; 
+                    padding: 4px;
+                }} 
+                QMenu::item:selected {{ 
+                    background-color: {Theme.ACCENT_LOW}; 
+                    color: {Theme.ACCENT};
+                }}
+            """)
             copy_action = menu.addAction(f"Copiar Nombre: {item_name}")
             
             action = menu.exec(self.viewport().mapToGlobal(event.pos()))
@@ -271,7 +286,7 @@ class MarketTableWidget(QTableWidget):
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
             score.setTextAlignment(Qt.AlignCenter)
-            score.setForeground(QColor("#34d399") if score_val > 70 else (QColor("#fbbf24") if score_val > 40 else QColor("#f87171")))
+            score.setForeground(QColor(Theme.SUCCESS) if score_val > 70 else (QColor(Theme.WARNING) if score_val > 40 else QColor(Theme.DANGER)))
             score.setFont(QFont("Arial", 10, QFont.Bold))
             
             vol_val = opp.liquidity.volume_5d
@@ -281,15 +296,15 @@ class MarketTableWidget(QTableWidget):
             margin_val = opp.margin_net_pct
             margin = CustomTableWidgetItem(f"{margin_val:.1f}%", margin_val)
             margin.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if margin_val > 15: margin.setForeground(QColor("#10b981"))
+            if margin_val > 15: margin.setForeground(QColor(Theme.SUCCESS))
             
             profit_val = opp.profit_per_unit
             profit = CustomTableWidgetItem(f"{profit_val:,.2f}", profit_val)
             profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if profit_val > 0:
-                profit.setForeground(QColor("#10b981"))
+                profit.setForeground(QColor(Theme.SUCCESS))
             elif profit_val < 0:
-                profit.setForeground(QColor("#ef4444"))
+                profit.setForeground(QColor(Theme.DANGER))
             
             spread_val = opp.spread_pct
             spread = CustomTableWidgetItem(f"{spread_val:.1f}%", spread_val)
@@ -301,12 +316,12 @@ class MarketTableWidget(QTableWidget):
             # Formatear etiquetas como [RÁPIDA] [SÓLIDA]
             tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
             tags_item = QTableWidgetItem(tags_str)
-            tags_item.setForeground(QColor("#60a5fa"))
-            tags_item.setFont(QFont("Arial", 8, QFont.Bold))
+            tags_item.setForeground(QColor(Theme.ACCENT))
+            tags_item.setFont(QFont("Segoe UI", 8, QFont.Bold))
             
             # Alineaciones generales
             rank.setTextAlignment(Qt.AlignCenter)
-            rank.setForeground(QColor("#64748b"))
+            rank.setForeground(QColor(Theme.TEXT_DIM))
             
             self.setItem(row, 0, rank)
             self.setItem(row, 1, item)
@@ -395,7 +410,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             # 0. Rank
             rank = CustomTableWidgetItem(str(row + 1), row + 1)
             rank.setTextAlignment(Qt.AlignCenter)
-            rank.setForeground(QColor("#64748b"))
+            rank.setForeground(QColor(Theme.TEXT_DIM))
             
             # 1. Item
             item = QTableWidgetItem(opp.item_name)
@@ -413,7 +428,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
             score.setTextAlignment(Qt.AlignCenter)
-            score.setForeground(QColor("#34d399") if score_val > 70 else (QColor("#fbbf24") if score_val > 40 else QColor("#f87171")))
+            score.setForeground(QColor(Theme.SUCCESS) if score_val > 70 else (QColor(Theme.WARNING) if score_val > 40 else QColor(Theme.DANGER)))
             score.setFont(QFont("Arial", 10, QFont.Bold))
             
             # 3. Vol
@@ -425,17 +440,20 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             margin_val = opp.margin_net_pct
             margin = CustomTableWidgetItem(f"{margin_val:.1f}%", margin_val)
             margin.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if margin_val > 15: margin.setForeground(QColor("#10b981"))
+            if margin_val > 15: margin.setForeground(QColor(Theme.SUCCESS))
             
             # 5. Profit/U
             pu_val = opp.profit_per_unit
             pu = CustomTableWidgetItem(f"{pu_val:,.2f}", pu_val)
             pu.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if pu_val > 0: pu.setForeground(QColor(Theme.SUCCESS))
+            elif pu_val < 0: pu.setForeground(QColor(Theme.DANGER))
             
             # 6. Profit/Día
             pd_val = opp.profit_day_est
             pd = CustomTableWidgetItem(f"{pd_val:,.0f}", pd_val)
             pd.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if pd_val > 0: pd.setForeground(QColor(Theme.SUCCESS))
             
             # 7. Spread
             spread_val = opp.spread_pct
@@ -464,8 +482,8 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             # 12. Tags
             tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
             tags_item = QTableWidgetItem(tags_str)
-            tags_item.setForeground(QColor("#60a5fa"))
-            tags_item.setFont(QFont("Arial", 8, QFont.Bold))
+            tags_item.setForeground(QColor(Theme.ACCENT))
+            tags_item.setFont(QFont("Segoe UI", 8, QFont.Bold))
 
             self.setItem(row, 0, rank)
             self.setItem(row, 1, item)

@@ -3713,3 +3713,104 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - `advanced_view.py` permanece en el repo (compilable, no importado).
 - `profit_day_est` y `profit_day_min` permanecen en FilterConfig/models (necesarios para scoring interno y AdvancedMarketTableWidget que sigue en repo).
 - Broker fee y sales tax en FilterConfig se siguen usando internamente por `parse_opportunities` — ahora se populan desde ESI en vez de la UI.
+
+## Sesin 39 - VISUAL REWORK: Unified Tactical Theme for Main Suite and Market Command - 2026-05-02
+### STATUS: COMPLETADO o.
+### FASE COMPLETADA: Unified Visual Suite
+### RESUMEN
+- Implementado sistema de diseo centralizado en ui/common/theme.py.
+- Unificado el diseo de main_suite_window.py, command_main.py, simple_view.py, performance_view.py, my_orders_view.py y contracts_view.py.
+- Aplicada paleta tactica Cian/Neon en toda la suite.
+### FILES_CHANGED
+- ui/common/theme.py (CREADO)
+- ui/desktop/styles.py
+- ui/desktop/main_suite_window.py
+- ui/market_command/command_main.py
+- ui/market_command/widgets.py
+- ui/market_command/simple_view.py
+- ui/market_command/performance_view.py
+- ui/market_command/my_orders_view.py
+- ui/market_command/contracts_view.py
+
+## Sesin 40 - FIX: Critical Startup Crash after Visual Rework - 2026-05-02
+### STATUS: COMPLETADO o.
+### FASE COMPLETADA: App Startup Restoration
+### RESUMEN
+- Corregido SyntaxError en ui/desktop/styles.py (unterminated triple-quoted string).
+- Validada integridad de todos los archivos modificados mediante py_compile.
+- Implementado test automatizado 	ests/test_app_startup_imports.py para asegurar que los componentes de la UI pueden importarse sin errores.
+- Verificado arranque exitoso de la aplicacin.
+### FILES_CHANGED
+- ui/desktop/styles.py
+- 	ests/test_app_startup_imports.py (CREADO)
+### CHECKS
+- [x] python -m py_compile [all_ui_files]
+- [x] python -m pytest tests/test_app_startup_imports.py
+- [x] Validacin manual de arranque
+
+
+## Sesin 41 - FIX: Market Command Regressions & App Icon - 2026-05-02
+### STATUS: COMPLETADO o.
+### FASE COMPLETADA: Estabilizacin Post-Rework Visual
+### RESUMEN
+- Corregido NameError: Theme en widgets.py, simple_view.py, contracts_view.py y performance_view.py moviendo importaciones a nivel global.
+- Mejorada visibilidad de filtros en Modo Simple mediante tarjetas con bordes iluminables y mayor contraste.
+- Reparada vista de Performance: unificados colores de grficos y telemetra con el sistema de temas (evita datos invisibles).
+- Optimizada la ventana de Market Command: reducido ancho mnimo y eliminados huecos negros ajustando layouts y anchos fijos de paneles laterales.
+- Implementado icono de la app (icon.png) en barra de tareas y marco de ventana, incluyendo AppUserModelID para Windows.
+### FILES_CHANGED
+- main.py
+- ui/desktop/main_suite_window.py
+- ui/market_command/widgets.py
+- ui/market_command/simple_view.py
+- ui/market_command/my_orders_view.py
+- ui/market_command/contracts_view.py
+- ui/market_command/performance_view.py
+### CHECKS
+- [x] python -m py_compile [all_ui_files]
+- [x] python -m pytest tests/test_app_startup_imports.py
+- [x] Verificacin de icono y layout compacto
+
+
+## Sesin 42 - FIX: Restore Performance and Contracts views - 2026-05-02
+### STATUS: COMPLETADO o.
+### FASE COMPLETADA: UI Restoration
+### RESUMEN
+- Corregido UnboundLocalError: Theme en performance_view.py eliminando importaciones locales redundantes.
+- Restaurados widgets faltantes en contracts_view.py (capital_min_spin, items_max_spin, vailability_combo, etc.) que causaban AttributeError.
+- Implementado test de instanciacin de vistas 	ests/test_market_command_view_imports.py para asegurar carga estable.
+- Verificado que el lazy loader de command_main.py registra tracebacks detallados en consola.
+### FILES_CHANGED
+- ui/market_command/performance_view.py
+- ui/market_command/contracts_view.py
+- 	ests/test_market_command_view_imports.py (CREADO)
+### CHECKS
+- [x] python -m py_compile ui/market_command/*.py
+- [x] python -m pytest tests/test_market_command_view_imports.py
+- [x] Validacin manual de carga de pestaas
+
+
+## Sesin 43 - FEAT: Full Visual Theme Customizer - 2026-05-02
+### STATUS: COMPLETADO o.
+### FASE COMPLETADA: UI Customization
+### RESUMEN
+- Creado ThemeManager centralizado en ui/common/theme_manager.py con soporte para tokens de color, persistencia JSON y overrides por vista.
+- Refactorizado Theme en ui/common/theme.py como un proxy dinmico usando metaclases.
+- Desarrollado ThemeCustomizerDialog con selectores de color, vista previa en vivo y categorizacin de tokens.
+- Integrado el botn 'PERSONALIZAR' en las 4 vistas principales: Simple, Performance, Mis Pedidos y Contratos.
+- Migrados estilos hardcodeados e inline a selectores setObjectName (PrimaryButton, SecondaryButton, etc.) controlados por el tema.
+### FILES_CHANGED
+- ui/common/theme_manager.py (CREADO)
+- ui/common/theme.py
+- ui/common/theme_customizer_dialog.py (CREADO)
+- ui/market_command/command_main.py
+- ui/market_command/simple_view.py
+- ui/market_command/performance_view.py
+- ui/market_command/my_orders_view.py
+- ui/market_command/contracts_view.py
+- 	ests/test_theme_manager.py (CREADO)
+### CHECKS
+- [x] python -m py_compile ui/common/*.py ui/market_command/*.py
+- [x] python -m pytest tests/test_theme_manager.py tests/test_market_command_view_imports.py
+- [x] Verificacin de persistencia en config/ui_theme_market_command.json
+

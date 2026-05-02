@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap, QAction, QGuiApplication, QPainter, QBrush, QFont, QCursor
 from PySide6.QtCharts import QChart, QChartView, QBarSet, QBarSeries, QBarCategoryAxis, QValueAxis, QLegend
 from core.eve_icon_service import EveIconService
+from ui.common.theme import Theme
 
 from core.esi_client import ESIClient
 from core.auth_manager import AuthManager
@@ -651,32 +652,40 @@ class TradeProfitsDialog(QDialog):
         self.load_data()
 
     def setup_ui(self):
+        self.setStyleSheet(Theme.get_qss("my_orders"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
         
         f_frame = QFrame()
-        f_frame.setStyleSheet("background: #0f172a; border-radius: 8px; border: 1px solid #1e293b;")
+        f_frame.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 8px; border: 1px solid {Theme.BORDER};")
         fl = QHBoxLayout(f_frame)
         self.txt_filter = QLineEdit()
         self.txt_filter.setPlaceholderText("Filtrar por item...")
-        self.txt_filter.setFixedWidth(250)
-        self.txt_filter.setStyleSheet("background:#1e293b; color:white; padding:8px; border:1px solid #334155;")
+        self.txt_filter.setFixedWidth(200)
+        self.txt_filter.setStyleSheet(f"background:{Theme.BG_NAV}; color:{Theme.TEXT_MAIN}; padding:8px; border:1px solid {Theme.BORDER};")
         self.txt_filter.textChanged.connect(self.apply_filters)
         
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItems(["Todos los resultados", "Solo Ganancias", "Solo Pérdidas"])
-        self.cmb_mode.setStyleSheet("background:#1e293b; color:white; padding:8px;")
+        self.cmb_mode.setStyleSheet(f"background:{Theme.BG_NAV}; color:{Theme.TEXT_MAIN}; padding:8px;")
         self.cmb_mode.currentIndexChanged.connect(self.apply_filters)
+        
+        self.btn_global = QPushButton("VISTA GLOBAL")
+        self.btn_global.setObjectName("SecondaryButton")
+        self.btn_global.setFixedWidth(120)
+        self.btn_global.clicked.connect(self.toggle_global_view)
+        
+        self.btn_customize = QPushButton("PERSONALIZAR")
+        self.btn_customize.setObjectName("SecondaryButton")
+        self.btn_customize.setFixedWidth(100)
+        self.btn_customize.clicked.connect(self.on_customize_clicked)
         
         fl.addWidget(QLabel("FILTRAR:")); fl.addWidget(self.txt_filter)
         fl.addSpacing(20); fl.addWidget(QLabel("MODO:")); fl.addWidget(self.cmb_mode)
         fl.addStretch()
-        
-        self.btn_global = QPushButton("VISTA GLOBAL")
-        self.btn_global.setFixedWidth(120)
-        self.btn_global.setStyleSheet("background: #334155; color: white; padding: 8px; border-radius: 4px; font-weight: bold;")
-        self.btn_global.clicked.connect(self.toggle_global_view)
+        fl.addWidget(self.btn_customize)
+        fl.addWidget(self.btn_global)
         fl.addWidget(self.btn_global)
         
         layout.addWidget(f_frame)
@@ -692,7 +701,7 @@ class TradeProfitsDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["FECHA", "ÍTEM", "UNIDADES", "P. COMPRA", "P. VENTA", "TOTAL COMPRA", "TOTAL VENTA", "FEES + TAX", "MARGEN %", "PROFIT NETO"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
-        self.table.setStyleSheet("QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 11px; } QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; padding: 10px; }")
+        self.table.setStyleSheet(f"QTableWidget {{ background: {Theme.BG_MAIN}; color: {Theme.TEXT_MAIN}; border: none; font-size: 11px; }} QHeaderView::section {{ background: {Theme.BG_NAV}; color: {Theme.TEXT_DIM}; font-weight: 800; border: none; padding: 10px; }}")
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setIconSize(QSize(24, 24))
@@ -738,7 +747,7 @@ class TradeProfitsDialog(QDialog):
         
         # Contenedor del Gráfico + Iconos
         self.chart_container = QFrame()
-        self.chart_container.setStyleSheet("background: #0f172a; border-radius: 12px; border: 1px solid #1e293b;")
+        self.chart_container.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 12px; border: 1px solid {Theme.BORDER};")
         chart_v = QVBoxLayout(self.chart_container)
         chart_v.setContentsMargins(10, 10, 10, 5)
         chart_v.setSpacing(0)
@@ -761,8 +770,8 @@ class TradeProfitsDialog(QDialog):
         
         # Panel de Ranking Lateral
         self.ranking_panel = QFrame()
-        self.ranking_panel.setFixedWidth(320)
-        self.ranking_panel.setStyleSheet("background: #0f172a; border-radius: 12px; border: 1px solid #1e293b;")
+        self.ranking_panel.setFixedWidth(260)
+        self.ranking_panel.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 12px; border: 1px solid {Theme.BORDER};")
         ranking_v = QVBoxLayout(self.ranking_panel)
         ranking_v.setContentsMargins(15, 15, 15, 15)
         
@@ -776,7 +785,7 @@ class TradeProfitsDialog(QDialog):
         self.ranking_table.verticalHeader().setVisible(False)
         self.ranking_table.setShowGrid(False)
         self.ranking_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.ranking_table.setStyleSheet("background: transparent; color: #f1f5f9; border: none; font-size: 11px;")
+        self.ranking_table.setStyleSheet(f"background: transparent; color: {Theme.TEXT_MAIN}; border: none; font-size: 11px;")
         self.ranking_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.ranking_table.setIconSize(QSize(24, 24))
         self.ranking_table.itemDoubleClicked.connect(self.on_ranking_double_click)
@@ -793,7 +802,7 @@ class TradeProfitsDialog(QDialog):
     def _create_metric_card(self, title, value, subtitle):
         card = QFrame()
         card.setFixedHeight(110)
-        card.setStyleSheet("background: #0f172a; border-radius: 10px; border: 1px solid #1e293b; padding: 12px;")
+        card.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 10px; border: 1px solid {Theme.BORDER}; padding: 12px;")
         l = QVBoxLayout(card)
         l.setSpacing(2)
         
@@ -831,6 +840,12 @@ class TradeProfitsDialog(QDialog):
         self.apply_filters()
         if self.stack.currentIndex() == 1:
             self.update_chart()
+
+    def on_customize_clicked(self):
+        from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
+        dialog = ThemeCustomizerDialog(view_scope="my_orders", parent=self)
+        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("my_orders")))
+        dialog.exec()
 
     def toggle_global_view(self):
         if self.stack.currentIndex() == 0:
@@ -1257,14 +1272,14 @@ class MarketMyOrdersView(QWidget):
         header = QHBoxLayout()
         title_v = QVBoxLayout()
         title_lbl = QLabel("MIS PEDIDOS")
-        title_lbl.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900; letter-spacing: 1px;")
+        title_lbl.setObjectName("SectionTitle")
         
         status_h = QHBoxLayout()
         self.lbl_spinner = QLabel("")
         self.lbl_spinner.setFixedWidth(15)
-        self.lbl_spinner.setStyleSheet("color: #3b82f6; font-weight: 900;")
+        self.lbl_spinner.setStyleSheet(f"color: {Theme.ACCENT}; font-weight: 900;")
         self.lbl_status = QLabel("● ESPERANDO SINCRONIZACIÓN")
-        self.lbl_status.setStyleSheet("color: #f59e0b; font-size: 10px; font-weight: 800;")
+        self.lbl_status.setObjectName("StatusWarning")
         status_h.addWidget(self.lbl_spinner)
         status_h.addWidget(self.lbl_status)
         status_h.addStretch()
@@ -1275,7 +1290,7 @@ class MarketMyOrdersView(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(4)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { background: #1e293b; border: none; } QProgressBar::chunk { background: #3b82f6; }")
+        self.progress_bar.setStyleSheet(f"QProgressBar {{ background: {Theme.BG_PANEL_ALT}; border: none; }} QProgressBar::chunk {{ background: {Theme.ACCENT}; }}")
         self.progress_bar.hide()
         title_v.addWidget(self.progress_bar)
         
@@ -1287,10 +1302,11 @@ class MarketMyOrdersView(QWidget):
         for b in [self.btn_repopulate, self.btn_inventory, self.btn_trades, self.btn_esi]:
             b.setCursor(Qt.PointingHandCursor)
             b.setFixedHeight(35)
-            b.setStyleSheet("QPushButton { background-color: #1e293b; color: white; font-size: 10px; font-weight: 900; border: 1px solid #334155; border-radius: 4px; padding: 0 15px; } QPushButton:hover { background-color: #334155; }")
         
-        self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#1e293b", "#3b82f6"))
-        self.btn_inventory.setStyleSheet(self.btn_inventory.styleSheet().replace("#1e293b", "#10b981"))
+        self.btn_esi.setStyleSheet(f"background-color: {Theme.ACCENT}; color: black; font-weight: 900;")
+        self.btn_inventory.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: black; font-weight: 900;")
+        self.btn_trades.setStyleSheet(f"background-color: {Theme.BG_PANEL_ALT}; color: {Theme.TEXT_MAIN};")
+        self.btn_repopulate.setStyleSheet(f"background-color: {Theme.BG_PANEL_ALT}; color: {Theme.ACCENT}; border-color: {Theme.ACCENT};")
         
         self.btn_repopulate.clicked.connect(self.do_sync)
         self.btn_inventory.clicked.connect(self.do_inventory)
@@ -1307,7 +1323,7 @@ class MarketMyOrdersView(QWidget):
 
         # Tablas
         self.lbl_sell = QLabel("ÓRDENES DE VENTA (0)")
-        self.lbl_sell.setStyleSheet("color:#ef4444; font-weight:900; font-size:10px;")
+        self.lbl_sell.setStyleSheet(f"color: {Theme.DANGER}; font-weight: 900; font-size: 10px; letter-spacing: 0.5px;")
         self.main_layout.addWidget(self.lbl_sell)
         
         self.table_sell = self.create_table(False)
@@ -1317,7 +1333,7 @@ class MarketMyOrdersView(QWidget):
         self.setup_taxes_bar()
         
         self.lbl_buy = QLabel("ÓRDENES DE COMPRA (0)")
-        self.lbl_buy.setStyleSheet("color:#3b82f6; font-weight:900; font-size:10px;")
+        self.lbl_buy.setStyleSheet(f"color: {Theme.ACCENT}; font-weight: 900; font-size: 10px; letter-spacing: 0.5px;")
         self.main_layout.addWidget(self.lbl_buy)
         
         self.table_buy = self.create_table(True)
@@ -1326,7 +1342,7 @@ class MarketMyOrdersView(QWidget):
         # Detail Panel
         self.detail_panel = QFrame()
         self.detail_panel.setFixedHeight(130)
-        self.detail_panel.setStyleSheet("background-color: #000000; border: 1px solid #1e293b; border-radius: 4px;")
+        self.detail_panel.setObjectName("MetricCard")
         self.setup_detail_layout()
         self.main_layout.addWidget(self.detail_panel)
         
@@ -1339,14 +1355,14 @@ class MarketMyOrdersView(QWidget):
     def setup_taxes_bar(self):
         self.taxes_bar = QFrame()
         self.taxes_bar.setFixedHeight(30)
-        self.taxes_bar.setStyleSheet("background-color: #0f172a; border-radius: 15px; border: 1px solid #1e293b;")
+        self.taxes_bar.setStyleSheet(f"background-color: {Theme.BG_PANEL}; border-radius: 15px; border: 1px solid {Theme.BORDER};")
         l = QHBoxLayout(self.taxes_bar)
         l.setContentsMargins(15, 0, 15, 0)
         self.lbl_sales_tax = QLabel("SALES TAX: ---")
         self.lbl_broker_fee = QLabel("BROKER FEE: ---")
         self.lbl_tax_source = QLabel("FUENTE: ---")
         for lbl in [self.lbl_sales_tax, self.lbl_broker_fee, self.lbl_tax_source]:
-            lbl.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 800;")
+            lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; text-transform: uppercase;")
         l.addWidget(self.lbl_sales_tax)
         l.addSpacing(20)
         l.addWidget(self.lbl_broker_fee)

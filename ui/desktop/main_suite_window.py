@@ -322,47 +322,50 @@ class MainSuiteWindow(QMainWindow):
         l.addWidget(lbl); l.addWidget(val); return w
 
     def create_status_item(self, label):
+        from ui.common.theme import Theme
         w = QWidget(); l = QHBoxLayout(w); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(8)
         dot = QLabel("●"); dot.setObjectName("StatusDot")
-        dot.setStyleSheet("color: #4a5568; font-size: 12px;") # Default gray
-        lbl = QLabel(label.upper()); lbl.setStyleSheet("color: #94a3b8; font-size: 8px; font-weight: 700; letter-spacing: 0.5px;")
+        dot.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 12px;") # Default gray
+        lbl = QLabel(label.upper()); lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 700; letter-spacing: 0.5px;")
         l.addWidget(dot); l.addWidget(lbl); l.addStretch()
         return w
 
     def create_action_button(self, text, icon_text, callback):
+        from ui.common.theme import Theme
         btn = QPushButton(f" {icon_text}  {text.upper()}")
         btn.setObjectName("ActionButton")
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet("""
-            QPushButton#ActionButton {
-                background-color: #1a1e23;
-                border: 1px solid #2d3748;
-                color: #e2e8f0;
+        btn.setStyleSheet(f"""
+            QPushButton#ActionButton {{
+                background-color: {Theme.BG_PANEL};
+                border: 1px solid {Theme.BORDER};
+                color: {Theme.TEXT_MAIN};
                 font-size: 9px;
                 font-weight: 800;
                 padding: 8px 12px;
                 text-align: left;
                 border-radius: 2px;
                 letter-spacing: 0.5px;
-            }
-            QPushButton#ActionButton:hover {
-                background-color: #242b33;
-                border-color: #3b82f6;
-                color: #ffffff;
-            }
-            QPushButton#ActionButton:pressed {
-                background-color: #1a1e23;
-                border-color: #2563eb;
-            }
+            }}
+            QPushButton#ActionButton:hover {{
+                background-color: {Theme.ACCENT_LOW};
+                border-color: {Theme.ACCENT};
+                color: {Theme.ACCENT};
+            }}
+            QPushButton#ActionButton:pressed {{
+                background-color: {Theme.ACCENT};
+                color: black;
+            }}
         """)
         btn.clicked.connect(callback)
         return btn
 
     def create_mini_analytic(self, label, value, color):
-        f = QFrame(); f.setObjectName("AnalyticBox"); f.setFixedHeight(45)
+        from ui.common.theme import Theme
+        f = QFrame(); f.setObjectName("MetricCard"); f.setFixedHeight(45)
         l = QVBoxLayout(f); l.setContentsMargins(10, 5, 10, 5); l.setSpacing(0)
-        lbl = QLabel(label); lbl.setObjectName("MetricLabel"); lbl.setStyleSheet(f"color: {color}; font-size: 8px;")
-        val = QLabel(value); val.setObjectName("AnalyticVal"); val.setStyleSheet("font-size: 13px;")
+        lbl = QLabel(label); lbl.setObjectName("MetricTitle"); lbl.setStyleSheet(f"color: {color};")
+        val = QLabel(value); val.setObjectName("MetricValue")
         l.addWidget(lbl); l.addWidget(val)
         return f
 
@@ -771,14 +774,15 @@ class MainSuiteWindow(QMainWindow):
         reply.finished.connect(on_finished)
 
     def _update_status_indicator(self, widget, state):
+        from ui.common.theme import Theme
         dot = widget.findChild(QLabel, "StatusDot")
         if not dot: return
         if state == "degraded":
-            dot.setStyleSheet("color: #f59e0b; font-size: 12px;") # Amber
+            dot.setStyleSheet(f"color: {Theme.WARNING}; font-size: 12px;") # Amber
         elif state:
-            dot.setStyleSheet("color: #10b981; font-size: 12px;") # Green
+            dot.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 12px;") # Green
         else:
-            dot.setStyleSheet("color: #ef4444; font-size: 12px;") # Red
+            dot.setStyleSheet(f"color: {Theme.DANGER}; font-size: 12px;") # Red
 
     def _action_reset(self):
         if self.controller and self.controller._tracker:
@@ -925,7 +929,7 @@ class MainSuiteWindow(QMainWindow):
                 from ui.market_command.command_main import MarketCommandMain
                 self._market_window = MarketCommandMain()
                 self._market_window.setWindowTitle("EVE iT Market Command")
-                self._market_window.resize(1100, 750)
+                self._market_window.resize(960, 700)
                 
                 # Standard window flags to avoid visibility issues
                 self._market_window.setWindowFlags(Qt.Window)
