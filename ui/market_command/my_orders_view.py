@@ -1634,6 +1634,7 @@ class MarketMyOrdersView(QWidget):
             char_id = self._get_char_id()
             self._orders_diag["wac_item_count"] = len(wac.stock_map)
             self._orders_diag["wac_last_tx_id"] = wac.last_transaction_id
+            self._orders_diag["wac_backfill_stats"] = wac.backfill_stats
             
             if char_id:
                 self._orders_diag["wac_cache_file"] = os.path.basename(wac._get_cache_path(char_id))

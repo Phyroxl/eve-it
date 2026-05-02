@@ -414,14 +414,55 @@ class ESIClient:
                 break
         return all_data
 
-    def wallet_transactions(self, char_id, token=None):
-        """Obtiene las últimas 2500 transacciones de la wallet."""
-        res = self._request_auth("GET", f"/characters/{char_id}/wallet/transactions/", token)
-        if res and res.status_code == 200:
-            return res.json()
-        if res and res.status_code in (401, 403):
-            return "missing_scope"
-        return []
+    def wallet_transactions(self, char_id, token=None, max_days=30):
+        """
+        Obtiene transacciones de la wallet con paginación hasta cubrir max_days.
+        ESI devuelve 2500 por página.
+        """
+        import datetime as dt_mod
+        all_transactions = []
+        last_id = None
+        now = dt_mod.datetime.now(dt_mod.timezone.utc)
+        
+        while True:
+            params = {}
+            if last_id:
+                params['from_id'] = last_id
+                
+            res = self._request_auth("GET", f"/characters/{char_id}/wallet/transactions/", token, params=params)
+            if res and res.status_code == 200:
+                data = res.json()
+                if not data:
+                    break
+                
+                all_transactions.extend(data)
+                
+                # Check date of oldest transaction in this batch
+                oldest_in_batch = data[-1]
+                # Date format: "2023-01-01T00:00:00Z"
+                dt_str = oldest_in_batch['date'].replace('Z', '')
+                try:
+                    # ESI dates are UTC
+                    oldest_date = dt_mod.datetime.fromisoformat(dt_str).replace(tzinfo=dt_mod.timezone.utc)
+                    age = now - oldest_date
+                    if age.days >= max_days:
+                        logger.info(f"[ESI WALLET] Reached backfill limit: {age.days} days ({oldest_date.isoformat()})")
+                        break
+                except Exception as e:
+                    logger.error(f"[ESI WALLET] Date parse error: {e}")
+                    break
+                
+                last_id = oldest_in_batch['transaction_id']
+                # Safety break: 6 pages = 15,000 transactions (enough for most traders)
+                if len(all_transactions) >= 15000: 
+                    logger.warning(f"[ESI WALLET] Safety limit reached (15k tx). Stopping backfill.")
+                    break
+            else:
+                if res and res.status_code in (401, 403):
+                    return "missing_scope"
+                break
+                
+        return all_transactions
 
     def character_orders(self, char_id, token=None):
         res = self._request_auth("GET", f"/characters/{char_id}/orders/", token)

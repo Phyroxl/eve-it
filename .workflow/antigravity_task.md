@@ -3620,3 +3620,14 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - Metadata: Implementado prefetch de metadata completo antes del filtrado por categoría para asegurar precisión.
 - Archivos: core/market_engine.py, core/market_models.py, ui/market_command/simple_view.py, ui/market_command/advanced_view.py, ui/market_command/refresh_worker.py, core/market_scan_diagnostics.py.
 - Verificación: 3 tests de integración de pipeline aprobados.
+
+## FIX: Use 30 day wallet history for average cost basis - 2026-05-02
+
+- Backfill: Implementado historial mnimo obligatorio de 30 das para el clculo del coste promedio (WAC).
+- Paginacin ESI: Actualizado ESIClient para navegar por las transacciones de la wallet usando from_id hasta cubrir el rango temporal requerido.
+- Robustez Cache: Protegida la persistencia de CostBasisService para evitar que datos incompletos de ESI sobrescriban promedios volidos previos con N/A.
+- Lgica WAC: Refinada la reconstruccin de posiciones abiertas basondose en el flujo cronolgico de compras y ventas de los ?ltimos 30 das.
+- Diagnstico: Integrado [AVERAGE COST BACKFILL] en el reporte de Mis Pedidos, mostrando el conteo de transacciones y el rango de fechas cubierto.
+- UI: Corregido el estado "SIN COSTE REAL" para tems con compras registradas en el historial extendido o en el almac?n persistente.
+- Archivos: core/esi_client.py, core/cost_basis_service.py, ui/market_command/my_orders_view.py, core/my_orders_diagnostics.py.
+- Verificacin: Superados tests de backfill (test_cost_basis_backfill.py) y de integridad de coste (test_trade_cost_basis.py). Compilacin exitosa.

@@ -38,6 +38,18 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
         f"Last Tx ID:      {diag.get('wac_last_tx_id', 0)}",
         f"Cache Hit Rate:  {diag.get('wac_hit_rate', 0):.1f}%",
         f"Items Without Cost: {diag.get('wac_missing_count', 0)}",
+    ]
+    
+    bs = diag.get("wac_backfill_stats", {})
+    if bs:
+        lines.extend([
+            f"Backfill Count:  {bs.get('count', 0)} tx",
+            f"Backfill Oldest: {bs.get('oldest', '---')}",
+            f"Backfill Newest: {bs.get('newest', '---')}",
+            f"Requested Days:  {bs.get('requested_days', 0)}",
+        ])
+    
+    lines.extend([
         "",
         "[MARKET SYNCHRONIZATION]",
     ]
