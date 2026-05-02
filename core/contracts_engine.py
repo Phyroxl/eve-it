@@ -6,6 +6,18 @@ from core.contracts_models import (
 
 from core.contract_blueprint_utils import classify_blueprint_item, get_valuation_strategy
 
+_BP_KEYWORDS = ("Blueprint",)
+_BPC_KEYWORDS = ("Blueprint Copy", " BPC", "Blueprint (Copy)")
+
+
+def _is_blueprint_name(name: str) -> bool:
+    return any(kw in name for kw in _BP_KEYWORDS)
+
+
+def _is_blueprint_copy_name(name: str) -> bool:
+    return any(kw in name for kw in _BPC_KEYWORDS)
+
+
 def build_price_index(market_orders: List[dict]) -> Dict[int, dict]:
     """
     Retorna {type_id: {'best_sell': float, 'best_buy': float}}.

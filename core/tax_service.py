@@ -166,6 +166,7 @@ class TaxService:
         
         self.overrides = load_tax_overrides() # Recargar al refrescar
         self._debug_printed = set()  # Resetear caché de debug para mostrar logs en este refresh
+        self.location_cache = {}  # Forzar re-lookup de faction_id tras refresh de standings
         try:
             # 1. REFRESH SKILLS
             s_res = self.client.character_skills(char_id, token)
@@ -232,7 +233,7 @@ class TaxService:
         Retorna (tasa_fee_efectiva, descripcion_fuente)
         """
         overrides = self._get_overrides_for_char(char_id)
-        
+
         # 1. Verificar Overrides específicos por ubicación (int o str)
         for ov in overrides:
             loc_match = False
@@ -240,7 +241,7 @@ class TaxService:
             if ov_loc is not None:
                 if str(ov_loc) == str(location_id):
                     loc_match = True
-            
+
             if loc_match and "broker_fee_pct" in ov:
                 logger.info(f"[TAX] Aplicando override BROKER FEE LOC={location_id}: {ov['broker_fee_pct']}%")
                 return ov["broker_fee_pct"], "CALIBRADO MANUAL"
@@ -253,9 +254,9 @@ class TaxService:
 
         taxes = self.get_taxes(char_id)
         br_lvl = taxes.broker_relations_lvl
-        
+
         loc_info = self._get_location_info(location_id, token)
-        
+
         if loc_info["type"] == "structure":
             return 1.0, "ESTRUCTURA (ESTIMADO)"
 
@@ -263,19 +264,42 @@ class TaxService:
             # Fórmula real: 3.0% - 0.3%*BR - 0.03%*Faction - 0.02%*Corp
             fee = 3.0 - (0.3 * br_lvl)
             source = f"NPC (Skills Lvl {br_lvl})"
-            
+
+            f_id = loc_info.get("faction")
+            c_id = loc_info.get("corp")
+            f_std = 0.0
+            c_std = 0.0
+            standings_applied = False
+
             if taxes.standings_status == "ready" and taxes.standings:
-                f_id = loc_info.get("faction")
-                c_id = loc_info.get("corp")
                 f_std = taxes.standings.get(f_id, 0.0) if f_id else 0.0
                 c_std = taxes.standings.get(c_id, 0.0) if c_id else 0.0
-                
                 reduction = (0.03 * f_std) + (0.02 * c_std)
                 fee -= reduction
                 source = "REAL ESI + STANDINGS"
+                standings_applied = True
             elif taxes.standings_status == "missing_scope":
                 source = "NPC (Skills sin Standings)"
-            
+            elif taxes.standings_status == "idle":
+                source = f"NPC (Skills Lvl {br_lvl}, standings pendientes)"
+                logger.warning(f"[TAX] standings_status=idle para char={char_id} al calcular broker fee. Llama a refresh_from_esi primero.")
+
+            # Diagnóstico detallado una vez por (char, loc)
+            _dbg_key = ("bf", char_id, location_id)
+            if not hasattr(self, '_debug_printed'):
+                self._debug_printed = set()
+            if _dbg_key not in self._debug_printed:
+                self._debug_printed.add(_dbg_key)
+                reduction_val = (0.03 * f_std) + (0.02 * c_std) if standings_applied else 0.0
+                print(f"[TAX DEBUG BF] char={char_id} loc={location_id}")
+                print(f"[TAX DEBUG BF] br_lvl={br_lvl} -> base_fee={3.0 - 0.3*br_lvl:.4f}%")
+                print(f"[TAX DEBUG BF] loc_type={loc_info['type']} corp_id={c_id} faction_id={f_id}")
+                print(f"[TAX DEBUG BF] standings_status={taxes.standings_status} standings_keys={list(taxes.standings.keys()) if taxes.standings else []}")
+                print(f"[TAX DEBUG BF] f_std={f_std} c_std={c_std} reduction={reduction_val:.4f}%")
+                print(f"[TAX DEBUG BF] final_fee={max(0.0, fee):.4f}% source={source}")
+                if f_id and taxes.standings and f_id not in taxes.standings:
+                    print(f"[TAX DEBUG BF] WARNING: faction_id={f_id} NO encontrado en standings. Verifica que ESI devuelve standing para esta facción.")
+
             return max(0.0, fee), source
 
         return taxes.broker_fee_pct, "FALLBACK (SKILLS)"
@@ -283,26 +307,31 @@ class TaxService:
     def _get_location_info(self, loc_id: int, token: str):
         if loc_id in self.location_cache:
             return self.location_cache[loc_id]
-        
+
         info = {"corp": None, "faction": None, "type": "unknown"}
-        
+
         if loc_id < 100000000: # Estación NPC
             data = self.client.universe_stations(loc_id)
             if data:
                 info["type"] = "npc"
                 corp_id = data.get("owner")
                 info["corp"] = corp_id
-                # Obtener la facción de la corporación
                 if corp_id:
                     c_info = self.client.corporation_info(corp_id)
                     if c_info:
                         info["faction"] = c_info.get("faction_id")
+                    else:
+                        logger.warning(f"[TAX] corporation_info falló para corp_id={corp_id} (loc={loc_id}). Sin reducción de facción.")
+            else:
+                logger.warning(f"[TAX] universe_stations falló para loc_id={loc_id}.")
         elif loc_id > 1000000000: # Estructura
             data = self.client.universe_structures(loc_id, token)
             if data:
                 info["type"] = "structure"
             else:
-                info["type"] = "structure" 
-        
+                info["type"] = "structure"
+                logger.info(f"[TAX] universe_structures no accesible para loc_id={loc_id} (privada o sin auth). Usando fee de estructura.")
+
         self.location_cache[loc_id] = info
+        logger.info(f"[TAX] _get_location_info loc={loc_id} -> {info}")
         return info

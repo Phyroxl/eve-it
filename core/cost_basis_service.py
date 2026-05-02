@@ -20,7 +20,7 @@ class CostBasis:
 
 class CostBasisService:
     _instance = None
-    AVERAGE_COST_MIN_HISTORY_DAYS = 30
+    AVERAGE_COST_MIN_HISTORY_DAYS = 365
     
     def __init__(self):
         self.cache: Dict[int, CostBasis] = {}

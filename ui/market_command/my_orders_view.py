@@ -116,27 +116,35 @@ class SyncWorker(QThread):
 
     def run(self):
         try:
+            from core.progress_tracker import ProgressTracker
+            tracker = ProgressTracker(
+                callback=lambda p, m: self.status_update.emit(m, p),
+                task_name="OrdersSync"
+            )
             client = ESIClient()
-            self.status_update.emit("CONECTANDO CON ESI...", 5)
             
             # ──────────────────────────────────────────────────────────────────
             # FASE 1 — CARGA RÁPIDA (Snapshot ESI + Caches locales)
             # ──────────────────────────────────────────────────────────────────
-            self.status_update.emit("DESCARGANDO ÓRDENES...", 15)
+            tracker.set_phase("CONECTANDO CON ESI...", 0, 5)
+            
+            tracker.set_phase("DESCARGANDO ÓRDENES...", 5, 20)
             orders = client.character_orders(self.char_id, self.token)
             if not orders:
+                tracker.finish("Sin órdenes activas")
                 self.finished_data.emit([])
                 return
             
             if not self.is_running: return
 
             # Cargar promedios cacheados (WAC) para render inmediato
+            tracker.set_phase("CARGANDO CACHÉ...", 20, 25)
             CostBasisService.instance().load_from_file(self.char_id)
             CostBasisService.instance()._rebuild_cache_from_map()
             
             type_ids = list(set(o['type_id'] for o in orders))
             
-            # Intentar usar nombres cacheados (ItemResolver tiene caché persistente de metadatos)
+            # Intentar usar nombres cacheados
             item_resolver = ItemResolver.instance()
             item_names = {}
             for tid in type_ids:
@@ -144,11 +152,11 @@ class SyncWorker(QThread):
                 if info and 'name' in info:
                     item_names[tid] = info['name']
             
-            # Usar mercado cacheado si existe para análisis preliminar de estado
+            # Usar mercado cacheado
             from core.market_orders_cache import MarketOrdersCache
             cached_market = MarketOrdersCache.instance().get(10000002) or []
             
-            self.status_update.emit("RENDERIZADO INICIAL...", 30)
+            tracker.set_phase("RENDERIZADO INICIAL...", 25, 30)
             initial_analyzed = analyze_character_orders(
                 orders, cached_market, item_names, load_market_filters(), 
                 char_id=self.char_id, token=self.token
@@ -161,14 +169,12 @@ class SyncWorker(QThread):
             # FASE 2 — HIDRATACIÓN COMPLETA (ESI Deep Sync)
             # ──────────────────────────────────────────────────────────────────
             
-            # Sincronizar dependencias pesadas
-            self.status_update.emit("SINCRONIZANDO TAXES...", 40)
+            tracker.set_phase("SINCRONIZANDO TAXES...", 30, 40)
             TaxService.instance().refresh_from_esi(self.char_id, self.token)
             
             if not self.is_running: return
 
-            # Obtener ubicación exacta
-            self.status_update.emit("LOCALIZANDO PERSONAJE...", 45)
+            tracker.set_phase("LOCALIZANDO PERSONAJE...", 40, 50)
             loc_res = client.character_location(self.char_id, self.token)
             if loc_res and loc_res != "missing_scope":
                 loc_id = loc_res.get('station_id') or loc_res.get('structure_id') or 0
@@ -177,36 +183,31 @@ class SyncWorker(QThread):
 
             if not self.is_running: return
 
-            # Descargar mercado fresco para ESTOS items específicamente
-            self.status_update.emit("ACTUALIZANDO PRECIOS DE MERCADO...", 60)
+            tracker.set_phase("ACTUALIZANDO PRECIOS DE MERCADO...", 50, 75)
             all_market_orders = client.market_orders_for_types(10000002, type_ids)
             
-            # Fallback si falla el filtrado
             if not all_market_orders and type_ids:
-                _log.warning("[MY ORDERS] Filtered market fetch failed, falling back to full regional")
+                tracker.update(50, message="Fallback: Mercado regional...")
                 all_market_orders = client.market_orders(10000002, force_refresh=True)
 
             if not self.is_running: return
 
-            # Refrescar WAC desde ESI (Descarga transacciones nuevas)
-            self.status_update.emit("SINCRONIZANDO PROMEDIOS (WAC)...", 80)
+            tracker.set_phase("SINCRONIZANDO PROMEDIOS (WAC)...", 75, 90)
             CostBasisService.instance().refresh_from_esi(self.char_id, self.token)
             
             if not self.is_running: return
 
-            # Resolver nombres (Completo)
-            self.status_update.emit("RESOLVIENDO NOMBRES...", 90)
+            tracker.set_phase("RESOLVIENDO NOMBRES...", 90, 95)
             names_data = client.universe_names(type_ids)
             item_names = {n['id']: n['name'] for n in names_data}
             
-            # Análisis Final
-            self.status_update.emit("FINALIZANDO ANÁLISIS...", 95)
+            tracker.set_phase("FINALIZANDO ANÁLISIS...", 95, 100)
             final_analyzed = analyze_character_orders(
                 orders, all_market_orders, item_names, load_market_filters(), 
                 char_id=self.char_id, token=self.token
             )
             
-            self.status_update.emit("ACTUALIZACIÓN COMPLETA", 100)
+            tracker.finish("ACTUALIZACIÓN COMPLETA")
             self.finished_data.emit(final_analyzed)
             
         except Exception as e:
@@ -226,8 +227,14 @@ class InventoryWorker(QThread):
 
     def run(self):
         try:
+            from core.progress_tracker import ProgressTracker
+            tracker = ProgressTracker(
+                callback=lambda p, m: self.status_update.emit(m, p),
+                task_name="InventorySync"
+            )
             client = ESIClient()
-            self.status_update.emit("LOCALIZANDO...", 10)
+            
+            tracker.set_phase("LOCALIZANDO...", 0, 15)
             loc_res = client.character_location(self.char_id, self.token)
             curr_loc_id = None
             loc_name = "TODO EL INVENTARIO"
@@ -240,12 +247,14 @@ class InventoryWorker(QThread):
                         loc_name = names[0]['name']
             
             self.location_info.emit(loc_name)
-            self.status_update.emit("DESCARGANDO ACTIVOS...", 40)
+            
+            tracker.set_phase("DESCARGANDO ACTIVOS...", 15, 50)
             assets = client.character_assets(self.char_id, self.token)
             if assets == "missing_scope":
                 self.error.emit("missing_scope")
                 return
             if not assets:
+                tracker.finish("Sin activos")
                 self.finished_data.emit([])
                 return
             
@@ -255,24 +264,27 @@ class InventoryWorker(QThread):
                 filtered = [a for a in assets if a.get('location_id') == curr_loc_id]
             
             if not filtered:
+                tracker.finish("Sin activos en esta ubicación")
                 self.finished_data.emit([])
                 return
 
-            self.status_update.emit("BUSCANDO PRECIOS...", 70)
+            tracker.set_phase("BUSCANDO PRECIOS...", 50, 75)
             type_ids = list(set(a['type_id'] for a in filtered))
             all_mo = client.market_orders(10000002)
             
+            tracker.update(50, message="Resolviendo nombres...")
             names_data = client.universe_names(type_ids)
             item_names = {n['id']: n['name'] for n in names_data}
             
-            self.status_update.emit("CALCULANDO WAC...", 90)
+            tracker.set_phase("CALCULANDO WAC...", 75, 95)
             CostBasisService.instance().refresh_from_esi(self.char_id, self.token, current_assets=assets)
-                
+            
+            tracker.set_phase("FINALIZANDO...", 95, 100)
             analyzed = analyze_inventory(
                 filtered, all_mo, item_names, load_market_filters(), 
                 char_id=self.char_id, token=self.token
             )
-            self.status_update.emit("LISTO", 100)
+            tracker.finish("Listo")
             self.finished_data.emit(analyzed)
         except Exception as e:
             self.error.emit(str(e))
@@ -289,29 +301,38 @@ class TradeProfitsWorker(QThread):
 
     def run(self):
         try:
+            from core.progress_tracker import ProgressTracker
+            tracker = ProgressTracker(
+                callback=lambda p, m: self.status_update.emit(m, p),
+                task_name="TradeProfits"
+            )
             client = ESIClient()
-            self.status_update.emit("DESCARGANDO TRANSACCIONES...", 20)
+            
+            tracker.set_phase("DESCARGANDO TRANSACCIONES...", 0, 60)
             txs = client.wallet_transactions(self.char_id, self.token)
             if txs == "missing_scope":
                 self.error.emit("Falta permiso: esi-wallet.read_character_wallet.v1")
                 return
             if not txs:
+                tracker.finish("Sin transacciones")
                 self.finished_data.emit([])
                 return
             
-            self.status_update.emit("CALCULANDO RENTABILIDAD HISTÓRICA...", 50)
+            tracker.set_phase("CALCULANDO RENTABILIDAD HISTÓRICA...", 60, 100, total=len(txs))
             sorted_tx = sorted(txs, key=lambda x: x['date'])
             trades = []
             stock_map = {} # type_id -> {qty, cost}
             
             type_ids = list(set(t['type_id'] for t in sorted_tx))
+            tracker.update(0, message="Resolviendo nombres de ítems...")
             names_data = client.universe_names(type_ids)
             item_names = {n['id']: n['name'] for n in names_data}
             
+            tracker.update(5, message="Sincronizando impuestos...")
             tx_service = TaxService.instance()
             tx_service.refresh_from_esi(self.char_id, self.token)
             
-            for t in sorted_tx:
+            for i, t in enumerate(sorted_tx):
                 tid = t['type_id']
                 qty = t['quantity']
                 price = t['unit_price']
@@ -320,7 +341,6 @@ class TradeProfitsWorker(QThread):
                 
                 # Obtener TAXES EFECTIVAS para esta ubicación específica
                 s_tax_pct, b_fee_pct, source, debug = tx_service.get_effective_taxes(self.char_id, loc_id, self.token)
-                _log.info(f"[TRADE_TAX] Tx={tid} Loc={loc_id} -> ST={s_tax_pct}%, BF={b_fee_pct}% ({source})")
                 
                 if tid not in stock_map:
                     stock_map[tid] = {'qty': 0, 'cost': 0.0}
@@ -363,10 +383,14 @@ class TradeProfitsWorker(QThread):
                         if curr['qty'] < 0:
                             curr['qty'] = 0
                             curr['cost'] = 0.0
+                
+                if i % 10 == 0:
+                    tracker.update(i + 1, message=f"Analizando transacción {i+1}/{len(sorted_tx)}")
             
-            self.status_update.emit("FINALIZADO", 100)
+            tracker.finish("Análisis completado")
             self.finished_data.emit(list(reversed(trades)))
         except Exception as e:
+            _log.error(f"[PROFITS ERR] {e}", exc_info=True)
             self.error.emit(str(e))
 
 # --- Diálogos ---
@@ -1748,7 +1772,7 @@ class MarketMyOrdersView(QWidget):
             i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
             if not o.is_buy_order and avg <= 0:
                 i_avg = NumericTableWidgetItem("N/A", 0)
-                i_avg.setToolTip("Promedio no disponible: historial incompleto o fuera del rango de 2500 transacciones.")
+                i_avg.setToolTip("Coste medio no disponible. El historial WAC (365 días / 100k tx) aún no cubre este ítem. Pulsa Sincronizar para actualizar.")
                 i_avg.setForeground(QColor("#64748b"))
             else:
                 i_avg = NumericTableWidgetItem(format_isk(avg) if avg > 0 else "---", avg)

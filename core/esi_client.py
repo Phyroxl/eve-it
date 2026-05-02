@@ -453,9 +453,9 @@ class ESIClient:
                     break
                 
                 last_id = oldest_in_batch['transaction_id']
-                # Safety break: 6 pages = 15,000 transactions (enough for most traders)
-                if len(all_transactions) >= 15000: 
-                    logger.warning(f"[ESI WALLET] Safety limit reached (15k tx). Stopping backfill.")
+                # Safety break: 100,000 transactions (supports ~1 year of history for active traders)
+                if len(all_transactions) >= 100000:
+                    logger.warning(f"[ESI WALLET] Safety limit reached (100k tx). Stopping backfill.")
                     break
             else:
                 if res and res.status_code in (401, 403):
