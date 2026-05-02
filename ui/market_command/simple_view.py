@@ -430,8 +430,16 @@ class MarketSimpleView(QWidget):
                 taxes = TaxService.instance().get_taxes(auth.char_id)
                 self.current_config.broker_fee_pct = taxes.broker_fee_pct
                 self.current_config.sales_tax_pct = taxes.sales_tax_pct
-        except Exception:
-            pass  # Keep defaults from FilterConfig if ESI unavailable
+            else:
+                import logging
+                logging.getLogger('eve.market.simple').warning(
+                    "[FEES] No authenticated character — using FilterConfig defaults (broker=%.2f%%, tax=%.2f%%)",
+                    self.current_config.broker_fee_pct, self.current_config.sales_tax_pct)
+        except Exception as e:
+            import logging
+            logging.getLogger('eve.market.simple').warning(
+                "[FEES] TaxService failed: %s — using FilterConfig defaults (broker=%.2f%%, tax=%.2f%%)",
+                e, self.current_config.broker_fee_pct, self.current_config.sales_tax_pct)
 
     def _log_scan_config(self):
         import logging
@@ -500,12 +508,10 @@ class MarketSimpleView(QWidget):
         filtered.sort(key=lambda x: x.score_breakdown.final_score if x.score_breakdown else 0, reverse=True)
         
         log.info(f"[UI DIAG] after_apply_filters={len(filtered)}")
-        
-        top_50 = filtered[:50]
-        self.table.populate(top_50)
-        
+
+        self.table.populate(filtered)
         self.lbl_sum_count.setText(f"{len(filtered)}")
-        
+
         # Actualizar UI si no hay resultados
         if total_raw == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
@@ -515,29 +521,30 @@ class MarketSimpleView(QWidget):
             self.lbl_status.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         elif len(filtered) == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
-            
             dom = diag.get("dominant_filter", "DESCONOCIDO")
             count = diag["removed"].get(dom, total_raw)
             self.lbl_sum_insight.setText(f"FILTRO DOMINANTE: {dom.upper()} ({count})")
             self.lbl_sum_insight.setStyleSheet("color: #f87171; font-size: 11px; font-weight: 800; border: none; background: transparent;")
-            
             self.lbl_status.setText(f"● {total_raw} ITEMS ENCONTRADOS PERO 0 PASAN FILTRO: {dom.upper()}")
             self.lbl_status.setStyleSheet("color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
         else:
-            self.lbl_sum_top.setText(top_50[0].item_name)
+            self.lbl_sum_top.setText(filtered[0].item_name)
             liquid_opp = max(filtered, key=lambda x: x.liquidity.volume_5d)
             self.lbl_sum_liquid.setText(f"{liquid_opp.item_name}")
             solid_opps = [o for o in filtered if "Sólida" in o.tags]
             if solid_opps:
                 best_solid = max(solid_opps, key=lambda x: x.margin_net_pct)
                 self.lbl_sum_margin.setText(f"{best_solid.item_name} ({best_solid.margin_net_pct:.1f}%)")
-            else: self.lbl_sum_margin.setText("Ninguna")
+            else:
+                self.lbl_sum_margin.setText("Ninguna")
             if len(filtered) > 50:
                 self.lbl_sum_insight.setText("MERCADO SALUDABLE")
                 self.lbl_sum_insight.setStyleSheet("color: #34d399; font-size: 13px; font-weight: 800; border: none; background: transparent;")
             else:
                 self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
                 self.lbl_sum_insight.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 800; border: none; background: transparent;")
+            self.lbl_status.setText(f"● MOSTRANDO {len(filtered)} RESULTADOS")
+            self.lbl_status.setStyleSheet("color: #10b981; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;")
 
     def on_table_selection(self):
         sel = self.table.selectedItems()

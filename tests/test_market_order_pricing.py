@@ -259,7 +259,7 @@ class TestFormatQuickUpdateReport(unittest.TestCase):
         report = format_quick_update_report(data)
         for section in ("[ORDER]", "[MARKET]", "[ORDER PRICE VALIDATION]",
                         "[WHY NOT AUTO COPY]", "[RECOMMENDATION]", "[ACTIONS]",
-                        "[CONFIG]", "[ERRORS]", "[NOTES]"):
+                        "[CONFIG DIAGNOSTICS]", "[ERRORS]", "[NOTES]"):
             self.assertIn(section, report)
 
     def test_empty_dict_no_crash(self):
