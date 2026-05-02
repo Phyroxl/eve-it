@@ -1383,8 +1383,12 @@ class MarketMyOrdersView(QWidget):
         auth = AuthManager.instance()
         t = auth.get_valid_access_token()
         if not t:
-            self.lbl_status.setText("SIN SESIÓN ESI — PULSA VINCULAR ESI")
-            self.lbl_status.setStyleSheet("color: #f59e0b;")
+            if auth.requires_reauth:
+                self.lbl_status.setText("SESIÓN EXPIRADA — REAUTORIZA EL PERSONAJE")
+                self.lbl_status.setStyleSheet("color: #ef4444;")
+            else:
+                self.lbl_status.setText("ESI NO DISPONIBLE — REINTENTANDO EN SEGUNDO PLANO")
+                self.lbl_status.setStyleSheet("color: #f59e0b;")
             return
         self.table_sell.setRowCount(0)
         self.table_buy.setRowCount(0)
@@ -1424,15 +1428,21 @@ class MarketMyOrdersView(QWidget):
         auth = AuthManager.instance()
         # Si ya está autenticado (restaurado por MarketCommandMain), sólo actualizar UI
         if auth.current_token:
-            self.btn_esi.setText(f"SALIR ({auth.char_name.upper()})")
+            self.btn_esi.setText(f"SALIR ({auth.char_name.upper() if auth.char_name else '???'})")
             self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#3b82f6", "#1e293b"))
-            self.lbl_status.setText(f"SESIÓN ACTIVA: {auth.char_name.upper()}")
+            self.lbl_status.setText(f"SESIÓN ACTIVA: {auth.char_name.upper() if auth.char_name else '???'}")
             self.lbl_status.setStyleSheet("color: #10b981;")
             return
+        
         res = auth.try_restore_session()
         if res == "ok":
+            self.btn_esi.setText(f"SALIR ({auth.char_name.upper()})")
+            self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#3b82f6", "#1e293b"))
             self.lbl_status.setText(f"SESIÓN RESTAURADA: {auth.char_name.upper()}")
             self.lbl_status.setStyleSheet("color: #10b981;")
+        elif res == "temporary_failure":
+            self.lbl_status.setText("ESI TEMPORALMENTE INACCESIBLE. REINTENTANDO EN SEGUNDO PLANO...")
+            self.lbl_status.setStyleSheet("color: #f59e0b;")
         elif res == "new_scopes_required":
             self.lbl_status.setText("FALTAN PERMISOS NUEVOS DE ESI. REAUTORIZA EL PERSONAJE.")
             self.lbl_status.setStyleSheet("color: #f59e0b;")
@@ -1442,7 +1452,7 @@ class MarketMyOrdersView(QWidget):
                 "Por favor, vuelve a vincular tu personaje."
             )
         elif res == "expired":
-            self.lbl_status.setText("SESIÓN EXPIRADA. REAUTORIZACIÓN REQUERIDA.")
+            self.lbl_status.setText("SESIÓN EXPIRADA O REVOCADA. REAUTORIZACIÓN REQUERIDA.")
             self.lbl_status.setStyleSheet("color: #ef4444;")
         else:
             self.lbl_status.setText("SIN SESIÓN ESI ACTIVA")

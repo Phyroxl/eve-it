@@ -325,35 +325,78 @@ class ESIClient:
 
     def _headers(self, token=None):
         if token is None:
-            from .auth_manager import AuthManager
             token = AuthManager.instance().get_valid_access_token()
-        return {"Authorization": f"Bearer {token}", "User-Agent": "EVE-iT-Market-Command"}
+        
+        # Ensure we don't send "Bearer None"
+        auth_header = f"Bearer {token}" if token else ""
+        headers = {
+            "User-Agent": "EVE-iT-Suite/1.2.1 (contact: Phyroxl)",
+            "Accept": "application/json",
+        }
+        if auth_header:
+            headers["Authorization"] = auth_header
+        return headers
 
-    def _request_auth(self, method, endpoint, token, params=None, json_data=None, retries=1):
-        """Petición autenticada con reintento automático en caso de 401."""
+    def _request_auth(self, method, endpoint, token=None, params=None, json_data=None, retries=2):
+        """
+        Authenticated request with automatic retry on 401.
+        If token is None, it fetches one from AuthManager.
+        """
         url = f"{self.BASE_URL}{endpoint}" if endpoint.startswith("/") else endpoint
+        
+        # If no token provided, get current valid one
+        current_token = token or AuthManager.instance().get_valid_access_token()
+        
         try:
             self._rate_limit()
-            res = self.session.request(method, url, headers=self._headers(token), params=params, json=json_data, timeout=15)
+            res = self.session.request(
+                method, 
+                url, 
+                headers=self._headers(current_token), 
+                params=params, 
+                json=json_data, 
+                timeout=20
+            )
+            
+            # Handle 401 Unauthorized -> Force Refresh
             if res.status_code == 401 and retries > 0:
-                logger.info(f"ESI: 401 en {endpoint}, forzando refresh...")
-                from .auth_manager import AuthManager
-                new_token = AuthManager.instance().get_valid_access_token()
-                if new_token:
-                    return self._request_auth(method, endpoint, new_token, params, json_data, retries - 1)
+                logger.info(f"[ESI CLIENT] 401 Unauthorized for {endpoint}. Forcing token refresh (retries left: {retries})...")
+                # We force refresh by asking for a valid token again. 
+                # AuthManager's get_valid_access_token handles the logic of checking if it actually needs refresh.
+                # However, if we got a 401, the token IS expired regardless of what we think.
+                
+                # Internal hack to force AuthManager to refresh next time or now:
+                auth = AuthManager.instance()
+                with auth._refresh_lock:
+                    # Mark current token as expired so do_refresh is triggered
+                    auth.expiry = 0 
+                    if auth._do_refresh():
+                        new_token = auth.current_token
+                        logger.info("[ESI CLIENT] Token refresh successful after 401. Retrying request...")
+                        return self._request_auth(method, endpoint, new_token, params, json_data, retries - 1)
+                    else:
+                        logger.error("[ESI CLIENT] Token refresh failed after 401.")
+            
             return res
         except Exception as e:
-            logger.error(f"ESI request_auth error en {endpoint}: {e}")
+            logger.error(f"[ESI CLIENT] Request exception for {endpoint}: {e}")
             return None
 
-    def character_wallet(self, char_id, token):
+    def character_location(self, char_id, token=None):
+        """Fetches current character location (station/structure/system)."""
+        res = self._request_auth("GET", f"/characters/{char_id}/location/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        return None
+
+    def character_wallet(self, char_id, token=None):
         res = self._request_auth("GET", f"/characters/{char_id}/wallet/", token)
         if res and res.status_code == 200:
             return res.json()
-        logger.warning(f"ESI character_wallet char={char_id} → Falló")
+        logger.warning(f"[ESI CLIENT] character_wallet char={char_id} failed with {res.status_code if res else 'No Response'}")
         return None
 
-    def wallet_journal(self, char_id, token):
+    def wallet_journal(self, char_id, token=None):
         all_data = []
         page = 1
         while True:
@@ -370,8 +413,8 @@ class ESIClient:
                 break
         return all_data
 
-    def wallet_transactions(self, char_id, token):
-        """Obtiene las últimas 2500 transacciones de la wallet. No usa 'page'."""
+    def wallet_transactions(self, char_id, token=None):
+        """Obtiene las últimas 2500 transacciones de la wallet."""
         res = self._request_auth("GET", f"/characters/{char_id}/wallet/transactions/", token)
         if res and res.status_code == 200:
             return res.json()
@@ -379,15 +422,16 @@ class ESIClient:
             return "missing_scope"
         return []
 
-    def character_orders(self, char_id, token):
+    def character_orders(self, char_id, token=None):
         res = self._request_auth("GET", f"/characters/{char_id}/orders/", token)
         if res and res.status_code == 200:
             return res.json()
         if res and res.status_code in (401, 403):
-            raise Exception("Token expirado o sin permisos (Reautorizar).")
+            logger.error(f"[ESI CLIENT] character_orders failed with {res.status_code} (Unauthorized/Forbidden)")
+            return "missing_scope"
         return []
 
-    def character_assets(self, char_id, token):
+    def character_assets(self, char_id, token=None):
         all_assets = []
         page = 1
         while True:
@@ -404,7 +448,20 @@ class ESIClient:
                 break
         return all_assets
 
-    def character_skills(self, char_id, token):
+    def character_industry_jobs(self, char_id, token=None, include_completed=True):
+        res = self._request_auth("GET", f"/characters/{char_id}/industry/jobs/", token, params={'include_completed': include_completed})
+        if res and res.status_code == 200:
+            return res.json()
+        return []
+
+    def get_structure_info(self, structure_id, token=None):
+        """Fetch structure info (name, owner, etc). Needs ACL access."""
+        res = self._request_auth("GET", f"/universe/structures/{structure_id}/", token)
+        if res and res.status_code == 200:
+            return res.json()
+        return None
+
+    def character_skills(self, char_id, token=None):
         res = self._request_auth("GET", f"/characters/{char_id}/skills/", token)
         if res and res.status_code == 200:
             return res.json()
@@ -412,21 +469,14 @@ class ESIClient:
             return "missing_scope"
         return None
 
-    def character_location(self, char_id: int, token: str):
-        """GET /characters/{character_id}/location/"""
-        res = self._request_auth("GET", f"/characters/{char_id}/location/", token)
-        if res and res.status_code == 200:
-            return res.json()
-        return None
-
-    def character_contracts(self, char_id: int, token: str):
+    def character_contracts(self, char_id: int, token: str = None):
         """GET /characters/{character_id}/contracts/"""
         res = self._request_auth("GET", f"/characters/{char_id}/contracts/", token)
         if res and res.status_code == 200:
             return res.json()
         return None
 
-    def open_market_window(self, type_id: int, access_token: str):
+    def open_market_window(self, type_id: int, token: str = None):
         """
         Abre la ventana de mercado regional en el cliente de EVE Online.
         Requiere scope: esi-ui.open_window.v1
@@ -435,15 +485,15 @@ class ESIClient:
         params = {'type_id': type_id}
         
         try:
-            res = self._request_auth("POST", endpoint, access_token, params=params)
+            res = self._request_auth("POST", endpoint, token, params=params)
             if res is None: return False
             if res.status_code == 403: return "missing_scope"
             return res.status_code == 204
         except Exception as e:
-            logger.error(f"Error opening market window (type_id={type_id}): {e}")
+            logger.error(f"[ESI CLIENT] Error opening market window (type_id={type_id}): {e}")
             return False
 
-    def open_contract_window(self, contract_id: int, access_token: str):
+    def open_contract_window(self, contract_id: int, token: str = None):
         """
         Abre el contrato en el cliente de EVE Online.
         Requiere scope: esi-ui.open_window.v1
@@ -452,12 +502,12 @@ class ESIClient:
         params = {'contract_id': contract_id}
         
         try:
-            res = self._request_auth("POST", endpoint, access_token, params=params)
+            res = self._request_auth("POST", endpoint, token, params=params)
             if res is None: return False
             if res.status_code == 403: return "missing_scope"
             return res.status_code == 204
         except Exception as e:
-            logger.error(f"Error opening contract window (contract_id={contract_id}): {e}")
+            logger.error(f"[ESI CLIENT] Error opening contract window (contract_id={contract_id}): {e}")
             return False
 
     def _fetch_public_contracts_page(self, region_id: int, page: int):

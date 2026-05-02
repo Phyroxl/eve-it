@@ -10,6 +10,7 @@ from core.contracts_engine import (
     calculate_contract_metrics, score_contract, apply_contracts_filters
 )
 from core.esi_client import ESIClient
+from core.auth_manager import AuthManager
 import logging
 
 logger = logging.getLogger('eve.contracts_worker')
