@@ -406,7 +406,7 @@ class InventoryAnalysisDialog(QDialog):
         _log.info(f"[INVENTORY] Dialog initialized for loc_name={loc_name}")
         self.setWindowTitle("INVENTARIO - VALOR DE ACTIVOS")
         self.setMinimumSize(1150, 750)
-        self.setStyleSheet("background-color: #000000;")
+        self.setStyleSheet(Theme.get_qss("my_orders"))
         self.setup_ui()
         self.load_layout()
 
@@ -647,7 +647,7 @@ class TradeProfitsDialog(QDialog):
         self.current_page = 0
         self.setWindowTitle("HISTORIAL DE TRADE PROFITS")
         self.setMinimumSize(1200, 750)
-        self.setStyleSheet("background-color: #000000;")
+        self.setStyleSheet(Theme.get_qss("my_orders"))
         self.setup_ui()
         self.load_data()
 
@@ -1357,13 +1357,26 @@ class MarketMyOrdersView(QWidget):
         restore_table_layout(self.table_buy, "my_orders_buy_table")
         connect_table_layout_persistence(self.table_buy, "my_orders_buy_table")
 
+        # Overlays de carga para las tablas
+        self._ov_sell = self._create_table_overlay(self.table_sell)
+        self._ov_buy = self._create_table_overlay(self.table_buy)
+        self._ov_timer = QTimer(self)
+        self._ov_timer.setInterval(600)
+        _ov_frames = ["◎", "◉", "●", "◉"]
+        _ov_idx = [0]
+        def _tick():
+            _ov_idx[0] = (_ov_idx[0] + 1) % len(_ov_frames)
+            self._ov_sell.findChild(QLabel, "_ov_icon").setText(_ov_frames[_ov_idx[0]])
+            self._ov_buy.findChild(QLabel, "_ov_icon").setText(_ov_frames[_ov_idx[0]])
+        self._ov_timer.timeout.connect(_tick)
+
         # Detail Panel
         self.detail_panel = QFrame()
         self.detail_panel.setFixedHeight(130)
         self.detail_panel.setObjectName("MetricCard")
         self.setup_detail_layout()
         self.main_layout.addWidget(self.detail_panel)
-        
+
         # Sincronización
         self.table_sell.horizontalHeader().sectionResized.connect(lambda i, o, n: self.sync_cols(self.table_sell, self.table_buy, i, n))
         self.table_buy.horizontalHeader().sectionResized.connect(lambda i, o, n: self.sync_cols(self.table_buy, self.table_sell, i, n))
@@ -2515,6 +2528,48 @@ class MarketMyOrdersView(QWidget):
         self.spinner_idx = (self.spinner_idx + 1) % 4
         self.lbl_spinner.setText(self.spinner_chars[self.spinner_idx])
 
+    def _create_table_overlay(self, table):
+        ov = QFrame(self)
+        ov.setObjectName("ScanOverlay")
+        ov.setStyleSheet("QFrame#ScanOverlay{background-color:rgba(5,7,10,200);border-radius:6px;}")
+        vl = QVBoxLayout(ov)
+        vl.setAlignment(Qt.AlignCenter)
+        icon_lbl = QLabel("◎")
+        icon_lbl.setObjectName("_ov_icon")
+        icon_lbl.setStyleSheet("color:#00c8ff;font-size:24px;")
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        text_lbl = QLabel("SINCRONIZANDO...")
+        text_lbl.setStyleSheet("color:#00c8ff;font-size:10px;font-weight:900;letter-spacing:2px;")
+        text_lbl.setAlignment(Qt.AlignCenter)
+        vl.addWidget(icon_lbl)
+        vl.addWidget(text_lbl)
+        ov.setVisible(False)
+        return ov
+
+    def _reposition_overlays(self):
+        for ov, tbl in [(self._ov_sell, self.table_sell), (self._ov_buy, self.table_buy)]:
+            if ov.isVisible():
+                pos = tbl.mapTo(self, tbl.rect().topLeft())
+                ov.setGeometry(pos.x(), pos.y(), tbl.width(), tbl.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_ov_sell'):
+            self._reposition_overlays()
+
+    def _show_orders_overlays(self):
+        for ov, tbl in [(self._ov_sell, self.table_sell), (self._ov_buy, self.table_buy)]:
+            pos = tbl.mapTo(self, tbl.rect().topLeft())
+            ov.setGeometry(pos.x(), pos.y(), tbl.width(), tbl.height())
+            ov.setVisible(True)
+            ov.raise_()
+        self._ov_timer.start()
+
+    def _hide_orders_overlays(self):
+        self._ov_timer.stop()
+        self._ov_sell.setVisible(False)
+        self._ov_buy.setVisible(False)
+
     def _start_sync_ui(self):
         self.spinner_timer.start(100)
         self.lbl_status.setText("SINCRONIZANDO...")
@@ -2524,6 +2579,8 @@ class MarketMyOrdersView(QWidget):
         self.btn_repopulate.setEnabled(False)
         self.btn_inventory.setEnabled(False)
         self.btn_trades.setEnabled(False)
+        if hasattr(self, '_ov_sell'):
+            self._show_orders_overlays()
 
     def _stop_sync_ui(self):
         self.spinner_timer.stop()
@@ -2534,6 +2591,8 @@ class MarketMyOrdersView(QWidget):
         self.btn_repopulate.setEnabled(True)
         self.btn_inventory.setEnabled(True)
         self.btn_trades.setEnabled(True)
+        if hasattr(self, '_ov_sell'):
+            self._hide_orders_overlays()
 
     def on_error(self, err):
         self._stop_sync_ui()

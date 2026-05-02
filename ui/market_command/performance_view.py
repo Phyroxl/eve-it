@@ -175,6 +175,8 @@ class MarketPerformanceView(QWidget):
         self._is_auto_sync = False
         self._image_generation = 0
         self._initial_refresh_done = False
+        self._next_sync_seconds = 0
+        self.auto_timer = None
         self.engine = PerformanceEngine()
         self.icon_service = EveIconService.instance()
         self._purge_fake_char0()

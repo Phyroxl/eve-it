@@ -84,12 +84,18 @@ class ContractsScanWorker(QThread):
 
             if self._cancelled: return
 
-            # ALLIANCE / PERSONAL FETCH
-            if self.config.availability_filter in ("alliance", "both") and char_id and token:
-                tracker.update(50, message="Descargando Alianza/Personales...")
+            # ALLIANCE / CORP / PERSONAL FETCH (ESI character endpoint covers all non-public)
+            if self.config.availability_filter in ("alliance", "corporation", "both") and char_id and token:
+                tracker.update(50, message="Descargando contratos privados...")
                 personal_raw = client.character_contracts(char_id, token)
                 if personal_raw:
-                    valid_personal = [c for c in personal_raw if c.get('type') == 'item_exchange' and c.get('status') == 'outstanding']
+                    avail_filter = self.config.availability_filter
+                    valid_personal = [
+                        c for c in personal_raw
+                        if c.get('type') == 'item_exchange'
+                        and c.get('status') == 'outstanding'
+                        and (avail_filter == "both" or c.get('availability') == avail_filter)
+                    ]
                     existing_ids = {c.get('contract_id') for c in contracts_raw}
                     for c in valid_personal:
                         if c.get('contract_id') not in existing_ids:

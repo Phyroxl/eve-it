@@ -160,7 +160,7 @@ def main():
         orig_w = splash_pix.width()
         orig_h = splash_pix.height()
         splash_pix = splash_pix.scaled(
-            int(orig_w * 0.6), int(orig_h * 0.6),
+            int(orig_w * 0.3), int(orig_h * 0.3),
             Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
 

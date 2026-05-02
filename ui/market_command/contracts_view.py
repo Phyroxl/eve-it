@@ -352,6 +352,7 @@ class MarketContractsView(QWidget):
             "#", "Items", "Coste", "Val. Jita Sell", "Val. Jita Buy", "Profit Neto", "ROI %", "Expira", "Score"
         ])
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.results_table.horizontalHeader().setSectionsMovable(True)
         self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.results_table.setColumnWidth(0, 40)

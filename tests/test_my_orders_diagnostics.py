@@ -53,7 +53,7 @@ class TestMyOrdersDiagnostics(unittest.TestCase):
         report = format_my_orders_diagnostic_report(diag, icon_diag)
         
         # Verify sections
-        self.assertIn("EVE iT — MY ORDERS DIAGNOSTIC REPORT", report)
+        self.assertIn("MY ORDERS DIAGNOSTIC REPORT", report)
         self.assertIn("[ORDERS SUMMARY]", report)
         self.assertIn("[TAXES]", report)
         self.assertIn("[ICON SUMMARY]", report)

@@ -63,11 +63,30 @@ class MarketSimpleView(QWidget):
         
     def create_insight_box(self, title, object_name=None):
         f = QFrame(); f.setObjectName("SummaryMetricCard")
-        l = QVBoxLayout(f); l.setContentsMargins(10, 8, 10, 8); l.setSpacing(2)
+        f.setCursor(Qt.PointingHandCursor)
+        f._insight_type_id = 0
+        f._insight_item_name = ""
+        l = QVBoxLayout(f); l.setContentsMargins(8, 6, 8, 6); l.setSpacing(2)
         t = QLabel(title); t.setObjectName("SummaryMetricTitle")
+        row = QHBoxLayout(); row.setSpacing(4)
+        icon_lbl = QLabel(); icon_lbl.setFixedSize(22, 22); icon_lbl.setObjectName("InsightIconLabel")
         v = QLabel("---"); v.setObjectName("SummaryMetricValue")
         if object_name: v.setObjectName(object_name)
-        l.addWidget(t); l.addWidget(v)
+        row.addWidget(icon_lbl); row.addWidget(v, 1)
+        l.addWidget(t); l.addLayout(row)
+        f._icon_lbl = icon_lbl
+
+        def _on_double_click(event, frame=f):
+            if event.button() == Qt.LeftButton and frame._insight_type_id:
+                from ui.market_command.widgets import ItemInteractionHelper
+                from core.esi_client import ESIClient
+                from core.auth_manager import AuthManager
+                def fb(msg, color): self.lbl_status.setText(f"● {msg.upper()}")
+                ItemInteractionHelper.open_market_with_fallback(
+                    ESIClient(), AuthManager.instance().char_id,
+                    frame._insight_type_id, frame._insight_item_name, fb
+                )
+        f.mouseDoubleClickEvent = _on_double_click
         return f, v
 
     def setup_ui(self):
@@ -156,7 +175,7 @@ class MarketSimpleView(QWidget):
         self.spin_capital = QDoubleSpinBox()
         self.spin_capital.setRange(0, 1e12); self.spin_capital.setDecimals(0); self.spin_capital.setSuffix(" ISK")
         self.spin_capital.setValue(self.current_config.capital_max)
-        add_compact_input(scroll_layout, "Cap. Máximo", self.spin_capital)
+        self.spin_capital.setVisible(False)
 
         self.spin_vol = QSpinBox()
         self.spin_vol.setRange(0, 10000); self.spin_vol.setValue(self.current_config.vol_min_day)
@@ -167,13 +186,12 @@ class MarketSimpleView(QWidget):
         add_compact_input(scroll_layout, "Margen Mínimo %", self.spin_margin)
 
         self.spin_spread = QDoubleSpinBox()
-        self.spin_spread.setRange(0, 999999); self.spin_spread.setSuffix("%"); self.spin_spread.setValue(self.current_config.spread_max_pct)
-        add_compact_input(scroll_layout, "Spread Máximo %", self.spin_spread)
+        self.spin_spread.setRange(0, 999999); self.spin_spread.setSuffix("%"); self.spin_spread.setValue(9999999)
+        self.spin_spread.setVisible(False)
 
         self.spin_max_items = QSpinBox()
-        self.spin_max_items.setRange(0, 10000); self.spin_max_items.setValue(self.current_config.max_item_types)
-        self.spin_max_items.setToolTip("0 = sin límite. Muestra todos los items de la categoría seleccionada.")
-        add_compact_input(scroll_layout, "Max Tipos Item", self.spin_max_items)
+        self.spin_max_items.setRange(0, 10000); self.spin_max_items.setValue(0)
+        self.spin_max_items.setVisible(False)
 
         self.spin_score = QDoubleSpinBox()
         self.spin_score.setRange(0, 100); self.spin_score.setDecimals(1); self.spin_score.setValue(self.current_config.score_min)
@@ -199,19 +217,16 @@ class MarketSimpleView(QWidget):
         add_compact_input(scroll_layout, "Capital Mínimo/u", self.spin_capital_min)
 
         self.spin_buy_orders = QSpinBox()
-        self.spin_buy_orders.setRange(0, 10000); self.spin_buy_orders.setValue(self.current_config.buy_orders_min)
-        self.spin_buy_orders.setToolTip("Mínimo de buy orders activas en el mercado.\n0 = sin filtro.")
-        add_compact_input(scroll_layout, "Buy Orders mín.", self.spin_buy_orders)
+        self.spin_buy_orders.setRange(0, 10000); self.spin_buy_orders.setValue(0)
+        self.spin_buy_orders.setVisible(False)
 
         self.spin_sell_orders = QSpinBox()
-        self.spin_sell_orders.setRange(0, 10000); self.spin_sell_orders.setValue(self.current_config.sell_orders_min)
-        self.spin_sell_orders.setToolTip("Mínimo de sell orders activas en el mercado.\n0 = sin filtro.")
-        add_compact_input(scroll_layout, "Sell Orders mín.", self.spin_sell_orders)
+        self.spin_sell_orders.setRange(0, 10000); self.spin_sell_orders.setValue(0)
+        self.spin_sell_orders.setVisible(False)
 
         self.spin_history_days = QSpinBox()
-        self.spin_history_days.setRange(0, 365); self.spin_history_days.setValue(self.current_config.history_days_min)
-        self.spin_history_days.setToolTip("Días mínimos de historial de precios.\n0 = sin filtro. Solo aplica a datos enriquecidos.")
-        add_compact_input(scroll_layout, "Historial mín. días", self.spin_history_days)
+        self.spin_history_days.setRange(0, 365); self.spin_history_days.setValue(0)
+        self.spin_history_days.setVisible(False)
 
         self.chk_require_buy_sell = QCheckBox("REQUERIR BUY Y SELL")
         self.chk_require_buy_sell.setObjectName("TacticalCheckbox")
@@ -711,22 +726,38 @@ class MarketSimpleView(QWidget):
             self.lbl_status.setText(f"● {total_raw} ITEMS ENCONTRADOS PERO 0 PASAN FILTRO: {dom.upper()}")
             self.lbl_status.setObjectName("ModeLabel")
         else:
-            self.lbl_sum_top.setText(filtered[0].item_name)
+            top_opp = filtered[0]
+            self.lbl_sum_top.setText(top_opp.item_name)
+            self.box_top._insight_type_id = top_opp.type_id
+            self.box_top._insight_item_name = top_opp.item_name
+            _px = self.table.icon_service.get_icon(top_opp.type_id, 22)
+            self.box_top._icon_lbl.setPixmap(_px.scaled(22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
             liquid_opp = max(filtered, key=lambda x: x.liquidity.volume_5d)
             self.lbl_sum_liquid.setText(f"{liquid_opp.item_name}")
+            self.box_liq._insight_type_id = liquid_opp.type_id
+            self.box_liq._insight_item_name = liquid_opp.item_name
+            _px = self.table.icon_service.get_icon(liquid_opp.type_id, 22)
+            self.box_liq._icon_lbl.setPixmap(_px.scaled(22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
             solid_opps = [o for o in filtered if "Sólida" in o.tags]
             if solid_opps:
                 best_solid = max(solid_opps, key=lambda x: x.margin_net_pct)
                 self.lbl_sum_margin.setText(f"{best_solid.item_name} ({best_solid.margin_net_pct:.1f}%)")
+                self.box_mar._insight_type_id = best_solid.type_id
+                self.box_mar._insight_item_name = best_solid.item_name
+                _px = self.table.icon_service.get_icon(best_solid.type_id, 22)
+                self.box_mar._icon_lbl.setPixmap(_px.scaled(22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
                 self.lbl_sum_margin.setText("Ninguna")
+                self.box_mar._icon_lbl.clear()
             if len(filtered) > 50:
                 self.lbl_sum_insight.setText("MERCADO SALUDABLE")
                 self.lbl_sum_insight.setObjectName("MetricValueSuccess")
             else:
                 self.lbl_sum_insight.setText("ALTA SELECTIVIDAD")
                 self.lbl_sum_insight.setObjectName("MetricValueWarning")
-            
+
             # Apply semantic classes to top summary boxes if they show real items
             self.lbl_sum_top.setObjectName("MetricValueInfo")
             self.lbl_sum_liquid.setObjectName("MetricValueInfo")
@@ -766,7 +797,25 @@ class MarketSimpleView(QWidget):
             self.lbl_det_buy.setText(f"{format_isk(opp.best_buy_price, short=True)} ISK")
             self.lbl_det_sell.setText(f"{format_isk(opp.best_sell_price, short=True)} ISK")
             self.lbl_det_profit.setText(f"{format_isk(opp.profit_per_unit, short=False)} ISK")
-            
+
+            # BUY = green, SELL = red
+            self.lbl_det_buy.setObjectName("MetricValueSuccess")
+            self.lbl_det_buy.style().unpolish(self.lbl_det_buy)
+            self.lbl_det_buy.style().polish(self.lbl_det_buy)
+            self.lbl_det_sell.setObjectName("MetricValueDanger")
+            self.lbl_det_sell.style().unpolish(self.lbl_det_sell)
+            self.lbl_det_sell.style().polish(self.lbl_det_sell)
+
+            # PROFIT/U color follows margin
+            if opp.profit_per_unit > 0 and opp.margin_net_pct > 10.0:
+                self.lbl_det_profit.setObjectName("MetricValueSuccess")
+            elif opp.profit_per_unit >= 0:
+                self.lbl_det_profit.setObjectName("MetricValueWarning")
+            else:
+                self.lbl_det_profit.setObjectName("MetricValueDanger")
+            self.lbl_det_profit.style().unpolish(self.lbl_det_profit)
+            self.lbl_det_profit.style().polish(self.lbl_det_profit)
+
             # Margin coloring logic
             self.lbl_det_margin.setText(f"{opp.margin_net_pct:.1f}%")
             if opp.margin_net_pct > 10.0:

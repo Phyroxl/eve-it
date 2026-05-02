@@ -1014,7 +1014,7 @@ class MainSuiteWindow(QMainWindow):
                 self._market_window = QWidget()
                 self._market_window.setWindowTitle("Salva Suite — Market Command")
                 self._market_window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-                self._market_window.resize(1200, 820)
+                self._market_window.resize(840, 820)
 
                 outer = _QVBox(self._market_window)
                 outer.setContentsMargins(0, 0, 0, 0)
