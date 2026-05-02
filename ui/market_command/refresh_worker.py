@@ -130,6 +130,7 @@ class MarketRefreshWorker(QThread):
                 else:
                     temp_grouped[t]['sell'].append(o)
             t_group = time.time()-t0
+            self._all_market_type_ids = list(temp_grouped.keys())
             self.diagnostics.grouping_elapsed = t_group
             self.diagnostics.grouped_type_ids_count = len(temp_grouped)
 
@@ -177,19 +178,17 @@ class MarketRefreshWorker(QThread):
                 initial_candidates = select_final_candidates(final_pool_cands, pool_size)
                 self.diagnostics.notes.append(f"Phase 1 using top {len(initial_candidates)} from final_pool")
             else:
-                # Solo items con metadata ya en caché
+                # Phase 1: use ALL economic candidates from cache (no size cap)
                 resolver = ItemResolver.instance()
-                # Usamos el pool ya ordenado
-                broad_stats = final_pool_cands[:_BROAD_POOL_SIZE]
                 initial_candidates = []
-                for c in broad_stats:
+                for c in final_pool_cands:
                     t_id = c.type_id
                     cat_id, grp_id, _, _ = resolver.resolve_category_info(t_id, blocking=False)
                     if cat_id is not None and grp_id is not None:
                         match, _ = is_type_in_category(selected_category, cat_id, grp_id, broad=True)
                         if match:
                             initial_candidates.append(t_id)
-                self.diagnostics.notes.append(f"Phase 1 found {len(initial_candidates)} candidates for {selected_category}")
+                self.diagnostics.notes.append(f"Phase 1 found {len(initial_candidates)} cached candidates for {selected_category}")
                 if not initial_candidates:
                     tracker.update(50, message=f"Preparando metadata para {selected_category}...")
 
@@ -246,25 +245,30 @@ class MarketRefreshWorker(QThread):
                 pool_size = max(_TODOS_POOL_SIZE, self.config.max_item_types) if self.config.max_item_types > 0 else _TODOS_POOL_SIZE
                 final_candidates = select_final_candidates(final_pool_cands, pool_size)
             else:
-                # Prefetch metadata paralelo para pool amplio
-                broad_ids = [c.type_id for c in final_pool_cands[:_BROAD_POOL_SIZE]]
-                tracker.update(10, message=f"Descargando metadatos ({len(broad_ids)} items)...")
-                p_stats = ItemResolver.instance().prefetch_type_metadata_parallel(broad_ids, n_clients=4)
+                # Category scan: use ALL market type_ids for full coverage
+                # Includes items with only buy or sell orders (e.g. ships with no buy orders at Jita)
+                all_ids = getattr(self, '_all_market_type_ids', [c.type_id for c in final_pool_cands])
+                tracker.update(10, message=f"Descargando metadatos ({len(all_ids)} items)...")
+                p_stats = ItemResolver.instance().prefetch_type_metadata_parallel(all_ids, n_clients=4)
                 if not self.is_running: return
-                
+
                 self.diagnostics.metadata_total = p_stats['total']
                 self.diagnostics.metadata_cached = p_stats['cached']
                 self.diagnostics.metadata_fetched = p_stats['fetched']
                 self.diagnostics.metadata_failed = p_stats['failed']
-                
+
                 tracker.update(80, message=f"Filtrando por categoría '{selected_category}'...")
+                score_map = {c.type_id: c.score for c in final_pool_cands}
                 category_ids = []
-                for c in final_pool_cands[:_BROAD_POOL_SIZE]:
-                    t_id = c.type_id
-                    cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(t_id, blocking=False)
+                for tid in all_ids:
+                    cat_id, grp_id, _, _ = ItemResolver.instance().resolve_category_info(tid, blocking=False)
                     match, _ = is_type_in_category(selected_category, cat_id, grp_id, broad=True)
                     if match:
-                        category_ids.append(t_id)
+                        category_ids.append(tid)
+
+                # Sort by economic score: items with both buy+sell orders rank higher
+                category_ids.sort(key=lambda tid: score_map.get(tid, 0.0), reverse=True)
+                self.diagnostics.notes.append(f"Phase 2 found {len(category_ids)} items in category '{selected_category}' from {len(all_ids)} market items")
 
                 cat_limit = max(_CATEGORY_LIMIT_DEFAULT, self.config.max_item_types) if self.config.max_item_types > 0 else _CATEGORY_LIMIT_DEFAULT
                 final_candidates = category_ids[:cat_limit]

@@ -286,9 +286,10 @@ class MarketSimpleView(QWidget):
         self.table.itemSelectionChanged.connect(self.on_table_selection)
         self.table.item_action_triggered.connect(self.on_item_action)
 
-        # Scan loading overlay (stacked over the table)
+        # Scan loading overlay (stacked over the table — non-blocking, table remains interactive)
         self._scan_overlay = QFrame(self)
         self._scan_overlay.setObjectName("ScanOverlay")
+        self._scan_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._scan_overlay.setStyleSheet(
             "QFrame#ScanOverlay { background-color: rgba(5,7,10,200); border-radius:8px; }"
         )

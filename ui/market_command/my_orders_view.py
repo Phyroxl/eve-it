@@ -332,16 +332,20 @@ class TradeProfitsWorker(QThread):
             tracker.update(5, message="Sincronizando impuestos...")
             tx_service = TaxService.instance()
             tx_service.refresh_from_esi(self.char_id, self.token)
-            
+            tax_cache = {}  # loc_id -> (s_tax_pct, b_fee_pct)
+
             for i, t in enumerate(sorted_tx):
                 tid = t['type_id']
                 qty = t['quantity']
                 price = t['unit_price']
                 is_buy = t.get('is_buy', False)
                 loc_id = t.get('location_id', 0)
-                
-                # Obtener TAXES EFECTIVAS para esta ubicación específica
-                s_tax_pct, b_fee_pct, source, debug = tx_service.get_effective_taxes(self.char_id, loc_id, self.token)
+
+                # Cache impuestos por ubicación (evita O(n) llamadas redundantes)
+                if loc_id not in tax_cache:
+                    s_tax_pct, b_fee_pct, _, _ = tx_service.get_effective_taxes(self.char_id, loc_id, self.token)
+                    tax_cache[loc_id] = (s_tax_pct, b_fee_pct)
+                s_tax_pct, b_fee_pct = tax_cache[loc_id]
                 
                 if tid not in stock_map:
                     stock_map[tid] = {'qty': 0, 'cost': 0.0}
@@ -418,13 +422,13 @@ class InventoryAnalysisDialog(QDialog):
         # Header
         header = QFrame()
         header.setFixedHeight(85)
-        header.setStyleSheet("background-color: #0f172a; border-radius: 8px; border: 1px solid #1e293b;")
+        header.setStyleSheet(f"background:{Theme.NAV_BG};border-radius:8px;border:1px solid {Theme.NAV_BORDER};")
         hl = QHBoxLayout(header)
         title_v = QVBoxLayout()
         title = QLabel("INVENTARIO LOCAL")
-        title.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900;")
+        title.setStyleSheet(f"color:{Theme.TEXT_MAIN};font-size:18px;font-weight:900;")
         loc_lbl = QLabel(f"UBICACIÓN: {self.loc_name.upper()}")
-        loc_lbl.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800;")
+        loc_lbl.setStyleSheet(f"color:{Theme.ACCENT};font-size:10px;font-weight:800;")
         title_v.addWidget(title)
         title_v.addWidget(loc_lbl)
         hl.addLayout(title_v)
@@ -437,12 +441,7 @@ class InventoryAnalysisDialog(QDialog):
 
         # Refresh button
         self._refresh_btn = QPushButton("↻ Actualizar")
-        self._refresh_btn.setStyleSheet(
-            "QPushButton { background: #1e293b; color: #94a3b8; border: 1px solid #334155; "
-            "border-radius: 4px; font-size: 9px; font-weight: 800; padding: 4px 10px; }"
-            "QPushButton:hover { background: #334155; color: #f1f5f9; }"
-            "QPushButton:disabled { color: #475569; }"
-        )
+        self._refresh_btn.setObjectName("SecondaryButton")
         self._refresh_btn.clicked.connect(self._do_refresh)
         hl.addWidget(self._refresh_btn)
         layout.addWidget(header)
@@ -562,10 +561,7 @@ class InventoryAnalysisDialog(QDialog):
             return
         row = item.row()
         menu = QMenu(self)
-        menu.setStyleSheet(
-            "QMenu { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; }"
-            "QMenu::item:selected { background: #334155; }"
-        )
+        menu.setStyleSheet(f"QMenu{{background:{Theme.NAV_BG};color:{Theme.TEXT_MAIN};border:1px solid {Theme.NAV_BORDER};}}QMenu::item:selected{{background:{Theme.CARD_BG};}}")
         act_copy_cell = QAction("Copiar celda", self)
         act_copy_cell.triggered.connect(lambda: QGuiApplication.clipboard().setText(item.text()))
         menu.addAction(act_copy_cell)
@@ -679,13 +675,16 @@ class TradeProfitsDialog(QDialog):
         self.btn_customize.setFixedWidth(100)
         self.btn_customize.clicked.connect(self.on_customize_clicked)
         
+        self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("MetricValueInfo")
+
         fl.addWidget(QLabel("FILTRAR:")); fl.addWidget(self.txt_filter)
         fl.addSpacing(20); fl.addWidget(QLabel("MODO:")); fl.addWidget(self.cmb_mode)
+        fl.addSpacing(10); fl.addWidget(self.lbl_status)
         fl.addStretch()
         fl.addWidget(self.btn_customize)
         fl.addWidget(self.btn_global)
-        fl.addWidget(self.btn_global)
-        
+
         layout.addWidget(f_frame)
         
         self.stack = QStackedWidget()
@@ -829,11 +828,23 @@ class TradeProfitsDialog(QDialog):
         return f"{prefix}{abs_val:,.0f}"
 
     def load_data(self):
+        self.lbl_status.setText("Cargando...")
         self.worker = TradeProfitsWorker(self.char_id, self.token)
         self.worker.finished_data.connect(self.on_data)
+        self.worker.error.connect(self._on_load_error)
         self.worker.start()
 
+    def _on_load_error(self, msg):
+        self.lbl_status.setText(f"Error: {msg}")
+        _log.error(f"[TRADE PROFITS] Worker error: {msg}")
+
+    def refresh_theme(self):
+        self.setStyleSheet(Theme.get_qss("my_orders"))
+        if self.all_trades:
+            self.update_chart()
+
     def on_data(self, data):
+        self.lbl_status.setText("")
         self.all_trades = data
         self.apply_filters()
         if self.stack.currentIndex() == 1:
@@ -883,31 +894,15 @@ class TradeProfitsDialog(QDialog):
 
     def on_bar_hovered(self, status, index, barset):
         if status:
-            if not hasattr(self, '_current_chart_items') or index >= len(self._current_chart_items):
+            tooltips = getattr(self, '_chart_hover_tooltips', [])
+            if index >= len(tooltips):
                 return
-            
-            item = self._current_chart_items[index]
-            from core.cost_basis_service import CostBasisService
-            wac = CostBasisService.instance()
-            cb = wac.get_cost_basis(item['type_id'])
-            stock = wac.stock_map.get(str(item['type_id']), {}).get('qty', 0)
-            
-            avg_profit = item['net_profit'] / item['count'] if item['count'] > 0 else 0
-            
-            tooltip = f"<b>{item['name']}</b><br/>"
-            tooltip += f"<hr/>"
-            tooltip += f"Profit Neto: <span style='color:{'#10b981' if item['net_profit'] >= 0 else '#ef4444'}'>{format_isk(item['net_profit'])}</span><br/>"
-            tooltip += f"Operaciones: {item['count']}<br/>"
-            tooltip += f"Avg Profit/Trade: {format_isk(avg_profit)}<br/>"
-            tooltip += f"<hr/>"
-            tooltip += f"Stock Actual: {'SÍ (' + str(stock) + ')' if stock > 0 else 'NO'}<br/>"
-            if cb:
-                tooltip += f"Coste Medio (WAC): {format_isk(cb.average_buy_price)}<br/>"
-            else:
-                tooltip += f"Coste Medio: N/A<br/>"
-                
-            QToolTip.showText(QCursor.pos(), tooltip, self.chart_view)
+            if index == getattr(self, '_last_hovered_bar', -1):
+                return
+            self._last_hovered_bar = index
+            QToolTip.showText(QCursor.pos(), tooltips[index], self.chart_view)
         else:
+            self._last_hovered_bar = -1
             QToolTip.hideText()
 
     def update_chart(self):
@@ -957,8 +952,26 @@ class TradeProfitsDialog(QDialog):
             top_items = sorted_stats
 
         self._current_chart_items = top_items
+        self._last_hovered_bar = -1
         if not top_items:
             return
+
+        # Precompute hover tooltips once (avoids live CostBasisService lookups on every mouse move)
+        from core.cost_basis_service import CostBasisService
+        wac = CostBasisService.instance()
+        self._chart_hover_tooltips = []
+        for item in top_items:
+            cb = wac.get_cost_basis(item['type_id'])
+            stock = wac.stock_map.get(str(item['type_id']), {}).get('qty', 0)
+            avg_profit = item['net_profit'] / item['count'] if item['count'] > 0 else 0
+            profit_color = '#10b981' if item['net_profit'] >= 0 else '#ef4444'
+            tt = (f"<b>{item['name']}</b><br/><hr/>"
+                  f"Profit Neto: <span style='color:{profit_color}'>{format_isk(item['net_profit'])}</span><br/>"
+                  f"Operaciones: {item['count']}<br/>"
+                  f"Avg Profit/Trade: {format_isk(avg_profit)}<br/><hr/>"
+                  f"Stock Actual: {'SÍ (' + str(stock) + ')' if stock > 0 else 'NO'}<br/>")
+            tt += f"Coste Medio (WAC): {format_isk(cb.average_buy_price)}<br/>" if cb else "Coste Medio: N/A<br/>"
+            self._chart_hover_tooltips.append(tt)
 
         chart = QChart()
         chart.setTitle("RANKING DE RENTABILIDAD POR ÍTEM")
