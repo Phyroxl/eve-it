@@ -17,17 +17,35 @@ _SESSION_FILE = Path(__file__).resolve().parent.parent / 'config' / 'esi_session
 _TOKEN_REFRESH_MARGIN = 300  # seconds before expiry to trigger refresh (5 minutes)
 
 
-def _load_client_id() -> str:
-    env_id = os.environ.get('EVE_CLIENT_ID', '').strip()
-    if env_id:
-        return env_id
+def _load_esi_config() -> dict:
+    """Loads ESI OAuth configuration from environment or file."""
+    config = {
+        "client_id": os.environ.get('EVE_CLIENT_ID', '').strip(),
+        "client_secret": os.environ.get('EVE_CLIENT_SECRET', '').strip(),
+        "redirect_uri": "http://localhost:12543/callback",
+        "scopes": (
+            "esi-ui.open_window.v1 esi-wallet.read_character_wallet.v1 "
+            "esi-markets.read_character_orders.v1 esi-assets.read_assets.v1 "
+            "esi-skills.read_skills.v1 esi-characters.read_standings.v1 "
+            "esi-location.read_location.v1"
+        )
+    }
+    
     try:
         if _CONFIG_FILE.exists():
             data = json.loads(_CONFIG_FILE.read_text(encoding='utf-8'))
-            return data.get('client_id', '')
+            if not config["client_id"]:
+                config["client_id"] = data.get('client_id', '').strip()
+            if not config["client_secret"]:
+                config["client_secret"] = data.get('client_secret', '').strip()
+            if 'redirect_uri' in data:
+                config["redirect_uri"] = data['redirect_uri']
+            if 'scopes' in data:
+                config["scopes"] = data['scopes']
     except Exception as e:
-        logger.warning(f"[ESI AUTH] Could not read EVE client config: {e}")
-    return ''
+        logger.warning(f"[ESI AUTH] Could not read EVE client config file: {e}")
+        
+    return config
 
 
 class AuthManager(QObject):
@@ -39,14 +57,12 @@ class AuthManager(QObject):
 
     def __init__(self):
         super().__init__()
-        self.client_id = _load_client_id()
-        self.redirect_uri = "http://localhost:12543/callback"
-        self.scopes = (
-            "esi-ui.open_window.v1 esi-wallet.read_character_wallet.v1 "
-            "esi-markets.read_character_orders.v1 esi-assets.read_assets.v1 "
-            "esi-skills.read_skills.v1 esi-characters.read_standings.v1 "
-            "esi-location.read_location.v1"
-        )
+        # Initial check to see if we HAVE a config
+        cfg = _load_esi_config()
+        self.client_id = cfg["client_id"]
+        self.redirect_uri = cfg["redirect_uri"]
+        self.scopes = cfg["scopes"]
+        
         self.current_token = None
         self.refresh_token = None
         self.expiry = 0.0
@@ -133,16 +149,12 @@ class AuthManager(QObject):
         self.last_refresh_success = False
         
         try:
-            if not _CONFIG_FILE.exists():
-                logger.error(f"[ESI AUTH] Config file missing: {_CONFIG_FILE}")
-                return False
-                
-            config_data = json.loads(_CONFIG_FILE.read_text(encoding='utf-8'))
-            client_id = config_data.get('client_id')
-            client_secret = config_data.get('client_secret', '')
+            cfg = self.get_esi_oauth_config()
+            client_id = cfg["client_id"]
+            client_secret = cfg["client_secret"]
 
             if not client_id:
-                logger.error("[ESI AUTH] client_id missing in config.")
+                logger.error("[ESI AUTH] client_id missing in config. Cannot refresh.")
                 return False
 
             post_data = {
@@ -156,6 +168,7 @@ class AuthManager(QObject):
             }
             
             if client_secret:
+                import base64
                 auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
                 headers["Authorization"] = f"Basic {auth_header}"
             else:
@@ -163,8 +176,9 @@ class AuthManager(QObject):
 
             logger.info(f"[ESI AUTH] Sending refresh request to CCP (client_id={client_id[:5]}...)")
             
+            import requests
             res = requests.post(
-                "https://login.eveonline.com/v2/oauth/token",
+                cfg["token_url"],
                 data=post_data,
                 headers=headers,
                 timeout=20,
@@ -237,23 +251,56 @@ class AuthManager(QObject):
     # Login flow (browser SSO)
     # ------------------------------------------------------------------
 
+    def get_esi_oauth_config(self) -> dict:
+        """Centralized helper for OAuth settings."""
+        cfg = _load_esi_config()
+        # Ensure URLs are absolute
+        cfg["auth_url"] = "https://login.eveonline.com/v2/oauth/authorize/"
+        cfg["token_url"] = "https://login.eveonline.com/v2/oauth/token"
+        return cfg
+
     def login(self):
         """Starts SSO flow in browser."""
-        if not self.client_id:
-            logger.error("[ESI AUTH] No Client ID configured.")
+        cfg = self.get_esi_oauth_config()
+        client_id = cfg["client_id"]
+        redirect_uri = cfg["redirect_uri"]
+        scopes = cfg["scopes"]
+
+        # 1. Diagnostics
+        logger.info("[ESI AUTH DIAGNOSTICS]")
+        logger.info(f"  client_id_present: {bool(client_id)}")
+        if client_id:
+            logger.info(f"  client_id_length: {len(client_id)}")
+            logger.info(f"  client_id_suffix: ...{client_id[-4:]}")
+        logger.info(f"  redirect_uri: {redirect_uri}")
+        logger.info(f"  scopes_count: {len(scopes.split())}")
+        logger.info(f"  config_source: {'Environment' if os.environ.get('EVE_CLIENT_ID') else 'File'}")
+        logger.info(f"  token_store_path: {_SESSION_FILE}")
+
+        if not client_id:
+            logger.error("[ESI AUTH] client_id missing or empty. Cannot proceed with login.")
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.critical(None, "Error ESI", "ESI client_id no configurado.\n\nPor favor, revisa el archivo 'config/eve_client.json'.")
+            except ImportError:
+                pass
             return False
 
-        url = (
-            f"https://login.eveonline.com/v2/oauth/authorize/?"
-            f"response_type=code&"
-            f"redirect_uri={self.redirect_uri}&"
-            f"client_id={self.client_id}&"
-            f"scope={self.scopes}&"
-            f"state=eve_it_market"
-        )
+        # 2. Build URL
+        from urllib.parse import urlencode
+        params = {
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+            "scope": scopes,
+            "state": "eve_it_market"
+        }
+        auth_url = f"{cfg['auth_url']}?{urlencode(params)}"
+        logger.info(f"  auth_url_built: True")
 
+        # 3. Start flow
         self.start_callback_server()
-        webbrowser.open(url)
+        webbrowser.open(auth_url)
         return True
 
     def start_callback_server(self):
