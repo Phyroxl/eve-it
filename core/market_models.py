@@ -37,23 +37,26 @@ class MarketOpportunity:
 
 @dataclass
 class FilterConfig:
-    capital_max: float = 1_000_000_000_000.0 # 1 Trillion (Non-restrictive)
+    capital_max: float = 1_000_000_000_000.0  # 1 Trillion (Non-restrictive)
+    capital_min: float = 0.0                   # 0 = no minimum unit price filter
     vol_min_day: int = 0
-    margin_min_pct: float = -100.0 # Allow losses by default in exploration
+    margin_min_pct: float = -100.0             # Allow losses by default in exploration
     spread_max_pct: float = 1000.0
     exclude_plex: bool = False
     broker_fee_pct: float = 3.0
     sales_tax_pct: float = 8.0
-    
+
     # Advanced Filters (Phase 1)
     score_min: float = 0.0
-    risk_max: int = 3  # 1: Low, 2: Medium, 3: High
+    risk_max: int = 3                          # 1: Low, 2: Medium, 3: High
     buy_orders_min: int = 0
     sell_orders_min: int = 0
     history_days_min: int = 0
     profit_day_min: float = 0.0
+    profit_unit_min: float = 0.0               # Minimum net profit per unit
+    require_buy_sell: bool = False             # Require both buy and sell orders present
     selected_category: str = "Todos"
-    max_item_types: int = 0 # 0 = No limit
+    max_item_types: int = 0                    # 0 = No limit
 
 @dataclass
 class PerformanceConfig:

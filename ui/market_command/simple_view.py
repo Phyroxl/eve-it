@@ -158,6 +158,39 @@ class MarketSimpleView(QWidget):
         self.combo_risk.setToolTip("Riesgo máximo permitido.\nSolo Low = solo oportunidades de bajo riesgo.\nMáximo Medium = excluye riesgo High.\nCualquier Riesgo = sin filtro.")
         add_compact_input(scroll_layout, "Riesgo Máximo", self.combo_risk)
 
+        self.spin_profit_unit = QDoubleSpinBox()
+        self.spin_profit_unit.setRange(0, 1e12); self.spin_profit_unit.setDecimals(0); self.spin_profit_unit.setSuffix(" ISK")
+        self.spin_profit_unit.setValue(self.current_config.profit_unit_min)
+        self.spin_profit_unit.setToolTip("Profit neto mínimo por unidad vendida (después de fees).\n0 = sin filtro.")
+        add_compact_input(scroll_layout, "Profit/u Mínimo", self.spin_profit_unit)
+
+        self.spin_capital_min = QDoubleSpinBox()
+        self.spin_capital_min.setRange(0, 1e12); self.spin_capital_min.setDecimals(0); self.spin_capital_min.setSuffix(" ISK")
+        self.spin_capital_min.setValue(self.current_config.capital_min)
+        self.spin_capital_min.setToolTip("Precio mínimo de compra por unidad. Filtra items demasiado baratos.\n0 = sin filtro.")
+        add_compact_input(scroll_layout, "Capital Mínimo/u", self.spin_capital_min)
+
+        self.spin_buy_orders = QSpinBox()
+        self.spin_buy_orders.setRange(0, 10000); self.spin_buy_orders.setValue(self.current_config.buy_orders_min)
+        self.spin_buy_orders.setToolTip("Mínimo de buy orders activas en el mercado.\n0 = sin filtro.")
+        add_compact_input(scroll_layout, "Buy Orders mín.", self.spin_buy_orders)
+
+        self.spin_sell_orders = QSpinBox()
+        self.spin_sell_orders.setRange(0, 10000); self.spin_sell_orders.setValue(self.current_config.sell_orders_min)
+        self.spin_sell_orders.setToolTip("Mínimo de sell orders activas en el mercado.\n0 = sin filtro.")
+        add_compact_input(scroll_layout, "Sell Orders mín.", self.spin_sell_orders)
+
+        self.spin_history_days = QSpinBox()
+        self.spin_history_days.setRange(0, 365); self.spin_history_days.setValue(self.current_config.history_days_min)
+        self.spin_history_days.setToolTip("Días mínimos de historial de precios.\n0 = sin filtro. Solo aplica a datos enriquecidos.")
+        add_compact_input(scroll_layout, "Historial mín. días", self.spin_history_days)
+
+        self.chk_require_buy_sell = QCheckBox("REQUERIR BUY Y SELL")
+        self.chk_require_buy_sell.setChecked(self.current_config.require_buy_sell)
+        self.chk_require_buy_sell.setToolTip("Excluir items sin órdenes de compra Y venta activas simultáneamente.")
+        self.chk_require_buy_sell.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700; margin-top: 3px;")
+        scroll_layout.addWidget(self.chk_require_buy_sell)
+
         self.chk_plex = QCheckBox("EXCLUIR PLEX / VOLÁTILES")
         self.chk_plex.setChecked(self.current_config.exclude_plex)
         self.chk_plex.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 700; margin-top: 5px;")
@@ -212,7 +245,7 @@ class MarketSimpleView(QWidget):
         right_panel.addWidget(self.table, 1)
         
         self.detail_panel = QFrame()
-        self.detail_panel.setFixedHeight(90)
+        self.detail_panel.setFixedHeight(99)
         self.detail_panel.setStyleSheet("background-color: #000000; border: 1px solid #1e293b; border-radius: 4px;")
         self.setup_detail_layout()
         right_panel.addWidget(self.detail_panel)
@@ -222,11 +255,11 @@ class MarketSimpleView(QWidget):
 
     def setup_detail_layout(self):
         dl = QHBoxLayout(self.detail_panel)
-        dl.setContentsMargins(10, 10, 10, 10)
+        dl.setContentsMargins(12, 10, 12, 10)
         dl.setSpacing(15)
-        
+
         self.lbl_det_icon = QLabel()
-        self.lbl_det_icon.setFixedSize(48, 48)
+        self.lbl_det_icon.setFixedSize(52, 52)
         self.lbl_det_icon.setStyleSheet("background: #0f172a; border-radius: 4px;")
         dl.addWidget(self.lbl_det_icon)
         
@@ -257,7 +290,7 @@ class MarketSimpleView(QWidget):
         self.lbl_det_profit = QLabel("---"); self.lbl_det_margin = QLabel("---")
         add_det_metric(m_g, 0, 0, "BUY PRICE", self.lbl_det_buy)
         add_det_metric(m_g, 0, 1, "SELL PRICE", self.lbl_det_sell)
-        add_det_metric(m_g, 1, 0, "NET PROFIT", self.lbl_det_profit, "#10b981")
+        add_det_metric(m_g, 1, 0, "NET PROFIT/U", self.lbl_det_profit, "#10b981")
         add_det_metric(m_g, 1, 1, "MARGIN %", self.lbl_det_margin, "#3b82f6")
         dl.addLayout(m_g)
 
@@ -410,12 +443,13 @@ class MarketSimpleView(QWidget):
         self.current_config.max_item_types = self.spin_max_items.value()
         self.current_config.score_min = self.spin_score.value()
         self.current_config.risk_max = self.combo_risk.currentIndex() + 1
-
-        # Non-exposed filters — fixed safe defaults
-        self.current_config.buy_orders_min = 0
-        self.current_config.sell_orders_min = 0
-        self.current_config.history_days_min = 0
-        self.current_config.profit_day_min = 0
+        self.current_config.profit_unit_min = self.spin_profit_unit.value()
+        self.current_config.capital_min = self.spin_capital_min.value()
+        self.current_config.buy_orders_min = self.spin_buy_orders.value()
+        self.current_config.sell_orders_min = self.spin_sell_orders.value()
+        self.current_config.history_days_min = self.spin_history_days.value()
+        self.current_config.require_buy_sell = self.chk_require_buy_sell.isChecked()
+        self.current_config.profit_day_min = 0  # Not exposed; profit_unit_min covers per-unit filtering
 
         # Fees desde ESI (no editable en UI — siempre vienen del personaje autenticado)
         self._apply_esi_fees_to_config()
@@ -460,12 +494,18 @@ class MarketSimpleView(QWidget):
             f"\n[SIMPLE SCAN CONFIG]\n"
             f"  selected_category: {cfg.selected_category}\n"
             f"  filters:\n"
+            f"    profit_unit_min: {cfg.profit_unit_min}\n"
+            f"    capital_min: {cfg.capital_min}\n"
+            f"    capital_max: {cfg.capital_max}\n"
+            f"    volume_min_5d: {cfg.vol_min_day}\n"
+            f"    margin_min_pct: {cfg.margin_min_pct}\n"
+            f"    spread_max_pct: {cfg.spread_max_pct}\n"
             f"    score_min: {cfg.score_min}\n"
             f"    risk_max: {cfg.risk_max}\n"
-            f"    margin_min_pct: {cfg.margin_min_pct}\n"
-            f"    capital_max: {cfg.capital_max}\n"
-            f"    spread_max_pct: {cfg.spread_max_pct}\n"
-            f"    vol_min_day: {cfg.vol_min_day}\n"
+            f"    buy_orders_min: {cfg.buy_orders_min}\n"
+            f"    sell_orders_min: {cfg.sell_orders_min}\n"
+            f"    history_days_min: {cfg.history_days_min}\n"
+            f"    require_buy_sell: {cfg.require_buy_sell}\n"
             f"    max_item_types: {cfg.max_item_types}\n"
             f"    exclude_plex: {cfg.exclude_plex}\n"
             f"  deprecated_manual_fees_used: False\n"
@@ -497,6 +537,12 @@ class MarketSimpleView(QWidget):
         self.spin_max_items.setValue(self.current_config.max_item_types)
         self.spin_score.setValue(self.current_config.score_min)
         self.combo_risk.setCurrentIndex(max(0, self.current_config.risk_max - 1))
+        self.spin_profit_unit.setValue(self.current_config.profit_unit_min)
+        self.spin_capital_min.setValue(self.current_config.capital_min)
+        self.spin_buy_orders.setValue(self.current_config.buy_orders_min)
+        self.spin_sell_orders.setValue(self.current_config.sell_orders_min)
+        self.spin_history_days.setValue(self.current_config.history_days_min)
+        self.chk_require_buy_sell.setChecked(self.current_config.require_buy_sell)
 
     def apply_and_display(self):
         import logging
@@ -568,10 +614,24 @@ class MarketSimpleView(QWidget):
             self.lbl_det_icon.setPixmap(pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             
             from utils.formatters import format_isk
+            from core.market_engine import compute_profit_breakdown
             self.lbl_det_buy.setText(f"{format_isk(opp.best_buy_price, short=True)} ISK")
             self.lbl_det_sell.setText(f"{format_isk(opp.best_sell_price, short=True)} ISK")
             self.lbl_det_profit.setText(f"{format_isk(opp.profit_per_unit, short=False)} ISK")
             self.lbl_det_margin.setText(f"{opp.margin_net_pct:.1f}%")
+            # Profit breakdown tooltip
+            bd = compute_profit_breakdown(
+                opp.best_buy_price, opp.best_sell_price,
+                self.current_config.broker_fee_pct, self.current_config.sales_tax_pct
+            )
+            self.lbl_det_profit.setToolTip(
+                f"Gross Spread:     {format_isk(bd['gross_spread'], short=False)} ISK\n"
+                f"Sales Tax ({bd['sales_tax_pct']:.2f}%):  -{format_isk(bd['sales_tax_isk'], short=False)} ISK\n"
+                f"Broker Buy ({bd['broker_fee_pct']:.2f}%): -{format_isk(bd['broker_fee_buy_isk'], short=False)} ISK\n"
+                f"Broker Sell ({bd['broker_fee_pct']:.2f}%): -{format_isk(bd['broker_fee_sell_isk'], short=False)} ISK\n"
+                f"{'─' * 38}\n"
+                f"Net Profit/u:     {format_isk(bd['net_profit_per_unit'], short=False)} ISK"
+            )
             
             sb = opp.score_breakdown
             if sb:

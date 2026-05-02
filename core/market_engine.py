@@ -9,6 +9,37 @@ from .item_categories import is_type_in_category
 
 logger = logging.getLogger('eve.market_engine')
 
+
+def compute_profit_breakdown(buy_price: float, sell_price: float,
+                              broker_fee_pct: float, sales_tax_pct: float) -> dict:
+    """Itemized fee breakdown for station trading. Formula: sell*(1-tax-fee) - buy*(1+fee)."""
+    s_tax = sales_tax_pct / 100.0
+    b_fee = broker_fee_pct / 100.0
+    gross_spread = sell_price - buy_price
+    sales_tax_isk = sell_price * s_tax
+    broker_fee_sell_isk = sell_price * b_fee
+    broker_fee_buy_isk = buy_price * b_fee
+    total_fees_isk = sales_tax_isk + broker_fee_sell_isk + broker_fee_buy_isk
+    net_profit_per_unit = sell_price * (1.0 - s_tax - b_fee) - buy_price * (1.0 + b_fee)
+    margin_net_pct = (net_profit_per_unit / buy_price) * 100.0 if buy_price > 0 else 0.0
+    return {
+        "buy_price": buy_price,
+        "sell_price": sell_price,
+        "gross_spread": gross_spread,
+        "sales_tax_pct": sales_tax_pct,
+        "broker_fee_pct": broker_fee_pct,
+        "sales_tax_isk": sales_tax_isk,
+        "broker_fee_buy_isk": broker_fee_buy_isk,
+        "broker_fee_sell_isk": broker_fee_sell_isk,
+        "total_fees_isk": total_fees_isk,
+        "other_costs_isk": 0.0,
+        "net_profit_per_unit": net_profit_per_unit,
+        "margin_net_pct": margin_net_pct,
+        "formula": "sell*(1-tax-fee) - buy*(1+fee)",
+        "fees_source": "config",
+    }
+
+
 def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Dict[str, Any]]], item_names: Dict[int, str] = None, config: FilterConfig = None) -> List[MarketOpportunity]:
     if config is None: config = FilterConfig()
     if item_names is None: item_names = {}
@@ -30,6 +61,19 @@ def parse_opportunities(orders: List[Dict[str, Any]], history: Dict[int, List[Di
             s_tax = config.sales_tax_pct / 100.0
             profit_per_unit = best_sell * (1.0 - s_tax - b_fee) - best_buy * (1.0 + b_fee)
             margin_net_pct = (profit_per_unit / best_buy) * 100 if best_buy > 0 else 0
+            if logger.isEnabledFor(logging.DEBUG):
+                _name = item_names.get(t_id, f"Type {t_id}")
+                _sf = best_sell * s_tax
+                _bf_b = best_buy * b_fee
+                _bf_s = best_sell * b_fee
+                logger.debug(
+                    "[PROFIT BREAKDOWN] item=%s type_id=%d buy=%.0f sell=%.0f "
+                    "gross=%.0f tax_pct=%.2f fee_pct=%.2f "
+                    "tax_isk=%.0f fee_buy=%.0f fee_sell=%.0f total_fees=%.0f net=%.0f margin=%.2f%%",
+                    _name, t_id, best_buy, best_sell, best_sell - best_buy,
+                    config.sales_tax_pct, config.broker_fee_pct,
+                    _sf, _bf_b, _bf_s, _sf + _bf_b + _bf_s, profit_per_unit, margin_net_pct
+                )
         else:
             spread_pct = 0.0; profit_per_unit = 0.0; margin_net_pct = 0.0
         hist = history.get(t_id, [])
@@ -85,8 +129,10 @@ def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], confi
     total_raw = len(opportunities)
     stats = {
         "metadata_missing": 0, "category_mismatch": 0, "no_buy_price": 0,
-        "capital": 0, "volume": 0, "margin": 0, "spread": 0, "risk": 0,
-        "buy_orders": 0, "sell_orders": 0, "history_days": 0, "profit_day": 0,
+        "no_sell_price": 0, "capital": 0, "capital_min": 0,
+        "volume": 0, "margin": 0, "spread": 0, "risk": 0,
+        "buy_orders": 0, "sell_orders": 0, "history_days": 0,
+        "profit_day": 0, "profit_unit": 0,
         "plex": 0, "score": 0, "limit": 0
     }
     
@@ -124,24 +170,33 @@ def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], confi
     for opp in pass_category:
         if opp.best_buy_price <= 0:
             stats["no_buy_price"] += 1; continue
-            
+
+        if config.require_buy_sell and opp.best_sell_price <= 0:
+            stats["no_sell_price"] += 1; continue
+
         if config.exclude_plex and ("plex" in opp.item_name.lower() or "skin" in opp.item_name.lower()):
             stats["plex"] += 1; continue
-            
+
         if opp.best_buy_price > config.capital_max:
             stats["capital"] += 1; continue
-            
+
+        if config.capital_min > 0 and opp.best_buy_price < config.capital_min:
+            stats["capital_min"] += 1; continue
+
         if opp.margin_net_pct < config.margin_min_pct:
             stats["margin"] += 1; continue
-            
+
         if opp.spread_pct > config.spread_max_pct:
             stats["spread"] += 1; continue
-            
+
         if opp.liquidity.buy_orders_count < config.buy_orders_min:
             stats["buy_orders"] += 1; continue
-            
+
         if opp.liquidity.sell_orders_count < config.sell_orders_min:
             stats["sell_orders"] += 1; continue
+
+        if config.profit_unit_min > 0 and opp.profit_per_unit < config.profit_unit_min:
+            stats["profit_unit"] += 1; continue
 
         if opp.is_enriched:
             if opp.liquidity.volume_5d < config.vol_min_day:

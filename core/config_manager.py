@@ -13,6 +13,7 @@ def save_market_filters(config: FilterConfig):
     try:
         data = {
             "capital_max": config.capital_max,
+            "capital_min": config.capital_min,
             "vol_min_day": config.vol_min_day,
             "margin_min_pct": config.margin_min_pct,
             "spread_max_pct": config.spread_max_pct,
@@ -25,7 +26,10 @@ def save_market_filters(config: FilterConfig):
             "sell_orders_min": config.sell_orders_min,
             "history_days_min": config.history_days_min,
             "profit_day_min": config.profit_day_min,
-            "selected_category": config.selected_category
+            "profit_unit_min": config.profit_unit_min,
+            "require_buy_sell": config.require_buy_sell,
+            "selected_category": config.selected_category,
+            "max_item_types": config.max_item_types,
         }
         _MARKET_FILTERS_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
     except Exception as e:
@@ -46,6 +50,7 @@ def load_market_filters() -> FilterConfig:
                 print(f"[MARKET CONFIG] deprecated UI setting loaded: {_deprecated}={data[_deprecated]} (will be overridden by ESI at scan time)")
         return FilterConfig(
             capital_max=data.get("capital_max", 500_000_000.0),
+            capital_min=data.get("capital_min", 0.0),
             vol_min_day=data.get("vol_min_day", 20),
             margin_min_pct=data.get("margin_min_pct", 5.0),
             spread_max_pct=data.get("spread_max_pct", 40.0),
@@ -58,7 +63,10 @@ def load_market_filters() -> FilterConfig:
             sell_orders_min=data.get("sell_orders_min", 0),
             history_days_min=data.get("history_days_min", 0),
             profit_day_min=data.get("profit_day_min", 0.0),
-            selected_category=data.get("selected_category", "Todos")
+            profit_unit_min=data.get("profit_unit_min", 0.0),
+            require_buy_sell=data.get("require_buy_sell", False),
+            selected_category=data.get("selected_category", "Todos"),
+            max_item_types=data.get("max_item_types", 0),
         )
     except Exception as e:
         print(f"Error cargando filtros: {e}")
