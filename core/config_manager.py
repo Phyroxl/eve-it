@@ -35,9 +35,15 @@ def load_market_filters() -> FilterConfig:
     """Carga la configuración de filtros desde el archivo JSON o devuelve la por defecto."""
     if not _MARKET_FILTERS_FILE.exists():
         return FilterConfig()
-    
+
     try:
         data = json.loads(_MARKET_FILTERS_FILE.read_text(encoding='utf-8'))
+        # Deprecated UI inputs: broker_fee_pct and sales_tax_pct are now sourced from ESI at scan time.
+        # Values in the file are kept for backward compatibility but will be overridden by ESI.
+        _defaults = FilterConfig()
+        for _deprecated in ('broker_fee_pct', 'sales_tax_pct'):
+            if _deprecated in data and data[_deprecated] != getattr(_defaults, _deprecated):
+                print(f"[MARKET CONFIG] deprecated UI setting loaded: {_deprecated}={data[_deprecated]} (will be overridden by ESI at scan time)")
         return FilterConfig(
             capital_max=data.get("capital_max", 500_000_000.0),
             vol_min_day=data.get("vol_min_day", 20),

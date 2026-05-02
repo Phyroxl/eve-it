@@ -111,16 +111,16 @@ class MarketTableWidget(QTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(9)
-        headers = ["Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/Día", "Spread %", "Riesgo", "Etiquetas (?)"]
+        headers = ["Rank", "Item", "Score", "Vol/Día", "Margen %", "Profit/u", "Spread %", "Riesgo", "Etiquetas (?)"]
         self.setHorizontalHeaderLabels(headers)
-        
+
         tooltips = [
             "Ranking de oportunidad (1 es la mejor).",
             "Nombre del Item en el mercado.",
             "Puntuación heurística de rentabilidad y seguridad. >70 Excelente.",
             "Unidades movidas de media al día (basado en 5 días).",
             "Margen de beneficio neto esperado (ya deducidas las tasas).",
-            "Beneficio en ISK estimado si capturas parte del volumen diario.",
+            "Beneficio neto por unidad vendida (fees ESI aplicados).",
             "Diferencia porcentual bruta entre órdenes Buy y Sell.",
             "Estimación de riesgo según capital requerido y volatilidad.",
             "ETIQUETAS INTELIGENTES:\n"
@@ -283,9 +283,13 @@ class MarketTableWidget(QTableWidget):
             margin.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if margin_val > 15: margin.setForeground(QColor("#10b981"))
             
-            profit_val = opp.profit_day_est
-            profit = CustomTableWidgetItem(f"{profit_val:,.0f}", profit_val)
+            profit_val = opp.profit_per_unit
+            profit = CustomTableWidgetItem(f"{profit_val:,.2f}", profit_val)
             profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if profit_val > 0:
+                profit.setForeground(QColor("#10b981"))
+            elif profit_val < 0:
+                profit.setForeground(QColor("#ef4444"))
             
             spread_val = opp.spread_pct
             spread = CustomTableWidgetItem(f"{spread_val:.1f}%", spread_val)

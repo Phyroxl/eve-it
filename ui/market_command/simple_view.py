@@ -142,18 +142,21 @@ class MarketSimpleView(QWidget):
         self.spin_spread.setRange(0, 999999); self.spin_spread.setSuffix("%"); self.spin_spread.setValue(self.current_config.spread_max_pct)
         add_compact_input(scroll_layout, "Spread Máximo %", self.spin_spread)
 
-        self.spin_broker = QDoubleSpinBox()
-        self.spin_broker.setRange(0, 10); self.spin_broker.setSuffix("%"); self.spin_broker.setValue(self.current_config.broker_fee_pct)
-        add_compact_input(scroll_layout, "Broker Fee %", self.spin_broker)
-
-        self.spin_tax = QDoubleSpinBox()
-        self.spin_tax.setRange(0, 10); self.spin_tax.setSuffix("%"); self.spin_tax.setValue(self.current_config.sales_tax_pct)
-        add_compact_input(scroll_layout, "Sales Tax %", self.spin_tax)
-
         self.spin_max_items = QSpinBox()
         self.spin_max_items.setRange(0, 10000); self.spin_max_items.setValue(self.current_config.max_item_types)
-        self.spin_max_items.setToolTip("0 = sin límite (Mostrar todos los items de la categoría)")
+        self.spin_max_items.setToolTip("0 = sin límite. Muestra todos los items de la categoría seleccionada.")
         add_compact_input(scroll_layout, "Max Tipos Item", self.spin_max_items)
+
+        self.spin_score = QDoubleSpinBox()
+        self.spin_score.setRange(0, 100); self.spin_score.setDecimals(1); self.spin_score.setValue(self.current_config.score_min)
+        self.spin_score.setToolTip("Score mínimo (0-100). Solo muestra items con puntuación ≥ este valor.\n>70 Excelente | >40 Buena | <40 Arriesgada.")
+        add_compact_input(scroll_layout, "Score Mínimo", self.spin_score)
+
+        self.combo_risk = QComboBox()
+        self.combo_risk.addItems(["Cualquier Riesgo", "Máximo Medium", "Solo Low"])
+        self.combo_risk.setCurrentIndex(max(0, self.current_config.risk_max - 1))
+        self.combo_risk.setToolTip("Riesgo máximo permitido.\nSolo Low = solo oportunidades de bajo riesgo.\nMáximo Medium = excluye riesgo High.\nCualquier Riesgo = sin filtro.")
+        add_compact_input(scroll_layout, "Riesgo Máximo", self.combo_risk)
 
         self.chk_plex = QCheckBox("EXCLUIR PLEX / VOLÁTILES")
         self.chk_plex.setChecked(self.current_config.exclude_plex)
@@ -292,6 +295,7 @@ class MarketSimpleView(QWidget):
     def on_refresh_clicked(self):
         if self.worker and self.worker.isRunning(): return
         self.update_config_from_ui()
+        self._log_scan_config()
         self.btn_refresh.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -401,19 +405,66 @@ class MarketSimpleView(QWidget):
         self.current_config.vol_min_day = self.spin_vol.value()
         self.current_config.margin_min_pct = self.spin_margin.value()
         self.current_config.spread_max_pct = self.spin_spread.value()
-        self.current_config.broker_fee_pct = self.spin_broker.value()
-        self.current_config.sales_tax_pct = self.spin_tax.value()
         self.current_config.exclude_plex = self.chk_plex.isChecked()
         self.current_config.selected_category = self.combo_category.currentText()
         self.current_config.max_item_types = self.spin_max_items.value()
-        
-        # Reset advanced filters to safe defaults in Simple Mode
+        self.current_config.score_min = self.spin_score.value()
+        self.current_config.risk_max = self.combo_risk.currentIndex() + 1
+
+        # Non-exposed filters — fixed safe defaults
         self.current_config.buy_orders_min = 0
         self.current_config.sell_orders_min = 0
         self.current_config.history_days_min = 0
         self.current_config.profit_day_min = 0
-        self.current_config.risk_max = 3 # Any risk
-        self.current_config.score_min = 0
+
+        # Fees desde ESI (no editable en UI — siempre vienen del personaje autenticado)
+        self._apply_esi_fees_to_config()
+
+    def _apply_esi_fees_to_config(self):
+        """Overwrites broker/tax in config with ESI effective values for the active character."""
+        try:
+            from core.tax_service import TaxService
+            from core.auth_manager import AuthManager
+            auth = AuthManager.instance()
+            if auth.char_id:
+                taxes = TaxService.instance().get_taxes(auth.char_id)
+                self.current_config.broker_fee_pct = taxes.broker_fee_pct
+                self.current_config.sales_tax_pct = taxes.sales_tax_pct
+        except Exception:
+            pass  # Keep defaults from FilterConfig if ESI unavailable
+
+    def _log_scan_config(self):
+        import logging
+        log = logging.getLogger('eve.market.simple')
+        cfg = self.current_config
+        try:
+            from core.tax_service import TaxService
+            from core.auth_manager import AuthManager
+            auth = AuthManager.instance()
+            if auth.char_id:
+                taxes = TaxService.instance().get_taxes(auth.char_id)
+                fees_source = taxes.source
+            else:
+                fees_source = "NO AUTH"
+        except Exception:
+            fees_source = "ERROR"
+        log.info(
+            f"\n[SIMPLE SCAN CONFIG]\n"
+            f"  selected_category: {cfg.selected_category}\n"
+            f"  filters:\n"
+            f"    score_min: {cfg.score_min}\n"
+            f"    risk_max: {cfg.risk_max}\n"
+            f"    margin_min_pct: {cfg.margin_min_pct}\n"
+            f"    capital_max: {cfg.capital_max}\n"
+            f"    spread_max_pct: {cfg.spread_max_pct}\n"
+            f"    vol_min_day: {cfg.vol_min_day}\n"
+            f"    max_item_types: {cfg.max_item_types}\n"
+            f"    exclude_plex: {cfg.exclude_plex}\n"
+            f"  deprecated_manual_fees_used: False\n"
+            f"  effective_sales_tax: {cfg.sales_tax_pct}%\n"
+            f"  effective_broker_fee: {cfg.broker_fee_pct}%\n"
+            f"  fees_source: {fees_source}"
+        )
 
     def on_apply_filters(self):
         self.update_config_from_ui()
@@ -434,10 +485,10 @@ class MarketSimpleView(QWidget):
         self.spin_margin.setValue(self.current_config.margin_min_pct)
         self.spin_spread.setValue(self.current_config.spread_max_pct)
         self.chk_plex.setChecked(self.current_config.exclude_plex)
-        self.spin_broker.setValue(self.current_config.broker_fee_pct)
-        self.spin_tax.setValue(self.current_config.sales_tax_pct)
         self.combo_category.setCurrentText(self.current_config.selected_category)
         self.spin_max_items.setValue(self.current_config.max_item_types)
+        self.spin_score.setValue(self.current_config.score_min)
+        self.combo_risk.setCurrentIndex(max(0, self.current_config.risk_max - 1))
 
     def apply_and_display(self):
         import logging
