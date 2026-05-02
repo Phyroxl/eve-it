@@ -366,18 +366,22 @@ def analyze_character_orders(esi_orders: List[Dict[str, Any]], market_orders: Li
             difference = comp_buy - price
             competitive = price >= (comp_buy - EPSILON)
             if bs > 0:
-                # Compro a 'price', vendo a 'bs'
-                # Coste real = price * (1 + b_fee)
-                # Ingreso neto = bs * (1 - s_tax - b_fee)
-                net_profit = bs * (1.0 - s_tax - b_fee) - price * (1.0 + b_fee)
-                margin_pct = (net_profit / (price * (1.0 + b_fee))) * 100 if price > 0 else 0
-                gross_profit = bs - price
-            
+                # Coste efectivo para el profit: si estoy superado, uso el precio necesario
+                # para liderar el mercado (comp_buy + tick). Si ya lidero, uso mi precio.
+                if not competitive and comp_buy > 0:
+                    from core.market_order_pricing import recommend_buy_price as _rbp
+                    effective_buy_cost = _rbp(comp_buy)
+                else:
+                    effective_buy_cost = price
+                net_profit = bs * (1.0 - s_tax - b_fee) - effective_buy_cost * (1.0 + b_fee)
+                margin_pct = (net_profit / (effective_buy_cost * (1.0 + b_fee))) * 100 if effective_buy_cost > 0 else 0
+                gross_profit = bs - effective_buy_cost
+
             if competitive:
                 state = "Liderando" if price >= (comp_buy + EPSILON) else "Liderando (Empate)"
             else:
                 state = "Superada"
-            
+
             if margin_pct <= 0 and bs > 0: state = "No Rentable"
         else:
             # En VENTA, soy competitivo si mi precio <= mejor competidor + EPSILON

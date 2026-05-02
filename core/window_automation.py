@@ -37,7 +37,7 @@ except ImportError:
 
 # ── Window scoring ──────────────────────────────────────────────────────────
 # These strings identify the *own* EVE iT application — must never be auto-selected
-_SELF_APP_MARKERS = ["EVE iT", "Market Command", "Quick Order Update", "Antigravity"]
+_SELF_APP_MARKERS = ["EVE iT", "Salva Suite", "Market Command", "Quick Order Update", "Antigravity"]
 
 # Common EVE launcher titles to exclude from auto-selection
 _LAUNCHER_MARKERS = [

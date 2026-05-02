@@ -39,7 +39,10 @@ config/*.session.json
 data/esi_session.json
 data/esi_session.json.corrupt.*
 
-# EVE iT Specific
+# User-local runtime state (never commit)
+config/table_layouts.json
+
+# Salva Suite Specific
 .main.pid
 *.log
 _main_char.json

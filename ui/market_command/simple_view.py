@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QComboBox
 )
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from ui.market_command.widgets import MarketTableWidget
 from ui.market_command.refresh_worker import MarketRefreshWorker
 from ui.market_command.diagnostics_dialog import MarketDiagnosticsDialog
@@ -38,6 +38,28 @@ class MarketSimpleView(QWidget):
     def activate_view(self):
         """Hook para activación de pestaña."""
         pass
+
+    def _show_scan_overlay(self, text="ESCANEANDO MERCADO...", sub="Obteniendo datos ESI — por favor espera"):
+        self._ov_text.setText(text)
+        self._ov_sub.setText(sub)
+        self._scan_overlay.setVisible(True)
+        self._scan_overlay.raise_()
+        self._ov_timer.start()
+        self._reposition_overlay()
+
+    def _hide_scan_overlay(self):
+        self._ov_timer.stop()
+        self._scan_overlay.setVisible(False)
+
+    def _reposition_overlay(self):
+        if hasattr(self, '_scan_overlay') and hasattr(self, 'table'):
+            tbl = self.table
+            pos = tbl.mapTo(self, tbl.rect().topLeft())
+            self._scan_overlay.setGeometry(pos.x(), pos.y(), tbl.width(), tbl.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_overlay()
         
     def create_insight_box(self, title, object_name=None):
         f = QFrame(); f.setObjectName("SummaryMetricCard")
@@ -248,13 +270,46 @@ class MarketSimpleView(QWidget):
         self.table.setObjectName("MarketResultsTable")
         self.table.itemSelectionChanged.connect(self.on_table_selection)
         self.table.item_action_triggered.connect(self.on_item_action)
+
+        # Scan loading overlay (stacked over the table)
+        self._scan_overlay = QFrame(self)
+        self._scan_overlay.setObjectName("ScanOverlay")
+        self._scan_overlay.setStyleSheet(
+            "QFrame#ScanOverlay { background-color: rgba(5,7,10,200); border-radius:8px; }"
+        )
+        ov_layout = QVBoxLayout(self._scan_overlay)
+        ov_layout.setAlignment(Qt.AlignCenter)
+        self._ov_icon = QLabel("◎")
+        self._ov_icon.setStyleSheet("color:#00c8ff; font-size:32px;")
+        self._ov_icon.setAlignment(Qt.AlignCenter)
+        self._ov_text = QLabel("ESCANEANDO MERCADO...")
+        self._ov_text.setStyleSheet("color:#00c8ff; font-size:13px; font-weight:900; letter-spacing:2px;")
+        self._ov_text.setAlignment(Qt.AlignCenter)
+        self._ov_sub = QLabel("Obteniendo datos ESI — por favor espera")
+        self._ov_sub.setStyleSheet("color:#64748b; font-size:9px; font-weight:700; letter-spacing:1px;")
+        self._ov_sub.setAlignment(Qt.AlignCenter)
+        ov_layout.addWidget(self._ov_icon)
+        ov_layout.addWidget(self._ov_text)
+        ov_layout.addWidget(self._ov_sub)
+        self._scan_overlay.setVisible(False)
+
+        # Animate overlay icon
+        self._ov_timer = QTimer(self)
+        self._ov_timer.setInterval(600)
+        _ov_frames = ["◎", "◉", "●", "◉"]
+        _ov_idx = [0]
+        def _tick_icon():
+            _ov_idx[0] = (_ov_idx[0] + 1) % len(_ov_frames)
+            self._ov_icon.setText(_ov_frames[_ov_idx[0]])
+        self._ov_timer.timeout.connect(_tick_icon)
+
         right_panel.addWidget(self.table, 1)
         from ui.common.table_layout_manager import restore_table_layout, connect_table_layout_persistence
         restore_table_layout(self.table, "scan_main_table")
         connect_table_layout_persistence(self.table, "scan_main_table")
         
         self.detail_panel = QFrame()
-        self.detail_panel.setFixedHeight(99)
+        self.detail_panel.setFixedHeight(120)
         self.detail_panel.setObjectName("MarketDetailPanel")
         self.setup_detail_layout()
         right_panel.addWidget(self.detail_panel)
@@ -264,61 +319,95 @@ class MarketSimpleView(QWidget):
 
     def setup_detail_layout(self):
         dl = QHBoxLayout(self.detail_panel)
-        dl.setContentsMargins(12, 10, 12, 10)
-        dl.setSpacing(15)
+        dl.setContentsMargins(12, 8, 12, 8)
+        dl.setSpacing(10)
 
+        # --- Icon block with border ---
+        icon_frame = QFrame()
+        icon_frame.setObjectName("DetailIconFrame")
+        icon_frame.setFixedSize(64, 64)
+        icon_frame.setStyleSheet(
+            "QFrame#DetailIconFrame{background:#0b1016;border:1px solid #1e293b;border-radius:6px;}"
+        )
+        icon_fl = QVBoxLayout(icon_frame)
+        icon_fl.setContentsMargins(4, 4, 4, 4)
         self.lbl_det_icon = QLabel()
         self.lbl_det_icon.setFixedSize(52, 52)
         self.lbl_det_icon.setObjectName("IconFrame")
-        dl.addWidget(self.lbl_det_icon)
-        
+        self.lbl_det_icon.setAlignment(Qt.AlignCenter)
+        icon_fl.addWidget(self.lbl_det_icon)
+        dl.addWidget(icon_frame)
+
+        # --- Name + tags block ---
         name_v = QVBoxLayout()
-        self.lbl_det_item = QLabel("SELECCIONA ITEM")
-        self.lbl_det_item.setFixedHeight(20)
-        self.lbl_det_item.setFixedWidth(280) 
+        name_v.setSpacing(3)
+        self.lbl_det_item = QLabel("SELECCIONA UN ITEM")
+        self.lbl_det_item.setFixedWidth(240)
         self.lbl_det_item.setObjectName("DetailName")
+        self.lbl_det_item.setStyleSheet("font-size:13px;font-weight:900;letter-spacing:1px;")
         self.lbl_det_tags = QLabel("---")
-        self.lbl_det_tags.setFixedHeight(12)
-        self.lbl_det_tags.setFixedWidth(280)
+        self.lbl_det_tags.setFixedWidth(240)
         self.lbl_det_tags.setObjectName("DetailTagline")
-        name_v.addWidget(self.lbl_det_item); name_v.addWidget(self.lbl_det_tags); name_v.addStretch()
-        
+        self.lbl_det_tags.setWordWrap(True)
+        name_v.addWidget(self.lbl_det_item)
+        name_v.addWidget(self.lbl_det_tags)
+        name_v.addStretch()
         dl.addLayout(name_v)
 
-        m_g = QGridLayout()
-        m_g.setSpacing(5)
-        def add_det_metric(layout, row, col, lbl_txt, val_obj):
-            lbl = QLabel(lbl_txt); lbl.setObjectName("DetailMetricTitle")
-            lbl.setFixedWidth(80)
-            layout.addWidget(lbl, row*2, col)
-            val_obj.setFixedWidth(80); val_obj.setObjectName("DetailMetricValue")
-            layout.addWidget(val_obj, row*2+1, col)
+        # --- Separator ---
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("color:#1e293b;"); sep.setFixedWidth(1)
+        dl.addWidget(sep)
 
-        self.lbl_det_buy = QLabel("---"); self.lbl_det_sell = QLabel("---")
-        self.lbl_det_profit = QLabel("---"); self.lbl_det_margin = QLabel("---")
-        add_det_metric(m_g, 0, 0, "BUY PRICE", self.lbl_det_buy)
-        add_det_metric(m_g, 0, 1, "SELL PRICE", self.lbl_det_sell)
-        add_det_metric(m_g, 1, 0, "NET PROFIT/U", self.lbl_det_profit)
-        add_det_metric(m_g, 1, 1, "MARGIN %", self.lbl_det_margin)
-        dl.addLayout(m_g)
+        # --- Metric cards helper ---
+        def make_metric_card(label_text, val_obj_name="DetailMetricValue"):
+            card = QFrame()
+            card.setObjectName("DetailMetricCard")
+            card.setStyleSheet(
+                "QFrame#DetailMetricCard{background:#0b1016;border:1px solid #1e293b;"
+                "border-radius:5px;min-width:90px;padding:4px 6px;}"
+            )
+            cv = QVBoxLayout(card)
+            cv.setContentsMargins(6, 4, 6, 4)
+            cv.setSpacing(2)
+            lbl = QLabel(label_text.upper())
+            lbl.setObjectName("DetailMetricTitle")
+            lbl.setStyleSheet("font-size:7px;font-weight:800;letter-spacing:0.8px;")
+            val = QLabel("---")
+            val.setObjectName(val_obj_name)
+            val.setStyleSheet("font-size:11px;font-weight:900;")
+            cv.addWidget(lbl)
+            cv.addWidget(val)
+            return card, val
 
-        s_v = QVBoxLayout()
-        header_score = QLabel("SCORE & RISK")
-        header_score.setObjectName("DetailMetricTitle")
-        s_v.addWidget(header_score)
-        self.lbl_det_score = QLabel("0.0"); self.lbl_det_score.setObjectName("DetailMetricValue")
-        self.lbl_det_score.setAlignment(Qt.AlignCenter)
+        self.lbl_det_buy = QLabel("---")
+        self.lbl_det_sell = QLabel("---")
+        self.lbl_det_profit = QLabel("---")
+        self.lbl_det_margin = QLabel("---")
+        self.lbl_det_score = QLabel("0.0")
+        self.lbl_det_pens = QLabel("---")
+        self.lbl_det_rec_qty = QLabel("0 uds")
+        self.lbl_det_rec_cost = QLabel("Coste: 0 ISK")
+
+        card_buy, _ = make_metric_card("BUY PRICE"); _ .setText("---"); self.lbl_det_buy = _
+        card_sell, _ = make_metric_card("SELL PRICE"); _.setText("---"); self.lbl_det_sell = _
+        card_profit, _ = make_metric_card("PROFIT / U"); _.setText("---"); self.lbl_det_profit = _
+        card_margin, _ = make_metric_card("MARGEN %"); _.setText("---"); self.lbl_det_margin = _
+        card_score, _ = make_metric_card("SCORE"); _.setText("0.0"); self.lbl_det_score = _
         self.lbl_det_pens = QLabel("---"); self.lbl_det_pens.setObjectName("DetailTagline")
-        s_v.addWidget(self.lbl_det_score); s_v.addWidget(self.lbl_det_pens); s_v.addStretch()
-        dl.addLayout(s_v, 1)
+        self.lbl_det_pens.setStyleSheet("font-size:8px;color:#64748b;")
 
-        r_v = QVBoxLayout()
-        header_rec = QLabel("RECOMMENDED QTY"); header_rec.setObjectName("DetailMetricTitle")
-        r_v.addWidget(header_rec)
-        self.lbl_det_rec_qty = QLabel("0 uds"); self.lbl_det_rec_qty.setObjectName("DetailMetricValue")
-        self.lbl_det_rec_cost = QLabel("Cost: 0 ISK"); self.lbl_det_rec_cost.setObjectName("DetailTagline")
-        r_v.addWidget(self.lbl_det_rec_qty); r_v.addWidget(self.lbl_det_rec_cost); r_v.addStretch()
-        dl.addLayout(r_v, 1)
+        card_score_inner = card_score.layout()
+        card_score_inner.addWidget(self.lbl_det_pens)
+
+        card_qty, _ = make_metric_card("QTY RECOM."); _.setText("0 uds"); self.lbl_det_rec_qty = _
+        self.lbl_det_rec_cost = QLabel("Coste: 0 ISK")
+        self.lbl_det_rec_cost.setObjectName("DetailTagline")
+        self.lbl_det_rec_cost.setStyleSheet("font-size:8px;color:#64748b;")
+        card_qty.layout().addWidget(self.lbl_det_rec_cost)
+
+        for card in [card_buy, card_sell, card_profit, card_margin, card_score, card_qty]:
+            dl.addWidget(card)
 
     def on_item_action(self, action, item_name, type_id):
         if action == "copied":
@@ -344,6 +433,7 @@ class MarketSimpleView(QWidget):
         self.progress_bar.setValue(0)
         self.lbl_status.setText("● OBTENIENDO MERCADO (ESI)...")
         self.lbl_status.setObjectName("ModeLabel")
+        self._show_scan_overlay("ESCANEANDO MERCADO...", "Conectando con ESI — descargando órdenes...")
         self.worker = MarketRefreshWorker(region_id=10000002, config=copy.deepcopy(self.current_config))
         self.worker.progress_changed.connect(self.on_progress)
         self.worker.initial_data_ready.connect(self.on_initial_data_ready)
@@ -372,6 +462,7 @@ class MarketSimpleView(QWidget):
         cat = self.current_config.selected_category
         if opps:
             msg = f"● RESULTADOS INICIALES ({len(opps)}) — ENRIQUECIENDO HISTORIAL..."
+            self._show_scan_overlay("ENRIQUECIENDO DATOS...", f"{len(opps)} items — calculando historial y scores...")
         else:
             msg = f"● BUSCANDO {cat.upper()}... DESCARGANDO METADATA" if cat != "Todos" else "● ENRIQUECIENDO..."
         self.lbl_status.setText(msg)
@@ -391,11 +482,13 @@ class MarketSimpleView(QWidget):
             logging.getLogger('eve.market.simple').exception(f"Error in on_enriched_data_ready: {e}")
             self.on_error(str(e))
         finally:
+            self._hide_scan_overlay()
             self.btn_refresh.setEnabled(True)
             self.btn_refresh.setText("REFRESCAR MERCADO (ESI)")
             self.progress_bar.setVisible(False)
 
     def on_error(self, err_msg):
+        self._hide_scan_overlay()
         self.btn_refresh.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.lbl_status.setText(f"● ERROR: {err_msg.upper()}")

@@ -129,7 +129,7 @@ class MarketScanDiagnostics:
         
         report = []
         report.append("==============================================")
-        report.append("     EVE iT — MARKET COMMAND SCAN REPORT      ")
+        report.append("     SALVA SUITE — MARKET COMMAND SCAN REPORT      ")
         report.append("==============================================")
         report.append(f"Scan ID:   {self.scan_id}")
         report.append(f"Status:    {self.status}")

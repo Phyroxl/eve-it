@@ -11,7 +11,7 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
     # Header & Summary
     lines = [
         "==============================================",
-        "     EVE iT — MY ORDERS DIAGNOSTIC REPORT      ",
+        "     SALVA SUITE — MY ORDERS DIAGNOSTIC REPORT      ",
         "==============================================",
         f"Timestamp:   {ts}",
         f"Char ID:     {diag.get('char_id', 'Unknown')}",

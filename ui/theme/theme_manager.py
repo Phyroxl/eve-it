@@ -47,10 +47,12 @@ class ThemeManager:
                         if k in self.theme_data["global"]:
                             self.theme_data["global"][k] = v
                 
-                # Apply view-specific overrides
+                # Apply view-specific overrides (create view entry if missing)
                 if "views" in data:
                     for view, tokens in data["views"].items():
-                        if view in self.theme_data["views"] and isinstance(tokens, dict):
+                        if isinstance(tokens, dict):
+                            if view not in self.theme_data["views"]:
+                                self.theme_data["views"][view] = {}
                             self.theme_data["views"][view].update(tokens)
                             
                 _log.info(f"[THEME] Loaded theme. Active Preset: {self.theme_data['active_preset']}")

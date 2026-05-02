@@ -1007,16 +1007,29 @@ class MainSuiteWindow(QMainWindow):
         try:
             if not hasattr(self, '_market_window') or self._market_window is None:
                 from ui.market_command.command_main import MarketCommandMain
-                self._market_window = MarketCommandMain()
+                from ui.common.custom_titlebar import CustomTitleBar
+                from PySide6.QtWidgets import QVBoxLayout as _QVBox
+
+                # Wrapper frameless para Market Command
+                self._market_window = QWidget()
                 self._market_window.setWindowTitle("Salva Suite — Market Command")
-                self._market_window.resize(960, 700)
-                
-                # Standard window flags to avoid visibility issues
-                self._market_window.setWindowFlags(Qt.Window)
-                
+                self._market_window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+                self._market_window.resize(1200, 820)
+
+                outer = _QVBox(self._market_window)
+                outer.setContentsMargins(0, 0, 0, 0)
+                outer.setSpacing(0)
+
+                tb = CustomTitleBar("Salva Suite — Market Command", self._market_window)
+                outer.addWidget(tb)
+
+                mc = MarketCommandMain()
+                outer.addWidget(mc, 1)
+                self._market_window._mc = mc  # keep ref
+
                 from ui.desktop.styles import MAIN_STYLE
-                self._market_window.setStyleSheet(MAIN_STYLE)
-            
+                mc.setStyleSheet(MAIN_STYLE)
+
             self._market_window.show()
             self._market_window.raise_()
             self._market_window.activateWindow()
