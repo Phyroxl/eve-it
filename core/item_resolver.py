@@ -60,16 +60,13 @@ class ItemResolver:
             cat_id, grp_name, cat_name = self._get_detailed_info(group_id)
             
             clean_info = {
+                'name': info.get('name', f"Type {type_id}"),
                 'group_id': group_id,
                 'category_id': cat_id,
                 'group_name': grp_name,
                 'category_name': cat_name
             }
             self.cache[type_id] = clean_info
-            # No llamar _save_cache() aquí: este método puede ejecutarse desde
-            # múltiples hilos (ThreadPoolExecutor en prefetch_type_metadata).
-            # Escribir el archivo desde hilos simultáneos corrompe el JSON.
-            # prefetch_type_metadata ya llama _save_cache() una sola vez al final.
             return clean_info
         return None
 
@@ -149,13 +146,14 @@ class ItemResolver:
                 info = client._get(f"/universe/types/{tid}/", ttl=86400)
                 if not info:
                     return tid, None
+                name = info.get('name', f"Type {tid}")
                 group_id = info.get('group_id')
                 if not group_id:
-                    return tid, {'group_id': None, 'category_id': None, 'group_name': 'Unknown Group', 'category_name': 'Unknown Category'}
+                    return tid, {'name': name, 'group_id': None, 'category_id': None, 'group_name': 'Unknown Group', 'category_name': 'Unknown Category'}
                 # self.esi para grupo/categoría → cache compartida entre todos los hilos
                 group_info = self.esi._get(f"/universe/groups/{group_id}/", ttl=86400)
                 if not group_info:
-                    return tid, {'group_id': group_id, 'category_id': None, 'group_name': f'Group {group_id}', 'category_name': 'Unknown Category'}
+                    return tid, {'name': name, 'group_id': group_id, 'category_id': None, 'group_name': f'Group {group_id}', 'category_name': 'Unknown Category'}
                 cat_id = group_info.get('category_id')
                 grp_name = group_info.get('name', f'Group {group_id}')
                 cat_name = 'Unknown Category'
@@ -163,7 +161,7 @@ class ItemResolver:
                     cat_info = self.esi._get(f"/universe/categories/{cat_id}/", ttl=86400)
                     if cat_info:
                         cat_name = cat_info.get('name', f'Category {cat_id}')
-                return tid, {'group_id': group_id, 'category_id': cat_id, 'group_name': grp_name, 'category_name': cat_name}
+                return tid, {'name': name, 'group_id': group_id, 'category_id': cat_id, 'group_name': grp_name, 'category_name': cat_name}
             except Exception:
                 return tid, None
 

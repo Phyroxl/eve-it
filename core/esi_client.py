@@ -31,6 +31,7 @@ class ESICache:
 
 class ESIClient:
     BASE_URL = "https://esi.evetech.net/latest"
+    _shared_cache = ESICache()
     # Shared ceiling across all instances — prevents burst 429s when using parallel workers.
     # 0.03s = ~33 req/s global max; per-instance limit remains 10 req/s via rate_limit_lock.
     GLOBAL_MIN_REQUEST_INTERVAL = 0.03
@@ -39,7 +40,7 @@ class ESIClient:
     _market_orders_timings = {} # region_id -> timing_data (Shared across instances)
 
     def __init__(self):
-        self.cache = ESICache()
+        self.cache = ESIClient._shared_cache
         self.session = requests.Session()
         self.last_request_time = 0
         self.rate_limit_lock = Lock()

@@ -40,6 +40,7 @@ from core.market_order_pricing import (
     _SENTINEL_MIN
 )
 from core.quick_order_update_diagnostics import format_quick_update_report
+from core.item_resolver import ItemResolver
 
 _log = logging.getLogger('eve.market.my_orders')
 
@@ -99,6 +100,7 @@ class ClickableIcon(QLabel):
 
 class SyncWorker(QThread):
     finished_data = Signal(list)
+    initial_data_ready = Signal(list)  # Phase 1: Fast render with cached data
     status_update = Signal(str, int)
     location_ready = Signal(int)
     error = Signal(str)
@@ -107,57 +109,108 @@ class SyncWorker(QThread):
         super().__init__()
         self.char_id = char_id
         self.token = token
+        self.is_running = True
+
+    def stop(self):
+        self.is_running = False
 
     def run(self):
         try:
             client = ESIClient()
-            self.status_update.emit("CONECTANDO CON ESI...", 10)
+            self.status_update.emit("CONECTANDO CON ESI...", 5)
             
-            # Sincronizar dependencias
-            self.status_update.emit("SINCRONIZANDO TAXES...", 20)
+            # ──────────────────────────────────────────────────────────────────
+            # FASE 1 — CARGA RÁPIDA (Snapshot ESI + Caches locales)
+            # ──────────────────────────────────────────────────────────────────
+            self.status_update.emit("DESCARGANDO ÓRDENES...", 15)
+            orders = client.character_orders(self.char_id, self.token)
+            if not orders:
+                self.finished_data.emit([])
+                return
+            
+            if not self.is_running: return
+
+            # Cargar promedios cacheados (WAC) para render inmediato
+            CostBasisService.instance().load_from_file(self.char_id)
+            CostBasisService.instance()._rebuild_cache_from_map()
+            
+            type_ids = list(set(o['type_id'] for o in orders))
+            
+            # Intentar usar nombres cacheados (ItemResolver tiene caché persistente de metadatos)
+            item_resolver = ItemResolver.instance()
+            item_names = {}
+            for tid in type_ids:
+                info = item_resolver.cache.get(tid)
+                if info and 'name' in info:
+                    item_names[tid] = info['name']
+            
+            # Usar mercado cacheado si existe para análisis preliminar de estado
+            from core.market_orders_cache import MarketOrdersCache
+            cached_market = MarketOrdersCache.instance().get(10000002) or []
+            
+            self.status_update.emit("RENDERIZADO INICIAL...", 30)
+            initial_analyzed = analyze_character_orders(
+                orders, cached_market, item_names, load_market_filters(), 
+                char_id=self.char_id, token=self.token
+            )
+            self.initial_data_ready.emit(initial_analyzed)
+            
+            if not self.is_running: return
+
+            # ──────────────────────────────────────────────────────────────────
+            # FASE 2 — HIDRATACIÓN COMPLETA (ESI Deep Sync)
+            # ──────────────────────────────────────────────────────────────────
+            
+            # Sincronizar dependencias pesadas
+            self.status_update.emit("SINCRONIZANDO TAXES...", 40)
             TaxService.instance().refresh_from_esi(self.char_id, self.token)
             
-            # Obtener ubicación para calibrar taxes locales en el reporte
-            self.status_update.emit("LOCALIZANDO PERSONAJE...", 25)
+            if not self.is_running: return
+
+            # Obtener ubicación exacta
+            self.status_update.emit("LOCALIZANDO PERSONAJE...", 45)
             loc_res = client.character_location(self.char_id, self.token)
             if loc_res and loc_res != "missing_scope":
                 loc_id = loc_res.get('station_id') or loc_res.get('structure_id') or 0
                 if loc_id:
                     self.location_ready.emit(loc_id)
 
-            self.status_update.emit("DESCARGANDO ÓRDENES...", 40)
-            orders = client.character_orders(self.char_id, self.token)
-            if not orders:
-                self.finished_data.emit([])
-                return
-            
-            self.status_update.emit("CARGANDO PRECIOS DE MERCADO...", 60)
-            type_ids = list(set(o['type_id'] for o in orders))
-            
-            # MODO OPTIMIZADO: Solo descargar los type_ids de mis órdenes (Snapshot fresco)
+            if not self.is_running: return
+
+            # Descargar mercado fresco para ESTOS items específicamente
+            self.status_update.emit("ACTUALIZANDO PRECIOS DE MERCADO...", 60)
             all_market_orders = client.market_orders_for_types(10000002, type_ids)
             
-            # Fallback si falla el filtrado por tipo
+            # Fallback si falla el filtrado
             if not all_market_orders and type_ids:
-                _log.warning("[MY ORDERS] Filtered market fetch failed or empty, falling back to full regional refresh")
+                _log.warning("[MY ORDERS] Filtered market fetch failed, falling back to full regional")
                 all_market_orders = client.market_orders(10000002, force_refresh=True)
-                if 10000002 in client.market_orders_timings:
-                    client.market_orders_timings[10000002]["source"] = "esi_type_filtered_failed_full_fallback"
-            
-            self.status_update.emit("CALCULANDO WAC...", 80)
+
+            if not self.is_running: return
+
+            # Refrescar WAC desde ESI (Descarga transacciones nuevas)
+            self.status_update.emit("SINCRONIZANDO PROMEDIOS (WAC)...", 80)
             CostBasisService.instance().refresh_from_esi(self.char_id, self.token)
             
-            self.status_update.emit("ANALIZANDO ESTADOS...", 95)
+            if not self.is_running: return
+
+            # Resolver nombres (Completo)
+            self.status_update.emit("RESOLVIENDO NOMBRES...", 90)
             names_data = client.universe_names(type_ids)
             item_names = {n['id']: n['name'] for n in names_data}
             
-            analyzed = analyze_character_orders(
+            # Análisis Final
+            self.status_update.emit("FINALIZANDO ANÁLISIS...", 95)
+            final_analyzed = analyze_character_orders(
                 orders, all_market_orders, item_names, load_market_filters(), 
                 char_id=self.char_id, token=self.token
             )
-            self.status_update.emit("SINCRONIZACIÓN EXITOSA", 100)
-            self.finished_data.emit(analyzed)
+            
+            self.status_update.emit("ACTUALIZACIÓN COMPLETA", 100)
+            self.finished_data.emit(final_analyzed)
+            
         except Exception as e:
+            _log.error(f"[SYNC WORKER ERR] {e}", exc_info=True)
             self.error.emit(str(e))
 
 class InventoryWorker(QThread):
@@ -1403,6 +1456,7 @@ class MarketMyOrdersView(QWidget):
         self.worker = SyncWorker(auth.char_id, t)
         self.worker.status_update.connect(lambda m, v: (self.lbl_status.setText(m), self.progress_bar.setValue(v)))
         self.worker.location_ready.connect(self._on_location_found)
+        self.worker.initial_data_ready.connect(self.on_initial_data)
         self.worker.finished_data.connect(self.on_data)
         self.worker.error.connect(self.on_error)
         self.worker.start()
@@ -1411,6 +1465,25 @@ class MarketMyOrdersView(QWidget):
         self.current_location_id = loc_id
         _log.info(f"[LOCATION] Personaje localizado en {loc_id}")
         self.update_taxes_info()
+
+    def on_initial_data(self, data):
+        """Phase 1: Renderizado rápido de órdenes (puede estar incompleto)."""
+        self._orders_diag["phase1_at"] = time.time()
+        self._orders_diag["phase1_duration"] = self._orders_diag["phase1_at"] - self._orders_diag["started_at"]
+        
+        _log.info(f"[MY ORDERS] Phase 1 Data Ready: {len(data)} orders (Time: {self._orders_diag['phase1_duration']:.2f}s)")
+        self.all_orders = data
+        sells = [o for o in data if not o.is_buy_order]
+        buys = [o for o in data if o.is_buy_order]
+        
+        # Indicar estado de hidratación
+        self.lbl_sell.setText(f"ÓRDENES DE VENTA ({len(sells)}) — HIDRATANDO...")
+        self.lbl_buy.setText(f"ÓRDENES DE COMPRA ({len(buys)}) — HIDRATANDO...")
+        
+        self._image_generation += 1
+        gen = self._image_generation
+        self.fill_table(self.table_sell, sells, gen)
+        self.fill_table(self.table_buy, buys, gen)
 
     def on_authenticated(self, name, tokens):
         self.btn_esi.setText(f"SALIR ({name.upper()})")
@@ -1590,6 +1663,8 @@ class MarketMyOrdersView(QWidget):
         # Finalize diag and show report
         self._orders_diag["finished_at"] = time.time()
         self._orders_diag["duration"] = self._orders_diag["finished_at"] - self._orders_diag["started_at"]
+        self._orders_diag["phase2_duration"] = self._orders_diag["finished_at"] - self._orders_diag.get("phase1_at", self._orders_diag["started_at"])
+        self._orders_diag["hydration_success"] = True
         
         # Count rows with type_id
         for r in range(self.table_sell.rowCount()):
