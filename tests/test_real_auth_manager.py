@@ -36,8 +36,11 @@ class TestRealAuthManager(unittest.TestCase):
         self.old_config_path = core.auth_manager._CONFIG_FILE
         self.old_session_path = core.auth_manager._SESSION_FILE
         
-        core.auth_manager._CONFIG_FILE = self.tmp_path / "eve_client.json"
-        core.auth_manager._SESSION_FILE = self.tmp_path / "esi_session.json"
+        self.config_path = self.tmp_path / "eve_client.json"
+        self.session_path = self.tmp_path / "esi_session.json"
+        
+        core.auth_manager._CONFIG_FILE = self.config_path
+        core.auth_manager._SESSION_FILE = self.session_path
         
         # Reset Singleton for testing
         AuthManager._instance = None

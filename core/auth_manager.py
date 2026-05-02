@@ -39,9 +39,9 @@ def _load_esi_config() -> dict:
             if not config["client_secret"]:
                 config["client_secret"] = data.get('client_secret', '').strip()
             if 'redirect_uri' in data:
-                config["redirect_uri"] = data['redirect_uri']
+                config["redirect_uri"] = data['redirect_uri'].strip()
             if 'scopes' in data:
-                config["scopes"] = data['scopes']
+                config["scopes"] = data['scopes'].strip()
     except Exception as e:
         logger.warning(f"[ESI AUTH] Could not read EVE client config file: {e}")
         
@@ -304,11 +304,14 @@ class AuthManager(QObject):
         return True
 
     def start_callback_server(self):
-        import requests
-        import base64
-
         def run_server():
             self.auth_error = None
+            import socket
+            import requests
+            import base64
+            import json
+            from urllib.parse import urlparse, parse_qs
+
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
@@ -340,48 +343,74 @@ class AuthManager(QObject):
 
                             if code:
                                 try:
-                                    config_data = json.loads(_CONFIG_FILE.read_text(encoding='utf-8'))
-                                    c_id = config_data.get('client_id')
-                                    c_secret = config_data.get('client_secret', '')
+                                    cfg = self.get_esi_oauth_config()
+                                    c_id = cfg["client_id"]
+                                    c_secret = cfg["client_secret"]
+                                    r_uri = cfg["redirect_uri"]
+
+                                    logger.info("[ESI TOKEN EXCHANGE DIAGNOSTICS]")
+                                    logger.info(f"  token_url: {cfg['token_url']}")
+                                    logger.info(f"  client_id_present: {bool(c_id)}")
+                                    logger.info(f"  client_id_suffix: ...{c_id[-4:] if c_id else 'N/A'}")
+                                    logger.info(f"  client_secret_present: {bool(c_secret)}")
+                                    logger.info(f"  client_secret_length: {len(c_secret) if c_secret else 0}")
+                                    logger.info(f"  redirect_uri: {r_uri}")
+                                    logger.info(f"  code_present: {bool(code)}")
+                                    logger.info(f"  code_length: {len(code)}")
 
                                     post_data = {
                                         "grant_type": "authorization_code",
                                         "code": code,
-                                        "redirect_uri": self.redirect_uri,
+                                        "redirect_uri": r_uri,
                                     }
 
-                                    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                                    # Try Confidential Client (Basic Auth)
+                                    res = None
                                     if c_secret:
                                         auth_h = base64.b64encode(f"{c_id}:{c_secret}".encode()).decode()
-                                        headers["Authorization"] = f"Basic {auth_h}"
-                                    else:
-                                        post_data["client_id"] = c_id
+                                        logger.info("  uses_basic_auth: True")
+                                        res = requests.post(
+                                            cfg["token_url"],
+                                            data=post_data,
+                                            headers={
+                                                "Authorization": f"Basic {auth_h}",
+                                                "Content-Type": "application/x-www-form-urlencoded"
+                                            },
+                                            timeout=20,
+                                        )
+                                        logger.info(f"  response_status (confidential): {res.status_code}")
 
-                                    res = requests.post(
-                                        "https://login.eveonline.com/v2/oauth/token",
-                                        data=post_data,
-                                        headers=headers,
-                                        timeout=20,
-                                    )
+                                    # Fallback to Public Client if Basic fails with 401 or no secret
+                                    if not res or res.status_code == 401:
+                                        if res and res.status_code == 401:
+                                            logger.warning("[ESI AUTH] 401 with Basic auth. Retrying as public client...")
+                                        
+                                        logger.info("  sends_client_secret_in_body: False (public client retry)")
+                                        public_data = {**post_data, "client_id": c_id}
+                                        res = requests.post(
+                                            cfg["token_url"],
+                                            data=public_data,
+                                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                                            timeout=20,
+                                        )
+                                        logger.info(f"  response_status (public): {res.status_code}")
 
                                     if res.status_code == 200:
                                         tokens = res.json()
                                         self.current_token = tokens.get('access_token')
                                         self.refresh_token = tokens.get('refresh_token')
-                                        self.expiry = time.time() + tokens.get('expires_in', 1200)
+                                        self.expiry = time.time() + tokens.get('expires_in', 3600)
                                         
                                         # Decode JWT
                                         try:
-                                            import base64 as _b64
                                             payload_part = self.current_token.split('.')[1]
                                             payload_part += '=' * (4 - len(payload_part) % 4)
-                                            payload = json.loads(_b64.urlsafe_b64decode(payload_part).decode())
+                                            payload = json.loads(base64.urlsafe_b64decode(payload_part).decode())
                                             sub = payload.get('sub', '')
                                             if sub.startswith('CHARACTER:EVE:'):
                                                 self.char_id = int(sub.split(':')[2])
                                             self.char_name = payload.get('name', '')
                                         except Exception:
-                                            # Fallback verify
                                             v_res = requests.get(
                                                 "https://login.eveonline.com/oauth/verify",
                                                 headers={"Authorization": f"Bearer {self.current_token}"},
@@ -398,9 +427,22 @@ class AuthManager(QObject):
                                         self.authenticated.emit(self.char_name, tokens)
                                         body = "<h1>EVE iT Authenticated</h1><p>You can close this window and return to the app.</p>"
                                     else:
+                                        err_data = {}
+                                        try: err_data = res.json()
+                                        except: pass
+                                        
                                         self.auth_error = f"Token exchange failed: {res.status_code}"
-                                        body = f"<h1>Auth Error</h1><p>{self.auth_error}</p>"
+                                        logger.error(f"  response_error: {err_data.get('error')}")
+                                        logger.error(f"  response_error_description: {err_data.get('error_description')}")
+                                        
+                                        body = (
+                                            f"<h1>Auth Error</h1>"
+                                            f"<p>{self.auth_error}</p>"
+                                            f"<p><b>Error:</b> {err_data.get('error', 'Unknown')}</p>"
+                                            f"<p><b>Description:</b> {err_data.get('error_description', 'No description')}</p>"
+                                        )
                                 except Exception as e:
+                                    logger.error(f"[ESI AUTH] Token exchange exception: {e}", exc_info=True)
                                     self.auth_error = str(e)
                                     body = f"<h1>Exception</h1><p>{e}</p>"
                             else:
@@ -411,6 +453,7 @@ class AuthManager(QObject):
                 except Exception as e:
                     logger.error(f"[ESI AUTH] Callback server error: {e}")
 
+        import threading
         threading.Thread(target=run_server, daemon=True).start()
 
     # ------------------------------------------------------------------
