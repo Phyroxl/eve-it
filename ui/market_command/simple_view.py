@@ -456,40 +456,64 @@ class MarketSimpleView(QWidget):
 
     def _apply_esi_fees_to_config(self):
         """Overwrites broker/tax in config with ESI effective values for the active character."""
+        import logging
+        log = logging.getLogger('eve.market.simple')
         try:
             from core.tax_service import TaxService
             from core.auth_manager import AuthManager
             auth = AuthManager.instance()
+            
+            # Default Jita 4-4 (Caldari Navy Assembly Plant)
+            loc_id = 60003760
+            self._last_fees_loc = loc_id
+            
             if auth.char_id:
-                taxes = TaxService.instance().get_taxes(auth.char_id)
-                self.current_config.broker_fee_pct = taxes.broker_fee_pct
-                self.current_config.sales_tax_pct = taxes.sales_tax_pct
+                token = auth.get_token()
+                st, bf, source, debug = TaxService.instance().get_effective_taxes(auth.char_id, loc_id, token)
+                
+                self.current_config.broker_fee_pct = bf
+                self.current_config.sales_tax_pct = st
+                self._last_fees_source = source
+                self._last_fees_debug = debug
+                self._last_fees_fallback = False
+                
+                log.info(f"[FEES] Effective taxes applied: ST={st}%, BF={bf}% (Source: {source})")
             else:
-                import logging
-                logging.getLogger('eve.market.simple').warning(
-                    "[FEES] No authenticated character — using FilterConfig defaults (broker=%.2f%%, tax=%.2f%%)",
-                    self.current_config.broker_fee_pct, self.current_config.sales_tax_pct)
+                self._last_fees_source = "NO AUTH"
+                self._last_fees_debug = "No character authenticated"
+                self._last_fees_fallback = True
+                log.warning("[FEES] No authenticated character — using FilterConfig defaults")
+                
         except Exception as e:
-            import logging
-            logging.getLogger('eve.market.simple').warning(
-                "[FEES] TaxService failed: %s — using FilterConfig defaults (broker=%.2f%%, tax=%.2f%%)",
-                e, self.current_config.broker_fee_pct, self.current_config.sales_tax_pct)
+            log.warning(f"[FEES] TaxService failed: {e} — using FilterConfig defaults")
+            self._last_fees_source = "ERROR"
+            self._last_fees_debug = str(e)
+            self._last_fees_fallback = True
 
     def _log_scan_config(self):
         import logging
         log = logging.getLogger('eve.market.simple')
         cfg = self.current_config
-        try:
-            from core.tax_service import TaxService
-            from core.auth_manager import AuthManager
-            auth = AuthManager.instance()
-            if auth.char_id:
-                taxes = TaxService.instance().get_taxes(auth.char_id)
-                fees_source = taxes.source
-            else:
-                fees_source = "NO AUTH"
-        except Exception:
-            fees_source = "ERROR"
+        
+        from core.auth_manager import AuthManager
+        auth = AuthManager.instance()
+        
+        fees_source = getattr(self, '_last_fees_source', 'N/A')
+        loc_id = getattr(self, '_last_fees_loc', 0)
+        fallback = getattr(self, '_last_fees_fallback', True)
+        debug = getattr(self, '_last_fees_debug', 'N/A')
+
+        log.info(
+            f"\n[SIMPLE FEES]\n"
+            f"  character_id: {auth.char_id}\n"
+            f"  location_id: {loc_id}\n"
+            f"  sales_tax_pct: {cfg.sales_tax_pct}%\n"
+            f"  broker_fee_pct: {cfg.broker_fee_pct}%\n"
+            f"  source: {fees_source}\n"
+            f"  fallback_used: {fallback}\n"
+            f"  debug: {debug}"
+        )
+
         log.info(
             f"\n[SIMPLE SCAN CONFIG]\n"
             f"  selected_category: {cfg.selected_category}\n"
@@ -508,7 +532,6 @@ class MarketSimpleView(QWidget):
             f"    require_buy_sell: {cfg.require_buy_sell}\n"
             f"    max_item_types: {cfg.max_item_types}\n"
             f"    exclude_plex: {cfg.exclude_plex}\n"
-            f"  deprecated_manual_fees_used: False\n"
             f"  effective_sales_tax: {cfg.sales_tax_pct}%\n"
             f"  effective_broker_fee: {cfg.broker_fee_pct}%\n"
             f"  fees_source: {fees_source}"
@@ -625,12 +648,18 @@ class MarketSimpleView(QWidget):
                 self.current_config.broker_fee_pct, self.current_config.sales_tax_pct
             )
             self.lbl_det_profit.setToolTip(
-                f"Gross Spread:     {format_isk(bd['gross_spread'], short=False)} ISK\n"
-                f"Sales Tax ({bd['sales_tax_pct']:.2f}%):  -{format_isk(bd['sales_tax_isk'], short=False)} ISK\n"
-                f"Broker Buy ({bd['broker_fee_pct']:.2f}%): -{format_isk(bd['broker_fee_buy_isk'], short=False)} ISK\n"
-                f"Broker Sell ({bd['broker_fee_pct']:.2f}%): -{format_isk(bd['broker_fee_sell_isk'], short=False)} ISK\n"
-                f"{'─' * 38}\n"
-                f"Net Profit/u:     {format_isk(bd['net_profit_per_unit'], short=False)} ISK"
+                f"[PROFIT BREAKDOWN]\n"
+                f"  buy_price:       {format_isk(opp.best_buy_price, short=False)} ISK\n"
+                f"  sell_price:      {format_isk(opp.best_sell_price, short=False)} ISK\n"
+                f"  gross_spread:    {format_isk(bd['gross_spread'], short=False)} ISK\n"
+                f"  sales_tax_pct:   {bd['sales_tax_pct']:.2f}%\n"
+                f"  broker_fee_pct:  {bd['broker_fee_pct']:.2f}%\n"
+                f"  sales_tax_isk:   -{format_isk(bd['sales_tax_isk'], short=False)} ISK\n"
+                f"  broker_sell_isk: -{format_isk(bd['broker_fee_sell_isk'], short=False)} ISK\n"
+                f"  broker_buy_isk:  -{format_isk(bd['broker_fee_buy_isk'], short=False)} ISK\n"
+                f"  {'-' * 40}\n"
+                f"  net_profit_unit: {format_isk(bd['net_profit_per_unit'], short=False)} ISK\n"
+                f"  formula:         {bd['formula']}"
             )
             
             sb = opp.score_breakdown

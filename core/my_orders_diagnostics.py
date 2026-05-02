@@ -52,7 +52,7 @@ def format_my_orders_diagnostic_report(diag: Dict[str, Any], icon_diag: Dict[str
     lines.extend([
         "",
         "[MARKET SYNCHRONIZATION]",
-    ]
+    ])
     
     mt = diag.get("market_timings", {})
     if mt:

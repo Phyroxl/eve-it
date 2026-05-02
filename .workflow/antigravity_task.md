@@ -3631,3 +3631,85 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - UI: Corregido el estado "SIN COSTE REAL" para tems con compras registradas en el historial extendido o en el almac?n persistente.
 - Archivos: core/esi_client.py, core/cost_basis_service.py, ui/market_command/my_orders_view.py, core/my_orders_diagnostics.py.
 - Verificacin: Superados tests de backfill (test_cost_basis_backfill.py) y de integridad de coste (test_trade_cost_basis.py). Compilacin exitosa.
+
+## Sesión 37 — FIX: Correct character market fees and long history average cost — 2026-05-01
+
+### STATUS: COMPLETADO ✅
+
+### BUGS CORREGIDOS
+
+**Bug 1 — Tax/Broker Fee (3.60%→3.37% / 1.47%→1.43%)**
+- `tax_service.py`: `refresh_from_esi` ahora limpia `location_cache` para forzar re-lookup de `faction_id` tras actualización de standings. Antes, una facción cacheada erróneamente en session anterior perpetuaba el valor incorrecto.
+- `tax_service.py`: `get_effective_broker_fee` ahora emite bloque `[TAX DEBUG BF]` detallado con br_lvl, base_fee, loc_type, corp_id, faction_id, standings disponibles, f_std, c_std, reduction y fee final. Permite diagnóstico inmediato en consola.
+- `tax_service.py`: Log warning cuando `standings_status=idle` (standings aún no cargados) para identificar race conditions de carga.
+- `tax_service.py`: Log warning cuando `corporation_info` falla (antes silenciaba el error dejando faction=None, reducción=0).
+- `config/tax_overrides.json` (gitignored): Creado template con documentación para que traders en estructuras con base <8% puedan fijar `sales_tax_pct=3.37` y `broker_fee_pct=1.43` por personaje o por ubicación.
+
+**Bug 2 — Average Cost N/A (límite 2500/15000 transacciones)**
+- `esi_client.py`: Safety limit de `wallet_transactions` elevado de 15,000 → 100,000 transacciones.
+- `cost_basis_service.py`: `AVERAGE_COST_MIN_HISTORY_DAYS` elevado de 30 → 365 días (historial completo de 1 año).
+- `my_orders_view.py`: Tooltip N/A actualizado — elimina referencia obsoleta a "2500 transacciones", describe el backfill real (365 días / 100k tx).
+
+**Bonus fix — Sesión 36 residual**
+- `contracts_engine.py`: Añadidas `_is_blueprint_name` y `_is_blueprint_copy_name` que los tests de Sesión 36 esperaban importar. La implementación de Sesión 36 las había puesto en `contract_blueprint_utils.py` pero no las re-exportaba desde `contracts_engine.py`.
+
+### ARCHIVOS MODIFICADOS
+| Archivo | Cambio |
+|---|---|
+| `core/tax_service.py` | location_cache clear en refresh, debug BF detallado, warnings de idle/corp_info |
+| `core/esi_client.py` | Safety limit 15k→100k tx |
+| `core/cost_basis_service.py` | AVERAGE_COST_MIN_HISTORY_DAYS 30→365 |
+| `core/contracts_engine.py` | Añadido _is_blueprint_name/_is_blueprint_copy_name |
+| `ui/market_command/my_orders_view.py` | Tooltip N/A actualizado |
+| `config/tax_overrides.json` | Template de configuración de fees por personaje (gitignored) |
+| `tests/test_market_fees_character_specific.py` | 13 tests: fórmula sales tax, broker fee con standings, overrides, reset cache, corp_info failure |
+| `tests/test_average_cost_long_history.py` | 10 tests: constante 365d, límite 100k, WAC buy/sell, reconciliación, tooltip |
+
+### CHECKS
+- Compilación OK: `core/tax_service.py`, `core/cost_basis_service.py`, `core/esi_client.py`
+- 41/41 tests pasan: `test_market_manipulation`, `test_market_fees_character_specific`, `test_average_cost_long_history`
+- Commit: `1dc8b0a` "FIX: Correct character market fees and long history average cost"
+
+## Sesión 38 — IMPROVE: Consolidate Market Command into Simple Mode with advanced filters — 2026-05-02
+
+### STATUS: COMPLETADO ✅
+
+### OBJETIVOS EJECUTADOS
+
+**Block 1 — Eliminar pestaña Modo Avanzado**
+- `command_main.py`: Eliminado import de `MarketAdvancedView`. Rediseño completo a 4 pestañas: Simple(0), Performance(1), Mis Pedidos(2), Contratos(3). Eliminado `btn_advanced`, actualizados todos los índices de stack, labels de modo, referencias en `switch_view`. Diagnóstico `[MARKET COMMAND] Advanced Mode Enabled: False`.
+
+**Block 2 — Profit/u en lugar de Profit/día**
+- `widgets.py` (`MarketTableWidget`): Header columna 5 cambiado de `Profit/Día` a `Profit/u`. `populate()` lee `opp.profit_per_unit` (no `profit_day_est`). Coloreado verde/rojo según positivo/negativo.
+
+**Block 3 — Filtros avanzados en Modo Simple**
+- `simple_view.py`: Eliminados `spin_broker` y `spin_tax`. Añadidos `spin_score` (Score Mínimo, 0-100) y `combo_risk` (Riesgo Máximo: Cualquier / Máximo Medium / Solo Low) con tooltips descriptivos. `update_config_from_ui` lee estos controles en lugar de resetear hardcodeado.
+
+**Block 4 — Fees desde ESI, no inputs manuales**
+- `simple_view.py`: Añadido `_apply_esi_fees_to_config()` que lee `TaxService.get_taxes(char_id)` y actualiza `config.broker_fee_pct` y `config.sales_tax_pct` antes de cada escaneo. Si ESI no disponible, mantiene defaults de FilterConfig.
+
+**Block 6 — [SIMPLE SCAN CONFIG] diagnóstico**
+- `simple_view.py`: Añadido `_log_scan_config()` que emite bloque completo con: categoría, score_min, risk_max, todos los filtros, sales_tax efectivo, broker_fee efectivo y fees_source. Llamado al inicio de `on_refresh_clicked`.
+
+**Block 5 — Compatibilidad config antigua**
+- `config_manager.py`: `load_market_filters()` detecta `broker_fee_pct`/`sales_tax_pct` en el JSON y loguea `[MARKET CONFIG] deprecated UI setting: ...` cuando difieren del default. No crashea.
+
+### ARCHIVOS MODIFICADOS
+| Archivo | Cambio |
+|---|---|
+| `ui/market_command/command_main.py` | Reescritura: 4 tabs, sin AdvancedView, índices actualizados |
+| `ui/market_command/simple_view.py` | Broker/tax removidos; score/risk añadidos; ESI fees; SCAN CONFIG log |
+| `ui/market_command/widgets.py` | MarketTableWidget: Profit/Día→Profit/u, profit_day_est→profit_per_unit |
+| `core/config_manager.py` | Log deprecated settings al cargar |
+| `tests/test_market_command_simple.py` | 21 tests: tabs, imports, profit/u, filtros, fees, migración config |
+
+### CHECKS
+- Compilación OK: todos los archivos afectados
+- 21/21 tests nuevos pasan
+- 112/113 tests totales (fallo pre-existente `[CONFIG]` en test_market_order_pricing.py)
+- Commit: `b6a517a` "IMPROVE: Consolidate Market Command into Simple Mode with advanced filters"
+
+### NOTAS
+- `advanced_view.py` permanece en el repo (compilable, no importado).
+- `profit_day_est` y `profit_day_min` permanecen en FilterConfig/models (necesarios para scoring interno y AdvancedMarketTableWidget que sigue en repo).
+- Broker fee y sales tax en FilterConfig se siguen usando internamente por `parse_opportunities` — ahora se populan desde ESI en vez de la UI.

@@ -599,7 +599,9 @@ class MarketContractsView(QWidget):
     def on_cancel_clicked(self):
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self.status_label.setText("Cancelando...")
+            self.status_label.setText("Deteniendo escaneo...")
+            self.btn_cancel.setEnabled(False)
+            self._scan_events.append(f"cancel_clicked at {datetime.datetime.now().strftime('%H:%M:%S')}")
 
     def on_clear_clicked(self):
         self._clear_table()
@@ -621,7 +623,21 @@ class MarketContractsView(QWidget):
         report.append(f"Region: {self.combo_region.currentText()} ({self.config.region_id})")
         report.append(f"Category: {self.combo_category.currentText()} ({self.config.category_filter})")
         
-        if not self.last_diag:
+        status = "IDLE"
+        if self.worker and self.worker.isRunning():
+            status = "RUNNING"
+            if getattr(self.worker, '_cancelled', False):
+                status = "CANCELLING"
+        elif self.last_diag:
+            status = "COMPLETED" if not getattr(self.last_diag, 'esi_fetch_stopped_reason', None) == 'cancelled' else "CANCELLED"
+
+        report.append(f"Status: {status}")
+
+        d = self.last_diag
+        if not d and self.worker and hasattr(self.worker, 'diag'):
+            d = self.worker.diag
+
+        if not d:
             report.append("\n[ESI FETCH]")
             report.append("  No hay diagnóstico disponible todavía. Ejecuta un escaneo.")
             
@@ -629,10 +645,7 @@ class MarketContractsView(QWidget):
             report.append(f"  Last Open Attempt: {self._last_open_attempt if self._last_open_attempt > 0 else 'None'}")
             report.append(f"  Last Open Source: {self._last_open_source}")
             report.append(f"  Selected Contract ID: {getattr(self, '_current_contract_id', 'None')}")
-            report.append(f"  Open Method: ESI UI (POST /ui/openwindow/contract/)")
             report.append(f"  Open Success: {self._last_open_success}")
-            if self._last_open_error:
-                report.append(f"  Open Error: {self._last_open_error}")
             return "\n".join(report)
 
         d = self.last_diag
@@ -1040,10 +1053,12 @@ class MarketContractsView(QWidget):
         
         self.btn_scan.setVisible(True)
         self.btn_cancel.setVisible(False)
+        self.btn_cancel.setEnabled(True) # Re-enable for next time
         self.progress_widget.setVisible(False)
         self.insights_widget.setVisible(True)
         
-        self._scan_events.append(f"scan_finished received results count={len(results)}")
+        is_cancel = getattr(self.worker, '_cancelled', False)
+        self._scan_events.append(f"scan_finished received results count={len(results)} cancelled={is_cancel}")
         self.apply_filters_locally() # Re-render final ordenado
 
     def on_scan_error(self, msg):

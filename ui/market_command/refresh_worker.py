@@ -65,6 +65,12 @@ class MarketRefreshWorker(QThread):
     # ─────────────────────────────────────────────────────────────────────────
     def run(self):
         try:
+            from core.progress_tracker import ProgressTracker
+            tracker = ProgressTracker(
+                callback=self.emit_progress,
+                task_name="MarketScan"
+            )
+            
             t_start = time.time()
             selected_category = getattr(self.config, 'selected_category', 'Todos')
             self.diagnostics.mode = "Advanced" if "Advanced" in str(self.__class__) else "Simple"
@@ -74,8 +80,8 @@ class MarketRefreshWorker(QThread):
             self.diagnostics.notes.append("Starting Phase 1 (Initial Data)")
 
             # Paso 1: Descargar market orders (ESIClient maneja el caché internamente)
+            tracker.set_phase("Descargando órdenes de mercado...", 0, 15)
             t0 = time.time()
-            self.emit_progress(2, "Checking market orders...")
             orders = self.client.market_orders(self.region_id)
             if not orders:
                 self.emit_error("No se pudieron obtener órdenes de mercado.")
@@ -112,6 +118,7 @@ class MarketRefreshWorker(QThread):
             logger.info(f"[WORKER DIAG] raw_orders={len(orders)} source={self.diagnostics.market_orders_source} elapsed={t_orders:.1f}s")
 
             # Paso 2: Agrupar por type_id
+            tracker.set_phase("Agrupando por tipos...", 15, 20)
             t0 = time.time()
             temp_grouped = {}
             for o in orders:
@@ -125,14 +132,15 @@ class MarketRefreshWorker(QThread):
             t_group = time.time()-t0
             self.diagnostics.grouping_elapsed = t_group
             self.diagnostics.grouped_type_ids_count = len(temp_grouped)
-            logger.info(f"[WORKER DIAG] grouped_type_ids={len(temp_grouped)} elapsed={t_group:.2f}s")
 
             # Paso 3: Construir pool de candidatos económicos
+            tracker.set_phase("Identificando candidatos económicos...", 20, 25)
             t0 = time.time()
             all_cands = build_economic_candidates(temp_grouped, self.config)
             self.diagnostics.economic_candidates_count = len(all_cands)
             
             # Paso 4: Pre-filtro rápido (capital, spread, margin, plex)
+            tracker.set_phase("Aplicando pre-filtro de rentabilidad...", 25, 30)
             viable_cands, pre_stats = prefilter_candidates(all_cands, self.config)
             
             self.diagnostics.viable_candidates_count = len(viable_cands)
@@ -159,11 +167,9 @@ class MarketRefreshWorker(QThread):
             
             # Ordenar pool final por score una sola vez
             final_pool_cands = sorted(final_pool_cands, key=lambda x: x.score, reverse=True)
-            
-            logger.info(f"[WORKER DIAG] economic_cands={len(all_cands)} viable={len(viable_cands)} sorted_pool={len(final_pool_cands)} elapsed={t_candidates:.2f}s")
-            self.emit_progress(18, f"Found {len(viable_cands)} viable candidates.")
 
             # Paso 5: Selección de candidatos iniciales (Fase 1)
+            tracker.set_phase("Seleccionando items iniciales...", 30, 35)
             t0 = time.time()
             if selected_category == "Todos":
                 # Seleccionar top N type_ids
@@ -184,10 +190,8 @@ class MarketRefreshWorker(QThread):
                         if match:
                             initial_candidates.append(t_id)
                 self.diagnostics.notes.append(f"Phase 1 found {len(initial_candidates)} candidates for {selected_category}")
-                logger.info(f"[WORKER DIAG] Phase1 category={selected_category} initial_candidates={len(initial_candidates)}")
                 if not initial_candidates:
-                    logger.warning(f"[WORKER DIAG] Phase1 category={selected_category} initial_candidates=0. metadata_cache_miss likely.")
-                    self.emit_progress(40, f"Preparando metadata para {selected_category}...")
+                    tracker.update(50, message=f"Preparando metadata para {selected_category}...")
 
             self.diagnostics.initial_candidates_count = len(initial_candidates)
 
@@ -196,11 +200,9 @@ class MarketRefreshWorker(QThread):
             if self.config.exclude_plex and plex_id in initial_candidates:
                 initial_candidates.remove(plex_id)
 
-            logger.info(f"[SCAN PERF] Phase1_candidates_elapsed={time.time()-t0:.2f}s")
-
             # Paso 5: Nombres en batch para candidatos iniciales
+            tracker.set_phase("Resolviendo nombres iniciales...", 35, 45)
             t0 = time.time()
-            self.emit_progress(25, f"Fetching names for {len(initial_candidates)} items...")
             names_dict = {}
             if initial_candidates:
                 chunk_size = 500
@@ -210,29 +212,25 @@ class MarketRefreshWorker(QThread):
                     if names_data:
                         for n in names_data:
                             names_dict[n['id']] = n['name']
+                    tracker.update(i + len(chunk), total=len(initial_candidates))
             t_names = time.time() - t0
             self.diagnostics.names_elapsed = t_names
-            logger.info(f"[WORKER DIAG] names_dict={len(names_dict)} elapsed={t_names:.2f}s")
 
             # Paso 6: Crear oportunidades iniciales SIN historial
+            tracker.set_phase("Generando resultados iniciales...", 45, 50)
             t0 = time.time()
-            self.emit_progress(35, "Creating initial opportunities...")
             initial_set = set(initial_candidates)
             relevant_orders_initial = [o for o in orders if o['type_id'] in initial_set]
             self.diagnostics.relevant_orders_initial_count = len(relevant_orders_initial)
-            logger.info(f"[WORKER DIAG] relevant_orders_initial={len(relevant_orders_initial)}")
             
             opps_initial = parse_opportunities(relevant_orders_initial, {}, names_dict, self.config)
             for opp in opps_initial:
                 opp.is_enriched = False
                 opp.score_breakdown = score_opportunity(opp, self.config)
 
-            t_initial_emit = time.time() - t0
             self.diagnostics.opps_initial_count = len(opps_initial)
-            logger.info(f"[WORKER DIAG] opps_initial={len(opps_initial)} elapsed={t_initial_emit:.2f}s")
 
             # Emitir resultados iniciales a la UI
-            self.emit_progress(50, f"Initial results: {len(opps_initial)} items. Enriching...")
             self.initial_data_ready.emit(opps_initial)
 
             if not self.is_running: return
@@ -241,19 +239,16 @@ class MarketRefreshWorker(QThread):
             # FASE 2 — ENRIQUECIMIENTO AUTOMÁTICO (historial + metadata completa)
             # ──────────────────────────────────────────────────────────────────
 
-            t_phase2_start = time.time()
-            self.emit_progress(52, "Phase 2: expanding metadata...")
-
             # Paso 7: Determinar candidatos finales con metadata completa
+            tracker.set_phase("Enriqueciendo metadatos...", 50, 65)
             t0 = time.time()
             if selected_category == "Todos":
                 pool_size = max(_TODOS_POOL_SIZE, self.config.max_item_types) if self.config.max_item_types > 0 else _TODOS_POOL_SIZE
                 final_candidates = select_final_candidates(final_pool_cands, pool_size)
-                logger.info(f"[WORKER DIAG] Phase2 mode=Todos final_candidates={len(final_candidates)}")
             else:
                 # Prefetch metadata paralelo para pool amplio
                 broad_ids = [c.type_id for c in final_pool_cands[:_BROAD_POOL_SIZE]]
-                self.emit_progress(54, f"Prefetching metadata for {len(broad_ids)} items (parallel)...")
+                tracker.update(10, message=f"Descargando metadatos ({len(broad_ids)} items)...")
                 p_stats = ItemResolver.instance().prefetch_type_metadata_parallel(broad_ids, n_clients=4)
                 if not self.is_running: return
                 
@@ -262,12 +257,7 @@ class MarketRefreshWorker(QThread):
                 self.diagnostics.metadata_fetched = p_stats['fetched']
                 self.diagnostics.metadata_failed = p_stats['failed']
                 
-                logger.info(
-                    f"[WORKER DIAG] metadata total={p_stats['total']} "
-                    f"cached={p_stats['cached']} fetched={p_stats['fetched']} failed={p_stats['failed']}"
-                )
-
-                self.emit_progress(65, f"Filtering by category '{selected_category}'...")
+                tracker.update(80, message=f"Filtrando por categoría '{selected_category}'...")
                 category_ids = []
                 for c in final_pool_cands[:_BROAD_POOL_SIZE]:
                     t_id = c.type_id
@@ -276,7 +266,6 @@ class MarketRefreshWorker(QThread):
                     if match:
                         category_ids.append(t_id)
 
-                logger.info(f"[WORKER DIAG] Phase2 category_ids={len(category_ids)} for category={selected_category}")
                 cat_limit = max(_CATEGORY_LIMIT_DEFAULT, self.config.max_item_types) if self.config.max_item_types > 0 else _CATEGORY_LIMIT_DEFAULT
                 final_candidates = category_ids[:cat_limit]
 
@@ -298,27 +287,24 @@ class MarketRefreshWorker(QThread):
 
             t_metadata = time.time() - t0
             self.diagnostics.metadata_elapsed = t_metadata
-            logger.info(f"[WORKER DIAG] metadata_elapsed={t_metadata:.1f}s final_candidates={len(final_candidates)}")
 
             if self.config.exclude_plex and plex_id in final_candidates:
                 final_candidates.remove(plex_id)
 
             # Paso 8: History cache hits
+            tracker.set_phase("Comprobando caché de historial...", 65, 70)
             t0 = time.time()
-            self.emit_progress(68, "Checking history cache...")
             hist_cache = MarketHistoryCache.instance()
             history_hits = hist_cache.get_many(self.region_id, final_candidates)
             missing_hist = [t for t in final_candidates if t not in history_hits]
             self.diagnostics.history_cache_hits = len(history_hits)
             self.diagnostics.history_cache_misses = len(missing_hist)
-            logger.info(f"[WORKER DIAG] history_hits={len(history_hits)} history_misses={len(missing_hist)}")
 
             # Paso 9: Descarga concurrente de historial faltante
+            tracker.set_phase("Descargando historial de mercado...", 70, 85, total=len(missing_hist))
             fetched_history = {}
             failed_hist = 0
             if missing_hist:
-                self.emit_progress(70, f"Fetching history for {len(missing_hist)} items (parallel)...")
-                # Pool de ESIClient independientes → cada uno con su propio rate limiter
                 _workers = min(_HISTORY_WORKERS, len(missing_hist))
                 hist_pool = [ESIClient() for _ in range(_workers)]
 
@@ -328,8 +314,7 @@ class MarketRefreshWorker(QThread):
                     try:
                         hist = client.market_history(self.region_id, type_id)
                         return type_id, hist
-                    except Exception as e:
-                        logger.debug(f"[HISTORY FETCH] error type_id={type_id}: {e}")
+                    except Exception:
                         return type_id, None
 
                 with ThreadPoolExecutor(max_workers=_workers) as executor:
@@ -337,27 +322,19 @@ class MarketRefreshWorker(QThread):
                                    for i, t in enumerate(missing_hist)}
                     done = 0
                     for future in as_completed(futures_map):
-                        if not self.is_running:
-                            break
+                        if not self.is_running: break
                         try:
                             type_id, hist = future.result()
-                            if hist:
-                                fetched_history[type_id] = hist
-                            else:
-                                failed_hist += 1
-                        except Exception as e:
-                            failed_hist += 1
-                            logger.debug(f"[HISTORY FETCH] future error: {e}")
+                            if hist: fetched_history[type_id] = hist
+                            else: failed_hist += 1
+                        except Exception: failed_hist += 1
                         done += 1
-                        if done % 20 == 0:
-                            pct = 70 + int((done / max(len(missing_hist), 1)) * 15)
-                            self.emit_progress(pct, f"History: {done}/{len(missing_hist)}")
+                        tracker.update(done, message=f"Historial: {done}/{len(missing_hist)}")
 
             t_history = time.time() - t0
             self.diagnostics.history_fetched = len(fetched_history)
             self.diagnostics.history_failed = failed_hist
             self.diagnostics.history_elapsed = t_history
-            logger.info(f"[WORKER DIAG] fetched_history={len(fetched_history)} failed_hist={failed_hist} elapsed={t_history:.1f}s")
 
             # Actualizar cache de historial en disco
             for t_id, hist in fetched_history.items():
@@ -368,63 +345,45 @@ class MarketRefreshWorker(QThread):
             # Merge historial completo
             history_dict = {**history_hits, **fetched_history}
             self.diagnostics.history_dict_count = len(history_dict)
-            logger.info(f"[WORKER DIAG] total_history_dict={len(history_dict)}")
 
             # Paso 10: Nombres para nuevos candidatos (Fase 2 puede tener más que Fase 1)
+            tracker.set_phase("Resolviendo nombres finales...", 85, 90)
             t0 = time.time()
             new_ids = [t for t in final_candidates if t not in names_dict]
             if new_ids:
-                self.emit_progress(87, f"Fetching names for {len(new_ids)} new items...")
                 for i in range(0, len(new_ids), 500):
                     chunk = new_ids[i:i + 500]
                     names_data = self.client.universe_names(chunk)
                     if names_data:
                         for n in names_data:
                             names_dict[n['id']] = n['name']
-            logger.info(f"[WORKER DIAG] names_dict_total={len(names_dict)} elapsed={time.time()-t0:.2f}s")
+                    tracker.update(i + len(chunk), total=len(new_ids))
 
             if not self.is_running: return
 
             # Paso 11: Parsear oportunidades enriquecidas
+            tracker.set_phase("Finalizando análisis de mercado...", 90, 100)
             t0 = time.time()
-            self.emit_progress(90, "Parsing enriched opportunities...")
             final_set = set(final_candidates)
             relevant_orders_enriched = [o for o in orders if o['type_id'] in final_set]
             self.diagnostics.relevant_orders_enriched_count = len(relevant_orders_enriched)
-            logger.info(f"[WORKER DIAG] relevant_orders_enriched={len(relevant_orders_enriched)}")
             
             # Diagnóstico de entrada a parse
             self.diagnostics.enriched_with_both_count = 0
             self.diagnostics.enriched_with_buy_count = 0
             self.diagnostics.enriched_with_sell_count = 0
-            self.diagnostics.enriched_parse_input_sample = []
             
-            # Análisis rápido de qué estamos mandando a parse
             temp_parse_map = {}
             for o in relevant_orders_enriched:
                 tid = o['type_id']
-                if tid not in temp_parse_map: temp_parse_map[tid] = {'buy': 0, 'sell': 0, 'prices': []}
+                if tid not in temp_parse_map: temp_parse_map[tid] = {'buy': 0, 'sell': 0}
                 if o.get('is_buy_order'): temp_parse_map[tid]['buy'] += 1
                 else: temp_parse_map[tid]['sell'] += 1
-                temp_parse_map[tid]['prices'].append(o['price'])
 
             for tid, data in temp_parse_map.items():
                 if data['buy'] > 0 and data['sell'] > 0: self.diagnostics.enriched_with_both_count += 1
                 elif data['buy'] > 0: self.diagnostics.enriched_with_buy_count += 1
                 elif data['sell'] > 0: self.diagnostics.enriched_with_sell_count += 1
-                
-                if len(self.diagnostics.enriched_parse_input_sample) < 10:
-                    # Calcular spread rápido para el diagnóstico
-                    spr = 0.0
-                    try:
-                        b = max([o['price'] for o in relevant_orders_enriched if o['type_id'] == tid and o.get('is_buy_order')])
-                        s = min([o['price'] for o in relevant_orders_enriched if o['type_id'] == tid and not o.get('is_buy_order')])
-                        spr = ((s-b)/b)*100
-                    except: pass
-                    self.diagnostics.enriched_parse_input_sample.append({
-                        'id': tid, 'buy_count': data['buy'], 'sell_count': data['sell'], 
-                        'spread': spr, 'has_history': (tid in history_dict)
-                    })
 
             try:
                 opps_enriched = parse_opportunities(relevant_orders_enriched, history_dict, names_dict, self.config)
@@ -434,11 +393,6 @@ class MarketRefreshWorker(QThread):
                 self.diagnostics.errors.append(f"Error in parse_opportunities: {str(e)}")
                 opps_enriched = []
 
-            if not opps_enriched and self.diagnostics.enriched_with_both_count > 0:
-                msg = f"parse_opportunities returned 0 despite {self.diagnostics.enriched_with_both_count} items with buy/sell orders."
-                logger.error(f"[WORKER ERROR] {msg}")
-                self.diagnostics.errors.append(msg)
-
             for opp in opps_enriched:
                 opp.is_enriched = True
                 opp.score_breakdown = score_opportunity(opp, self.config)
@@ -447,21 +401,16 @@ class MarketRefreshWorker(QThread):
             self.diagnostics.parse_elapsed = t_enrich
             t_total_final = time.time() - t_start
             self.diagnostics.total_elapsed = t_total_final
-            logger.info(f"[WORKER DIAG] opps_enriched={len(opps_enriched)} elapsed={t_enrich:.2f}s")
 
             if not opps_enriched and opps_initial:
-                logger.warning(f"[WORKER DIAG] Enriched results EMPTY but initial had {len(opps_initial)}. Falling back to initial data.")
                 opps_enriched = opps_initial
-                for o in opps_enriched: 
-                    o.is_enriched = False  # Keep as False to bypass history filters in UI
+                for o in opps_enriched: o.is_enriched = False
                 self.diagnostics.fallback_used = True
-                self.diagnostics.fallback_reason = "opps_enriched_empty_but_initial_available"
-                self.diagnostics.fallback_kept_is_enriched_false = True
 
             self.last_results = opps_enriched
             self.diagnostics.final_emitted_count = len(opps_enriched)
             self.diagnostics.status = "Success"
-            self.emit_progress(100, f"Done. {len(opps_enriched)} items.")
+            tracker.finish(f"Escaneo completo: {len(opps_enriched)} items.")
             self.enriched_data_ready.emit(opps_enriched)
             self.finished.emit(opps_enriched)
             self.data_ready.emit(opps_enriched)  # legacy compat
