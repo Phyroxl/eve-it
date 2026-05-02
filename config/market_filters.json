@@ -1,16 +1,20 @@
 {
-  "capital_max": 10000000000.0,
+  "capital_max": 1000000000000.0,
+  "capital_min": 0.0,
   "vol_min_day": 0,
   "margin_min_pct": 0.0,
-  "spread_max_pct": 500.0,
+  "spread_max_pct": 1000.0,
   "exclude_plex": false,
   "broker_fee_pct": 3.0,
-  "sales_tax_pct": 1.0,
+  "sales_tax_pct": 8.0,
   "score_min": 0.0,
   "risk_max": 3,
   "buy_orders_min": 0,
   "sell_orders_min": 0,
   "history_days_min": 0,
-  "profit_day_min": 0.0,
-  "selected_category": "Naves"
+  "profit_day_min": 0,
+  "profit_unit_min": 0.0,
+  "require_buy_sell": false,
+  "selected_category": "Naves",
+  "max_item_types": 0
 }

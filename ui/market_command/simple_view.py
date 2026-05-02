@@ -249,6 +249,9 @@ class MarketSimpleView(QWidget):
         self.table.itemSelectionChanged.connect(self.on_table_selection)
         self.table.item_action_triggered.connect(self.on_item_action)
         right_panel.addWidget(self.table, 1)
+        from ui.common.table_layout_manager import restore_table_layout, connect_table_layout_persistence
+        restore_table_layout(self.table, "scan_main_table")
+        connect_table_layout_persistence(self.table, "scan_main_table")
         
         self.detail_panel = QFrame()
         self.detail_panel.setFixedHeight(99)
@@ -426,7 +429,7 @@ class MarketSimpleView(QWidget):
         diagnostics.metadata_missing_count = filter_diag.get("metadata_missing_count", 0)
         diagnostics.metadata_missing_ids = filter_diag.get("metadata_missing_ids", [])
         diagnostics.selected_category_ui = self.current_config.selected_category
-        diagnostics.mode = "Simple"
+        diagnostics.mode = "Scan"
         
         if hasattr(self.table, 'get_icon_diagnostics'):
             icon_stats = self.table.get_icon_diagnostics()
@@ -552,11 +555,15 @@ class MarketSimpleView(QWidget):
         )
 
     def on_apply_filters(self):
-        self.update_config_from_ui()
         import logging
-        logging.getLogger('eve.market.simple').info(f"[CATEGORY UI] mode=Simple selected_category={self.current_config.selected_category}")
+        log = logging.getLogger('eve.market.simple')
+        try:
+            self.update_config_from_ui()
+        except Exception as e:
+            log.warning(f"[APPLY] update_config_from_ui failed (fees may be defaults): {e}")
         save_market_filters(self.current_config)
         self.apply_and_display()
+        log.info(f"[APPLY] Filters applied: category={self.current_config.selected_category} max_items={self.current_config.max_item_types} margin={self.current_config.margin_min_pct}")
 
     def on_reset_filters(self):
         self.current_config = FilterConfig()
@@ -600,7 +607,7 @@ class MarketSimpleView(QWidget):
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")
             self.lbl_sum_insight.setText("SIN DATOS DEL ESCANEO")
             self.lbl_sum_insight.setObjectName("MetricValueInfo")
-            self.lbl_status.setText("● SIN DATOS DISPONIBLES — REALIZA UN ESCANEO")
+            self.lbl_status.setText("● SIN DATOS — PRIMERO REALIZA UN ESCANEO (REFRESCAR MERCADO)")
             self.lbl_status.setObjectName("ModeLabel")
         elif len(filtered) == 0:
             self.lbl_sum_top.setText("---"); self.lbl_sum_liquid.setText("---"); self.lbl_sum_margin.setText("---")

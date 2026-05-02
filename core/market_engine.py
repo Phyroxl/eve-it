@@ -238,11 +238,12 @@ def apply_filters_with_diagnostics(opportunities: List[MarketOpportunity], confi
         "dominant_filter": dominant_filter,
         "selected_category": config.selected_category,
         "limit_applied": limit_applied,
-        "limit_value": config.max_item_types
+        "limit_value": config.max_item_types if config.max_item_types > 0 else "SIN LÍMITE"
     }
 
     # Mandatory Category Scan Report Logging
-    report_msg = f"\n[CATEGORY SCAN REPORT]\nMode: N/A (Engine Level)\nSelected Category: {config.selected_category}\nRaw Market Items: {total_raw}\nMetadata Missing: {stats['metadata_missing']}\nCategory Match Count: {len(pass_category)}\nAfter User Filters: {len(pass_user)}\nDisplayed Rows: {len(final_results)}\nLimit Applied: {limit_applied} (Value: {config.max_item_types})\nDominant Filter: {dominant_filter}\n"
+    limit_str = f"{config.max_item_types}" if config.max_item_types > 0 else "SIN LÍMITE"
+    report_msg = f"\n[CATEGORY SCAN REPORT]\nMode: N/A (Engine Level)\nSelected Category: {config.selected_category}\nRaw Market Items: {total_raw}\nMetadata Missing: {stats['metadata_missing']}\nCategory Match Count: {len(pass_category)}\nAfter User Filters: {len(pass_user)}\nDisplayed Rows: {len(final_results)}\nLimit Applied: {limit_applied} (Value: {limit_str})\nDominant Filter: {dominant_filter}\n"
     logger.info(report_msg)
     
     if metadata_missing_ids:

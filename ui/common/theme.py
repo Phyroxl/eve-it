@@ -1,8 +1,8 @@
 """
-ui/common/theme.py — Unified Design System for EVE iT Suite.
+ui/common/theme.py — Unified Design System for Salva Suite.
 Centralizes colors, style tokens, and shared QSS fragments via ThemeManager.
 """
-from .theme_manager import ThemeManager
+from ui.theme.theme_manager import ThemeManager
 
 class ThemeMeta(type):
     def __getattr__(cls, key):

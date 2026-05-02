@@ -19,10 +19,9 @@ from ui.common.theme import Theme
 _log = logging.getLogger('eve.performance')
 
 class KPIWidget(QFrame):
-    def __init__(self, title, value, color=None, tooltip=None, parent=None):
+    def __init__(self, title, value, object_name=None, tooltip=None, parent=None):
         super().__init__(parent)
-        if color is None: color = Theme.ACCENT
-        self.setObjectName("MetricCard")
+        self.setObjectName("PerfMetricCard")
         if tooltip:
             self.setToolTip(tooltip)
         
@@ -31,14 +30,14 @@ class KPIWidget(QFrame):
         l.setSpacing(2)
         
         t = QLabel(title.upper())
-        t.setObjectName("MetricTitle")
-        t.setStyleSheet(f"color: {color};")
+        t.setObjectName("PerfMetricTitle")
         
         self.v = QLabel(value)
-        self.v.setObjectName("MetricValue")
+        self.v.setObjectName("PerfMetricValue")
+        if object_name: self.v.setObjectName(object_name)
         
         self.d = QLabel("CONTABILIDAD CERRADA")
-        self.d.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; letter-spacing: 0.5px;")
+        self.d.setObjectName("DetailTagline")
         
         l.addWidget(t)
         l.addWidget(self.v)
@@ -47,7 +46,6 @@ class KPIWidget(QFrame):
     def update_value(self, val, detail=None, color=None):
         self.v.setText(val)
         if detail: self.d.setText(detail.upper())
-        if color: self.v.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 900;")
 
 class SimpleBarChart(QWidget):
     def __init__(self, parent=None):
@@ -109,9 +107,9 @@ class SimpleBarChart(QWidget):
         zero_line = padding_t + chart_h / 2
         
         # Grid lines
-        p.setPen(QPen(QColor("#0f172a"), 1))
+        p.setPen(QPen(QColor(Theme.BG_WINDOW), 1))
         p.drawLine(padding_l, padding_t, padding_l, h-padding_b)
-        p.setPen(QPen(QColor("#1e293b"), 1, Qt.DashLine))
+        p.setPen(QPen(QColor(Theme.BORDER_MAIN), 1, Qt.DashLine))
         p.drawLine(padding_l, zero_line, w - padding_r, zero_line)
         
         # Bars
@@ -170,6 +168,7 @@ class SimpleBarChart(QWidget):
 class MarketPerformanceView(QWidget):
     def __init__(self, parent=None, defer_initial_refresh=False):
         super().__init__(parent)
+        self.setObjectName("PerformanceViewRoot")
         from core.config_manager import load_performance_config
         self.config = load_performance_config()
         self._sync_in_progress = False
@@ -180,6 +179,12 @@ class MarketPerformanceView(QWidget):
         self.icon_service = EveIconService.instance()
         self._purge_fake_char0()
         self.setup_ui()
+        
+    def refresh_theme(self):
+        """Re-applies the current theme QSS to this view."""
+        self.setStyleSheet(Theme.get_qss("performance"))
+        self.top_items_table.setStyleSheet(Theme.get_qss("performance"))
+        self.trans_table.setStyleSheet(Theme.get_qss("performance"))
         
         # Setup Auto-Refresh Timer
         self.auto_timer = QTimer(self)
@@ -257,12 +262,15 @@ class MarketPerformanceView(QWidget):
         self.main_layout.setSpacing(20)
         
         # 1. Header & Selectors
-        header = QHBoxLayout()
+        header_frame = QFrame()
+        header_frame.setObjectName("PerformanceActionBar")
+        header = QHBoxLayout(header_frame)
+        header.setContentsMargins(0, 0, 0, 0)
         
         # Portrait del personaje
         self.lbl_portrait = QLabel()
         self.lbl_portrait.setFixedSize(48, 48)
-        self.lbl_portrait.setStyleSheet(f"background: {Theme.BG_NAV}; border: 1px solid {Theme.BORDER}; border-radius: 24px;")
+        self.lbl_portrait.setObjectName("CharacterBadge")
         self.lbl_portrait.setScaledContents(True)
         header.addWidget(self.lbl_portrait)
         
@@ -270,13 +278,13 @@ class MarketPerformanceView(QWidget):
         title_lbl = QLabel("MARKET PERFORMANCE")
         title_lbl.setObjectName("SectionTitle")
         subtitle = QLabel("ANÁLISIS DE RENDIMIENTO REAL")
-        subtitle.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 9px; font-weight: 800; letter-spacing: 1px;")
+        subtitle.setObjectName("DetailTagline")
         title_v.addWidget(title_lbl)
         title_v.addWidget(subtitle)
         
         # Nueva etiqueta de contexto operativa
         self.context_lbl = QLabel("ANALIZANDO OPERATIVA...")
-        self.context_lbl.setStyleSheet(f"color: {Theme.ACCENT}; font-size: 9px; font-weight: 800; letter-spacing: 0.5px;")
+        self.context_lbl.setObjectName("ModeLabel")
         title_v.addWidget(self.context_lbl)
         
         # Auto-Refresh Group
@@ -284,11 +292,12 @@ class MarketPerformanceView(QWidget):
         auto_group.setSpacing(5)
         
         self.check_auto = QCheckBox("Auto-Refresh")
+        self.check_auto.setObjectName("TacticalCheckbox")
         self.check_auto.setChecked(self.config.auto_refresh_enabled)
-        self.check_auto.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 700;")
         self.check_auto.toggled.connect(self.on_auto_refresh_toggled)
         
         self.combo_auto_time = QComboBox()
+        self.combo_auto_time.setObjectName("TacticalCombo")
         for m in [1, 2, 5, 10, 15]:
             self.combo_auto_time.addItem(f"{m} min", m)
         
@@ -297,7 +306,6 @@ class MarketPerformanceView(QWidget):
         if idx >= 0: self.combo_auto_time.setCurrentIndex(idx)
         
         self.combo_auto_time.setFixedWidth(70)
-        self.combo_auto_time.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; font-size: 9px;")
         self.combo_auto_time.currentIndexChanged.connect(self.on_auto_interval_changed)
         
         auto_group.addWidget(self.check_auto)
@@ -305,28 +313,28 @@ class MarketPerformanceView(QWidget):
         
         # Selectores de Personaje y Rango (Inicialización faltante restaurada)
         self.combo_char = QComboBox()
+        self.combo_char.setObjectName("TacticalCombo")
         self.combo_char.addItem("Sincroniza para ver personajes")
         self.combo_char.setFixedWidth(200)
-        self.combo_char.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 5px;")
         self.combo_char.currentIndexChanged.connect(self.refresh_view)
         
         self.combo_range = QComboBox()
+        self.combo_range.setObjectName("TacticalCombo")
         self.combo_range.addItems(["Hoy", "7 días", "30 días", "90 días"])
         self.combo_range.setCurrentIndex(2)
         self.combo_range.setFixedWidth(100)
-        self.combo_range.setStyleSheet("background: #0f172a; color: #f1f5f9; border: 1px solid #1e293b; padding: 5px;")
         self.combo_range.currentIndexChanged.connect(self.refresh_view)
         
         self.btn_refresh = QPushButton("SINCRONIZAR ESI")
-        self.btn_refresh.setObjectName("PrimaryButton")
+        self.btn_refresh.setObjectName("RefreshButton")
         self.btn_refresh.setFixedWidth(120)
         self.btn_refresh.setFixedHeight(30)
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.on_sync_clicked)
         
         self.btn_customize = QPushButton("PERSONALIZAR")
-        self.btn_customize.setObjectName("SecondaryButton")
-        self.btn_customize.setFixedWidth(100)
+        self.btn_customize.setObjectName("CustomizeButton")
+        self.btn_customize.setMinimumWidth(110)
         self.btn_customize.setFixedHeight(30)
         self.btn_customize.setCursor(Qt.PointingHandCursor)
         self.btn_customize.clicked.connect(self.on_customize_clicked)
@@ -354,15 +362,11 @@ class MarketPerformanceView(QWidget):
         header.addWidget(self.btn_local_refresh)
         header.addWidget(self.btn_customize)
         header.addWidget(self.btn_refresh)
-        self.main_layout.addLayout(header)
+        self.main_layout.addWidget(header_frame)
 
         # Barra de estado de diagnóstico (siempre visible)
         self._diag_label = QLabel("▸ Sin datos — pulsa SINCRONIZAR ESI para empezar")
-        self._diag_label.setStyleSheet(
-            f"color: {Theme.TEXT_DIM}; font-size: 9px; font-weight: 700; "
-            f"padding: 4px 8px; background: {Theme.BG_NAV}; "
-            f"border: 1px solid {Theme.BORDER}; border-radius: 3px;"
-        )
+        self._diag_label.setObjectName("CharacterBadge")
         self.main_layout.addWidget(self._diag_label)
 
         # 2. KPIs Section (Rediseñado para Net Profit)
@@ -372,12 +376,12 @@ class MarketPerformanceView(QWidget):
         # Fila 1: Métricas Críticas (Profit vs Cashflow vs Stock)
         kpis_row1 = QHBoxLayout(); kpis_row1.setSpacing(6)
         self.kpi_net_profit = KPIWidget(
-            "Net Profit", "0 ISK", "#10b981", 
+            "Net Profit", "0 ISK", "MetricValueSuccess", 
             "Beneficio Real Realizado: Ventas - COGS (Coste Adquisición Unidades Vendidas) - Fees/Tax. "
             "Es el rendimiento real de tu trading, independiente de si has comprado stock extra o no."
         )
         self.kpi_cashflow = KPIWidget(
-            "Trade Cashflow", "0 ISK", "#3b82f6", 
+            "Trade Cashflow", "0 ISK", "MetricValueInfo", 
             "Movimiento Neto de ISK: Income - Coste Compras - Fees/Tax. "
             "Representa la variación real de tu cartera. Si es negativo, estás invirtiendo en stock."
         )
@@ -391,10 +395,10 @@ class MarketPerformanceView(QWidget):
         
         # Fila 2: Desglose Operativo
         kpis_row2 = QHBoxLayout(); kpis_row2.setSpacing(6)
-        self.kpi_income = KPIWidget("Sales Income", "0 ISK", "#60a5fa")
-        self.kpi_cost = KPIWidget("Buy Investment", "0 ISK", "#f87171")
-        self.kpi_broker = KPIWidget("Broker Fees", "0 ISK", "#f59e0b")
-        self.kpi_tax = KPIWidget("Sales Tax", "0 ISK", "#f97316")
+        self.kpi_income = KPIWidget("Sales Income", "0 ISK", "StatusSuccess")
+        self.kpi_cost = KPIWidget("Buy Investment", "0 ISK", "StatusDanger")
+        self.kpi_broker = KPIWidget("Broker Fees", "0 ISK", "StatusWarning")
+        self.kpi_tax = KPIWidget("Sales Tax", "0 ISK", "StatusWarning")
         
         kpis_row2.addWidget(self.kpi_income)
         kpis_row2.addWidget(self.kpi_cost)
@@ -411,13 +415,12 @@ class MarketPerformanceView(QWidget):
         
         # Chart
         self.chart_frame = QFrame()
-        self.chart_frame.setObjectName("AnalyticBox")
-        self.chart_frame.setStyleSheet(f"background: {Theme.BG_PANEL}; border: 1px solid {Theme.BORDER}; border-radius: 4px;")
+        self.chart_frame.setObjectName("PerfChartBox")
         self.chart_frame.setMinimumHeight(250)
         chart_l = QVBoxLayout(self.chart_frame)
         
         chart_title = QLabel("PROFIT DIARIO (ISK)")
-        chart_title.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 9px; font-weight: 800;")
+        chart_title.setObjectName("PerfMetricTitle")
         chart_l.addWidget(chart_title)
         
         self.chart = SimpleBarChart()
@@ -427,6 +430,7 @@ class MarketPerformanceView(QWidget):
         # Top Items Table
         from PySide6.QtWidgets import QAbstractItemView
         self.top_items_table = QTableWidget(0, 6)
+        self.top_items_table.setObjectName("PerformanceTable")
         self.top_items_table.setHorizontalHeaderLabels(["Item", "In (Qty)", "Out (Qty)", "Net Stock", "Realized Profit", "Estado"])
         self.top_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.top_items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -434,7 +438,6 @@ class MarketPerformanceView(QWidget):
         self.top_items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.top_items_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.top_items_table.customContextMenuRequested.connect(self.on_table_context_menu)
-        self.top_items_table.setStyleSheet(f"background: {Theme.BG_PANEL}; color: {Theme.TEXT_MAIN}; border: none; font-size: 10px;")
         self.top_items_table.setShowGrid(False)
         self.top_items_table.verticalHeader().setVisible(False)
         self.top_items_table.setFixedHeight(250)
@@ -443,18 +446,20 @@ class MarketPerformanceView(QWidget):
         self.top_items_table.itemSelectionChanged.connect(self.on_item_selection_changed)
         self.top_items_table.itemDoubleClicked.connect(self._on_table_double_click)
         middle_layout.addWidget(self.top_items_table, 4)
+        from ui.common.table_layout_manager import restore_table_layout, connect_table_layout_persistence
+        restore_table_layout(self.top_items_table, "performance_items_table")
+        connect_table_layout_persistence(self.top_items_table, "performance_items_table")
         
         self.main_layout.addLayout(middle_layout)
         
         # 3.5 Item Detail Panel (New)
         self.detail_frame = QFrame()
+        self.detail_frame.setObjectName("PerformanceDetailPanel")
         self.detail_frame.setFixedHeight(80)
-        self.detail_frame.setStyleSheet(f"background: {Theme.BG_PANEL_ALT}; border: 1px solid {Theme.BORDER}; border-radius: 4px;")
-        self.detail_frame.setVisible(False)
         dl = QHBoxLayout(self.detail_frame)
         
         self.lbl_det_name = QLabel("ITEM DETAIL")
-        self.lbl_det_name.setStyleSheet("color: #f1f5f9; font-size: 14px; font-weight: 800;")
+        self.lbl_det_name.setObjectName("DetailName")
         
         def create_det_box(label, color="#94a3b8"):
             w = QWidget()
@@ -462,9 +467,9 @@ class MarketPerformanceView(QWidget):
             v_l.setContentsMargins(0,0,0,0)
             v_l.setSpacing(1)
             l = QLabel(label.upper())
-            l.setStyleSheet(f"color: {color}; font-size: 8px; font-weight: 800;")
+            l.setObjectName("DetailMetricTitle")
             val = QLabel("---")
-            val.setStyleSheet("color: #f1f5f9; font-size: 12px; font-weight: 700;")
+            val.setObjectName("DetailMetricValue")
             v_l.addWidget(l)
             v_l.addWidget(val)
             return w, val
@@ -492,6 +497,7 @@ class MarketPerformanceView(QWidget):
         
         # 4. Bottom Row: Recent Transactions
         self.trans_table = QTableWidget(0, 6)
+        self.trans_table.setObjectName("PerformanceTransactionsTable")
         self.trans_table.setHorizontalHeaderLabels(["Fecha", "Item", "Tipo", "Cantidad", "Total", "Fee Est."])
         self.trans_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.trans_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -499,18 +505,28 @@ class MarketPerformanceView(QWidget):
         self.trans_table.itemDoubleClicked.connect(self._on_table_double_click)
         self.trans_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.trans_table.customContextMenuRequested.connect(self.on_table_context_menu)
-        self.trans_table.setStyleSheet("background: #000000; color: #f1f5f9; border: none; font-size: 10px;")
         self.trans_table.setShowGrid(False)
         self.trans_table.verticalHeader().setVisible(False)
         self.trans_table.setMinimumHeight(250)
         self.main_layout.addWidget(self.trans_table)
+        from ui.common.table_layout_manager import restore_table_layout, connect_table_layout_persistence
+        restore_table_layout(self.trans_table, "performance_trans_table")
+        connect_table_layout_persistence(self.trans_table, "performance_trans_table")
         
         self.main_layout.addStretch()
+
+    def refresh_theme(self):
+        """Re-applies the current theme QSS to this view."""
+        self.setStyleSheet(Theme.get_qss("performance"))
+        if hasattr(self, 'table'):
+            self.table.setStyleSheet(Theme.get_qss("performance"))
+        if hasattr(self, 'table_tx'):
+            self.table_tx.setStyleSheet(Theme.get_qss("performance"))
 
     def on_customize_clicked(self):
         from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
         dialog = ThemeCustomizerDialog(view_scope="performance", parent=self)
-        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("performance")))
+        dialog.themeUpdated.connect(self.refresh_theme)
         dialog.exec()
 
     def on_sync_clicked(self, is_auto=False):
@@ -525,8 +541,15 @@ class MarketPerformanceView(QWidget):
         auth = AuthManager.instance()
         self._is_auto_sync = is_auto
         
+        # Intentar obtener un token válido (puede refrescar automáticamente si ha caducado)
+        token = None
+        if hasattr(auth, 'get_valid_access_token'):
+            token = auth.get_valid_access_token()
+        if not token:
+            token = auth.current_token
+
         # Si no hay token, iniciar login ESI (solo si es manual)
-        if not auth.current_token:
+        if not token:
             if is_auto:
                 _log.info("[SYNC] Auto-refresh cancelado: no hay token.")
                 return
@@ -539,7 +562,7 @@ class MarketPerformanceView(QWidget):
             self._auth_poll_timer.start()
             self._auth_poll_count = 0
             return
-            
+
         char_id = self.combo_char.currentData()
 
         # El personaje autenticado tiene prioridad absoluta sobre el combo
@@ -578,7 +601,7 @@ class MarketPerformanceView(QWidget):
         self.poller.moveToThread(self.poller_thread)
         
         self._last_sync_report = None
-        self.poller_thread.started.connect(lambda: self.poller.poll(char_id, auth.current_token))
+        self.poller_thread.started.connect(lambda: self.poller.poll(char_id, token))
         self.poller.sync_report.connect(self._on_sync_report)
         self.poller.finished.connect(self.on_sync_finished)
         self.poller.error.connect(self.on_sync_error)
@@ -732,6 +755,7 @@ class MarketPerformanceView(QWidget):
         date_from = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
 
         char_id = self.combo_char.currentData()
+        _log.info(f"[PERFORMANCE SYNC] char_id={char_id} days={days} date_from={date_from} date_to={date_to}")
         _log.info(
             f"[REFRESH] ▶ char_id={char_id!r}  tipo={type(char_id).__name__}  "
             f"rango={days}d  ({date_from} → {date_to})"

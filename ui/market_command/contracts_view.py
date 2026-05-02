@@ -79,32 +79,23 @@ class ContractReportDialog(QWidget):
         self.setWindowTitle("Diagnóstico de Escaneo de Contratos")
         self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint)
         self.resize(700, 500)
-        self.setStyleSheet("background: #0f172a; color: #f1f5f9;")
+        self.setObjectName("ContractReportRoot")
         
         layout = QVBoxLayout(self)
         self.txt = QTableWidget() # Usaremos un widget de texto para el reporte
         self.edit = QTextEdit()
         self.edit.setReadOnly(True)
         self.edit.setPlainText(report_text)
-        self.edit.setStyleSheet("""
-            QTextEdit { 
-                background: #000000; 
-                color: #10b981; 
-                font-family: 'Consolas', monospace; 
-                font-size: 11px; 
-                border: 1px solid #1e293b; 
-                padding: 10px;
-            }
-        """)
+        self.edit.setObjectName("DiagnosticReportText")
         layout.addWidget(self.edit)
         
         btns = QHBoxLayout()
         btn_copy = QPushButton("COPIAR REPORTE")
-        btn_copy.setStyleSheet("background: #10b981; color: #064e3b; font-weight: 800; padding: 10px; border-radius: 4px;")
+        btn_copy.setObjectName("PrimaryButton")
         btn_copy.clicked.connect(self.copy_report)
         
         btn_close = QPushButton("CERRAR")
-        btn_close.setStyleSheet("background: #1e293b; color: #f1f5f9; padding: 10px; border-radius: 4px;")
+        btn_close.setObjectName("SecondaryButton")
         btn_close.clicked.connect(self.close)
         
         btns.addWidget(btn_copy)
@@ -118,6 +109,7 @@ class ContractReportDialog(QWidget):
 class MarketContractsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("ContractsViewRoot")
         self.worker = None
         self._all_results = []
         self.last_diag = None
@@ -133,6 +125,12 @@ class MarketContractsView(QWidget):
         self.current_location_id = None
         self.setup_ui()
         self._load_config()
+        
+    def refresh_theme(self):
+        """Re-applies the current theme QSS to this view."""
+        self.setStyleSheet(Theme.get_qss("contracts"))
+        self.results_table.setStyleSheet(Theme.get_qss("contracts"))
+        self.items_table.setStyleSheet(Theme.get_qss("contracts"))
 
     def activate_view(self):
         """Hook para activación de pestaña."""
@@ -146,9 +144,8 @@ class MarketContractsView(QWidget):
 
         # Panel izquierdo: Filtros (230px fijo)
         filter_panel = QFrame()
-        filter_panel.setObjectName("AnalyticBox")
+        filter_panel.setObjectName("ContractsFilterPanel")
         filter_panel.setFixedWidth(210)
-        filter_panel.setStyleSheet(f"border-right: 1px solid {Theme.BORDER}; border-radius: 0px;")
         fl = QVBoxLayout(filter_panel)
         fl.setContentsMargins(15, 15, 15, 15)
         fl.setSpacing(12)
@@ -158,39 +155,43 @@ class MarketContractsView(QWidget):
         fl.addWidget(lbl_filters)
 
         def create_dspin(label, min_v, max_v, step, suffix):
-            v_l = QVBoxLayout(); v_l.setSpacing(2)
-            lbl = QLabel(label.upper()); lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+            card = QFrame(); card.setObjectName("ContractsFilterCard")
+            v_l = QVBoxLayout(card); v_l.setSpacing(1); v_l.setContentsMargins(8, 6, 8, 6)
+            lbl = QLabel(label.upper()); lbl.setObjectName("ContractsFilterLabel")
             spin = QDoubleSpinBox(); spin.setRange(min_v, max_v); spin.setSingleStep(step); spin.setSuffix(suffix); spin.setDecimals(1)
             v_l.addWidget(lbl); v_l.addWidget(spin)
-            fl.addLayout(v_l)
+            fl.addWidget(card)
             return spin
 
         def create_spin(label, min_v, max_v, step):
-            v_l = QVBoxLayout(); v_l.setSpacing(2)
-            lbl = QLabel(label.upper()); lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+            card = QFrame(); card.setObjectName("ContractsFilterCard")
+            v_l = QVBoxLayout(card); v_l.setSpacing(1); v_l.setContentsMargins(8, 6, 8, 6)
+            lbl = QLabel(label.upper()); lbl.setObjectName("ContractsFilterLabel")
             spin = QSpinBox(); spin.setRange(min_v, max_v); spin.setSingleStep(step)
             v_l.addWidget(lbl); v_l.addWidget(spin)
-            fl.addLayout(v_l)
+            fl.addWidget(card)
             return spin
 
         # Región
-        v_reg = QVBoxLayout(); v_reg.setSpacing(2)
-        lbl_reg = QLabel("REGIÓN"); lbl_reg.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+        c_reg = QFrame(); c_reg.setObjectName("ContractsFilterCard")
+        v_reg = QVBoxLayout(c_reg); v_reg.setSpacing(1); v_reg.setContentsMargins(8, 6, 8, 6)
+        lbl_reg = QLabel("REGIÓN"); lbl_reg.setObjectName("ContractsFilterLabel")
         self.combo_region = QComboBox()
         self.combo_region.addItem("The Forge (Jita)", 10000002)
         self.combo_region.addItem("Domain (Amarr)", 10000043)
         self.combo_region.addItem("Sinq Laison (Dodixie)", 10000032)
-        v_reg.addWidget(lbl_reg); v_reg.addWidget(self.combo_region); fl.addLayout(v_reg)
+        v_reg.addWidget(lbl_reg); v_reg.addWidget(self.combo_region); fl.addWidget(c_reg)
 
         # Categoría
-        v_cat = QVBoxLayout(); v_cat.setSpacing(2)
-        lbl_cat = QLabel("CATEGORÍA"); lbl_cat.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+        c_cat = QFrame(); c_cat.setObjectName("ContractsFilterCard")
+        v_cat = QVBoxLayout(c_cat); v_cat.setSpacing(1); v_cat.setContentsMargins(8, 6, 8, 6)
+        lbl_cat = QLabel("CATEGORÍA"); lbl_cat.setObjectName("ContractsFilterLabel")
         self.combo_category = QComboBox(); self.combo_category.addItem("Todas las categorías", "all")
         for cat in MARKET_CATEGORIES: self.combo_category.addItem(cat.name, cat.id)
-        v_cat.addWidget(lbl_cat); v_cat.addWidget(self.combo_category); fl.addLayout(v_cat)
+        v_cat.addWidget(lbl_cat); v_cat.addWidget(self.combo_category); fl.addWidget(c_cat)
 
         self.current_station_check = QCheckBox("Solo estación actual")
-        self.current_station_check.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
+        self.current_station_check.setObjectName("TacticalCheckbox")
         fl.addWidget(self.current_station_check)
 
         self.capital_min_spin = create_dspin("CAPITAL MIN", 0, 100000, 100, " M ISK")
@@ -201,26 +202,27 @@ class MarketContractsView(QWidget):
         self.scan_max_spin = create_spin("MAX CONTRATOS", 0, 10000, 10)
 
         self.exclude_no_price_check = QCheckBox("Excluir sin precio")
-        self.exclude_no_price_check.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
+        self.exclude_no_price_check.setObjectName("TacticalCheckbox")
         fl.addWidget(self.exclude_no_price_check)
 
         self.exclude_blueprints_check = QCheckBox("Excluir planos (BPO)")
-        self.exclude_blueprints_check.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
+        self.exclude_blueprints_check.setObjectName("TacticalCheckbox")
         fl.addWidget(self.exclude_blueprints_check)
 
         self.check_bpcs = QCheckBox("Excluir copias (BPC)")
+        self.check_bpcs.setObjectName("TacticalCheckbox")
         self.check_bpcs.setChecked(True)
-        self.check_bpcs.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
         fl.addWidget(self.check_bpcs)
 
         self.check_abyssal = QCheckBox("Excluir Abyssal/Mut")
-        self.check_abyssal.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 10px; border: none;")
+        self.check_abyssal.setObjectName("TacticalCheckbox")
         fl.addWidget(self.check_abyssal)
         
         # Disponibilidad
         v_avail = QVBoxLayout(); v_avail.setSpacing(2)
-        lbl_avail = QLabel("DISPONIBILIDAD"); lbl_avail.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; border: none;")
+        lbl_avail = QLabel("DISPONIBILIDAD"); lbl_avail.setObjectName("TacticalFilterLabel")
         self.availability_combo = QComboBox()
+        self.availability_combo.setObjectName("TacticalCombo")
         self.availability_combo.addItem("Públicos", "public")
         self.availability_combo.addItem("Corporación", "corporation")
         self.availability_combo.addItem("Alianza", "alliance")
@@ -235,18 +237,19 @@ class MarketContractsView(QWidget):
         self.btn_apply.clicked.connect(self.apply_filters_locally)
         
         self.btn_customize = QPushButton("PERSONALIZAR")
+        self.btn_customize.setObjectName("CustomizeButton")
+        self.btn_customize.setMinimumWidth(110)
         self.btn_customize.setFixedHeight(30)
         self.btn_customize.setCursor(Qt.PointingHandCursor)
-        self.btn_customize.setObjectName("SecondaryButton")
         self.btn_customize.clicked.connect(self.on_customize_clicked)
         
         fl.addWidget(self.btn_apply)
         fl.addWidget(self.btn_customize)
 
-        self.btn_reset = QPushButton("RESET")
+        self.btn_reset = QPushButton("REESTABLECER PARÁMETROS")
         self.btn_reset.setFixedHeight(25)
         self.btn_reset.setCursor(Qt.PointingHandCursor)
-        self.btn_reset.setStyleSheet(f"background-color: transparent; color: {Theme.TEXT_DIM}; font-size: 10px; font-weight: 800; border: 1px solid {Theme.BORDER};")
+        self.btn_reset.setObjectName("SecondaryButton")
         self.btn_reset.clicked.connect(self.reset_filters)
         fl.addWidget(self.btn_reset)
 
@@ -254,45 +257,39 @@ class MarketContractsView(QWidget):
 
         # Panel derecho: Contenido
         content_panel = QFrame()
-        content_panel.setStyleSheet("background: #000000; border: none;")
+        content_panel.setObjectName("ContractsContent")
         cl = QVBoxLayout(content_panel)
         cl.setContentsMargins(15, 15, 15, 15)
         cl.setSpacing(10)
 
         # Barra superior
-        header_l = QHBoxLayout()
+        header_frame = QFrame()
+        header_frame.setObjectName("ContractsActionBar")
+        header_l = QHBoxLayout(header_frame)
+        header_l.setContentsMargins(0, 0, 0, 0)
         header_title = QLabel("CONTRATOS")
-        header_title.setStyleSheet("color: #f1f5f9; font-size: 18px; font-weight: 900; letter-spacing: 1px;")
+        header_title.setObjectName("SectionTitle")
         header_l.addWidget(header_title)
         header_l.addStretch()
 
-        self.btn_clear = QPushButton("LIMPIAR")
+        self.btn_clear = QPushButton("LIMPIAR TABLA")
         self.btn_clear.setFixedHeight(35)
         self.btn_clear.setCursor(Qt.PointingHandCursor)
-        self.btn_clear.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: {Theme.TEXT_DIM}; font-size: 10px; font-weight: 800; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 0 15px; }} "
-            f"QPushButton:hover {{ background-color: {Theme.BG_PANEL_ALT}; color: {Theme.TEXT_MAIN}; }}"
-        )
+        self.btn_clear.setObjectName("SecondaryButton")
         self.btn_clear.clicked.connect(self.on_clear_clicked)
         header_l.addWidget(self.btn_clear)
 
-        self.btn_report = QPushButton("REPORTE")
+        self.btn_report = QPushButton("REPORTE TÉCNICO")
         self.btn_report.setFixedHeight(35)
         self.btn_report.setCursor(Qt.PointingHandCursor)
-        self.btn_report.setStyleSheet(
-            f"QPushButton {{ background-color: {Theme.BG_PANEL_ALT}; color: {Theme.NEUTRAL}; font-size: 10px; font-weight: 800; border: 1px solid {Theme.BORDER}; border-radius: 4px; padding: 0 15px; }} "
-            f"QPushButton:hover {{ background-color: {Theme.ACCENT_LOW}; color: {Theme.ACCENT}; }}"
-        )
+        self.btn_report.setObjectName("SecondaryButton")
         self.btn_report.clicked.connect(self.on_report_clicked)
         header_l.addWidget(self.btn_report)
 
-        self.btn_cancel = QPushButton("CANCELAR ESCANEO")
+        self.btn_cancel = QPushButton("CANCELAR OPERACIÓN")
         self.btn_cancel.setFixedHeight(35)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
-        self.btn_cancel.setStyleSheet(
-            f"QPushButton {{ background-color: {Theme.DANGER}; color: black; font-size: 10px; font-weight: 800; border-radius: 4px; padding: 0 15px; }} "
-            f"QPushButton:hover {{ background-color: {Theme.BG_PANEL_ALT}; color: {Theme.DANGER}; border: 1px solid {Theme.DANGER}; }}"
-        )
+        self.btn_cancel.setObjectName("DangerButton")
         self.btn_cancel.setVisible(False)
         self.btn_cancel.clicked.connect(self.on_cancel_clicked)
         header_l.addWidget(self.btn_cancel)
@@ -302,38 +299,35 @@ class MarketContractsView(QWidget):
         self.btn_scan.setCursor(Qt.PointingHandCursor)
         self.btn_scan.setContextMenuPolicy(Qt.CustomContextMenu)
         self.btn_scan.customContextMenuRequested.connect(self.on_scan_context_menu)
-        self.btn_scan.setStyleSheet(
-            "QPushButton { background-color: #3b82f6; color: white; font-size: 10px; font-weight: 900; border-radius: 4px; padding: 0 20px; } "
-            "QPushButton:hover { background-color: #2563eb; }"
-        )
+        self.btn_scan.setObjectName("RefreshButton")
         self.btn_scan.clicked.connect(self.on_scan_clicked)
         header_l.addWidget(self.btn_scan)
-
-        cl.addLayout(header_l)
+        cl.addWidget(header_frame)
 
         # Insights Widget
         self.insights_widget = QFrame()
         self.insights_widget.setFixedHeight(60)
-        self.insights_widget.setStyleSheet("background: #0f172a; border: 1px solid #1e293b; border-radius: 4px;")
+        self.insights_widget.setObjectName("ContractMetricCard")
         iw_l = QHBoxLayout(self.insights_widget)
         iw_l.setContentsMargins(10, 5, 10, 5)
 
-        def create_kpi(title, color="#f1f5f9"):
+        def create_kpi(title, color=None):
             v_l = QVBoxLayout()
             v_l.setSpacing(0)
             t = QLabel(title)
-            t.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800; border: none;")
+            t.setObjectName("ContractMetricTitle")
             v = QLabel("-")
-            v.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 900; border: none;")
+            v.setObjectName("ContractMetricValue")
+            if color: v.setObjectName(color)
             v_l.addWidget(t)
             v_l.addWidget(v)
             iw_l.addLayout(v_l)
             return v
 
         self.lbl_ins_scanned = create_kpi("ESCANEADOS")
-        self.lbl_ins_profit = create_kpi("CON PROFIT", "#10b981")
-        self.lbl_ins_roi = create_kpi("MEJOR ROI", "#3b82f6")
-        self.lbl_ins_top = create_kpi("TOP PROFIT", "#f59e0b")
+        self.lbl_ins_profit = create_kpi("CON PROFIT", "MetricValueSuccess")
+        self.lbl_ins_roi = create_kpi("MEJOR ROI", "MetricValueInfo")
+        self.lbl_ins_top = create_kpi("TOP PROFIT", "MetricValueWarning")
         cl.addWidget(self.insights_widget)
 
         # Progress Widget
@@ -342,20 +336,18 @@ class MarketContractsView(QWidget):
         pw_l = QHBoxLayout(self.progress_widget)
         pw_l.setContentsMargins(0, 0, 0, 0)
         self.status_label = QLabel("Preparando...")
-        self.status_label.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800;")
+        self.status_label.setObjectName("ModeLabel")
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(10)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(
-            "QProgressBar { border: 1px solid #1e293b; border-radius: 2px; background: #0f172a; } "
-            "QProgressBar::chunk { background-color: #3b82f6; border-radius: 1px; }"
-        )
+        self.progress_bar.setObjectName("SyncProgressBar")
         pw_l.addWidget(self.status_label)
         pw_l.addWidget(self.progress_bar, 1)
         cl.addWidget(self.progress_widget)
 
         # Results Table
         self.results_table = QTableWidget(0, 9)
+        self.results_table.setObjectName("ContractsTable")
         self.results_table.setHorizontalHeaderLabels([
             "#", "Items", "Coste", "Val. Jita Sell", "Val. Jita Buy", "Profit Neto", "ROI %", "Expira", "Score"
         ])
@@ -375,15 +367,13 @@ class MarketContractsView(QWidget):
         self.results_table.setSelectionMode(QTableWidget.SingleSelection)
         self.results_table.setShowGrid(False)
         self.results_table.verticalHeader().setVisible(False)
-        self.results_table.setStyleSheet(
-            "QTableWidget { background: #000000; color: #f1f5f9; border: 1px solid #1e293b; font-size: 10px; } "
-            "QHeaderView::section { background: #0f172a; color: #94a3b8; font-weight: 800; font-size: 9px; border: none; padding: 4px; } "
-            "QTableWidget::item:selected { background: #1e293b; }"
-        )
         self.results_table.cellClicked.connect(self.on_row_selected)
         self.results_table.cellDoubleClicked.connect(self.on_row_double_clicked)
         self.results_table.setSortingEnabled(True)
-        
+        from ui.common.table_layout_manager import restore_table_layout, connect_table_layout_persistence
+        restore_table_layout(self.results_table, "contracts_main_table")
+        connect_table_layout_persistence(self.results_table, "contracts_main_table")
+
         # Splitter para resizabilidad
         self.splitter = QSplitter(Qt.Vertical)
         
@@ -398,7 +388,7 @@ class MarketContractsView(QWidget):
         # Detail Frame
         self.detail_frame = QFrame()
         self.detail_frame.setVisible(False)
-        self.detail_frame.setStyleSheet("background: #0f172a; border: 1px solid #1e293b; border-radius: 4px;")
+        self.detail_frame.setObjectName("ContractsDetailPanel")
         dl = QVBoxLayout(self.detail_frame)
         dl.setContentsMargins(10, 10, 10, 10)
         dl.setSpacing(10)
@@ -411,25 +401,19 @@ class MarketContractsView(QWidget):
 
         dl_h1 = QHBoxLayout()
         self.lbl_det_title = QLabel("CONTRATO")
-        self.lbl_det_title.setStyleSheet("color: #f1f5f9; font-size: 14px; font-weight: 900; border: none;")
+        self.lbl_det_title.setObjectName("ContractsDetailTitle")
         dl_h1.addWidget(self.lbl_det_title)
         dl_h1.addStretch()
 
         self.btn_copy_id = QPushButton("COPIAR CONTRACT ID")
         self.btn_copy_id.setCursor(Qt.PointingHandCursor)
-        self.btn_copy_id.setStyleSheet(
-            "QPushButton { background: transparent; color: #64748b; font-weight: 800; font-size: 9px; border: 1px solid #334155; border-radius: 2px; padding: 2px 8px; } "
-            "QPushButton:hover { background: #1e293b; color: #f1f5f9; }"
-        )
+        self.btn_copy_id.setObjectName("SecondaryButton")
         self.btn_copy_id.clicked.connect(lambda: self.copy_contract_id(getattr(self, '_current_contract_id', 0)))
         dl_h1.addWidget(self.btn_copy_id)
-
+ 
         self.btn_open_game = QPushButton("ABRIR IN-GAME")
         self.btn_open_game.setCursor(Qt.PointingHandCursor)
-        self.btn_open_game.setStyleSheet(
-            "QPushButton { background: #3b82f6; color: white; font-weight: 800; font-size: 9px; border-radius: 2px; padding: 2px 8px; } "
-            "QPushButton:hover { background: #2563eb; }"
-        )
+        self.btn_open_game.setObjectName("PrimaryButton")
         self.btn_open_game.clicked.connect(self.on_open_in_game_clicked)
         dl_h1.addWidget(self.btn_open_game)
 
@@ -446,11 +430,12 @@ class MarketContractsView(QWidget):
         self.lbl_det_risk = QLabel()
         
         for l in [self.lbl_det_cost, self.lbl_det_sell, self.lbl_det_profit, self.lbl_det_roi, self.lbl_det_risk]:
-            l.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 700; border: none;")
+            l.setObjectName("DetailMetricValue")
             self.det_metrics_layout.addWidget(l)
         self.det_metrics_layout.addStretch()
 
         self.items_table = QTableWidget(0, 5)
+        self.items_table.setObjectName("MarketResultsTable")
         self.items_table.setHorizontalHeaderLabels(["Item", "Cant", "Precio Jita", "Valor", "% Total"])
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.items_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -463,11 +448,6 @@ class MarketContractsView(QWidget):
         self.items_table.setShowGrid(False)
         self.items_table.verticalHeader().setVisible(False)
         self.items_table.cellDoubleClicked.connect(self.on_item_double_clicked)
-        self.items_table.setStyleSheet(
-            "QTableWidget { background: #000000; color: #f1f5f9; border: none; font-size: 10px; } "
-            "QHeaderView::section { background: #1e293b; color: #64748b; font-weight: 800; font-size: 8px; border: none; padding: 2px; } "
-            "QTableWidget::item { border: none; }"
-        )
         dl.addWidget(self.items_table, 1)
 
         self.main_layout.addWidget(content_panel)
@@ -534,10 +514,16 @@ class MarketContractsView(QWidget):
         force_act.triggered.connect(lambda: self.on_scan_clicked(force_refresh=True))
         menu.exec_(self.btn_scan.mapToGlobal(pos))
 
+    def refresh_theme(self):
+        """Re-applies the current theme QSS to this view."""
+        self.setStyleSheet(Theme.get_qss("contracts"))
+        if hasattr(self, 'table'):
+            self.table.setStyleSheet(Theme.get_qss("contracts"))
+
     def on_customize_clicked(self):
         from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
         dialog = ThemeCustomizerDialog(view_scope="contracts", parent=self)
-        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("contracts")))
+        dialog.themeUpdated.connect(self.refresh_theme)
         dialog.exec()
 
     def on_scan_clicked(self, force_refresh=False):

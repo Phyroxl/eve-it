@@ -42,31 +42,38 @@ def load_market_filters() -> FilterConfig:
 
     try:
         data = json.loads(_MARKET_FILTERS_FILE.read_text(encoding='utf-8'))
+        
+        # Defensive Migration: if max_item_types is 1, it's likely a legacy bug value.
+        # We migrate it to 0 (no limit) unless the user specifically has 1 item in the file.
+        if data.get("max_item_types") == 1:
+            print("[MARKET CONFIG] Migrating legacy max_item_types=1 to 0 (No Limit)")
+            data["max_item_types"] = 0
         # Deprecated UI inputs: broker_fee_pct and sales_tax_pct are now sourced from ESI at scan time.
         # Values in the file are kept for backward compatibility but will be overridden by ESI.
         _defaults = FilterConfig()
         for _deprecated in ('broker_fee_pct', 'sales_tax_pct'):
             if _deprecated in data and data[_deprecated] != getattr(_defaults, _deprecated):
                 print(f"[MARKET CONFIG] deprecated UI setting loaded: {_deprecated}={data[_deprecated]} (will be overridden by ESI at scan time)")
+        _defaults = FilterConfig()
         return FilterConfig(
-            capital_max=data.get("capital_max", 500_000_000.0),
-            capital_min=data.get("capital_min", 0.0),
-            vol_min_day=data.get("vol_min_day", 20),
-            margin_min_pct=data.get("margin_min_pct", 5.0),
-            spread_max_pct=data.get("spread_max_pct", 40.0),
-            exclude_plex=data.get("exclude_plex", True),
-            broker_fee_pct=data.get("broker_fee_pct", 3.0),
-            sales_tax_pct=data.get("sales_tax_pct", 8.0),
-            score_min=data.get("score_min", 0.0),
-            risk_max=data.get("risk_max", 3),
-            buy_orders_min=data.get("buy_orders_min", 0),
-            sell_orders_min=data.get("sell_orders_min", 0),
-            history_days_min=data.get("history_days_min", 0),
-            profit_day_min=data.get("profit_day_min", 0.0),
-            profit_unit_min=data.get("profit_unit_min", 0.0),
-            require_buy_sell=data.get("require_buy_sell", False),
-            selected_category=data.get("selected_category", "Todos"),
-            max_item_types=data.get("max_item_types", 0),
+            capital_max=data.get("capital_max", _defaults.capital_max),
+            capital_min=data.get("capital_min", _defaults.capital_min),
+            vol_min_day=data.get("vol_min_day", _defaults.vol_min_day),
+            margin_min_pct=data.get("margin_min_pct", _defaults.margin_min_pct),
+            spread_max_pct=data.get("spread_max_pct", _defaults.spread_max_pct),
+            exclude_plex=data.get("exclude_plex", _defaults.exclude_plex),
+            broker_fee_pct=data.get("broker_fee_pct", _defaults.broker_fee_pct),
+            sales_tax_pct=data.get("sales_tax_pct", _defaults.sales_tax_pct),
+            score_min=data.get("score_min", _defaults.score_min),
+            risk_max=data.get("risk_max", _defaults.risk_max),
+            buy_orders_min=data.get("buy_orders_min", _defaults.buy_orders_min),
+            sell_orders_min=data.get("sell_orders_min", _defaults.sell_orders_min),
+            history_days_min=data.get("history_days_min", _defaults.history_days_min),
+            profit_day_min=data.get("profit_day_min", _defaults.profit_day_min),
+            profit_unit_min=data.get("profit_unit_min", _defaults.profit_unit_min),
+            require_buy_sell=data.get("require_buy_sell", _defaults.require_buy_sell),
+            selected_category=data.get("selected_category", _defaults.selected_category),
+            max_item_types=data.get("max_item_types", _defaults.max_item_types),
         )
     except Exception as e:
         print(f"Error cargando filtros: {e}")

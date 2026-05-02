@@ -3814,3 +3814,49 @@ Se ha estabilizado el mecanismo de **fallback de rejilla manual (SELL manual gri
 - [x] python -m pytest tests/test_theme_manager.py tests/test_market_command_view_imports.py
 - [x] Verificacin de persistencia en config/ui_theme_market_command.json
 
+
+## Sesión Actual — 2026-05-02
+### STATUS: CRITICAL FIX COMPLETED ?
+### OBJETIVO: Restaurar el arranque de la aplicación tras el commit 9f3c1d4
+
+### RESUMEN
+Se corrigió un crash crítico que impedía el inicio de la aplicación debido a errores de sintaxis en el generador de QSS y la falta de tokens heredados en el nuevo sistema de temas.
+
+### CAMBIOS REALIZADOS
+- **ui/common/theme_manager.py**:
+  - Se escaparon las llaves de CSS ({{ y }}) en las f-strings del método get_qss para evitar que Python intentara evaluar el código CSS como expresiones.
+  - Se restauraron los tokens BORDER, RADIUS, ACCENT_LOW y ACCENT_HOVER en DEFAULT_TOKENS para mantener compatibilidad con ui/desktop/styles.py.
+  - Se implementaron bloques 	ry-except en get_qss y load_theme para asegurar que el sistema sea resiliente a fallos y degrade a un estado seguro sin tumbar la aplicación.
+- **ui/desktop/styles.py**: Ahora carga correctamente al encontrar sus tokens requeridos.
+
+### PRUEBAS EJECUTADAS
+- **Compilación**: Todos los archivos modificados (ui/desktop/main_suite_window.py, ui/market_command/command_main.py, etc.) compilaron con éxito mediante py_compile.
+- **Startup Test**: Se creó y ejecutó 	ests/test_startup_fix.py, confirmando que QApplication, ThemeManager y MarketCommandMain se instancian correctamente.
+- **Validación de QSS**: Se verificó que get_qss() genera un estilo válido de más de 8000 caracteres.
+
+### NOTAS DE ESTABILIDAD
+El sistema de temas ahora es "fail-safe". Si el archivo de configuración está corrupto o falta algún token, la aplicación usará valores predeterminados seguros en lugar de cerrarse.
+
+
+## Sesin 44 - FEAT: Add 20 Preset Themes to Market Command - 2026-05-02
+### STATUS: COMPLETADO
+### FASE COMPLETADA: Customizer Presets
+### RESUMEN
+- Reestructurada arquitectura de temas moviendo el motor a ui/theme/.
+- Creado catlogo de 20 temas predefinidos en ui/theme/theme_presets.py inspirados en EVE Online.
+- Centralizados tokens y metadatos en ui/theme/theme_tokens.py.
+- Actualizado ThemeManager para soportar aplicacin de presets, persistencia de tema activo y recuperacin ante fallos.
+- Integrado el selector de temas en ThemeCustomizerDialog con previsualizacin dinmica.
+### FILES_CHANGED
+- ui/theme/theme_tokens.py (CREADO)
+- ui/theme/theme_presets.py (CREADO)
+- ui/theme/theme_manager.py (MOVIDO y ACTUALIZADO)
+- ui/common/theme.py
+- ui/common/theme_customizer_dialog.py
+- tests/test_theme_presets.py (CREADO)
+- tests/test_theme_manager.py
+- tests/test_app_startup_imports.py
+### CHECKS
+- [x] python -m pytest tests/test_theme_presets.py tests/test_theme_manager.py tests/test_app_startup_imports.py
+- [x] python -m py_compile ui/theme/*.py
+- [x] Verificacin de persistencia de active_preset

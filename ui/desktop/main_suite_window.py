@@ -1,11 +1,11 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFrame, QLabel, QPushButton, QStackedWidget,
-    QScrollArea, QGridLayout, QLineEdit, QCheckBox, 
+    QScrollArea, QGridLayout, QLineEdit, QCheckBox,
     QDoubleSpinBox, QComboBox, QFileDialog, QSpacerItem, QSizePolicy,
     QListWidget, QProgressBar
 )
-from PySide6.QtCore import Qt, QSize, QTimer, QSettings, QUrl
+from PySide6.QtCore import Qt, QSize, QTimer, QSettings, QUrl, QPoint
 from PySide6.QtGui import QColor, QIcon, QFont, QLinearGradient, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 import sys
@@ -15,29 +15,96 @@ from ui.desktop.styles import MAIN_STYLE
 from ui.desktop.components import AnimatedCard, IndustrialBadge, TelemetryChart
 from utils.formatters import format_isk
 
+
+class _TitleBar(QWidget):
+    """Custom frameless titlebar for MainSuiteWindow."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(28)
+        self.setObjectName("CustomTitleBar")
+        self.setStyleSheet("""
+            QWidget#CustomTitleBar {
+                background-color: #0b1016;
+                border-bottom: 1px solid #1e293b;
+            }
+            QLabel#TitleLabel {
+                color: #00c8ff;
+                font-size: 10px;
+                font-weight: 900;
+                letter-spacing: 2px;
+            }
+            QPushButton#TitleMinBtn, QPushButton#TitleCloseBtn {
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 3px;
+                color: #94a3b8;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton#TitleMinBtn:hover {
+                background-color: #1e293b;
+                color: #e2e8f0;
+            }
+            QPushButton#TitleCloseBtn:hover {
+                background-color: rgba(239, 68, 68, 0.2);
+                border-color: #ef4444;
+                color: #ef4444;
+            }
+        """)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 0, 6, 0)
+        lay.setSpacing(4)
+
+        self.lbl_title = QLabel("SALVA SUITE")
+        self.lbl_title.setObjectName("TitleLabel")
+        lay.addWidget(self.lbl_title)
+        lay.addStretch()
+
+        self.btn_min = QPushButton("−")
+        self.btn_min.setObjectName("TitleMinBtn")
+        self.btn_min.setFixedSize(20, 18)
+        self.btn_min.setCursor(Qt.PointingHandCursor)
+
+        self.btn_close = QPushButton("×")
+        self.btn_close.setObjectName("TitleCloseBtn")
+        self.btn_close.setFixedSize(20, 18)
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+
+        lay.addWidget(self.btn_min)
+        lay.addWidget(self.btn_close)
+
+        self._drag_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton and self._drag_pos is not None:
+            self.window().move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+
+
 class MainSuiteWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
         import logging
         self.diag_log = logging.getLogger('eve.suite.diag')
         self.diag_log.info("DIAG: Instanciando MainSuiteWindow...")
-        
+
         self.controller = controller
         self.tray_manager = None
-        self.setWindowTitle("EVE iT Elite Suite")
+        self.setWindowTitle("Salva Suite")
         # Tamaño fijo: el mínimo es igual al máximo
         self.setFixedSize(960, 680)
-        
-        # Configuración de flags: Mantener botones básicos pero quitar Maximizar
-        # Es necesario incluir CloseButton y MinimizeButton explícitamente con CustomizeWindowHint
-        self.setWindowFlags(
-            Qt.Window | 
-            Qt.CustomizeWindowHint | 
-            Qt.WindowTitleHint | 
-            Qt.WindowSystemMenuHint | 
-            Qt.WindowMinimizeButtonHint | 
-            Qt.WindowCloseButtonHint
-        )
+
+        # Frameless window — keep Qt.Window so taskbar icon is visible
+        self.setWindowFlag(Qt.FramelessWindowHint)
+        self.setWindowFlag(Qt.Window)
         
         self.account_cards = {}
         self.current_character = None 
@@ -72,14 +139,27 @@ class MainSuiteWindow(QMainWindow):
     def setup_ui(self):
         self.central_widget = QWidget(); self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget); self.main_layout.setContentsMargins(0, 0, 0, 0); self.main_layout.setSpacing(0)
-        
+        outer_layout = QVBoxLayout(self.central_widget)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Custom Titlebar
+        self._titlebar = _TitleBar(self)
+        self._titlebar.btn_min.clicked.connect(self.showMinimized)
+        self._titlebar.btn_close.clicked.connect(self._action_logoff)
+        outer_layout.addWidget(self._titlebar)
+
+        # Content area below titlebar
+        content_widget = QWidget()
+        self.main_layout = QHBoxLayout(content_widget); self.main_layout.setContentsMargins(0, 0, 0, 0); self.main_layout.setSpacing(0)
+        outer_layout.addWidget(content_widget, 1)
+
         # 1. Sidebar (Compact)
         self.nav_bar = QFrame(); self.nav_bar.setObjectName("NavBar")
         self.nav_bar.setFixedWidth(180)
         self.nav_l = QVBoxLayout(self.nav_bar); self.nav_l.setContentsMargins(0, 0, 0, 0); self.nav_l.setSpacing(0)
-        
-        self.logo = QLabel("EVE iT ELITE"); self.logo.setObjectName("LogoLabel"); self.logo.setAlignment(Qt.AlignCenter)
+
+        self.logo = QLabel("SALVA SUITE"); self.logo.setObjectName("LogoLabel"); self.logo.setAlignment(Qt.AlignCenter)
         self.nav_l.addWidget(self.logo)
         
         self.btn_dashboard = self.create_nav_button("Dashboard", True)
@@ -928,7 +1008,7 @@ class MainSuiteWindow(QMainWindow):
             if not hasattr(self, '_market_window') or self._market_window is None:
                 from ui.market_command.command_main import MarketCommandMain
                 self._market_window = MarketCommandMain()
-                self._market_window.setWindowTitle("EVE iT Market Command")
+                self._market_window.setWindowTitle("Salva Suite — Market Command")
                 self._market_window.resize(960, 700)
                 
                 # Standard window flags to avoid visibility issues
@@ -947,7 +1027,7 @@ class MainSuiteWindow(QMainWindow):
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
     def load_settings(self):
-        s = QSettings("EVE_iT", "Suite")
+        s = QSettings("SalvaSuite", "Suite")
         saved_dir = s.value("log_dir", "")
 
         # Si no hay directorio guardado, intentar auto-detección
@@ -990,7 +1070,7 @@ class MainSuiteWindow(QMainWindow):
             if idx >= 0: self.combo_translator_lang.setCurrentIndex(idx)
 
     def save_settings(self):
-        s = QSettings("EVE_iT", "Suite")
+        s = QSettings("SalvaSuite", "Suite")
         new_log_dir = self.edit_log_dir.text() if self.edit_log_dir else ""
         if self.edit_log_dir: s.setValue("log_dir", new_log_dir)
         if self.check_skip_logs: s.setValue("skip_logs", "true" if self.check_skip_logs.isChecked() else "false")
@@ -1020,7 +1100,7 @@ class MainSuiteWindow(QMainWindow):
         QTimer.singleShot(2000, lambda: self.section_title.setText("Configuración"))
     def closeEvent(self, event):
         try:
-            QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
+            QSettings("SalvaSuite", "Suite").setValue("geometry", self.saveGeometry())
         except Exception:
             pass
         event.ignore()
@@ -1028,7 +1108,7 @@ class MainSuiteWindow(QMainWindow):
     def restore_geometry(self):
         try:
             self.diag_log.info("DIAG: Restaurando geometría...")
-            s = QSettings("EVE_iT", "Suite")
+            s = QSettings("SalvaSuite", "Suite")
             geo = s.value("geometry")
             if geo:
                 self.restoreGeometry(geo)
@@ -1082,7 +1162,7 @@ class MainSuiteWindow(QMainWindow):
     def closeEvent(self, event):
         self.diag_log.info("DIAG: closeEvent detectado.")
         try:
-            QSettings("EVE_iT", "Suite").setValue("geometry", self.saveGeometry())
+            QSettings("SalvaSuite", "Suite").setValue("geometry", self.saveGeometry())
         except Exception:
             pass
         

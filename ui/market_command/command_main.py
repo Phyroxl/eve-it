@@ -24,7 +24,7 @@ class MarketCommandMain(QWidget):
             3: MarketContractsView,
         }
         self._view_names = {
-            0: "Modo Simple",
+            0: "Scan",
             1: "Performance",
             2: "Mis Pedidos",
             3: "Contratos",
@@ -53,7 +53,7 @@ class MarketCommandMain(QWidget):
         nav_layout.setContentsMargins(20, 0, 20, 0)
         nav_layout.setSpacing(10)
 
-        self.btn_simple = self.create_tab_button("MODO SIMPLE", True)
+        self.btn_simple = self.create_tab_button("SCAN", True)
         self.btn_performance = self.create_tab_button("PERFORMANCE")
         self.btn_my_orders = self.create_tab_button("MIS PEDIDOS")
         self.btn_contracts = self.create_tab_button("CONTRATOS")
@@ -81,7 +81,7 @@ class MarketCommandMain(QWidget):
 
         # Status Label inside Nav
         self.lbl_mode = QLabel("ANÁLISIS OPERATIVO")
-        self.lbl_mode.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800; letter-spacing: 1px;")
+        self.lbl_mode.setObjectName("ModeLabel")
         nav_layout.addWidget(self.lbl_mode)
 
         self.layout.addWidget(self.nav_frame)
@@ -103,17 +103,9 @@ class MarketCommandMain(QWidget):
 
     def on_auth_success(self, char_name, tokens):
         self.btn_sso.setText(f"● {char_name.upper()}")
-        self.btn_sso.setStyleSheet("""
-            QPushButton {
-                background: rgba(16, 185, 129, 0.1);
-                color: #10b981;
-                border: 1px solid rgba(16, 185, 129, 0.2);
-                border-radius: 4px;
-                font-size: 8px;
-                font-weight: 800;
-                padding: 4px 10px;
-            }
-        """)
+        self.btn_sso.setObjectName("CharacterBadge")
+        self.btn_sso.style().unpolish(self.btn_sso)
+        self.btn_sso.style().polish(self.btn_sso)
 
     def create_tab_button(self, text, active=False):
         btn = QPushButton(text)
@@ -150,13 +142,13 @@ class MarketCommandMain(QWidget):
             view = QWidget()
             err_layout = QVBoxLayout(view)
             err_lbl = QLabel(f"❌ Error al cargar {name}\n\n{str(e)}")
-            err_lbl.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: 800;")
+            err_lbl.setStyleSheet(f"color: {Theme.DANGER}; font-size: 12px; font-weight: 800;")
             err_lbl.setAlignment(Qt.AlignCenter)
             err_layout.addWidget(err_lbl)
 
             retry_btn = QPushButton("REINTENTAR CARGA")
             retry_btn.setFixedWidth(200)
-            retry_btn.setStyleSheet("background: #1e293b; color: #f1f5f9; padding: 10px; border-radius: 4px;")
+            retry_btn.setObjectName("SecondaryButton")
             retry_btn.clicked.connect(lambda: self.switch_view(index))
             err_layout.addWidget(retry_btn, 0, Qt.AlignCenter)
 
@@ -172,6 +164,9 @@ class MarketCommandMain(QWidget):
         self.stack.removeWidget(placeholder)
         self.stack.insertWidget(index, view)
         placeholder.deleteLater()
+
+        # Ensure newly loaded view has the correct theme
+        self.apply_market_theme()
 
         end_t = time.perf_counter()
         ms = (end_t - start_t) * 1000
@@ -228,3 +223,23 @@ class MarketCommandMain(QWidget):
             res = auth.try_restore_session()
             if res == "ok":
                 self.on_auth_success(auth.char_name, {})
+
+    def apply_market_theme(self):
+        """Applies current theme to root and all active views."""
+        try:
+            qss = Theme.get_qss("market_command")
+            self.setStyleSheet(qss)
+            _log.info("[THEME] Global market theme applied.")
+            
+            # Mapping index to internal view_scope
+            scope_map = {0: "simple", 1: "performance", 2: "my_orders", 3: "contracts"}
+            
+            # Refresh loaded views
+            for idx, view in self._views.items():
+                if view and hasattr(view, 'refresh_theme'):
+                    view.refresh_theme()
+                elif view:
+                    scope = scope_map.get(idx, "")
+                    view.setStyleSheet(Theme.get_qss(scope))
+        except Exception as e:
+            _log.error(f"[THEME] Failed to propagate theme: {e}")

@@ -10,7 +10,7 @@ import sys
 # Ensure root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ui.common.theme_manager import ThemeManager
+from ui.theme.theme_manager import ThemeManager
 from ui.common.theme import Theme
 
 @pytest.fixture

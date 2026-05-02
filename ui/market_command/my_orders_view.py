@@ -432,7 +432,7 @@ class InventoryAnalysisDialog(QDialog):
 
         total_val = sum(item.analysis.est_total_value for item in self.items)
         self.val_lbl = QLabel(format_isk(total_val))
-        self.val_lbl.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900;")
+        self.val_lbl.setObjectName("MetricValueSuccess")
         hl.addWidget(self.val_lbl)
 
         # Refresh button
@@ -496,7 +496,7 @@ class InventoryAnalysisDialog(QDialog):
 
             i_profit = NumericTableWidgetItem(format_isk(profit_t) if avg > 0 else "Sin registros", profit_t if avg > 0 else -1e18)
             if avg > 0:
-                i_profit.setForeground(QColor("#10b981" if profit_t >= 0 else "#ef4444"))
+                i_profit.setForeground(QColor(Theme.TABLE_PROFIT_POSITIVE if profit_t >= 0 else Theme.TABLE_PROFIT_NEGATIVE))
 
             pct = (a.est_total_value / total_val * 100) if total_val > 0 else 0
             i_pct = NumericTableWidgetItem(f"{pct:.1f}%", pct)
@@ -658,17 +658,15 @@ class TradeProfitsDialog(QDialog):
         layout.setSpacing(15)
         
         f_frame = QFrame()
-        f_frame.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 8px; border: 1px solid {Theme.BORDER};")
+        f_frame.setObjectName("TacticalPanel")
         fl = QHBoxLayout(f_frame)
         self.txt_filter = QLineEdit()
         self.txt_filter.setPlaceholderText("Filtrar por item...")
         self.txt_filter.setFixedWidth(200)
-        self.txt_filter.setStyleSheet(f"background:{Theme.BG_NAV}; color:{Theme.TEXT_MAIN}; padding:8px; border:1px solid {Theme.BORDER};")
         self.txt_filter.textChanged.connect(self.apply_filters)
         
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItems(["Todos los resultados", "Solo Ganancias", "Solo Pérdidas"])
-        self.cmb_mode.setStyleSheet(f"background:{Theme.BG_NAV}; color:{Theme.TEXT_MAIN}; padding:8px;")
         self.cmb_mode.currentIndexChanged.connect(self.apply_filters)
         
         self.btn_global = QPushButton("VISTA GLOBAL")
@@ -747,7 +745,7 @@ class TradeProfitsDialog(QDialog):
         
         # Contenedor del Gráfico + Iconos
         self.chart_container = QFrame()
-        self.chart_container.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 12px; border: 1px solid {Theme.BORDER};")
+        self.chart_container.setObjectName("AnalyticBox")
         chart_v = QVBoxLayout(self.chart_container)
         chart_v.setContentsMargins(10, 10, 10, 5)
         chart_v.setSpacing(0)
@@ -771,7 +769,7 @@ class TradeProfitsDialog(QDialog):
         # Panel de Ranking Lateral
         self.ranking_panel = QFrame()
         self.ranking_panel.setFixedWidth(260)
-        self.ranking_panel.setStyleSheet(f"background: {Theme.BG_PANEL}; border-radius: 12px; border: 1px solid {Theme.BORDER};")
+        self.ranking_panel.setObjectName("AnalyticBox")
         ranking_v = QVBoxLayout(self.ranking_panel)
         ranking_v.setContentsMargins(15, 15, 15, 15)
         
@@ -844,7 +842,7 @@ class TradeProfitsDialog(QDialog):
     def on_customize_clicked(self):
         from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
         dialog = ThemeCustomizerDialog(view_scope="my_orders", parent=self)
-        dialog.themeUpdated.connect(lambda: self.setStyleSheet(Theme.get_qss("my_orders")))
+        dialog.themeUpdated.connect(self.refresh_theme)
         dialog.exec()
 
     def toggle_global_view(self):
@@ -1215,6 +1213,7 @@ class TradeProfitsDialog(QDialog):
 class MarketMyOrdersView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("MyOrdersViewRoot")
         self.worker = None
         self.all_orders = []
         self.current_location_id = 0
@@ -1225,12 +1224,18 @@ class MarketMyOrdersView(QWidget):
         self.spinner_timer = QTimer(self)
         self.spinner_timer.timeout.connect(self._update_spinner)
         
+        AuthManager.instance().authenticated.connect(self.on_authenticated)
         self.setup_ui()
         self.load_layouts()
         self._init_diagnostics()
         self._initial_activation_done = False
         self._manual_login_requested = False
-        AuthManager.instance().authenticated.connect(self.on_authenticated)
+        
+    def refresh_theme(self):
+        """Re-applies the current theme QSS to this view."""
+        self.setStyleSheet(Theme.get_qss("my_orders"))
+        self.table_sell.setStyleSheet(Theme.get_qss("my_orders"))
+        self.table_buy.setStyleSheet(Theme.get_qss("my_orders"))
 
     def _init_diagnostics(self):
         self._orders_diag = {
@@ -1269,7 +1274,10 @@ class MarketMyOrdersView(QWidget):
         self.main_layout.setSpacing(12)
         
         # Header
-        header = QHBoxLayout()
+        header_frame = QFrame()
+        header_frame.setObjectName("MyOrdersActionBar")
+        header = QHBoxLayout(header_frame)
+        header.setContentsMargins(0, 0, 0, 0)
         title_v = QVBoxLayout()
         title_lbl = QLabel("MIS PEDIDOS")
         title_lbl.setObjectName("SectionTitle")
@@ -1277,9 +1285,9 @@ class MarketMyOrdersView(QWidget):
         status_h = QHBoxLayout()
         self.lbl_spinner = QLabel("")
         self.lbl_spinner.setFixedWidth(15)
-        self.lbl_spinner.setStyleSheet(f"color: {Theme.ACCENT}; font-weight: 900;")
+        self.lbl_spinner.setObjectName("ModeLabel")
         self.lbl_status = QLabel("● ESPERANDO SINCRONIZACIÓN")
-        self.lbl_status.setObjectName("StatusWarning")
+        self.lbl_status.setObjectName("ModeLabel")
         status_h.addWidget(self.lbl_spinner)
         status_h.addWidget(self.lbl_status)
         status_h.addStretch()
@@ -1290,23 +1298,25 @@ class MarketMyOrdersView(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(4)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(f"QProgressBar {{ background: {Theme.BG_PANEL_ALT}; border: none; }} QProgressBar::chunk {{ background: {Theme.ACCENT}; }}")
+        self.progress_bar.setObjectName("SyncProgressBar")
         self.progress_bar.hide()
         title_v.addWidget(self.progress_bar)
         
-        self.btn_repopulate = QPushButton("ACTUALIZAR")
-        self.btn_esi = QPushButton("VINCULAR ESI")
+        self.btn_repopulate = QPushButton("SINCRONIZAR ESI")
+        self.btn_repopulate.setObjectName("PrimaryButton")
         self.btn_inventory = QPushButton("INVENTARIO")
-        self.btn_trades = QPushButton("TRADE PROFITS")
+        self.btn_inventory.setObjectName("SecondaryButton")
+        self.btn_trades = QPushButton("TRANSACCIONES")
+        self.btn_trades.setObjectName("SecondaryButton")
+        self.btn_esi = QPushButton("ESI: ONLINE")
+        self.btn_esi.setObjectName("SecondaryButton")
+        self.btn_customize = QPushButton("PERSONALIZAR")
+        self.btn_customize.setObjectName("CustomizeButton")
         
-        for b in [self.btn_repopulate, self.btn_inventory, self.btn_trades, self.btn_esi]:
+        for b in [self.btn_repopulate, self.btn_inventory, self.btn_trades, self.btn_esi, self.btn_customize]:
             b.setCursor(Qt.PointingHandCursor)
             b.setFixedHeight(35)
-        
-        self.btn_esi.setStyleSheet(f"background-color: {Theme.ACCENT}; color: black; font-weight: 900;")
-        self.btn_inventory.setStyleSheet(f"background-color: {Theme.SUCCESS}; color: black; font-weight: 900;")
-        self.btn_trades.setStyleSheet(f"background-color: {Theme.BG_PANEL_ALT}; color: {Theme.TEXT_MAIN};")
-        self.btn_repopulate.setStyleSheet(f"background-color: {Theme.BG_PANEL_ALT}; color: {Theme.ACCENT}; border-color: {Theme.ACCENT};")
+            if b == self.btn_customize: b.setMinimumWidth(110)
         
         self.btn_repopulate.clicked.connect(self.do_sync)
         self.btn_inventory.clicked.connect(self.do_inventory)
@@ -1318,26 +1328,34 @@ class MarketMyOrdersView(QWidget):
         header.addWidget(self.btn_esi)
         header.addWidget(self.btn_inventory)
         header.addWidget(self.btn_trades)
+        header.addWidget(self.btn_customize)
         header.addWidget(self.btn_repopulate)
-        self.main_layout.addLayout(header)
+        self.main_layout.addWidget(header_frame)
 
         # Tablas
         self.lbl_sell = QLabel("ÓRDENES DE VENTA (0)")
-        self.lbl_sell.setStyleSheet(f"color: {Theme.DANGER}; font-weight: 900; font-size: 10px; letter-spacing: 0.5px;")
+        self.lbl_sell.setObjectName("ModeLabel")
         self.main_layout.addWidget(self.lbl_sell)
         
         self.table_sell = self.create_table(False)
+        self.table_sell.setObjectName("MyOrdersSellTable")
         self.main_layout.addWidget(self.table_sell, 1)
-        
+        from ui.common.table_layout_manager import restore_table_layout, connect_table_layout_persistence
+        restore_table_layout(self.table_sell, "my_orders_sell_table")
+        connect_table_layout_persistence(self.table_sell, "my_orders_sell_table")
+
         # Taxes bar
         self.setup_taxes_bar()
-        
+
         self.lbl_buy = QLabel("ÓRDENES DE COMPRA (0)")
-        self.lbl_buy.setStyleSheet(f"color: {Theme.ACCENT}; font-weight: 900; font-size: 10px; letter-spacing: 0.5px;")
+        self.lbl_buy.setObjectName("ModeLabel")
         self.main_layout.addWidget(self.lbl_buy)
-        
+
         self.table_buy = self.create_table(True)
+        self.table_buy.setObjectName("MyOrdersBuyTable")
         self.main_layout.addWidget(self.table_buy, 1)
+        restore_table_layout(self.table_buy, "my_orders_buy_table")
+        connect_table_layout_persistence(self.table_buy, "my_orders_buy_table")
 
         # Detail Panel
         self.detail_panel = QFrame()
@@ -1355,14 +1373,14 @@ class MarketMyOrdersView(QWidget):
     def setup_taxes_bar(self):
         self.taxes_bar = QFrame()
         self.taxes_bar.setFixedHeight(30)
-        self.taxes_bar.setStyleSheet(f"background-color: {Theme.BG_PANEL}; border-radius: 15px; border: 1px solid {Theme.BORDER};")
+        self.taxes_bar.setObjectName("MyOrdersTaxBar")
         l = QHBoxLayout(self.taxes_bar)
         l.setContentsMargins(15, 0, 15, 0)
         self.lbl_sales_tax = QLabel("SALES TAX: ---")
         self.lbl_broker_fee = QLabel("BROKER FEE: ---")
         self.lbl_tax_source = QLabel("FUENTE: ---")
         for lbl in [self.lbl_sales_tax, self.lbl_broker_fee, self.lbl_tax_source]:
-            lbl.setStyleSheet(f"color: {Theme.TEXT_DIM}; font-size: 8px; font-weight: 800; text-transform: uppercase;")
+            lbl.setObjectName("ModeLabel")
         l.addWidget(self.lbl_sales_tax)
         l.addSpacing(20)
         l.addWidget(self.lbl_broker_fee)
@@ -1372,31 +1390,34 @@ class MarketMyOrdersView(QWidget):
 
     def create_table(self, is_buy):
         t = QTableWidget(0, 11)
+        t.setObjectName("MarketResultsTable")
         t.setHorizontalHeaderLabels(["ÍTEM", "TIPO", "PRECIO", "PROMEDIO", "MEJOR", "TOTAL", "RESTO", "SPREAD", "MARGEN", "PROFIT", "ESTADO"])
         t.verticalHeader().setVisible(False)
         t.setSelectionBehavior(QAbstractItemView.SelectRows)
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        t.setStyleSheet("QTableWidget { background: #000000; color: white; border: 1px solid #1e293b; font-size: 10px; } QHeaderView::section { background: #1e293b; color: #94a3b8; font-weight: 800; border: none; }")
         t.horizontalHeader().setSectionsMovable(True)
         t.setIconSize(QSize(24, 24))
         t.setSortingEnabled(True)
         t.itemSelectionChanged.connect(self.on_selection_changed)
         t.itemDoubleClicked.connect(lambda i: self.on_double_click_item(i, t))
         return t
-
     def setup_detail_layout(self):
+        self.detail_panel.setObjectName("MarketDetailPanel")
         dl = QHBoxLayout(self.detail_panel)
         dl.setContentsMargins(15, 12, 15, 12)
         self.lbl_det_icon = QLabel()
+        self.lbl_det_icon.setObjectName("IconFrame")
         self.lbl_det_icon.setFixedSize(64, 64)
         dl.addWidget(self.lbl_det_icon)
         
         info_v = QVBoxLayout()
         self.lbl_det_item = QLabel("SELECCIONA UNA ORDEN")
         self.lbl_det_item.setFixedWidth(300)
-        self.lbl_det_item.setStyleSheet("color:#f1f5f9; font-size:14px; font-weight:900;")
+        self.lbl_det_item.setObjectName("MarketDetailTitle")
         self.lbl_det_type = QLabel("---")
+        self.lbl_det_type.setObjectName("DetailTagline")
         self.lbl_det_cost_msg = QLabel("---")
+        self.lbl_det_cost_msg.setObjectName("DetailTagline")
         info_v.addWidget(self.lbl_det_item)
         info_v.addWidget(self.lbl_det_type)
         info_v.addWidget(self.lbl_det_cost_msg)
@@ -1407,8 +1428,11 @@ class MarketMyOrdersView(QWidget):
         self.grid.setSpacing(10)
         def add_m(l, r, c):
             v = QVBoxLayout()
-            v.addWidget(QLabel(l, styleSheet="color:#475569; font-size:9px; font-weight:900;"))
-            val = QLabel("---", styleSheet="color:#f1f5f9; font-size:11px; font-weight:900;")
+            lbl = QLabel(l)
+            lbl.setObjectName("DetailMetricTitle")
+            v.addWidget(lbl)
+            val = QLabel("---")
+            val.setObjectName("DetailMetricValue")
             v.addWidget(val)
             self.grid.addLayout(v, r, c)
             return val
@@ -1576,9 +1600,10 @@ class MarketMyOrdersView(QWidget):
             # Logout
             auth.logout()
             self.btn_esi.setText("VINCULAR ESI")
-            self.btn_esi.setStyleSheet(self.btn_esi.styleSheet().replace("#1e293b", "#3b82f6"))
             self.lbl_status.setText("SESIÓN CERRADA")
-            self.lbl_status.setStyleSheet("color: #94a3b8;")
+            self.lbl_status.setObjectName("MetricValueInfo")
+            self.lbl_status.style().unpolish(self.lbl_status)
+            self.lbl_status.style().polish(self.lbl_status)
             self.all_orders = []
             self.table_sell.setRowCount(0)
             self.table_buy.setRowCount(0)
@@ -1587,6 +1612,12 @@ class MarketMyOrdersView(QWidget):
             self._manual_login_requested = True
             self.lbl_status.setText("INICIANDO SSO EN NAVEGADOR...")
             auth.login()
+
+    def on_customize_clicked(self):
+        from ui.common.theme_customizer_dialog import ThemeCustomizerDialog
+        dialog = ThemeCustomizerDialog(view_scope="my_orders", parent=self)
+        dialog.themeUpdated.connect(self.refresh_theme)
+        dialog.exec()
 
     def _load_icon_into_table_item(self, table, row, col, type_id, pixmap, generation, side=None, name=None):
         """Callback robusto para cargar iconos en las tablas de órdenes."""
@@ -1783,7 +1814,7 @@ class MarketMyOrdersView(QWidget):
                 _log.debug(f"[ORDERS ICON] Requesting {o.type_id} for row {r}")
             
             i_type = QTableWidgetItem("BUY" if o.is_buy_order else "SELL")
-            i_type.setForeground(QColor("#3b82f6" if o.is_buy_order else "#ef4444"))
+            i_type.setForeground(QColor(Theme.ACCENT if o.is_buy_order else Theme.DANGER))
             
             i_price = NumericTableWidgetItem(format_isk(o.price), o.price)
             if not o.is_buy_order and avg <= 0:
@@ -1798,9 +1829,9 @@ class MarketMyOrdersView(QWidget):
             i_ref = NumericTableWidgetItem(format_isk(ref_v) if ref_v > 0 and ref_v < 999999999999 else "---", ref_v)
             if not a.competitive and ref_v > 0:
                 # Si estamos superados, resaltar el precio mejor
-                i_ref.setForeground(QColor("#f59e0b"))
+                i_ref.setForeground(QColor(Theme.WARNING))
             elif a.competitive:
-                i_ref.setForeground(QColor("#10b981"))
+                i_ref.setForeground(QColor(Theme.SUCCESS))
             
             # TOTAL y RESTO
             i_tot = NumericTableWidgetItem(f"{o.volume_total:,}", o.volume_total)
@@ -1808,21 +1839,22 @@ class MarketMyOrdersView(QWidget):
             i_spr = NumericTableWidgetItem(f"{a.spread_pct:.1f}%", a.spread_pct)
             
             i_mar = NumericTableWidgetItem(f"{a.margin_pct:.1f}%", a.margin_pct)
-            if a.margin_pct > 15: i_mar.setForeground(QColor("#10b981"))
-            elif a.margin_pct < 0: i_mar.setForeground(QColor("#ef4444"))
+            if a.margin_pct > 10.0: i_mar.setForeground(QColor(Theme.TABLE_MARGIN_POSITIVE))
+            elif a.margin_pct >= 0.0: i_mar.setForeground(QColor(Theme.TABLE_MARGIN_WARNING))
+            else: i_mar.setForeground(QColor(Theme.TABLE_MARGIN_NEGATIVE))
             
             i_prof = NumericTableWidgetItem(format_isk(a.net_profit_total), a.net_profit_total)
-            if a.net_profit_total > 0: i_prof.setForeground(QColor("#10b981"))
-            elif a.net_profit_total < 0: i_prof.setForeground(QColor("#ef4444"))
+            if a.net_profit_total > 0: i_prof.setForeground(QColor(Theme.TABLE_PROFIT_POSITIVE))
+            elif a.net_profit_total < 0: i_prof.setForeground(QColor(Theme.TABLE_PROFIT_NEGATIVE))
             
             i_state = SemanticTableWidgetItem(a.state.upper())
             s_low = a.state.lower()
             if any(x in s_low for x in ["liderando", "competitiva", "sana", "rentable"]):
-                i_state.setForeground(QColor("#10b981"))
+                i_state.setForeground(QColor(Theme.SUCCESS))
             elif "superada" in s_low or "ajustado" in s_low:
-                i_state.setForeground(QColor("#f59e0b"))
+                i_state.setForeground(QColor(Theme.WARNING))
             elif any(x in s_low for x in ["pérdida", "no rentable", "fuera"]):
-                i_state.setForeground(QColor("#ef4444"))
+                i_state.setForeground(QColor(Theme.DANGER))
             
             items = [i_name, i_type, i_price, i_avg, i_ref, i_tot, i_rem, i_spr, i_mar, i_prof, i_state]
             for i, it in enumerate(items):
@@ -1856,7 +1888,7 @@ class MarketMyOrdersView(QWidget):
         self.lbl_det_item.setText(elided)
 
         self.lbl_det_type.setText("COMPRA" if o.is_buy_order else "VENTA")
-        self.lbl_det_type.setStyleSheet("color:#3b82f6;" if o.is_buy_order else "color:#ef4444;")
+        self.lbl_det_type.setStyleSheet(f"color:{Theme.ACCENT};" if o.is_buy_order else f"color:{Theme.DANGER};")
         
         def on_det_icon_ready(pixmap, tid=o.type_id):
             if getattr(self, "_selected_detail_type_id", None) == tid:
@@ -1891,30 +1923,30 @@ class MarketMyOrdersView(QWidget):
             pass
 
         self.lbl_det_cost_msg.setText(f"{a.state} | ID: {o.order_id}{manip_warn}")
-        manip_color = "#f59e0b" if manip_warn else "#64748b"
+        manip_color = Theme.WARNING if manip_warn else Theme.TEXT_DIM
         self.lbl_det_cost_msg.setStyleSheet(f"color:{manip_color}; font-size:9px;")
 
         _FMT = "font-size:11px; font-weight:900;"
         self.det_price.setText(format_isk(o.price))
-        self.det_price.setStyleSheet(f"color:#f1f5f9; {_FMT}")
+        self.det_price.setStyleSheet(f"color:{Theme.TEXT_MAIN}; {_FMT}")
 
         self.det_avg.setText(format_isk(avg) if avg > 0 else "---")
-        self.det_avg.setStyleSheet(f"color:#94a3b8; {_FMT}")
+        self.det_avg.setStyleSheet(f"color:{Theme.TEXT_DIM}; {_FMT}")
 
         self.det_best_buy.setText(format_isk(a.best_buy))
-        self.det_best_buy.setStyleSheet(f"color:#60a5fa; {_FMT}")  # blue — buy
+        self.det_best_buy.setStyleSheet(f"color:{Theme.ACCENT}; {_FMT}")  # blue — buy
 
         self.det_best_sell.setText(format_isk(a.best_sell))
-        self.det_best_sell.setStyleSheet(f"color:#86efac; {_FMT}")  # light-green — sell
+        self.det_best_sell.setStyleSheet(f"color:{Theme.TABLE_MARGIN_POSITIVE}; {_FMT}")  # light-green — sell
 
         margin = a.margin_pct
         self.det_margin.setText(f"{margin:.1f}%")
-        if margin >= 15:
-            margin_color = "#10b981"
-        elif margin >= 5:
-            margin_color = "#f59e0b"
+        if margin >= 10.0:
+            margin_color = Theme.TABLE_MARGIN_POSITIVE
+        elif margin >= 0.0:
+            margin_color = Theme.TABLE_MARGIN_WARNING
         else:
-            margin_color = "#ef4444"
+            margin_color = Theme.TABLE_MARGIN_NEGATIVE
         self.det_margin.setStyleSheet(f"color:{margin_color}; {_FMT}")
 
         profit_u = a.net_profit_per_unit
@@ -1923,18 +1955,18 @@ class MarketMyOrdersView(QWidget):
 
         profit_t = a.net_profit_total
         self.det_profit_t.setText(format_isk(profit_t))
-        self.det_profit_t.setStyleSheet(f"color:{'#10b981' if profit_t >= 0 else '#ef4444'}; {_FMT}")
+        self.det_profit_t.setStyleSheet(f"color:{Theme.TABLE_PROFIT_POSITIVE if profit_t >= 0 else Theme.TABLE_PROFIT_NEGATIVE}; {_FMT}")
 
         state_upper = a.state.upper()
         self.det_state.setText(state_upper)
         if "LIDER" in state_upper:
-            state_color = "#10b981"   # green
+            state_color = Theme.SUCCESS   # green
         elif "SUPERA" in state_upper:
-            state_color = "#ef4444"   # red
+            state_color = Theme.DANGER    # red
         elif "ACTIV" in state_upper:
-            state_color = "#f59e0b"   # amber
+            state_color = Theme.WARNING   # amber
         else:
-            state_color = "#94a3b8"   # neutral
+            state_color = Theme.TEXT_DIM   # neutral
         self.det_state.setStyleSheet(f"color:{state_color}; {_FMT}")
 
     # ------------------------------------------------------------------

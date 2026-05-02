@@ -54,7 +54,7 @@ class ItemInteractionHelper:
                         success = True
                         msg = f"Mercado in-game abierto: {item_name}"
                         log.info(msg)
-                        if feedback_callback: feedback_callback(msg, "#34d399") # Verde
+                        if feedback_callback: feedback_callback(msg, Theme.SUCCESS)
                     else:
                         error_msg = "Error ESI al abrir mercado (¿Sesión expirada?)"
             except Exception as e:
@@ -68,7 +68,7 @@ class ItemInteractionHelper:
             
             final_msg = f"Mercado no disponible ({error_msg}). Nombre copiado."
             log.warning(final_msg)
-            if feedback_callback: feedback_callback(final_msg, "#f87171") # Rojo
+            if feedback_callback: feedback_callback(final_msg, Theme.DANGER)
         
         return success
 
@@ -83,7 +83,7 @@ class ItemInteractionHelper:
         
         if not token:
             msg = "ESI no autenticado o sesión expirada. Reautoriza el personaje."
-            if feedback_callback: feedback_callback(msg, "#f87171")
+            if feedback_callback: feedback_callback(msg, Theme.DANGER)
             return False
 
         res = esi_client.open_contract_window(contract_id, token)
@@ -97,13 +97,13 @@ class ItemInteractionHelper:
             return False
         elif res is True:
             msg = f"Contrato {contract_id} abierto in-game"
-            if feedback_callback: feedback_callback(msg, "#34d399")
+            if feedback_callback: feedback_callback(msg, Theme.SUCCESS)
             return True
         else:
             msg = "Error al abrir contrato (¿Estás logueado en el juego?). ID copiado."
             from PySide6.QtWidgets import QApplication
             QApplication.clipboard().setText(str(contract_id))
-            if feedback_callback: feedback_callback(msg, "#f87171")
+            if feedback_callback: feedback_callback(msg, Theme.DANGER)
             return False
 
 class MarketTableWidget(QTableWidget):
@@ -154,36 +154,7 @@ class MarketTableWidget(QTableWidget):
         from PySide6.QtCore import QSize
         self.setIconSize(QSize(32, 32))
         
-        self.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {Theme.BG_PANEL};
-                border: 1px solid {Theme.BORDER};
-                border-radius: {Theme.RADIUS};
-                color: {Theme.TEXT_MAIN};
-                gridline-color: transparent;
-                font-size: 11px;
-            }}
-            QTableWidget::item {{
-                padding: 4px;
-                border-bottom: 1px solid {Theme.BORDER};
-            }}
-            QTableWidget::item:selected {{
-                background-color: {Theme.ACCENT_LOW};
-                color: white;
-                border-left: 2px solid {Theme.ACCENT};
-            }}
-            QHeaderView::section {{
-                background-color: {Theme.BG_NAV};
-                color: {Theme.TEXT_DIM};
-                padding: 6px;
-                border: none;
-                border-bottom: 1px solid {Theme.BORDER};
-                font-weight: 800;
-                font-size: 9px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-        """)
+        self.setObjectName("MarketResultsTable")
         
         self.icon_service = EveIconService.instance()
         self._image_generation = 0
@@ -222,18 +193,7 @@ class MarketTableWidget(QTableWidget):
             type_id = self.item(row, 1).data(Qt.UserRole)
             
             menu = QMenu(self)
-            menu.setStyleSheet(f"""
-                QMenu {{ 
-                    background-color: {Theme.BG_PANEL}; 
-                    color: {Theme.TEXT_MAIN}; 
-                    border: 1px solid {Theme.ACCENT}; 
-                    padding: 4px;
-                }} 
-                QMenu::item:selected {{ 
-                    background-color: {Theme.ACCENT_LOW}; 
-                    color: {Theme.ACCENT};
-                }}
-            """)
+            menu.setObjectName("ContextMenu")
             copy_action = menu.addAction(f"Copiar Nombre: {item_name}")
             
             action = menu.exec(self.viewport().mapToGlobal(event.pos()))
@@ -286,7 +246,9 @@ class MarketTableWidget(QTableWidget):
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
             score.setTextAlignment(Qt.AlignCenter)
-            score.setForeground(QColor(Theme.SUCCESS) if score_val > 70 else (QColor(Theme.WARNING) if score_val > 40 else QColor(Theme.DANGER)))
+            if score_val > 70: score.setForeground(QColor(Theme.TABLE_SCORE_HIGH))
+            elif score_val > 40: score.setForeground(QColor(Theme.TABLE_SCORE_MEDIUM))
+            else: score.setForeground(QColor(Theme.TABLE_SCORE_LOW))
             score.setFont(QFont("Arial", 10, QFont.Bold))
             
             vol_val = opp.liquidity.volume_5d
@@ -296,15 +258,22 @@ class MarketTableWidget(QTableWidget):
             margin_val = opp.margin_net_pct
             margin = CustomTableWidgetItem(f"{margin_val:.1f}%", margin_val)
             margin.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if margin_val > 15: margin.setForeground(QColor(Theme.SUCCESS))
+            if margin_val > 10.0: 
+                margin.setForeground(QColor(Theme.TABLE_MARGIN_POSITIVE))
+            elif margin_val >= 0.0: 
+                margin.setForeground(QColor(Theme.TABLE_MARGIN_WARNING))
+            else: 
+                margin.setForeground(QColor(Theme.TABLE_MARGIN_NEGATIVE))
             
             profit_val = opp.profit_per_unit
             profit = CustomTableWidgetItem(f"{profit_val:,.2f}", profit_val)
             profit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if profit_val > 0:
-                profit.setForeground(QColor(Theme.SUCCESS))
+                profit.setForeground(QColor(Theme.TABLE_PROFIT_POSITIVE))
             elif profit_val < 0:
-                profit.setForeground(QColor(Theme.DANGER))
+                profit.setForeground(QColor(Theme.TABLE_PROFIT_NEGATIVE))
+            else:
+                profit.setForeground(QColor(Theme.TABLE_PROFIT_NEUTRAL))
             
             spread_val = opp.spread_pct
             spread = CustomTableWidgetItem(f"{spread_val:.1f}%", spread_val)
@@ -316,7 +285,7 @@ class MarketTableWidget(QTableWidget):
             # Formatear etiquetas como [RÁPIDA] [SÓLIDA]
             tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
             tags_item = QTableWidgetItem(tags_str)
-            tags_item.setForeground(QColor(Theme.ACCENT))
+            tags_item.setForeground(QColor(Theme.TABLE_TAGS_TEXT))
             tags_item.setFont(QFont("Segoe UI", 8, QFont.Bold))
             
             # Alineaciones generales
@@ -428,7 +397,9 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             score_val = opp.score_breakdown.final_score if opp.score_breakdown else 0.0
             score = CustomTableWidgetItem(f"{score_val:.1f}", score_val)
             score.setTextAlignment(Qt.AlignCenter)
-            score.setForeground(QColor(Theme.SUCCESS) if score_val > 70 else (QColor(Theme.WARNING) if score_val > 40 else QColor(Theme.DANGER)))
+            if score_val > 70: score.setForeground(QColor(Theme.TABLE_SCORE_HIGH))
+            elif score_val > 40: score.setForeground(QColor(Theme.TABLE_SCORE_MEDIUM))
+            else: score.setForeground(QColor(Theme.TABLE_SCORE_LOW))
             score.setFont(QFont("Arial", 10, QFont.Bold))
             
             # 3. Vol
@@ -440,20 +411,25 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             margin_val = opp.margin_net_pct
             margin = CustomTableWidgetItem(f"{margin_val:.1f}%", margin_val)
             margin.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if margin_val > 15: margin.setForeground(QColor(Theme.SUCCESS))
+            if margin_val > 10.0: 
+                margin.setForeground(QColor(Theme.TABLE_MARGIN_POSITIVE))
+            elif margin_val >= 0.0: 
+                margin.setForeground(QColor(Theme.TABLE_MARGIN_WARNING))
+            else: 
+                margin.setForeground(QColor(Theme.TABLE_MARGIN_NEGATIVE))
             
             # 5. Profit/U
             pu_val = opp.profit_per_unit
             pu = CustomTableWidgetItem(f"{pu_val:,.2f}", pu_val)
             pu.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if pu_val > 0: pu.setForeground(QColor(Theme.SUCCESS))
-            elif pu_val < 0: pu.setForeground(QColor(Theme.DANGER))
+            if pu_val > 0: pu.setForeground(QColor(Theme.TABLE_PROFIT_POSITIVE))
+            elif pu_val < 0: pu.setForeground(QColor(Theme.TABLE_PROFIT_NEGATIVE))
             
             # 6. Profit/Día
             pd_val = opp.profit_day_est
             pd = CustomTableWidgetItem(f"{pd_val:,.0f}", pd_val)
             pd.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if pd_val > 0: pd.setForeground(QColor(Theme.SUCCESS))
+            if pd_val > 0: pd.setForeground(QColor(Theme.TABLE_PROFIT_POSITIVE))
             
             # 7. Spread
             spread_val = opp.spread_pct
@@ -482,7 +458,7 @@ class AdvancedMarketTableWidget(MarketTableWidget):
             # 12. Tags
             tags_str = " ".join([f"[{t.upper()}]" for t in opp.tags])
             tags_item = QTableWidgetItem(tags_str)
-            tags_item.setForeground(QColor(Theme.ACCENT))
+            tags_item.setForeground(QColor(Theme.TABLE_TAGS_TEXT))
             tags_item.setFont(QFont("Segoe UI", 8, QFont.Bold))
 
             self.setItem(row, 0, rank)

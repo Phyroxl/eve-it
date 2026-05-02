@@ -129,7 +129,7 @@ def main():
         sys.exit(0)
 
     log = setup_logging()
-    log.info("--- INICIANDO EVE iT ELITE ---")
+    log.info("--- INICIANDO SALVA SUITE ---")
 
     from PySide6.QtWidgets import QApplication, QSplashScreen
     from PySide6.QtGui import QPixmap, QColor
@@ -147,7 +147,7 @@ def main():
 
     if os.name == 'nt':
         import ctypes
-        myappid = 'EVEiT.EliteSuite.v1'
+        myappid = 'SalvaSuite.v1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     # --- Pantalla de Carga (Splash) ---
@@ -155,7 +155,15 @@ def main():
     if splash_pix.isNull():
         splash_pix = QPixmap(600, 400)
         splash_pix.fill(QColor("#000000"))
-        
+
+    if not splash_pix.isNull():
+        orig_w = splash_pix.width()
+        orig_h = splash_pix.height()
+        splash_pix = splash_pix.scaled(
+            int(orig_w * 0.6), int(orig_h * 0.6),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+
     splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
     splash.show()
     
@@ -216,7 +224,7 @@ def main():
     if _suite_window_ref:
         _suite_window_ref.showMinimized()
     
-    log.info("Cerrando EVE iT Elite...")
+    log.info("Cerrando Salva Suite...")
     _play_sound("logoff")
     
     # [NUEVO] Purga de Configuración del Replicador (Evitar datos residuales corruptos)
@@ -240,7 +248,7 @@ def main():
 
 def _auto_start(controller, tray, suite_win, ctrl_win, log):
     from PySide6.QtCore import QSettings
-    s = QSettings("EVE_iT", "Suite")
+    s = QSettings("SalvaSuite", "Suite")
 
     # 1. Cargar Log Dir guardado si existe y es válido
     saved_log_dir = s.value("log_dir", "")

@@ -2,6 +2,8 @@
 Pure pricing functions for Quick Order Update.
 No Qt, no ESI, no side effects.
 """
+import logging as _logging
+_buy_profit_log = _logging.getLogger("eve.market_order_pricing")
 
 _NO_COMPETITOR = 0.0
 _SENTINEL_MIN = 0.0
@@ -163,6 +165,35 @@ def build_order_update_recommendation(order, analysis) -> dict:
             if not action_needed
             else f"Subir a {recommended_price:,.2f} ISK para superar competidor"
         )
+        # BUY profit diagnostic — uses best competitor buy as effective cost reference
+        try:
+            best_buy_excl_own = competitor_price  # competitor_price already excludes own order
+            effective_buy_cost = recommended_price  # price we would pay to lead market
+            sales_tax_pct = getattr(analysis, "sales_tax_pct", 0.0) if analysis else 0.0
+            broker_fee_pct = getattr(analysis, "broker_fee_pct", 0.0) if analysis else 0.0
+            s_tax = sales_tax_pct / 100.0
+            b_fee = broker_fee_pct / 100.0
+            profit_per_unit = (
+                best_sell * (1.0 - s_tax - b_fee) - effective_buy_cost * (1.0 + b_fee)
+                if best_sell > 0 else 0.0
+            )
+            vol_remain = getattr(order, "volume_remain", 1) or 1
+            profit_total = profit_per_unit * vol_remain
+            state = getattr(analysis, "state", "N/A") if analysis else "N/A"
+            type_id = getattr(order, "type_id", 0)
+            item_name = getattr(order, "item_name", "")
+            own_order_id = getattr(order, "order_id", 0)
+            _buy_profit_log.info(
+                f"[BUY PROFIT DEBUG] type_id={type_id} item={item_name!r} "
+                f"order_id={own_order_id} own_price={my_price:.2f} "
+                f"best_buy_excluding_own={best_buy_excl_own:.2f} "
+                f"effective_buy_cost_used={effective_buy_cost:.2f} "
+                f"best_sell={best_sell:.2f} sales_tax_pct={sales_tax_pct} "
+                f"broker_fee_pct={broker_fee_pct} profit_per_unit={profit_per_unit:.2f} "
+                f"profit_total={profit_total:.2f} state={state!r}"
+            )
+        except Exception as _e:
+            _buy_profit_log.debug(f"[BUY PROFIT DEBUG] diagnostic failed: {_e}")
     else:
         recommended_price = recommend_sell_price(competitor_price)
         already_best = analysis.competitive if analysis else False
