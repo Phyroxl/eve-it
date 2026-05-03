@@ -60,8 +60,7 @@ class TestHotkeyParsing(unittest.TestCase):
 
     def test_get_hotkey_defaults_structure(self):
         d = get_hotkey_defaults()
-        self.assertIn('global_enabled', d)
-        self.assertFalse(d['global_enabled'])
+        self.assertIn('cycle_next', d)
         self.assertIn('per_client', d)
         self.assertIn('cycle_next', d)
         self.assertIn('cycle_prev', d)

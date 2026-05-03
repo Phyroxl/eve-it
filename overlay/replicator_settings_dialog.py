@@ -101,7 +101,7 @@ class ReplicatorSettingsDialog(QDialog):
         self.setWindowTitle(f"Ajustes — {overlay._title}")
         self.setMinimumWidth(440)
         self.setStyleSheet(_STYLE)
-        flags = Qt.WindowType.Tool if hasattr(Qt, 'WindowType') else Qt.Tool
+        flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setWindowFlags(flags | (Qt.WindowType.WindowCloseButtonHint
                                      if hasattr(Qt, 'WindowType') else Qt.WindowCloseButtonHint))
         self._build_ui()
@@ -389,7 +389,7 @@ class ReplicatorSettingsDialog(QDialog):
                     pass
             lbl_layout_status.setText(f"Layout copiado a {len(peers)} replica(s).")
 
-        btn_copy_layout = QPushButton("Copiar layout a todas")
+        btn_copy_layout = QPushButton("Replicar layout")
         btn_copy_layout.setObjectName("green")
         btn_copy_layout.clicked.connect(_copy_layout_all)
         lay.addWidget(btn_copy_layout)
@@ -568,17 +568,7 @@ class ReplicatorSettingsDialog(QDialog):
         from overlay.replicator_config import get_hotkeys_cfg, save_hotkeys_cfg
         hk = get_hotkeys_cfg(self._ov._cfg)
 
-        _section(lay, "HOTKEYS GLOBALES")
-
-        le_next = QLineEdit(hk.get('cycle_next', {}).get('combo', 'F14'))
-        le_next.setPlaceholderText("Ej: F14")
-        _row(lay, "Siguiente cliente:", le_next)
-
-        le_prev = QLineEdit(hk.get('cycle_prev', {}).get('combo', 'CTRL+F14'))
-        le_prev.setPlaceholderText("Ej: CTRL+F14")
-        _row(lay, "Ventana anterior:", le_prev)
-
-        _section(lay, "GRUPOS DE CICLO")
+        _section(lay, "GRUPO DE CICLO")
         
         group_row = QHBoxLayout()
         cmb_group = QComboBox()
@@ -677,8 +667,8 @@ class ReplicatorSettingsDialog(QDialog):
         def _save_all_hk():
             from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
             from overlay.replication_overlay import _OVERLAY_REGISTRY
-            hk.setdefault('cycle_next', {})['combo'] = le_next.text().strip().upper()
-            hk.setdefault('cycle_prev', {})['combo'] = le_prev.text().strip().upper()
+            # Save groups logic is handled per-group in _save_current_group, 
+            # but we still save the master hk config here if needed.
             save_hotkeys_cfg(self._ov._cfg, hk)
             def _get_titles():
                 return [ov._title for ov in list(_OVERLAY_REGISTRY)]

@@ -407,10 +407,19 @@ class ReplicationOverlay(QWidget):
         menu.exec(event.globalPos())
 
     def _open_settings(self):
+        if hasattr(self, "_settings_dialog") and self._settings_dialog and self._settings_dialog.isVisible():
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            return
         try:
             from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
             dlg = ReplicatorSettingsDialog(self)
-            dlg.exec()
+            dlg.setModal(False)
+            dlg.setWindowModality(Qt.WindowModality.NonModal if hasattr(Qt.WindowModality, 'NonModal') else Qt.NonModal)
+            self._settings_dialog = dlg
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
         except Exception as e:
             logger.error(f"Error abriendo ajustes: {e}")
 
