@@ -13,6 +13,7 @@ OVERLAY_DEFAULTS = {
     'w': 280, 'h': 200,
     'opacity': 1.0,
     'locked': False,
+    'maintain_aspect': True,
     # Task 4 — visibility behaviour
     'always_on_top': True,
     'hide_when_inactive': False,
@@ -144,4 +145,78 @@ def apply_common_settings_to_all(cfg, source_title: str,
                 ov_data[k] = source[k]
         if include_client_color and 'client_color' in source:
             ov_data['client_color'] = source['client_color']
+    save_config(cfg)
+
+
+# Keys copied when user clicks "apply general settings to all"
+GENERAL_COPY_KEYS = [
+    'always_on_top', 'hide_when_inactive', 'locked',
+    'highlight_active',
+]
+
+# Keys stored in a layout profile
+LAYOUT_PROFILE_KEYS = [
+    'w', 'h', 'maintain_aspect',
+    'snap_enabled', 'snap_x', 'snap_y',
+    'fps', 'opacity', 'label_visible', 'border_visible',
+]
+
+_DEFAULT_LAYOUT_PROFILE = {
+    'w': 280, 'h': 200, 'maintain_aspect': True,
+    'snap_enabled': False, 'snap_x': 20, 'snap_y': 20,
+    'fps': 30, 'opacity': 1.0, 'label_visible': True, 'border_visible': True,
+}
+
+_HOTKEY_DEFAULTS = {
+    'global_enabled': False,
+    'per_client': {},
+    'cycle_next': {'combo': ''},
+    'cycle_prev': {'combo': ''},
+}
+
+
+def get_layout_profiles(cfg: dict) -> dict:
+    profiles = cfg.get('layout_profiles', {})
+    if not profiles:
+        profiles = {'Default': _DEFAULT_LAYOUT_PROFILE.copy()}
+    return profiles
+
+
+def save_layout_profile(cfg: dict, name: str, data: dict):
+    cfg.setdefault('layout_profiles', {})
+    cfg['layout_profiles'][name] = {k: data[k] for k in LAYOUT_PROFILE_KEYS if k in data}
+    save_config(cfg)
+
+
+def delete_layout_profile(cfg: dict, name: str):
+    cfg.get('layout_profiles', {}).pop(name, None)
+    if cfg.get('active_layout_profile') == name:
+        cfg['active_layout_profile'] = 'Default'
+    save_config(cfg)
+
+
+def get_active_layout_profile(cfg: dict) -> tuple:
+    """Returns (name, profile_dict)."""
+    profiles = get_layout_profiles(cfg)
+    name = cfg.get('active_layout_profile', 'Default')
+    if name not in profiles:
+        name = next(iter(profiles), 'Default')
+    return name, profiles.get(name, _DEFAULT_LAYOUT_PROFILE.copy())
+
+
+def apply_layout_profile_to_ov_cfg(ov_cfg: dict, profile: dict):
+    """Copy profile keys into an overlay config dict (does NOT touch x/y)."""
+    for k in LAYOUT_PROFILE_KEYS:
+        if k in profile:
+            ov_cfg[k] = profile[k]
+
+
+def get_hotkeys_cfg(cfg: dict) -> dict:
+    result = _HOTKEY_DEFAULTS.copy()
+    result.update(cfg.get('hotkeys', {}))
+    return result
+
+
+def save_hotkeys_cfg(cfg: dict, hk: dict):
+    cfg['hotkeys'] = hk
     save_config(cfg)

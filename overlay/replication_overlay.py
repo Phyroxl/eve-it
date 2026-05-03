@@ -36,7 +36,7 @@ if not _qt_ok:
 from overlay.win32_capture import (
     capture_window_region, IS_WINDOWS, resolve_eve_window_handle,
     set_no_activate, user32, focus_eve_window, get_foreground_hwnd,
-    set_topmost, should_show_overlays,
+    set_topmost, should_show_overlays, get_window_size,
 )
 from overlay.replicator_config import get_overlay_cfg, save_overlay_cfg
 
@@ -154,6 +154,9 @@ class ReplicationOverlay(QWidget):
         self._monitor_timer.timeout.connect(self._monitor_focus)
         self._monitor_timer.start(500)
 
+        # Fix 2: correct aspect ratio on first launch (when size is at defaults)
+        self._fix_initial_aspect()
+
     # ------------------------------------------------------------------
     # Setup
     # ------------------------------------------------------------------
@@ -215,6 +218,29 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
     # Class-level EVE hwnd cache (shared, refreshed every 2 s)
     # ------------------------------------------------------------------
+
+    def _fix_initial_aspect(self):
+        """Correct widget height to match region aspect ratio on first launch."""
+        from overlay.replicator_config import OVERLAY_DEFAULTS
+        # Only correct if using default dimensions (never been saved/positioned manually)
+        if (self._ov_cfg.get('w') != OVERLAY_DEFAULTS['w'] or
+                self._ov_cfg.get('h') != OVERLAY_DEFAULTS['h']):
+            return
+        if not self._hwnd:
+            return
+        try:
+            ev_w, ev_h = get_window_size(self._hwnd)
+            if ev_w > 0 and ev_h > 0:
+                reg_w = self._region.get('w', 0.3) * ev_w
+                reg_h = self._region.get('h', 0.2) * ev_h
+                if reg_h > 0:
+                    aspect = reg_w / reg_h
+                    w = self.width()
+                    correct_h = max(64, int(w / aspect))
+                    if abs(correct_h - self.height()) > 8:
+                        self.resize(w, correct_h)
+        except Exception:
+            pass
 
     @classmethod
     def _get_cached_eve_hwnds(cls) -> set:
@@ -509,13 +535,23 @@ class ReplicationOverlay(QWidget):
 
         if self._pixmap:
             pw, ph = self._pixmap.width(), self._pixmap.height()
-            draw_w, draw_h = pw / 1.5, ph / 1.5
-            if abs(draw_w - self.width()) < 5 and abs(draw_h - self.height()) < 5:
-                p.drawPixmap(self.rect(), self._pixmap)
+            src_aspect = pw / ph if ph > 0 else 1.0
+            dst_aspect = self.width() / self.height() if self.height() > 0 else 1.0
+
+            if self._ov_cfg.get('maintain_aspect', True) and abs(src_aspect - dst_aspect) > 0.05:
+                # Letterbox / pillarbox to preserve source aspect ratio
+                if src_aspect > dst_aspect:
+                    dw = self.width()
+                    dh = max(1, int(dw / src_aspect))
+                    ty = (self.height() - dh) // 2
+                    p.drawPixmap(0, ty, dw, dh, self._pixmap)
+                else:
+                    dh = self.height()
+                    dw = max(1, int(dh * src_aspect))
+                    tx = (self.width() - dw) // 2
+                    p.drawPixmap(tx, 0, dw, dh, self._pixmap)
             else:
-                tx = (self.width() - draw_w) // 2
-                ty = (self.height() - draw_h) // 2
-                p.drawPixmap(int(tx), int(ty), int(draw_w), int(draw_h), self._pixmap)
+                p.drawPixmap(self.rect(), self._pixmap)
         else:
             p.setPen(Qt.cyan)
             p.drawText(self.rect(), Qt.AlignCenter, self._status)

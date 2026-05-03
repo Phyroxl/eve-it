@@ -257,3 +257,16 @@ def should_show_overlays(fg_hwnd: int, eve_hwnds: set) -> bool:
         return get_window_pid(fg_hwnd) == os.getpid()
     except Exception:
         return True  # safe default: no ocultar
+
+
+def get_window_size(hwnd: int) -> tuple:
+    """Returns (w, h) of a window in pixels, or (0, 0) on failure."""
+    if not hwnd:
+        return (0, 0)
+    try:
+        rect = wt.RECT()
+        if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return (max(0, rect.right - rect.left), max(0, rect.bottom - rect.top))
+    except Exception:
+        pass
+    return (0, 0)

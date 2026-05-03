@@ -319,6 +319,20 @@ class ReplicatorWizard:
         top_row.addStretch()
         l2.addLayout(top_row)
 
+        # Layout profile selector row
+        layout_row = W.QHBoxLayout()
+        lbl_layout = W.QLabel("Layout:"); layout_row.addWidget(lbl_layout)
+        self.layout_prof_combo = W.QComboBox()
+        self.layout_prof_combo.setMinimumWidth(130)
+        layout_row.addWidget(self.layout_prof_combo)
+        btn_apply_lp = W.QPushButton("Aplicar")
+        btn_apply_lp.setFixedSize(60, 28)
+        btn_apply_lp.setToolTip("Aplicar perfil de layout a los overlays al lanzar")
+        btn_apply_lp.clicked.connect(self._apply_layout_profile_to_cfg)
+        layout_row.addWidget(btn_apply_lp)
+        layout_row.addStretch()
+        l2.addLayout(layout_row)
+
         # Numeric Control Grid (Match user image)
         grid = W.QGridLayout(); grid.setSpacing(15)
         
@@ -359,6 +373,7 @@ class ReplicatorWizard:
             sp.valueChanged.connect(self._sync_to_cfg)
 
         self._load_profiles()
+        self._load_layout_profiles()
 
     def start_visual_selection(self):
         """Inicia el modo de selección visual directamente."""
@@ -775,6 +790,34 @@ class ReplicatorWizard:
             return input_field.text(), res == W.QDialog.DialogCode.Accepted if hasattr(W.QDialog, 'DialogCode') else res == 1
         return res
 
+    def _load_layout_profiles(self):
+        """Load layout profiles into the combo."""
+        try:
+            from overlay.replicator_config import get_layout_profiles
+            profiles = get_layout_profiles(self._cfg)
+            active = self._cfg.get('active_layout_profile', 'Default')
+            self.layout_prof_combo.blockSignals(True)
+            self.layout_prof_combo.clear()
+            for name in profiles:
+                self.layout_prof_combo.addItem(name)
+            idx = self.layout_prof_combo.findText(active)
+            if idx >= 0:
+                self.layout_prof_combo.setCurrentIndex(idx)
+            self.layout_prof_combo.blockSignals(False)
+        except Exception as e:
+            logger.debug(f"_load_layout_profiles error: {e}")
+
+    def _apply_layout_profile_to_cfg(self):
+        """Store selected layout profile as active in cfg (applied on launch)."""
+        try:
+            name = self.layout_prof_combo.currentText()
+            if name:
+                self._cfg['active_layout_profile'] = name
+                self._cfg_mod.save_config(self._cfg)
+                logger.info(f"Active layout profile set to: {name!r}")
+        except Exception as e:
+            logger.debug(f"_apply_layout_profile_to_cfg error: {e}")
+
     def _go_next(self):
         idx = self.stack.currentIndex()
         if idx == 0:
@@ -828,17 +871,29 @@ class ReplicatorWizard:
                     save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a)
                 )
                 
-                # Posicionamiento: Centrado en pantalla (una encima de otra)
+                # Positionamiento inicial con aspect ratio correcto desde perfil activo
                 try:
+                    from overlay.replicator_config import get_active_layout_profile
+                    from overlay.win32_capture import get_window_size
                     from PySide6.QtWidgets import QApplication
+                    _, lp = get_active_layout_profile(self._cfg)
+                    init_w = int(lp.get('w', 280))
+                    # Compute correct height from region aspect ratio
+                    ev_w, ev_h = get_window_size(h) if h else (0, 0)
+                    if ev_w > 0 and ev_h > 0:
+                        rw = ov_region.get('w', 0.3) * ev_w
+                        rh = ov_region.get('h', 0.2) * ev_h
+                        init_h = max(64, int(init_w / (rw / rh))) if rh > 0 else int(lp.get('h', 200))
+                    else:
+                        init_h = int(lp.get('h', 200))
                     screen = QApplication.primaryScreen().geometry()
-                    center_x = screen.x() + (screen.width() - 200) // 2
-                    center_y = screen.y() + (screen.height() - 200) // 2
-                    ov.resize(200, 200)
-                    ov.move(center_x, center_y)
-                except:
-                    ov.resize(200, 200)
-                    ov.move(400, 300)
+                    center_x = screen.x() + (screen.width() - init_w) // 2
+                    center_y = screen.y() + (screen.height() - init_h) // 2
+                    ov.resize(init_w, init_h)
+                    ov.move(center_x + i * 20, center_y + i * 20)
+                except Exception:
+                    ov.resize(280, 200)
+                    ov.move(400 + i * 20, 300 + i * 20)
                 
                 ov.show()
                 self._overlays_refs.append(ov)
