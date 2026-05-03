@@ -111,3 +111,37 @@ def save_overlay_cfg(cfg, title: str, ov_cfg: dict):
         cfg['overlays'][title] = {}
     cfg['overlays'][title].update(ov_cfg)
     save_config(cfg)
+
+
+# Keys safe to copy from one overlay to all others (excludes position/size/identity)
+COMMON_SETTING_KEYS = [
+    'always_on_top', 'hide_when_inactive', 'locked',
+    'snap_enabled', 'snap_x', 'snap_y',
+    'label_visible', 'label_pos', 'label_font_size',
+    'label_color', 'label_bg', 'label_bg_color',
+    'label_bg_opacity', 'label_padding',
+    'border_visible', 'highlight_active', 'border_width',
+    'active_border_color',
+    'fps', 'opacity',
+]
+
+
+def apply_common_settings_to_all(cfg, source_title: str,
+                                  keys=None, include_client_color: bool = False):
+    """Copia las claves globalizables del overlay fuente a todos los demás.
+
+    No toca x, y, w, h, ni client_color (salvo include_client_color=True).
+    Guarda la config completa al terminar.
+    """
+    if keys is None:
+        keys = COMMON_SETTING_KEYS
+    source = cfg.get('overlays', {}).get(source_title, {})
+    for title, ov_data in cfg.get('overlays', {}).items():
+        if title == source_title:
+            continue
+        for k in keys:
+            if k in source:
+                ov_data[k] = source[k]
+        if include_client_color and 'client_color' in source:
+            ov_data['client_color'] = source['client_color']
+    save_config(cfg)

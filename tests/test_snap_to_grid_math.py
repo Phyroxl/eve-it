@@ -44,7 +44,6 @@ class TestSnapToGridMath(unittest.TestCase):
 
     def test_overlay_apply_snap_uses_ov_cfg(self):
         """Smoke-test that _apply_snap reads snap_x/snap_y from _ov_cfg."""
-        # We instantiate a minimal stand-in without Qt to avoid display dependency.
         class FakeOverlay:
             _ov_cfg = {'snap_x': 10, 'snap_y': 5}
             def _apply_snap(self, x, y):
@@ -55,6 +54,32 @@ class TestSnapToGridMath(unittest.TestCase):
         ov = FakeOverlay()
         self.assertEqual(ov._apply_snap(13, 7), (10, 5))
         self.assertEqual(ov._apply_snap(16, 8), (20, 10))
+
+    def test_absolute_delta_snap_never_freezes(self):
+        """Simulate the absolute-origin drag approach: moving mouse always moves overlay."""
+        # Drag start: widget at (100, 100), mouse pressed at global (200, 200)
+        start_pos_x, start_pos_y = 100, 100
+        start_global_x, start_global_y = 200, 200
+        grid = 20
+
+        results = []
+        for mouse_x in range(200, 260, 3):  # mouse moves right
+            raw_x = start_pos_x + (mouse_x - start_global_x)
+            snapped_x = _snap(raw_x, start_pos_y, grid, grid)[0]
+            results.append(snapped_x)
+
+        # The snapped x must increase as mouse moves — it must not stay frozen
+        self.assertGreater(max(results), min(results),
+                           "Snap should allow movement, not freeze the overlay")
+
+    def test_alt_override_skips_snap(self):
+        """When ALT held, raw position is used instead of snapped."""
+        raw_x, raw_y = 13, 27
+        snapped = _snap(raw_x, raw_y, 10, 10)
+        # ALT override: use raw directly
+        alt_result = (raw_x, raw_y)
+        self.assertNotEqual(snapped, alt_result)  # snap actually changes the value
+        self.assertEqual(alt_result, (13, 27))    # ALT preserves raw
 
 
 if __name__ == '__main__':

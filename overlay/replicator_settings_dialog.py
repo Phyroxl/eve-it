@@ -116,11 +116,12 @@ class ReplicatorSettingsDialog(QDialog):
         lay.setSpacing(8)
 
         tabs = QTabWidget()
-        tabs.addTab(self._tab_general(),  "General")
-        tabs.addTab(self._tab_layout(),   "Layout")
-        tabs.addTab(self._tab_label(),    "Etiqueta")
-        tabs.addTab(self._tab_border(),   "Borde")
-        tabs.addTab(self._tab_advanced(), "Avanzado")
+        tabs.addTab(self._tab_general(),   "General")
+        tabs.addTab(self._tab_layout(),    "Layout")
+        tabs.addTab(self._tab_label(),     "Etiqueta")
+        tabs.addTab(self._tab_border(),    "Borde")
+        tabs.addTab(self._tab_advanced(),  "Avanzado")
+        tabs.addTab(self._tab_apply_all(), "Aplicar a todas")
         lay.addWidget(tabs)
 
         btn_close = QPushButton("Cerrar")
@@ -346,6 +347,69 @@ class ReplicatorSettingsDialog(QDialog):
         info.setStyleSheet("color: #475569; font-size: 10px; padding: 6px;")
         info.setWordWrap(True)
         lay.addWidget(info)
+
+        lay.addStretch()
+        return w
+
+    # ------------------------------------------------------------------ #
+    # Tab: Aplicar a todas
+    # ------------------------------------------------------------------ #
+    def _tab_apply_all(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(12, 12, 12, 8)
+        lay.setSpacing(8)
+
+        _section(lay, "SINCRONIZAR AJUSTES")
+
+        desc = QLabel(
+            "Copia los ajustes visuales de esta replica a todas las demas.\n"
+            "No copia posicion, tamano ni hotkeys individuales."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #64748b; font-size: 10px; padding: 4px 0;")
+        lay.addWidget(desc)
+
+        chk_color = QCheckBox("Incluir color de cliente")
+        chk_color.setChecked(False)
+        lay.addWidget(chk_color)
+
+        lbl_status = QLabel("")
+        lbl_status.setStyleSheet("color: #00ff64; font-size: 10px;")
+
+        def _do_apply():
+            from overlay.replicator_config import apply_common_settings_to_all, COMMON_SETTING_KEYS
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            include_col = chk_color.isChecked()
+            apply_common_settings_to_all(
+                self._ov._cfg,
+                self._ov._title,
+                keys=COMMON_SETTING_KEYS,
+                include_client_color=include_col,
+            )
+            src_keys = {k: self._ov._ov_cfg[k]
+                        for k in COMMON_SETTING_KEYS if k in self._ov._ov_cfg}
+            if include_col and 'client_color' in self._ov._ov_cfg:
+                src_keys['client_color'] = self._ov._ov_cfg['client_color']
+            count = 0
+            for peer in list(_OVERLAY_REGISTRY):
+                if peer is not self._ov:
+                    try:
+                        peer.apply_settings_dict(src_keys, persist=False)
+                        count += 1
+                    except Exception:
+                        pass
+            lbl_status.setText(f"Ajustes copiados a {count} replica(s).")
+
+        btn_apply = QPushButton("Copiar ajustes a todas las replicas")
+        btn_apply.setStyleSheet(
+            "QPushButton { background: rgba(0,255,100,0.1); border: 1px solid rgba(0,255,100,0.3); "
+            "color: #00ff64; padding: 6px 14px; border-radius: 4px; font-weight: 700; font-size: 11px; }"
+            "QPushButton:hover { background: rgba(0,255,100,0.25); border-color: #00ff64; }"
+        )
+        btn_apply.clicked.connect(_do_apply)
+        lay.addWidget(btn_apply)
+        lay.addWidget(lbl_status)
 
         lay.addStretch()
         return w

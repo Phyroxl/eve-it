@@ -1,6 +1,7 @@
 import logging
 import time
 import threading
+import weakref
 
 logger = logging.getLogger('eve.overlay')
 
@@ -35,9 +36,15 @@ if not _qt_ok:
 from overlay.win32_capture import (
     capture_window_region, IS_WINDOWS, resolve_eve_window_handle,
     set_no_activate, user32, focus_eve_window, get_foreground_hwnd,
-    set_topmost,
+    set_topmost, should_show_overlays,
 )
 from overlay.replicator_config import get_overlay_cfg, save_overlay_cfg
+
+# Global weak registry so the settings dialog can reach all active overlays
+_OVERLAY_REGISTRY: 'weakref.WeakSet' = weakref.WeakSet()
+
+# Minimum pixel movement before a press is considered a drag (not a click)
+_DRAG_THRESHOLD = 5
 
 
 class CaptureThread(QThread):
@@ -101,7 +108,11 @@ class ReplicationOverlay(QWidget):
     selection_requested = Signal(object)
     closed = Signal(str)
     sync_triggered = Signal(dict)
-    sync_resize_triggered = Signal(int, int)  # Task 2: (w, h) broadcast to peers
+    sync_resize_triggered = Signal(int, int)  # (w, h) broadcast to peers
+
+    # Class-level EVE hwnd cache shared across all overlay instances (avoids N×find_eve_windows/s)
+    _eve_hwnds_cache: set = set()
+    _eve_hwnds_ts: float = 0.0
 
     def __init__(self, title, hwnd=None, region_rel=None, cfg=None,
                  save_callback=None, hwnd_getter=None):
@@ -114,26 +125,31 @@ class ReplicationOverlay(QWidget):
         self._save_callback = save_callback
         self._sync_active = False
 
-        # Task 3: per-overlay persistent config (merged with OVERLAY_DEFAULTS)
+        # Per-overlay persistent config (merged with OVERLAY_DEFAULTS)
         self._ov_cfg = get_overlay_cfg(self._cfg, self._title)
 
         self._pixmap = None
         self._status = "CONECTANDO..."
-        self._drag_pos = None
-        self._is_resizing = False
         self._is_active_client = False
-        # Task 2: guard flag to break sync-resize signal loops
-        self._applying_sync_resize = False
+        self._applying_sync_resize = False  # guard: break sync-resize loops
+
+        # Drag state — absolute-origin approach (fix for snap static bug)
+        self._drag_start_global = None   # QPoint at press, never mutated during drag
+        self._drag_start_pos = None      # widget pos at press, never mutated during drag
+        self._drag_moved = False         # True once mouse exceeded _DRAG_THRESHOLD
+        self._is_resizing = False
+
+        _OVERLAY_REGISTRY.add(self)
 
         self._setup_ui()
         self._start_capture()
 
-        # Task 3: 300 ms debounced autosave
+        # 300 ms debounced autosave
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.timeout.connect(self._do_save)
 
-        # Task 4: 500 ms monitor for active-border + hide_when_inactive
+        # 500 ms monitor: active-border + hide_when_inactive
         self._monitor_timer = QTimer(self)
         self._monitor_timer.timeout.connect(self._monitor_focus)
         self._monitor_timer.start(500)
@@ -163,20 +179,20 @@ class ReplicationOverlay(QWidget):
         self.setStyleSheet("background-color: #000;")
         set_no_activate(int(self.winId()))
 
-        # Task 3: restore saved position / size
+        # Restore saved position / size
         self.move(int(ov.get('x', 400)), int(ov.get('y', 300)))
         self.resize(int(ov.get('w', 280)), int(ov.get('h', 200)))
 
-        # Task 4: apply always_on_top from config
+        # Apply always_on_top from config
         self.apply_always_on_top(bool(ov.get('always_on_top', True)))
 
-        # Win32 topmost re-assertion every 2 s (belt-and-suspenders)
+        # Win32 topmost re-assertion belt-and-suspenders every 2 s
         self._top_timer = QTimer(self)
         self._top_timer.timeout.connect(self._reassert_topmost)
         self._top_timer.start(2000)
 
     # ------------------------------------------------------------------
-    # Task 6: label text extraction
+    # Label extraction
     # ------------------------------------------------------------------
 
     def _extract_label(self) -> str:
@@ -187,18 +203,36 @@ class ReplicationOverlay(QWidget):
         return self._title
 
     # ------------------------------------------------------------------
-    # Task 4: always-on-top + hide-when-inactive
+    # Always-on-top
     # ------------------------------------------------------------------
 
     def apply_always_on_top(self, v: bool):
-        """Set or clear the Win32 TOPMOST flag."""
         try:
             set_topmost(int(self.winId()), v)
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Class-level EVE hwnd cache (shared, refreshed every 2 s)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _get_cached_eve_hwnds(cls) -> set:
+        now = time.monotonic()
+        if now - cls._eve_hwnds_ts > 2.0:
+            try:
+                from overlay.win32_capture import find_eve_windows
+                cls._eve_hwnds_cache = {w['hwnd'] for w in find_eve_windows()}
+            except Exception:
+                pass
+            cls._eve_hwnds_ts = now
+        return cls._eve_hwnds_cache
+
+    # ------------------------------------------------------------------
+    # Monitor: active-border + hide_when_inactive (Fix #4)
+    # ------------------------------------------------------------------
+
     def _monitor_focus(self):
-        """Poll foreground window every 500 ms to update active-border state."""
         try:
             fg = get_foreground_hwnd()
             was_active = self._is_active_client
@@ -208,19 +242,18 @@ class ReplicationOverlay(QWidget):
                 self.update()
 
             if self._ov_cfg.get('hide_when_inactive', False):
-                from overlay.win32_capture import find_eve_windows
-                eve_hwnds = {w['hwnd'] for w in find_eve_windows()}
-                if fg not in eve_hwnds:
-                    if self.isVisible():
-                        self.hide()
-                else:
+                eve_hwnds = self._get_cached_eve_hwnds()
+                if should_show_overlays(fg, eve_hwnds):
                     if not self.isVisible():
                         self.show()
+                else:
+                    if self.isVisible():
+                        self.hide()
         except Exception:
             pass
 
     # ------------------------------------------------------------------
-    # Task 2: sync-resize support
+    # Sync-resize support
     # ------------------------------------------------------------------
 
     def apply_size(self, w: int, h: int):
@@ -234,14 +267,13 @@ class ReplicationOverlay(QWidget):
             self._applying_sync_resize = False
 
     # ------------------------------------------------------------------
-    # Task 3: autosave
+    # Autosave
     # ------------------------------------------------------------------
 
     def _schedule_autosave(self):
         self._autosave_timer.start(300)
 
     def _do_save(self):
-        """Persist current position / size / FPS to replicator.json."""
         self._ov_cfg['x'] = self.x()
         self._ov_cfg['y'] = self.y()
         self._ov_cfg['w'] = self.width()
@@ -251,7 +283,29 @@ class ReplicationOverlay(QWidget):
         save_overlay_cfg(self._cfg, self._title, self._ov_cfg)
 
     # ------------------------------------------------------------------
-    # FPS helper (used by context menu + settings dialog)
+    # Apply settings from another overlay (apply-to-all feature)
+    # ------------------------------------------------------------------
+
+    def apply_settings_dict(self, settings: dict, persist: bool = True):
+        """Absorb a batch of settings keys (from apply-to-all)."""
+        self._ov_cfg.update(settings)
+        self.apply_always_on_top(bool(self._ov_cfg.get('always_on_top', True)))
+        if hasattr(self, '_thread'):
+            self._thread.set_fps(int(self._ov_cfg.get('fps', 30)))
+        self.update()
+        if persist:
+            self._schedule_autosave()
+
+    def reload_overlay_config(self):
+        """Reload _ov_cfg from the master cfg dict (used after apply_common_settings_to_all)."""
+        self._ov_cfg = get_overlay_cfg(self._cfg, self._title)
+        self.apply_always_on_top(bool(self._ov_cfg.get('always_on_top', True)))
+        if hasattr(self, '_thread'):
+            self._thread.set_fps(int(self._ov_cfg.get('fps', 30)))
+        self.update()
+
+    # ------------------------------------------------------------------
+    # FPS helper
     # ------------------------------------------------------------------
 
     def _set_fps(self, val: int):
@@ -261,16 +315,16 @@ class ReplicationOverlay(QWidget):
         self._schedule_autosave()
 
     # ------------------------------------------------------------------
-    # Task 5: snap-to-grid
+    # Snap-to-grid (Fix #2: compute from press origin, not running pos)
     # ------------------------------------------------------------------
 
-    def _apply_snap(self, x: int, y: int):
+    def _apply_snap(self, x: int, y: int) -> tuple:
         sx = max(1, int(self._ov_cfg.get('snap_x', 20)))
         sy = max(1, int(self._ov_cfg.get('snap_y', 20)))
         return (round(x / sx) * sx, round(y / sy) * sy)
 
     # ------------------------------------------------------------------
-    # Context menu  (Task 9: adds ⚙ Ajustes)
+    # Context menu
     # ------------------------------------------------------------------
 
     def contextMenuEvent(self, event):
@@ -309,7 +363,6 @@ class ReplicationOverlay(QWidget):
         menu.exec(event.globalPos())
 
     def _open_settings(self):
-        """Task 9: open per-replica settings dialog."""
         try:
             from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
             dlg = ReplicatorSettingsDialog(self)
@@ -438,7 +491,7 @@ class ReplicationOverlay(QWidget):
         self.update()
 
     # ------------------------------------------------------------------
-    # Paint  (Task 6: label, Task 7: border)
+    # Paint
     # ------------------------------------------------------------------
 
     def paintEvent(self, event):
@@ -469,7 +522,7 @@ class ReplicationOverlay(QWidget):
 
         ov = self._ov_cfg
 
-        # Task 7: configurable border (active vs client color)
+        # Configurable border (active vs client color)
         if ov.get('border_visible', True):
             bw = max(1, int(ov.get('border_width', 2)))
             if ov.get('highlight_active', True) and self._is_active_client:
@@ -480,7 +533,7 @@ class ReplicationOverlay(QWidget):
             adj = bw // 2
             p.drawRect(self.rect().adjusted(adj, adj, -adj, -adj))
 
-        # Task 6: overlay label
+        # Overlay label
         if ov.get('label_visible', True):
             label_text = self._extract_label()
             fs = max(6, int(ov.get('label_font_size', 10)))
@@ -513,7 +566,7 @@ class ReplicationOverlay(QWidget):
             p.drawText(lx + pad, ly + pad + fm.ascent(), label_text)
 
     # ------------------------------------------------------------------
-    # Mouse events  (Task 1: focus EVE, Task 2: sync-resize, Task 5: snap)
+    # Mouse events
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
@@ -523,15 +576,17 @@ class ReplicationOverlay(QWidget):
             in_resize_corner = pos.x() > self.width() - 25 and pos.y() > self.height() - 25
             if in_resize_corner:
                 self._is_resizing = True
+                self._drag_start_global = None
+                self._drag_moved = False
                 return
-            # Task 1: focus the EVE client (Win32 only, no input injection)
-            if self._hwnd:
-                focus_eve_window(self._hwnd)
-            self._drag_pos = (
-                event.globalPosition().toPoint()
+            # Record drag origin (absolute approach — never mutated during drag)
+            g = event.globalPosition().toPoint() \
                 if hasattr(event, 'globalPosition') else event.globalPos()
-            )
-        # Qt focus so keyboard events still work
+            self._drag_start_global = g
+            self._drag_start_pos = self.pos()
+            self._drag_moved = False
+
+        # Qt focus for keyboard events
         self.setFocus(
             Qt.FocusReason.MouseFocusReason
             if hasattr(Qt.FocusReason, 'MouseFocusReason') else Qt.MouseFocusReason
@@ -546,19 +601,28 @@ class ReplicationOverlay(QWidget):
                 pos = event.pos()
                 self.resize(max(50, pos.x()), max(50, pos.y()))
                 return
-            if self._drag_pos and not self._ov_cfg.get('locked', False):
-                g_pos = (
-                    event.globalPosition().toPoint()
+
+            if self._drag_start_global is not None and not self._ov_cfg.get('locked', False):
+                g_pos = event.globalPosition().toPoint() \
                     if hasattr(event, 'globalPosition') else event.globalPos()
-                )
-                delta = g_pos - self._drag_pos
-                new_x = self.pos().x() + delta.x()
-                new_y = self.pos().y() + delta.y()
-                # Task 5: snap to grid
-                if self._ov_cfg.get('snap_enabled', False):
-                    new_x, new_y = self._apply_snap(new_x, new_y)
-                self.move(new_x, new_y)
-                self._drag_pos = g_pos
+                delta = g_pos - self._drag_start_global
+
+                # Mark as drag once threshold exceeded
+                if not self._drag_moved:
+                    if abs(delta.x()) > _DRAG_THRESHOLD or abs(delta.y()) > _DRAG_THRESHOLD:
+                        self._drag_moved = True
+
+                # Absolute calculation from press origin — snap never freezes the overlay
+                raw_x = self._drag_start_pos.x() + delta.x()
+                raw_y = self._drag_start_pos.y() + delta.y()
+
+                # ALT key temporarily bypasses snap
+                mods = event.modifiers()
+                alt_held = bool(mods & (Qt.AltModifier if hasattr(Qt, 'AltModifier') else 0x08000000))
+                if self._ov_cfg.get('snap_enabled', False) and not alt_held:
+                    raw_x, raw_y = self._apply_snap(raw_x, raw_y)
+
+                self.move(raw_x, raw_y)
         else:
             pos = event.pos()
             if pos.x() > self.width() - 20 and pos.y() > self.height() - 20:
@@ -567,20 +631,36 @@ class ReplicationOverlay(QWidget):
                 self.setCursor(Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
+        left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         was_resizing = self._is_resizing
-        self._drag_pos = None
         self._is_resizing = False
         self.setCursor(Qt.ArrowCursor)
 
-        # Task 2: broadcast new size to synced peers after manual resize
-        if was_resizing and self._sync_active and not self._applying_sync_resize:
-            self.sync_resize_triggered.emit(self.width(), self.height())
+        if event.button() == left:
+            if not was_resizing and not self._drag_moved:
+                # Fix #1: plain click (no drag, no resize) → focus the EVE client
+                hwnd = self._hwnd_getter()
+                if hwnd:
+                    self._hwnd = hwnd
+                ok = focus_eve_window(self._hwnd) if self._hwnd else False
+                logger.debug(
+                    f"[REPLICATOR FOCUS] title={self._title!r} "
+                    f"hwnd={self._hwnd} success={ok}"
+                )
 
-        # Task 3: debounced save on every move/resize
+            # Broadcast resize to synced peers after manual resize
+            if was_resizing and self._sync_active and not self._applying_sync_resize:
+                self.sync_resize_triggered.emit(self.width(), self.height())
+
+        self._drag_start_global = None
+        self._drag_start_pos = None
+        self._drag_moved = False
+
+        # Debounced save on every move/resize
         self._schedule_autosave()
 
     # ------------------------------------------------------------------
-    # Resize event (single, combined — fixes duplicate from original file)
+    # Resize event
     # ------------------------------------------------------------------
 
     def resizeEvent(self, event):
@@ -602,7 +682,7 @@ class ReplicationOverlay(QWidget):
             self._monitor_timer.stop()
         if hasattr(self, '_autosave_timer'):
             self._autosave_timer.stop()
-        self._do_save()  # final flush
+        self._do_save()
         self.closed.emit(self._title)
         if hasattr(self, '_thread'):
             self._thread.stop()

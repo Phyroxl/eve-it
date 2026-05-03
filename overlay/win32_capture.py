@@ -226,3 +226,34 @@ def set_topmost(hwnd: int, topmost: bool):
         user32.SetWindowPos(hwnd, flag, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
     except Exception as e:
         logger.debug(f"set_topmost error: {e}")
+
+
+def get_window_pid(hwnd: int) -> int:
+    """Devuelve el PID del proceso dueño de una ventana."""
+    if not hwnd:
+        return 0
+    try:
+        pid = wt.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return pid.value
+    except Exception:
+        return 0
+
+
+def should_show_overlays(fg_hwnd: int, eve_hwnds: set) -> bool:
+    """Devuelve True si los overlays deben estar visibles.
+
+    Oculta solo cuando el foreground NO es:
+    - una ventana EVE
+    - una ventana del propio proceso (Salva Suite, replicas, menus Qt)
+    """
+    if not fg_hwnd:
+        return True  # foreground desconocido → mantener visibles
+    if fg_hwnd in eve_hwnds:
+        return True
+    # Ventana del propio proceso (Salva Suite, diálogos, overlays, menús Qt)
+    try:
+        import os
+        return get_window_pid(fg_hwnd) == os.getpid()
+    except Exception:
+        return True  # safe default: no ocultar
