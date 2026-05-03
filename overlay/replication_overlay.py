@@ -69,6 +69,10 @@ class CaptureThread(QThread):
         self._running = True
         self._out_w, self._out_h = 400, 300
         self._lock = threading.Lock()
+        self._fast_stop = False
+
+    def set_fast_stop(self, enabled=True):
+        self._fast_stop = enabled
 
     def set_output_size(self, w, h):
         with self._lock:
@@ -80,15 +84,33 @@ class CaptureThread(QThread):
 
     def stop(self):
         self._running = False
-        self.wait(500)
+        if not self._fast_stop:
+            self.wait(500)
 
     def run(self):
+        # Cache module reference once — avoids repeated import overhead per frame
+        _hk_mod = None
+        try:
+            import overlay.replicator_hotkeys as _hk_mod
+        except Exception:
+            pass
+
         while self._running:
             t_start = time.perf_counter()
 
             with self._lock:
                 w, h = self._out_w, self._out_h
                 fps = self._fps
+
+            # Skip one frame while a hotkey cycle is in progress.
+            # Reduces capture-thread competition with Win32 SetForegroundWindow.
+            if _hk_mod is not None:
+                try:
+                    if time.monotonic() < _hk_mod._capture_suspended_until:
+                        time.sleep(max(0.0, (1.0 / fps) - (time.perf_counter() - t_start)))
+                        continue
+                except Exception:
+                    pass
 
             # Auto-recover handle if lost
             if not self._hwnd or not user32.IsWindow(self._hwnd):
@@ -117,6 +139,7 @@ class ReplicationOverlay(QWidget):
     closed = Signal(str)
     sync_triggered = Signal(dict)
     sync_resize_triggered = Signal(int, int)  # (w, h) broadcast to peers
+    geometryChanged = Signal(int, int, int, int) # (x, y, w, h)
 
     # Class-level EVE hwnd cache shared across all overlay instances (avoids N×find_eve_windows/s)
     _eve_hwnds_cache: set = set()
@@ -147,6 +170,7 @@ class ReplicationOverlay(QWidget):
         self._drag_moved = False         # True once mouse exceeded _DRAG_THRESHOLD
         self._is_resizing = False
         self._debug_visual_layers = False  # toggled by diagnostics dialog only
+        self._shutting_down = False
 
         _OVERLAY_REGISTRY.add(self)
 
@@ -1125,6 +1149,23 @@ class ReplicationOverlay(QWidget):
     # Mouse events
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Geometry events for real-time sync with settings
+    # ------------------------------------------------------------------
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Sincronizar el hilo de captura si es necesario
+        if hasattr(self, '_thread'):
+            self._thread.set_output_size(self.width(), self.height())
+        # Notificar al diálogo de ajustes
+        self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
+        # Aplicar máscara de forma si es necesario
+        self._apply_window_shape_mask()
+
     def mousePressEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         if event.button() == left:
@@ -1256,8 +1297,14 @@ class ReplicationOverlay(QWidget):
             self._monitor_timer.stop()
         if hasattr(self, '_autosave_timer'):
             self._autosave_timer.stop()
-        self._do_save()
+        
+        # Saltamos el guardado individual si estamos en apagado global (TrayManager lo hará)
+        if not self._shutting_down:
+            self._do_save()
+            
         self.closed.emit(self._title)
         if hasattr(self, '_thread'):
+            if self._shutting_down:
+                self._thread.set_fast_stop(True)
             self._thread.stop()
         super().closeEvent(event)
