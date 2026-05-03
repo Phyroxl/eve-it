@@ -3860,3 +3860,47 @@ El sistema de temas ahora es "fail-safe". Si el archivo de configuración está co
 - [x] python -m pytest tests/test_theme_presets.py tests/test_theme_manager.py tests/test_app_startup_imports.py
 - [x] python -m py_compile ui/theme/*.py
 - [x] Verificacin de persistencia de active_preset
+
+
+---
+
+## Replicator EVE-O Preview Features Fase 1 -- 2026-05-02
+
+### STATUS: COMPLETADO
+
+### FEATURES IMPLEMENTADAS
+
+| Tarea | Descripcion | Archivo |
+|---|---|---|
+| Task 1 | Click izquierdo sobre replica -> focus_eve_window() (Win32, EULA safe) | replication_overlay.py |
+| Task 2 | sync_resize_triggered Signal(int,int) + apply_size() con guard flag | replication_overlay.py |
+| Task 3 | _ov_cfg = get_overlay_cfg() en __init__; restaura pos/size; debounced autosave 300ms | replication_overlay.py |
+| Task 4 | apply_always_on_top() via set_topmost(); monitor 500ms hide_when_inactive + borde activo | replication_overlay.py |
+| Task 5 | _apply_snap(x,y) en mouseMoveEvent cuando snap_enabled=True | replication_overlay.py |
+| Task 6 | _extract_label() parsea nombre de personaje; dibujado en paintEvent | replication_overlay.py |
+| Task 7 | Borde configurable: client_color vs active_border_color segun _is_active_client | replication_overlay.py |
+| Task 9 | Menu contextual: Ajustes -> ReplicatorSettingsDialog(self).exec() | replication_overlay.py |
+| Fix   | resizeEvent duplicado eliminado (una sola implementacion combinada) | replication_overlay.py |
+
+### FILES_CHANGED
+- overlay/replication_overlay.py (REESCRITO -- Tasks 1-7, 9 + fix resizeEvent duplicado)
+- overlay/replicator_config.py (REESCRITO sesion anterior -- OVERLAY_DEFAULTS + get/save_overlay_cfg)
+- overlay/replicator_settings_dialog.py (NUEVO -- dialogo 5 tabs por-replica)
+- overlay/win32_capture.py (ampliado sesion anterior -- focus_eve_window, set_topmost, get_foreground_hwnd)
+- controller/replicator_wizard.py (sync_resize_triggered conectado en _launch_direct y ReplicatorHub._launch_one)
+
+### TESTS NUEVOS (43 pasando)
+- tests/test_replicator_layout_persistence.py (5 tests)
+- tests/test_snap_to_grid_math.py (9 tests)
+- tests/test_sync_resize_broadcast.py (8 tests)
+- tests/test_client_id_stable_from_title.py (11 tests)
+- tests/test_settings_serialization.py (10 tests)
+
+### CHECKS
+- [x] python -m pytest ...5 archivos... (43/43 passed)
+- [x] python -m py_compile overlay/win32_capture.py overlay/replication_overlay.py overlay/replicator_config.py overlay/replicator_settings_dialog.py controller/replicator_wizard.py (todos OK)
+
+### NOTAS EULA/SEGURIDAD
+- focus_eve_window() usa unicamente ShowWindow + SetForegroundWindow + AttachThreadInput (Win32 window management)
+- NO se inyecta ningun click, teclado ni input al proceso EVE
+- Overlays solo capturan y muestran pixeles; no interactuan con el estado del juego

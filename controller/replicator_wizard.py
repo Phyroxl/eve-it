@@ -842,9 +842,12 @@ class ReplicatorWizard:
                 
                 ov.show()
                 self._overlays_refs.append(ov)
-                
-                # Conectar sincronización directa
+
+                # Conectar sincronización directa (pan/zoom y resize)
                 ov.sync_triggered.connect(lambda rd, _ov=ov: self._on_sync_direct(_ov, rd))
+                ov.sync_resize_triggered.connect(
+                    lambda w, h, _ov=ov: self._on_sync_resize_direct(_ov, w, h)
+                )
                 
             logger.info(f"Ultra-Lite: {len(self._overlays_refs)} réplicas lanzadas directamente.")
             
@@ -860,6 +863,12 @@ class ReplicatorWizard:
         for ov in getattr(self, '_overlays_refs', []):
             if ov != source_ov:
                 ov.apply_region(region_dict)
+
+    def _on_sync_resize_direct(self, source_ov, w, h):
+        """Broadcast manual resize to all synced peers."""
+        for ov in getattr(self, '_overlays_refs', []):
+            if ov != source_ov:
+                ov.apply_size(w, h)
 
     def _go_back(self):
         idx = self.stack.currentIndex()
@@ -1294,6 +1303,12 @@ class ReplicatorHub:
         self._sync_all = bool(state)
         logger.info(f"Sincronización global: {self._sync_all}")
 
+    def _on_hub_sync_resize(self, source_title, w, h):
+        """Hub: broadcast resize from one overlay to all others."""
+        for title, ov in self._overlays.items():
+            if title != source_title:
+                ov.apply_size(w, h)
+
     def _on_region_changed(self, title, new_region):
         """Callback cuando una réplica cambia su región (zoom/pan)."""
         if not self._sync_all:
@@ -1320,8 +1335,14 @@ class ReplicatorHub:
                                 region_rel=ov_region, cfg=self._cfg, 
                                 save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
         
-        # Conectar señal de cambio de región para sincronización
-        ov.region_changed.connect(self._on_region_changed)
+        # Conectar señal de cambio de región y resize para sincronización
+        try:
+            ov.region_changed.connect(self._on_region_changed)
+        except Exception:
+            pass
+        ov.sync_resize_triggered.connect(
+            lambda w, h, _t=title: self._on_hub_sync_resize(_t, w, h)
+        )
 
         # Posicionamiento 100x100 en GRILLA (6 por fila)
         # Usamos la cantidad de overlays activos para calcular la posición

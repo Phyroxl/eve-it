@@ -161,3 +161,68 @@ def set_no_activate(hwnd: int):
     if not hwnd: return
     ex_style = user32.GetWindowLongW(hwnd, -20)
     user32.SetWindowLongW(hwnd, -20, ex_style | 0x08000000)
+
+def focus_eve_window(hwnd: int) -> bool:
+    """Trae al frente el cliente EVE asociado al hwnd.
+    Solo enfoca / restaura la ventana. NO envía clicks ni inputs al juego.
+    """
+    if not hwnd or not user32.IsWindow(hwnd):
+        return False
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # Restaurar si está minimizado
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # Protocolo de foco: AttachThreadInput si otra ventana tiene el foco
+        fg_hwnd = user32.GetForegroundWindow()
+        if fg_hwnd != hwnd:
+            fore_tid = user32.GetWindowThreadProcessId(fg_hwnd, None)
+            target_tid = user32.GetWindowThreadProcessId(hwnd, None)
+            curr_tid = kernel32.GetCurrentThreadId()
+            attached = False
+            if fore_tid and fore_tid != curr_tid:
+                user32.AttachThreadInput(curr_tid, fore_tid, True)
+                attached = True
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            if attached:
+                user32.AttachThreadInput(curr_tid, fore_tid, False)
+        user32.BringWindowToTop(hwnd)
+        return True
+    except Exception as e:
+        logger.debug(f"focus_eve_window error: {e}")
+        return False
+
+def get_foreground_hwnd() -> int:
+    """Devuelve el HWND de la ventana actualmente activa."""
+    try:
+        return user32.GetForegroundWindow()
+    except Exception:
+        return 0
+
+def get_window_title(hwnd: int) -> str:
+    """Devuelve el título de una ventana dado su HWND."""
+    if not hwnd:
+        return ""
+    try:
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        return buf.value
+    except Exception:
+        return ""
+
+def set_topmost(hwnd: int, topmost: bool):
+    """Establece o quita el flag TOPMOST (siempre encima) de una ventana."""
+    if not hwnd:
+        return
+    try:
+        # HWND_TOPMOST = -1, HWND_NOTOPMOST = -2
+        flag = -1 if topmost else -2
+        # SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+        user32.SetWindowPos(hwnd, flag, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+    except Exception as e:
+        logger.debug(f"set_topmost error: {e}")
