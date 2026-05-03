@@ -233,6 +233,39 @@ def build_visual_diagnostic_report(overlay) -> str:
         I("last_native_region_error",  rgn_err)
 
     # ------------------------------------------------------------------
+    # 5b) DWM chrome suppression
+    # ------------------------------------------------------------------
+    S("5b) DWM CHROME SUPPRESSION")
+    dwm_status      = getattr(overlay, '_last_dwm_chrome_status',       '<N/A>')
+    dwm_corner      = getattr(overlay, '_last_dwm_corner_pref_status',  '<N/A>')
+    dwm_border      = getattr(overlay, '_last_dwm_border_color_status', '<N/A>')
+    dwm_hwnd        = getattr(overlay, '_last_dwm_hwnd',                '<N/A>')
+    dwm_err         = getattr(overlay, '_last_dwm_error',               None)
+    I("last_dwm_chrome_status",       dwm_status)
+    I("last_dwm_corner_pref_status",  dwm_corner)
+    I("last_dwm_border_color_status", dwm_border)
+    I("last_dwm_hwnd",                dwm_hwnd)
+    if dwm_err is not None:
+        I("last_dwm_error",           dwm_err)
+
+    # Interpretation
+    shape_5b = ov.get('border_shape', 'square')
+    if shape_5b in ('pill', 'rounded'):
+        if rgn_status == 'applied' and dwm_status == 'applied':
+            lines.append(
+                "  ✓ Qt clip + Win32 region + DWM suppression: todos activos."
+            )
+        elif rgn_status == 'applied' and dwm_status != 'applied':
+            lines.append(
+                f"  ⚠ DWM status={dwm_status!r} → borde/corner nativo puede seguir visible. "
+                "Si el marco persiste aunque corner alpha=0, probable borde DWM/GPU compositor."
+            )
+        elif dwm_status == 'applied':
+            lines.append(
+                f"  ℹ DWM suppression aplicada pero Win32 region status={rgn_status!r}."
+            )
+
+    # ------------------------------------------------------------------
     # 6) Screenshot
     # ------------------------------------------------------------------
     S("6) CAPTURA PNG")
@@ -358,6 +391,36 @@ def build_visual_diagnostic_report(overlay) -> str:
                 "⚠  _apply_native_window_region() aún no se ha llamado. "
                 "Genera el diagnóstico después de que la ventana sea visible."
             )
+
+    # DWM chrome suppression status
+    dwm_status_h = getattr(overlay, '_last_dwm_chrome_status', 'not_called')
+    if shape_now in ('pill', 'rounded'):
+        if dwm_status_h == 'applied':
+            hyp.append(
+                "✓  DWM border/corner suppression aplicada → "
+                "borde nativo DWM desactivado (DWMWA_BORDER_COLOR=NONE, DWMWCP_DONOTROUND)."
+            )
+        elif dwm_status_h == 'partial':
+            dwm_corner_h = getattr(overlay, '_last_dwm_corner_pref_status', '?')
+            dwm_border_h = getattr(overlay, '_last_dwm_border_color_status', '?')
+            hyp.append(
+                f"⚠  DWM suppression parcial → corner={dwm_corner_h!r} border={dwm_border_h!r}. "
+                "Posible Windows 10 o privilegios insuficientes para algún atributo."
+            )
+        elif dwm_status_h in ('failed', 'exception'):
+            dwm_err_h = getattr(overlay, '_last_dwm_error', '')
+            hyp.append(
+                f"⚠  DWM suppression status={dwm_status_h!r} err={dwm_err_h!r} → "
+                "borde nativo DWM puede seguir visible. "
+                "Si corner alpha=0 pero el marco persiste, es composición DWM/GPU o tema OS."
+            )
+        elif dwm_status_h == 'not_called':
+            hyp.append(
+                "⚠  _apply_dwm_chrome_suppression() aún no se ha llamado. "
+                "Genera el diagnóstico después de que la ventana sea visible."
+            )
+        elif dwm_status_h == 'not_win32':
+            pass  # non-Windows: no action needed
 
     show_gray = ov.get('show_gray_frame', True)
     if not show_gray:

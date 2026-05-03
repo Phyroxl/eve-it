@@ -150,6 +150,13 @@ class ReplicationOverlay(QWidget):
         self._last_native_region_size   = (0, 0)
         self._last_native_region_error  = None
 
+        # DWM chrome suppression state (populated by _apply_dwm_chrome_suppression)
+        self._last_dwm_chrome_status       = 'not_called'
+        self._last_dwm_corner_pref_status  = 'not_called'
+        self._last_dwm_border_color_status = 'not_called'
+        self._last_dwm_error               = None
+        self._last_dwm_hwnd                = 0
+
         self._setup_ui()
         self._start_capture()
 
@@ -277,56 +284,57 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_window_shape_mask(self):
-        """Apply a QBitmap mask (Qt layer) + Win32 SetWindowRgn (OS layer).
-        square → clear both,  pill/rounded → set both."""
+        """Apply QBitmap mask + Win32 SetWindowRgn + DWM chrome suppression.
+        square → clear both,  pill/rounded → set both.
+        DWM suppression always runs so corners/borders are always suppressed."""
         shape = self._ov_cfg.get('border_shape', 'square')
 
         if shape == 'square':
             self.clearMask()
             self._apply_native_window_region()  # clears SetWindowRgn too
-            return
+        else:
+            w, h = self.width(), self.height()
+            if w > 0 and h > 0:
+                # --- Qt QBitmap mask (fallback / extra layer) ---
+                try:
+                    try:
+                        from PySide6.QtGui import QBitmap
+                    except ImportError:
+                        from PyQt6.QtGui import QBitmap
 
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return
+                    bmp = QBitmap(w, h)
+                    c0 = Qt.GlobalColor.color0 if hasattr(Qt, 'GlobalColor') else Qt.color0
+                    c1 = Qt.GlobalColor.color1 if hasattr(Qt, 'GlobalColor') else Qt.color1
+                    bmp.fill(c0)  # all transparent / masked-out
 
-        # --- Qt QBitmap mask (fallback / extra layer) ---
-        try:
-            try:
-                from PySide6.QtGui import QBitmap
-            except ImportError:
-                from PyQt6.QtGui import QBitmap
+                    painter = QPainter(bmp)
+                    rh_aa = (QPainter.RenderHint.Antialiasing
+                             if hasattr(QPainter, 'RenderHint')
+                             else QPainter.Antialiasing)
+                    painter.setRenderHint(rh_aa)
+                    painter.setBrush(c1)   # visible area
+                    no_pen = (Qt.PenStyle.NoPen if hasattr(Qt, 'PenStyle') else Qt.NoPen)
+                    painter.setPen(no_pen)
 
-            bmp = QBitmap(w, h)
-            c0 = Qt.GlobalColor.color0 if hasattr(Qt, 'GlobalColor') else Qt.color0
-            c1 = Qt.GlobalColor.color1 if hasattr(Qt, 'GlobalColor') else Qt.color1
-            bmp.fill(c0)  # all transparent / masked-out
+                    path = QPainterPath()
+                    radius = min(w, h) / 2.0 if shape == 'pill' else 10.0
+                    path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+                    painter.drawPath(path)
+                    painter.end()
 
-            painter = QPainter(bmp)
-            rh_aa = (QPainter.RenderHint.Antialiasing
-                     if hasattr(QPainter, 'RenderHint')
-                     else QPainter.Antialiasing)
-            painter.setRenderHint(rh_aa)
-            painter.setBrush(c1)   # visible area
-            no_pen = (Qt.PenStyle.NoPen if hasattr(Qt, 'PenStyle') else Qt.NoPen)
-            painter.setPen(no_pen)
+                    self.setMask(bmp)
+                    logger.debug(
+                        "[REPLICATOR MASK] title=%r  shape=%s  size=%dx%d  r=%.1f",
+                        self._title, shape, w, h, radius,
+                    )
+                except Exception as e:
+                    logger.debug("[REPLICATOR MASK] error: %s", e)
 
-            path = QPainterPath()
-            radius = min(w, h) / 2.0 if shape == 'pill' else 10.0
-            path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
-            painter.drawPath(path)
-            painter.end()
+                # --- Win32 SetWindowRgn (primary / authoritative layer) ---
+                self._apply_native_window_region()
 
-            self.setMask(bmp)
-            logger.debug(
-                "[REPLICATOR MASK] title=%r  shape=%s  size=%dx%d  r=%.1f",
-                self._title, shape, w, h, radius,
-            )
-        except Exception as e:
-            logger.debug("[REPLICATOR MASK] error: %s", e)
-
-        # --- Win32 SetWindowRgn (primary / authoritative layer) ---
-        self._apply_native_window_region()
+        # --- DWM chrome suppression (both paths) ---
+        self._apply_dwm_chrome_suppression()
 
     def _apply_native_window_region(self):
         """Apply Win32 SetWindowRgn so DWM clips the window at the OS level.
@@ -412,6 +420,73 @@ class ReplicationOverlay(QWidget):
             self._last_native_region_status = 'exception'
             self._last_native_region_error  = str(e)
             logger.debug("[REPLICATOR REGION] error: %s", e)
+
+    def _apply_dwm_chrome_suppression(self) -> None:
+        """Suppress native DWM border and corner rounding via DwmSetWindowAttribute.
+        Windows 11+ only for corner pref / border color; best-effort, never raises."""
+        try:
+            import sys
+            if sys.platform != 'win32':
+                self._last_dwm_chrome_status = 'not_win32'
+                return
+            import ctypes
+
+            hwnd = int(self.winId())
+            if not hwnd:
+                self._last_dwm_chrome_status = 'no_hwnd'
+                return
+
+            self._last_dwm_hwnd  = hwnd
+            self._last_dwm_error = None
+
+            _dwmapi = ctypes.windll.dwmapi
+            _dwmapi.DwmSetWindowAttribute.restype  = ctypes.c_long
+            _dwmapi.DwmSetWindowAttribute.argtypes = [
+                ctypes.c_void_p,   # hwnd
+                ctypes.c_uint,     # dwAttribute
+                ctypes.c_void_p,   # pvAttribute
+                ctypes.c_uint,     # cbAttribute
+            ]
+
+            # A) Disable DWM corner rounding — DWMWA_WINDOW_CORNER_PREFERENCE=33
+            #    DWMWCP_DONOTROUND=1  (Windows 11+, silently ignored on Win10)
+            corner_val = ctypes.c_int(1)
+            hr_corner  = _dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(corner_val), ctypes.sizeof(corner_val),
+            )
+            self._last_dwm_corner_pref_status = (
+                f"ok:0x{hr_corner & 0xFFFFFFFF:08x}" if hr_corner == 0
+                else f"failed:0x{hr_corner & 0xFFFFFFFF:08x}"
+            )
+
+            # B) Remove native border — DWMWA_BORDER_COLOR=34
+            #    DWMWA_COLOR_NONE=0xFFFFFFFE  (Windows 11+)
+            border_val = ctypes.c_uint(0xFFFFFFFE)
+            hr_border  = _dwmapi.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(border_val), ctypes.sizeof(border_val),
+            )
+            self._last_dwm_border_color_status = (
+                f"ok:0x{hr_border & 0xFFFFFFFF:08x}" if hr_border == 0
+                else f"failed:0x{hr_border & 0xFFFFFFFF:08x}"
+            )
+
+            ok_count = sum([hr_corner == 0, hr_border == 0])
+            self._last_dwm_chrome_status = (
+                'applied' if ok_count == 2 else
+                'partial' if ok_count == 1 else
+                'failed'
+            )
+            logger.debug(
+                "[REPLICATOR DWM] hwnd=%d corner=%s border=%s status=%s",
+                hwnd,
+                self._last_dwm_corner_pref_status,
+                self._last_dwm_border_color_status,
+                self._last_dwm_chrome_status,
+            )
+        except Exception as e:
+            self._last_dwm_chrome_status = 'exception'
+            self._last_dwm_error         = str(e)
+            logger.debug("[REPLICATOR DWM] error: %s", e)
 
     @classmethod
     def _get_cached_eve_hwnds(cls) -> set:
