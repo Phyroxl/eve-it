@@ -660,7 +660,16 @@ class ReplicatorSettingsDialog(QDialog):
                 item = self._accounts_list.item(i)
                 title = item.data(Qt.UserRole)
                 
-                if item.checkState() == Qt.Checked:
+                # Fallback de seguridad: si UserRole es None, intentar extraer del texto visual
+                if title is None:
+                    raw_text = item.text()
+                    if ". " in raw_text:
+                        title = raw_text.split(". ", 1)[1]
+                    else:
+                        title = raw_text
+                    logger.warning(f"[HOTKEY CONFIG WARN] Client ID era None en index {i}. Recuperado del texto: '{title}'")
+                
+                if item.checkState() == Qt.Checked and title:
                     ordered_titles.append(title)
 
             hk.setdefault('groups', {})[gid] = {
@@ -673,6 +682,13 @@ class ReplicatorSettingsDialog(QDialog):
             save_hotkeys_cfg(self._ov._cfg, hk)
             _reload_group_combo()
             lbl_hk_status.setText(f"Grupo {gid} guardado.")
+            
+            # Log a archivo para diagnóstico
+            try:
+                from overlay.replicator_hotkeys import _log_to_file
+                _log_to_file(f"[CONFIG SAVE] Group '{le_grp_name.text()}' ({gid}) saved. Order: {ordered_titles}")
+            except Exception: pass
+            
             logger.info(f"[HOTKEY ORDER DEBUG] Group {gid} saved. Order: {ordered_titles}")
 
         def _save_all_hk():
@@ -728,7 +744,8 @@ class ReplicatorSettingsDialog(QDialog):
             self._accounts_list.clear()
             for i, (title, state) in enumerate(new_order, 1):
                 it = QListWidgetItem(f"{i}. {title}")
-                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                it.setData(Qt.UserRole, title)
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsDragEnabled)
                 it.setCheckState(state)
                 self._accounts_list.addItem(it)
 
@@ -833,8 +850,13 @@ class ReplicatorSettingsDialog(QDialog):
                 self._accounts_list.item(i).setCheckState(Qt.Checked)
         btn_select_all.clicked.connect(_select_all_clients)
         
+        btn_log = QPushButton("📋 Log hotkeys")
+        btn_log.setFixedWidth(110)
+        btn_log.clicked.connect(self._view_hotkey_log)
+        
         btn_row_ops.addWidget(btn_refresh)
         btn_row_ops.addWidget(btn_select_all)
+        btn_row_ops.addWidget(btn_log)
         btn_row_ops.addStretch()
         lay.addLayout(btn_row_ops)
 
@@ -856,3 +878,64 @@ class ReplicatorSettingsDialog(QDialog):
 
         lay.addStretch()
         return w
+
+    def _view_hotkey_log(self):
+        """Abre un visor de log no modal para depuración de hotkeys."""
+        from utils.paths import ROOT_DIR
+        log_path = ROOT_DIR / "logs" / "hotkey_order_debug.log"
+        
+        d = QDialog(self)
+        d.setWindowTitle("Log de hotkeys — Diagnóstico")
+        d.setMinimumSize(600, 400)
+        d.setWindowFlags(d.windowFlags() | Qt.WindowType.WindowMinimizeButtonHint | Qt.WindowType.WindowMaximizeButtonHint)
+        d.setStyleSheet("QDialog { background: #0b0e14; color: #e1e7ef; }")
+        
+        lay = QVBoxLayout(d)
+        
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        txt.setStyleSheet("""
+            QTextEdit { 
+                background: #0d1117; 
+                color: #00ff64; 
+                font-family: 'Consolas', 'Courier New'; 
+                font-size: 11px; 
+                border: 1px solid #1e293b;
+            }
+        """)
+        
+        content = "Todavía no hay log.\nGuarda el grupo, aplica hotkeys y pulsa Hotkey Sig./Ant. para generar datos."
+        if log_path.exists():
+            try:
+                content = log_path.read_text(encoding='utf-8')
+            except Exception as e:
+                content = f"Error leyendo log: {e}"
+        
+        txt.setPlainText(content)
+        lay.addWidget(txt)
+        
+        btns = QHBoxLayout()
+        
+        btn_copy = QPushButton("Copiar Log")
+        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(txt.toPlainText()))
+        
+        btn_clear = QPushButton("Limpiar")
+        def _clear():
+            if log_path.exists():
+                try: log_path.write_text("", encoding='utf-8')
+                except Exception: pass
+            txt.setPlainText("Log limpiado.")
+        btn_clear.clicked.connect(_clear)
+        
+        btn_close = QPushButton("Cerrar")
+        btn_close.clicked.connect(d.accept)
+        
+        btns.addWidget(btn_copy)
+        btns.addWidget(btn_clear)
+        btns.addStretch()
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+        
+        d.show() # No modal
+        self._log_diag = d # Mantener referencia para evitar GC
