@@ -258,6 +258,57 @@ class ReplicationOverlay(QWidget):
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Window shape mask (pill / rounded → setMask so OS clips to shape)
+    # ------------------------------------------------------------------
+
+    def _apply_window_shape_mask(self):
+        """Apply a QBitmap mask so Windows/DWM clips the window to the
+        overlay shape.  square → clearMask, pill/rounded → setMask."""
+        shape = self._ov_cfg.get('border_shape', 'square')
+
+        if shape == 'square':
+            self.clearMask()
+            return
+
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+
+        try:
+            try:
+                from PySide6.QtGui import QBitmap
+            except ImportError:
+                from PyQt6.QtGui import QBitmap
+
+            bmp = QBitmap(w, h)
+            c0 = Qt.GlobalColor.color0 if hasattr(Qt, 'GlobalColor') else Qt.color0
+            c1 = Qt.GlobalColor.color1 if hasattr(Qt, 'GlobalColor') else Qt.color1
+            bmp.fill(c0)  # all transparent / masked-out
+
+            painter = QPainter(bmp)
+            rh_aa = (QPainter.RenderHint.Antialiasing
+                     if hasattr(QPainter, 'RenderHint')
+                     else QPainter.Antialiasing)
+            painter.setRenderHint(rh_aa)
+            painter.setBrush(c1)   # visible area
+            no_pen = (Qt.PenStyle.NoPen if hasattr(Qt, 'PenStyle') else Qt.NoPen)
+            painter.setPen(no_pen)
+
+            path = QPainterPath()
+            radius = min(w, h) / 2.0 if shape == 'pill' else 10.0
+            path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+            painter.drawPath(path)
+            painter.end()
+
+            self.setMask(bmp)
+            logger.debug(
+                "[REPLICATOR MASK] title=%r  shape=%s  size=%dx%d  r=%.1f",
+                self._title, shape, w, h, radius,
+            )
+        except Exception as e:
+            logger.debug("[REPLICATOR MASK] error: %s", e)
+
     @classmethod
     def _get_cached_eve_hwnds(cls) -> set:
         now = time.monotonic()
@@ -352,6 +403,8 @@ class ReplicationOverlay(QWidget):
         self.apply_always_on_top(bool(self._ov_cfg.get('always_on_top', True)))
         if hasattr(self, '_thread'):
             self._thread.set_fps(int(self._ov_cfg.get('fps', 30)))
+        if 'border_shape' in settings:
+            self._apply_window_shape_mask()
         self.update()
         if persist:
             self._schedule_autosave()
@@ -362,6 +415,7 @@ class ReplicationOverlay(QWidget):
         self.apply_always_on_top(bool(self._ov_cfg.get('always_on_top', True)))
         if hasattr(self, '_thread'):
             self._thread.set_fps(int(self._ov_cfg.get('fps', 30)))
+        self._apply_window_shape_mask()
         self.update()
 
     # ------------------------------------------------------------------
@@ -843,6 +897,7 @@ class ReplicationOverlay(QWidget):
                 self._region['h'] = max(0.01, min(1.0, self._region['h'] * rh))
             self._thread.set_output_size(self.width(), self.height())
         super().resizeEvent(event)
+        self._apply_window_shape_mask()
 
     # ------------------------------------------------------------------
     # Close

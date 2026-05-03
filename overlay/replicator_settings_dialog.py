@@ -549,7 +549,12 @@ class ReplicatorSettingsDialog(QDialog):
             # Fallback visual en el combo si la config tiene algo raro
             cmb_shape.setCurrentText('square')
             
-        cmb_shape.currentTextChanged.connect(lambda v: (self._set('border_shape', v), self._ov.update()))
+        cmb_shape.currentTextChanged.connect(lambda v: (
+            self._set('border_shape', v),
+            self._ov._apply_window_shape_mask(),
+            self._ov.update(),
+            self._ov.repaint(),
+        ))
         _row(lay, "Forma:", cmb_shape)
 
         _section(lay, "COLORES")
