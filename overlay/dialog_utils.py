@@ -35,6 +35,47 @@ if not _qt_ok:
         def __init__(self, *args): pass
         def name(self): return "#ffffff"
 
+REPLICATOR_STYLE = """
+QDialog { background: #05070a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+QTabWidget::pane { background: #0b1016; border: 1px solid #1e293b; }
+QTabBar::tab { background: #0b1016; color: #64748b; padding: 6px 14px;
+               border: 1px solid #1e293b; border-bottom: none; }
+QTabBar::tab:selected { background: #05070a; color: #00c8ff; border-bottom: 1px solid #05070a; }
+QLabel { color: #94a3b8; font-size: 11px; }
+QLabel#section { color: #00c8ff; font-size: 10px; font-weight: 800;
+                 letter-spacing: 1px; margin-top: 6px; }
+QCheckBox { color: #e2e8f0; font-size: 11px; }
+QCheckBox::indicator { width: 14px; height: 14px; background: #1e293b;
+                       border: 1px solid #334155; border-radius: 2px; }
+QCheckBox::indicator:checked { background: #00c8ff; border-color: #00c8ff; }
+QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {
+    background: #1e293b; border: 1px solid #334155;
+    color: #e2e8f0; padding: 3px 6px; border-radius: 3px; font-size: 11px;
+}
+QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {
+    background: #1e293b; border-left: 1px solid #334155; width: 18px;
+}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background: #2d3748;
+}
+QPushButton {
+    background: rgba(0,200,255,0.1); border: 1px solid rgba(0,200,255,0.3);
+    color: #00c8ff; padding: 5px 12px; border-radius: 4px; font-size: 11px; font-weight: 700;
+}
+QPushButton:hover { background: rgba(0,200,255,0.25); border-color: #00c8ff; }
+QPushButton#close { background: rgba(255,50,50,0.1); border-color: rgba(255,50,50,0.3);
+                    color: #ef4444; }
+QPushButton#close:hover { background: rgba(255,50,50,0.25); }
+QPushButton#green { background: rgba(0,255,100,0.1); border-color: rgba(0,255,100,0.3);
+                    color: #00ff64; }
+QPushButton#green:hover { background: rgba(0,255,100,0.25); border-color: #00ff64; }
+QPushButton#blue { background: rgba(0,180,255,0.1); border-color: rgba(0,180,255,0.3);
+                   color: #00c8ff; }
+QPushButton#blue:hover { background: rgba(0,180,255,0.25); border-color: #00c8ff; }
+QPushButton#primary { background: rgba(0,200,255,0.2); border-color: #00e0ff; color: #00ffff; }
+QPushButton#primary:hover { background: rgba(0,200,255,0.35); border-color: #00ffff; }
+"""
+
 logger = logging.getLogger('eve.dialog_utils')
 
 # Helper para obtener atributos de forma compatible entre Qt5/Qt6
@@ -48,7 +89,7 @@ def _get_qt_attr(obj, name, default=None):
             return getattr(enum_obj, name)
     return default
 
-def make_replicator_dialog_topmost(dialog: QDialog):
+def make_replicator_dialog_topmost(dialog: QDialog, modal: bool = False):
     """
     Configura un diálogo para estar siempre por encima de las réplicas
     y de la Salva Suite, asegurando el foco.
@@ -60,12 +101,19 @@ def make_replicator_dialog_topmost(dialog: QDialog):
         # StaysOnTopHint y Tool
         topmost_flag = _get_qt_attr(Qt, 'WindowStaysOnTopHint', 0x00040000)
         tool_flag = _get_qt_attr(Qt, 'Tool', 0x00000001)
-        flags |= topmost_flag | tool_flag
-        dialog.setWindowFlags(flags)
         
-        # No modal
-        non_modal = _get_qt_attr(Qt, 'NonModal', 0)
-        dialog.setWindowModality(non_modal)
+        target_flags = flags | topmost_flag | tool_flag
+        if flags != target_flags:
+            was_visible = dialog.isVisible()
+            dialog.setWindowFlags(target_flags)
+            if was_visible:
+                dialog.show()
+        
+        # Modalidad
+        modality_key = 'ApplicationModal' if modal else 'NonModal'
+        target_modality = _get_qt_attr(Qt, modality_key, 2 if modal else 0)
+        if dialog.windowModality() != target_modality:
+            dialog.setWindowModality(target_modality)
         
         # Refuerzo Win32
         hwnd = int(dialog.winId())
@@ -91,7 +139,7 @@ def pick_color_topmost(parent, initial_color_hex, title="Seleccionar Color"):
     if show_alpha:
         dlg.setOption(show_alpha)
     
-    make_replicator_dialog_topmost(dlg)
+    make_replicator_dialog_topmost(dlg, modal=True)
     
     res = dlg.exec() if hasattr(dlg, 'exec') else dlg.exec_()
     accepted = _get_qt_attr(QDialog, 'Accepted', 1)

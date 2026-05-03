@@ -28,41 +28,7 @@ except ImportError:
 
 # ... (General, Layout, Etiqueta, Borde, Hotkeys)
 
-_STYLE = """
-QDialog { background: #05070a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
-QTabWidget::pane { background: #0b1016; border: 1px solid #1e293b; }
-QTabBar::tab { background: #0b1016; color: #64748b; padding: 6px 14px;
-               border: 1px solid #1e293b; border-bottom: none; }
-QTabBar::tab:selected { background: #05070a; color: #00c8ff; border-bottom: 1px solid #05070a; }
-QLabel { color: #94a3b8; font-size: 11px; }
-QLabel#section { color: #00c8ff; font-size: 10px; font-weight: 800;
-                 letter-spacing: 1px; margin-top: 6px; }
-QCheckBox { color: #e2e8f0; font-size: 11px; }
-QCheckBox::indicator { width: 14px; height: 14px; background: #1e293b;
-                       border: 1px solid #334155; border-radius: 2px; }
-QCheckBox::indicator:checked { background: #00c8ff; border-color: #00c8ff; }
-QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {
-    background: #1e293b; border: 1px solid #334155;
-    color: #e2e8f0; padding: 3px 6px; border-radius: 3px; font-size: 11px;
-}
-QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {
-    background: #1e293b; border-left: 1px solid #334155; width: 18px;
-}
-QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
-    background: #2d3748;
-}
-QPushButton {
-    background: rgba(0,200,255,0.1); border: 1px solid rgba(0,200,255,0.3);
-    color: #00c8ff; padding: 5px 12px; border-radius: 4px; font-size: 11px; font-weight: 700;
-}
-QPushButton:hover { background: rgba(0,200,255,0.25); border-color: #00c8ff; }
-QPushButton#close { background: rgba(255,50,50,0.1); border-color: rgba(255,50,50,0.3);
-                    color: #ef4444; }
-QPushButton#close:hover { background: rgba(255,50,50,0.25); }
-QPushButton#green { background: rgba(0,255,100,0.1); border-color: rgba(0,255,100,0.3);
-                    color: #00ff64; }
-QPushButton#green:hover { background: rgba(0,255,100,0.25); border-color: #00ff64; }
-"""
+from overlay.dialog_utils import REPLICATOR_STYLE as _STYLE
 
 
 def _row(parent_layout, label_text: str, widget) -> None:
@@ -107,10 +73,6 @@ class ReplicatorSettingsDialog(QDialog):
         flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setWindowFlags(flags | (Qt.WindowType.WindowCloseButtonHint
                                      if hasattr(Qt, 'WindowType') else Qt.WindowCloseButtonHint))
-        
-        # [NUEVO] Refuerzo topmost Win32 via util
-        from overlay.dialog_utils import make_replicator_dialog_topmost
-        make_replicator_dialog_topmost(self)
         
         self._build_ui()
         self._load_geometry()
@@ -198,13 +160,8 @@ class ReplicatorSettingsDialog(QDialog):
         chk_sync.toggled.connect(lambda v: setattr(self._ov, '_sync_active', v))
         lay.addWidget(chk_sync)
 
-        # --- Apply non-layout settings to all ---
+        # --- Apply settings to all ---
         _section(lay, "APLICAR CONFIGURACION A TODAS")
-
-        lbl_info = QLabel("Copia General, Etiqueta y Borde a todas las replicas. NO copia posicion, tamano, perfiles, snap, FPS ni region.")
-        lbl_info.setWordWrap(True)
-        lbl_info.setStyleSheet("color:#475569; font-size:10px;")
-        lay.addWidget(lbl_info)
 
         lbl_gen_status = QLabel("")
         lbl_gen_status.setStyleSheet("color:#00ff64; font-size:10px;")
@@ -213,29 +170,51 @@ class ReplicatorSettingsDialog(QDialog):
         chk_inc_color.setStyleSheet("color:#cbd5e1; font-size:10px;")
         lay.addWidget(chk_inc_color)
 
-        def _apply_non_layout():
-            from overlay.replicator_config import apply_common_settings_to_all, NON_LAYOUT_COPY_KEYS
+        def _replicate_all():
+            from overlay.replicator_config import apply_settings_keys_to_all, FULL_REPLICATE_KEYS
             from overlay.replication_overlay import _OVERLAY_REGISTRY
-            apply_common_settings_to_all(
-                self._ov._cfg, self._ov._title, 
-                keys=NON_LAYOUT_COPY_KEYS, 
+            
+            # 1. Sincronizar estado actual del widget a ov_cfg
+            self._ov._do_save()
+            
+            src_title = self._ov._title
+            keys = FULL_REPLICATE_KEYS
+            
+            # 2. Replicar en el archivo de configuración
+            apply_settings_keys_to_all(
+                self._ov._cfg, src_title, 
+                keys=keys, 
                 include_client_color=chk_inc_color.isChecked()
             )
-            src = {k: self._ov._ov_cfg[k] for k in NON_LAYOUT_COPY_KEYS if k in self._ov._ov_cfg}
+            
+            # 3. Replicar en caliente a los objetos activos
+            src = {k: self._ov._ov_cfg[k] for k in keys if k in self._ov._ov_cfg}
             if chk_inc_color.isChecked() and 'client_color' in self._ov._ov_cfg:
                 src['client_color'] = self._ov._ov_cfg['client_color']
 
             peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]
             for peer in peers:
                 try:
+                    # Aplicar todos los ajustes visuales (incluyendo región)
                     peer.apply_settings_dict(src, persist=False)
-                except Exception:
-                    pass
-            lbl_gen_status.setText(f"Copiado a {len(peers)} replica(s).")
+                    
+                    # Aplicar geometría de ventana (x, y, w, h)
+                    x_v = int(src.get('x', peer.x()))
+                    y_v = int(src.get('y', peer.y()))
+                    w_v = int(src.get('w', peer.width()))
+                    h_v = int(src.get('h', peer.height()))
+                    peer.move(x_v, y_v)
+                    peer.resize(w_v, h_v)
+                    
+                    peer.update()
+                except Exception as e:
+                    logger.error(f"Error replicando ajustes a peer: {e}")
+                    
+            lbl_gen_status.setText(f"Ajustes replicados a {len(peers)} replica(s).")
 
-        btn_gen = QPushButton("Copiar ajustes no-layout a todas")
+        btn_gen = QPushButton("Copiar y replicar ajustes")
         btn_gen.setObjectName("green")
-        btn_gen.clicked.connect(_apply_non_layout)
+        btn_gen.clicked.connect(_replicate_all)
         lay.addWidget(btn_gen)
         lay.addWidget(lbl_gen_status)
 
@@ -265,19 +244,27 @@ class ReplicatorSettingsDialog(QDialog):
         prof_row.addWidget(QLabel("Perfil:"))
         prof_row.addWidget(lp_combo, 1)
 
-        btn_lp_save = QPushButton("💾")
-        btn_lp_save.setToolTip("Guardar")
-        btn_lp_apply = QPushButton("Aplicar")
-        btn_lp_del = QPushButton("🗑️")
-        for b in [btn_lp_save, btn_lp_apply, btn_lp_del]:
-            b.setFixedWidth(50 if b.text() else 30)
-            b.setFixedHeight(22)
+        btn_lp_new = QPushButton("+")
+        btn_lp_new.setToolTip("Nuevo perfil")
+        btn_lp_save = QPushButton("Guardar")
+        btn_lp_del = QPushButton("Eliminar")
+        
+        btn_lp_new.setFixedWidth(32)
+        for b in [btn_lp_new, btn_lp_save, btn_lp_del]:
+            b.setFixedHeight(24)
+            if b != btn_lp_new:
+                b.setMinimumWidth(65)
             prof_row.addWidget(b)
         lay.addLayout(prof_row)
 
-        btn_lp_new = QPushButton("+ Nuevo perfil")
-        btn_lp_new.setFixedHeight(22)
-        lay.addWidget(btn_lp_new)
+        btn_lp_apply = QPushButton("Aplicar")
+        btn_lp_apply.setObjectName("blue")
+        btn_lp_apply.setFixedHeight(24)
+        lay.addWidget(btn_lp_apply)
+
+        chk_lp_all = QCheckBox("Aplicar a todas las réplicas")
+        chk_lp_all.setStyleSheet("font-size: 10px; color: #94a3b8;")
+        lay.addWidget(chk_lp_all)
 
         def _reload_lp_combo():
             profiles = get_layout_profiles(self._ov._cfg)
@@ -297,6 +284,8 @@ class ReplicatorSettingsDialog(QDialog):
             from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getText(self, "Nuevo perfil", "Nombre:")
             if ok and name.strip():
+                # Sincronizar región actual a ov_cfg antes de guardar
+                self._ov._do_save()
                 profile = {k: self._ov._ov_cfg[k] for k in LAYOUT_PROFILE_KEYS if k in self._ov._ov_cfg}
                 save_layout_profile(self._ov._cfg, name.strip(), profile)
                 _reload_lp_combo()
@@ -305,23 +294,46 @@ class ReplicatorSettingsDialog(QDialog):
         def _lp_save():
             name = lp_combo.currentText()
             if name:
+                # Sincronizar región actual a ov_cfg antes de guardar
+                self._ov._do_save()
                 profile = {k: self._ov._ov_cfg[k] for k in LAYOUT_PROFILE_KEYS if k in self._ov._ov_cfg}
                 save_layout_profile(self._ov._cfg, name, profile)
 
         def _lp_apply():
             name = lp_combo.currentText()
-            if name:
-                profiles = get_layout_profiles(self._ov._cfg)
-                prof = profiles.get(name, {})
+            if not name: return
+            
+            profiles = get_layout_profiles(self._ov._cfg)
+            prof = profiles.get(name, {})
+            if not prof: return
+
+            self._ov._cfg['active_layout_profile'] = name
+            
+            # ¿Aplicar a todas?
+            if chk_lp_all.isChecked():
+                from overlay.replication_overlay import _OVERLAY_REGISTRY
+                peers = list(_OVERLAY_REGISTRY)
+                logger.info(f"[REPLICATOR SETTINGS] Aplicando perfil '{name}' a {len(peers)} replicas")
+                for peer in peers:
+                    try:
+                        apply_layout_profile_to_ov_cfg(peer._ov_cfg, prof)
+                        # Usar el helper unificado para aplicar cambios visuales (incluyendo región)
+                        peer.apply_settings_dict(prof, persist=True)
+                        # Forzar redimensionado manual ya que apply_settings_dict no toca x/y/w/h de ventana directamente
+                        w_v = int(peer._ov_cfg.get('w', 280))
+                        h_v = int(peer._ov_cfg.get('h', 200))
+                        peer.resize(w_v, h_v)
+                    except Exception as e:
+                        logger.error(f"Error aplicando perfil a peer: {e}")
+            else:
+                # Solo a la actual
                 apply_layout_profile_to_ov_cfg(self._ov._ov_cfg, prof)
-                self._ov._cfg['active_layout_profile'] = name
+                self._ov.apply_settings_dict(prof, persist=True)
                 w_val = int(self._ov._ov_cfg.get('w', 280))
                 h_val = int(self._ov._ov_cfg.get('h', 200))
                 self._ov.resize(w_val, h_val)
-                if hasattr(self._ov, '_thread'):
-                    self._ov._thread.set_fps(int(self._ov._ov_cfg.get('fps', 30)))
-                self._ov._schedule_autosave()
-                self._ov.update()
+
+            self._ov.update()
 
         def _lp_del():
             name = lp_combo.currentText()
@@ -334,8 +346,19 @@ class ReplicatorSettingsDialog(QDialog):
         btn_lp_apply.clicked.connect(_lp_apply)
         btn_lp_del.clicked.connect(_lp_del)
 
+        # --- FPS ---
+        _section(lay, "CAPTURA")
+
+        cmb_fps = QComboBox()
+        cmb_fps.addItems(['5', '10', '15', '30', '60', '120'])
+        fps_now = str(getattr(self._ov._thread, '_fps', 30) if hasattr(self._ov, '_thread') else 30)
+        if cmb_fps.findText(fps_now) >= 0:
+            cmb_fps.setCurrentText(fps_now)
+        cmb_fps.currentTextChanged.connect(lambda v: self._ov._set_fps(int(v)))
+        _row(lay, "Fotogramas (FPS):", cmb_fps)
+
         # --- Position / size ---
-        _section(lay, "POSICION Y TAMANO")
+        _section(lay, "POSICIÓN y TAMAÑO")
 
         sp_x = QSpinBox(); sp_x.setRange(0, 9999); sp_x.setValue(self._ov.x())
         sp_y = QSpinBox(); sp_y.setRange(0, 9999); sp_y.setValue(self._ov.y())
@@ -393,48 +416,6 @@ class ReplicatorSettingsDialog(QDialog):
         _row(lay, "Grid X (px):", sp_gx)
         _row(lay, "Grid Y (px):", sp_gy)
 
-        # --- FPS ---
-        _section(lay, "CAPTURA")
-
-        cmb_fps = QComboBox()
-        cmb_fps.addItems(['5', '10', '15', '30', '60', '120'])
-        fps_now = str(getattr(self._ov._thread, '_fps', 30) if hasattr(self._ov, '_thread') else 30)
-        if cmb_fps.findText(fps_now) >= 0:
-            cmb_fps.setCurrentText(fps_now)
-        cmb_fps.currentTextChanged.connect(lambda v: self._ov._set_fps(int(v)))
-        _row(lay, "Fotogramas (FPS):", cmb_fps)
-
-        # --- Copy layout to all ---
-        _section(lay, "COPIAR LAYOUT A TODAS")
-
-        chk_copy_size = QCheckBox("Incluir tamano (ancho/alto)")
-        chk_copy_size.setChecked(False)
-        lay.addWidget(chk_copy_size)
-
-        lbl_layout_status = QLabel("")
-        lbl_layout_status.setStyleSheet("color:#00ff64; font-size:10px;")
-
-        def _copy_layout_all():
-            from overlay.replicator_config import apply_common_settings_to_all, LAYOUT_PROFILE_KEYS
-            from overlay.replication_overlay import _OVERLAY_REGISTRY
-            keys_to_copy = [k for k in LAYOUT_PROFILE_KEYS if k not in ('w', 'h')]
-            if chk_copy_size.isChecked():
-                keys_to_copy = LAYOUT_PROFILE_KEYS[:]
-            apply_common_settings_to_all(self._ov._cfg, self._ov._title, keys=keys_to_copy)
-            src = {k: self._ov._ov_cfg[k] for k in keys_to_copy if k in self._ov._ov_cfg}
-            peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]
-            for peer in peers:
-                try:
-                    peer.apply_settings_dict(src, persist=False)
-                except Exception:
-                    pass
-            lbl_layout_status.setText(f"Layout copiado a {len(peers)} replica(s).")
-
-        btn_copy_layout = QPushButton("Replicar layout")
-        btn_copy_layout.setObjectName("green")
-        btn_copy_layout.clicked.connect(_copy_layout_all)
-        lay.addWidget(btn_copy_layout)
-        lay.addWidget(lbl_layout_status)
 
         lay.addStretch()
         return w
@@ -514,7 +495,7 @@ class ReplicatorSettingsDialog(QDialog):
                     pass
             lbl_status.setText(f"Etiqueta aplicada a {len(peers)} replicas.")
 
-        btn_apply = QPushButton("Aplicar etiqueta a todas")
+        btn_apply = QPushButton("Replicar etiqueta")
         btn_apply.setObjectName("green")
         btn_apply.clicked.connect(_apply_label_all)
         lay.addWidget(btn_apply)
@@ -613,7 +594,7 @@ class ReplicatorSettingsDialog(QDialog):
                     pass
             lbl_b_status.setText(f"Borde aplicado a {len(peers)} replicas.")
 
-        btn_apply_b = QPushButton("Aplicar borde a todas")
+        btn_apply_b = QPushButton("Replicar borde")
         btn_apply_b.setObjectName("green")
         btn_apply_b.clicked.connect(_apply_border_all)
         lay.addWidget(btn_apply_b)
@@ -667,6 +648,52 @@ class ReplicatorSettingsDialog(QDialog):
         le_grp_prev = QLineEdit()
         le_grp_prev.setPlaceholderText("Anterior en grupo")
 
+        lbl_hk_status = QLabel("")
+        lbl_hk_status.setStyleSheet("color:#00ff64; font-size:10px;")
+
+        def _save_current_group():
+            gid = cmb_group.currentData() or str(cmb_group.currentIndex() + 1)
+            checked = [t for t, chk in self._account_chks.items() if chk.isChecked()]
+            hk.setdefault('groups', {})[gid] = {
+                'enabled': chk_grp_en.isChecked(),
+                'name': le_grp_name.text().strip(),
+                'next': le_grp_next.text().strip().upper(),
+                'prev': le_grp_prev.text().strip().upper(),
+                'clients_order': checked
+            }
+            save_hotkeys_cfg(self._ov._cfg, hk)
+            _reload_group_combo()
+            lbl_hk_status.setText(f"Grupo {gid} guardado.")
+            logger.info(f"[REPLICATOR SETTINGS] Group {gid} saved with {len(checked)} clients.")
+
+        def _save_all_hk():
+            from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            # Save groups logic is handled per-group in _save_current_group, 
+            # but we still save the master hk config here if needed.
+            save_hotkeys_cfg(self._ov._cfg, hk)
+            def _get_titles():
+                return [ov._title for ov in list(_OVERLAY_REGISTRY)]
+            try:
+                titles = _get_titles()
+                update_hotkey_cache(titles)
+                register_hotkeys(self._ov._cfg, cycle_titles_getter=_get_titles)
+                lbl_hk_status.setText("Hotkeys aplicadas correctamente.")
+            except Exception as e:
+                lbl_hk_status.setText(f"Error: {e}")
+
+        def _load_group(idx):
+            gid = cmb_group.itemData(idx) or str(idx + 1)
+            gdata = hk.get('groups', {}).get(gid, {})
+            chk_grp_en.setChecked(bool(gdata.get('enabled', False)))
+            le_grp_name.setText(gdata.get('name', f"Grupo {gid}"))
+            le_grp_next.setText(gdata.get('next', ''))
+            le_grp_prev.setText(gdata.get('prev', ''))
+            saved_clients = gdata.get('clients_order', [])
+            for t, chk in self._account_chks.items():
+                chk.setChecked(t in saved_clients)
+
+        # Conexiones ENTER para guardar
         le_grp_name.returnPressed.connect(_save_current_group)
         le_grp_next.returnPressed.connect(_save_current_group)
         le_grp_prev.returnPressed.connect(_save_current_group)
@@ -713,32 +740,6 @@ class ReplicatorSettingsDialog(QDialog):
         btn_refresh.clicked.connect(refresh_accounts)
         lay.addWidget(btn_refresh)
 
-        def _load_group(idx):
-            gid = cmb_group.itemData(idx) or str(idx + 1)
-            gdata = hk.get('groups', {}).get(gid, {})
-            chk_grp_en.setChecked(bool(gdata.get('enabled', False)))
-            le_grp_name.setText(gdata.get('name', f"Grupo {gid}"))
-            le_grp_next.setText(gdata.get('next', ''))
-            le_grp_prev.setText(gdata.get('prev', ''))
-            saved_clients = gdata.get('clients_order', [])
-            for t, chk in self._account_chks.items():
-                chk.setChecked(t in saved_clients)
-
-        def _save_current_group():
-            gid = cmb_group.currentData() or str(cmb_group.currentIndex() + 1)
-            checked = [t for t, chk in self._account_chks.items() if chk.isChecked()]
-            hk.setdefault('groups', {})[gid] = {
-                'enabled': chk_grp_en.isChecked(),
-                'name': le_grp_name.text().strip(),
-                'next': le_grp_next.text().strip().upper(),
-                'prev': le_grp_prev.text().strip().upper(),
-                'clients_order': checked
-            }
-            save_hotkeys_cfg(self._ov._cfg, hk)
-            _reload_group_combo()
-            lbl_hk_status.setText(f"Grupo {gid} guardado.")
-            logger.info(f"[REPLICATOR SETTINGS] Group {gid} saved with {len(checked)} clients.")
-
         btn_save_group = QPushButton("💾 Guardar Grupo")
         btn_save_group.setObjectName("blue")
         btn_save_group.clicked.connect(_save_current_group)
@@ -748,25 +749,6 @@ class ReplicatorSettingsDialog(QDialog):
         _reload_group_combo()
         refresh_accounts()
         _load_group(0)
-
-        lbl_hk_status = QLabel("")
-        lbl_hk_status.setStyleSheet("color:#00ff64; font-size:10px;")
-
-        def _save_all_hk():
-            from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
-            from overlay.replication_overlay import _OVERLAY_REGISTRY
-            # Save groups logic is handled per-group in _save_current_group, 
-            # but we still save the master hk config here if needed.
-            save_hotkeys_cfg(self._ov._cfg, hk)
-            def _get_titles():
-                return [ov._title for ov in list(_OVERLAY_REGISTRY)]
-            try:
-                titles = _get_titles()
-                update_hotkey_cache(titles)
-                register_hotkeys(self._ov._cfg, cycle_titles_getter=_get_titles)
-                lbl_hk_status.setText("Hotkeys aplicadas correctamente.")
-            except Exception as e:
-                lbl_hk_status.setText(f"Error: {e}")
 
         btn_hk_save = QPushButton("Aplicar Hotkeys")
         btn_hk_save.setObjectName("green")

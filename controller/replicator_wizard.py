@@ -55,28 +55,14 @@ class ReplicatorWizard:
         self.dlg.setWindowFlags(flags)
 
         # [NUEVO] Refuerzo topmost unificado
-        from overlay.dialog_utils import make_replicator_dialog_topmost
+        from overlay.dialog_utils import make_replicator_dialog_topmost, REPLICATOR_STYLE
         make_replicator_dialog_topmost(self.dlg)
 
         self._top_timer = QTimer(self.dlg)
         self._top_timer.timeout.connect(self._reassert_topmost)
         self._top_timer.start(2000)
         
-        self.dlg.setStyleSheet("""
-            QDialog { background: #000000; border: 1px solid rgba(0,180,255,0.3); color: #e1e9f5; font-family: 'Segoe UI', sans-serif; }
-            QLabel { color: #a0b0c0; font-size: 11px; }
-            QPushButton { 
-                background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3);
-                border-radius: 4px; color: #00c8ff; padding: 4px 10px; font-weight: bold;
-            }
-            QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }
-            QPushButton#primary { background: rgba(0,200,255,0.2); border-color: #00e0ff; color: #00ffff; }
-            QListWidget { background: #040810; border: 1px solid #1a2533; border-radius: 5px; color: #e1e9f5; }
-            QSpinBox, QComboBox { 
-                background: #0d1626; border: 1px solid #1a2533; border-radius: 3px; 
-                color: #00c8ff; padding: 3px; font-size: 11px;
-            }
-        """)
+        self.dlg.setStyleSheet(REPLICATOR_STYLE)
 
         main_lay = QVBoxLayout(self.dlg)
         main_lay.setContentsMargins(0,0,0,0); main_lay.setSpacing(0)

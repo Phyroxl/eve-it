@@ -2,6 +2,7 @@ import logging
 import time
 import threading
 import weakref
+from pathlib import Path
 
 logger = logging.getLogger('eve.overlay')
 
@@ -16,11 +17,11 @@ for _qt_try in [
         _w = importlib.import_module(_qt_try[1])
         _c = importlib.import_module(_qt_try[2])
         _g = importlib.import_module(_qt_try[3])
-        for _n in ['QApplication', 'QWidget', 'QLabel', 'QMenu']:
+        for _n in ['QApplication', 'QWidget', 'QLabel', 'QMenu', 'QMessageBox', 'QDialog', 'QTextEdit', 'QVBoxLayout', 'QHBoxLayout', 'QPushButton', 'QStyle', 'QAction']:
             if hasattr(_w, _n): globals()[_n] = getattr(_w, _n)
         for _n in ['Qt', 'QTimer', 'QThread', 'Signal', 'Slot', 'QPoint', 'QRect', 'QSize', 'QRectF', 'QPointF']:
             if hasattr(_c, _n): globals()[_n] = getattr(_c, _n)
-        for _n in ['QColor', 'QPainter', 'QPixmap', 'QImage', 'QFont', 'QCursor', 'QPen', 'QBrush', 'QPainterPath']:
+        for _n in ['QColor', 'QPainter', 'QPixmap', 'QImage', 'QFont', 'QCursor', 'QPen', 'QBrush', 'QPainterPath', 'QIcon']:
             if hasattr(_g, _n): globals()[_n] = getattr(_g, _n)
         _qt_ok = True
         break
@@ -30,6 +31,12 @@ for _qt_try in [
 if not _qt_ok:
     class QWidget: pass
     class QThread: pass
+    class QMessageBox:
+        @staticmethod
+        def information(*args): pass
+    class QDialog: pass
+    class QStyle:
+        class StandardPixmap: SP_MessageBoxInformation = 0
     def Signal(*args): pass
     def Slot(*args): pass
 
@@ -39,6 +46,7 @@ from overlay.win32_capture import (
     set_topmost, should_show_overlays, get_window_size,
 )
 from overlay.replicator_config import get_overlay_cfg, save_overlay_cfg
+from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
 
 # Global weak registry so the settings dialog can reach all active overlays
 _OVERLAY_REGISTRY: 'weakref.WeakSet' = weakref.WeakSet()
@@ -213,7 +221,7 @@ class ReplicationOverlay(QWidget):
         self.setAutoFillBackground(False) # Asegura que Qt no pinte fondo por defecto
         self.setMinimumSize(20, 20)
         self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.ClickFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus if hasattr(Qt, 'FocusPolicy') else Qt.StrongFocus)
         self.setWindowTitle(f"Replica - {self._title}")
         # Forzar transparencia absoluta y quitar bordes en el root widget
         self.setStyleSheet("background: transparent; border: none; outline: none;")
@@ -568,6 +576,12 @@ class ReplicationOverlay(QWidget):
         self._ov_cfg['y'] = self.y()
         self._ov_cfg['w'] = self.width()
         self._ov_cfg['h'] = self.height()
+        # Save current replicated region (ROI)
+        self._ov_cfg['region_x'] = self._region.get('x', 0.0)
+        self._ov_cfg['region_y'] = self._region.get('y', 0.0)
+        self._ov_cfg['region_w'] = self._region.get('w', 1.0)
+        self._ov_cfg['region_h'] = self._region.get('h', 1.0)
+        
         if hasattr(self, '_thread'):
             self._ov_cfg['fps'] = self._thread._fps
         save_overlay_cfg(self._cfg, self._title, self._ov_cfg)
@@ -579,9 +593,19 @@ class ReplicationOverlay(QWidget):
     def apply_settings_dict(self, settings: dict, persist: bool = True):
         """Absorb a batch of settings keys (from apply-to-all)."""
         self._ov_cfg.update(settings)
+        
+        # Apply region if present
+        if 'region_x' in settings:
+            self._region['x'] = settings['region_x']
+            self._region['y'] = settings.get('region_y', self._region['y'])
+            self._region['w'] = settings.get('region_w', self._region['w'])
+            self._region['h'] = settings.get('region_h', self._region['h'])
+            
         self.apply_always_on_top(bool(self._ov_cfg.get('always_on_top', True)))
         if hasattr(self, '_thread'):
-            self._thread.set_fps(int(self._ov_cfg.get('fps', 30)))
+            self._ov_cfg['fps'] = int(self._ov_cfg.get('fps', 30))
+            self._thread.set_fps(self._ov_cfg['fps'])
+            
         if 'border_shape' in settings:
             self._apply_window_shape_mask()
         self.update()
@@ -620,90 +644,182 @@ class ReplicationOverlay(QWidget):
     # Context menu
     # ------------------------------------------------------------------
 
+    def _get_asset_icon(self, name: str) -> QIcon:
+        """Helper para cargar iconos personalizados desde el directorio assets."""
+        try:
+            # Ruta relativa al archivo actual: ../assets/name.png
+            assets_path = Path(__file__).resolve().parent.parent / "assets"
+            icon_file = assets_path / f"{name}.png"
+            if icon_file.exists():
+                return QIcon(str(icon_file))
+        except Exception:
+            pass
+        return QIcon() # Fallback vacío
+
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu { background: #0a0a0a; border: 1px solid #00c8ff; color: #fff; padding: 5px; }
-            QMenu::item { padding: 5px 20px; }
+            QMenu::item { padding: 5px 25px; }
             QMenu::item:selected { background: #004466; }
         """)
 
-        act_sync = menu.addAction("🔗 Sincronizar desde aquí")
+        style = self.style()
+        # Placeholder transparente para alineación perfecta
+        transparent = QPixmap(16, 16)
+        transparent.fill(Qt.GlobalColor.transparent if hasattr(Qt, 'GlobalColor') else Qt.transparent)
+        placeholder = QIcon(transparent)
+        
+        # 1. Sincronizar
+        icon_sync = self._get_asset_icon("sincronizar")
+        act_sync = menu.addAction(icon_sync, "Sincronizar réplicas")
         act_sync.setCheckable(True)
         act_sync.setChecked(self._sync_active)
         act_sync.triggered.connect(self._toggle_sync)
 
-        fps_menu = menu.addMenu("⚡ Fotogramas (FPS)")
+        # 2. FPS
+        fps_menu = menu.addMenu(self._get_asset_icon("fps"), "Fotogramas (FPS)")
         cur_fps = self._thread._fps if hasattr(self, '_thread') else 30
         for val in [5, 10, 15, 30, 60, 120]:
             label = f"✓ {val} FPS" if val == cur_fps else f"{val} FPS"
-            act = fps_menu.addAction(label)
+            act = fps_menu.addAction(placeholder, label)
             act.triggered.connect(lambda _, v=val: self._set_fps(v))
 
-        act_wizard = menu.addAction("🎯 Cambiar Zona")
-        act_wizard.triggered.connect(self._relaunch_wizard)
+        # 3. Zona
+        icon_zone = self._get_asset_icon("region")
+        act_wizard = menu.addAction(icon_zone, "Cambiar Zona")
+        act_wizard.triggered.connect(lambda: self._relaunch_wizard())
 
         menu.addSeparator()
 
-        act_settings = menu.addAction("⚙ Ajustes")
-        act_settings.triggered.connect(self._open_settings)
+        # 4. Ajustes
+        icon_settings = self._get_asset_icon("ajuste")
+        act_settings = menu.addAction(icon_settings, "Ajustes")
+        act_settings.triggered.connect(lambda: QTimer.singleShot(0, self._open_settings))
 
         menu.addSeparator()
 
-        act_info = menu.addAction("ℹ Información")
-        act_info.triggered.connect(self._show_info_dialog)
+        # 5. Información
+        icon_info = self._get_asset_icon("informacion")
+        act_info = menu.addAction(icon_info, "Información")
+        act_info.triggered.connect(lambda: self._show_info_dialog())
 
         menu.addSeparator()
 
-        act_close = menu.addAction("✕ Cerrar")
+        # 6. Cerrar
+        icon_close = style.standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton if hasattr(QStyle.StandardPixmap, 'SP_TitleBarCloseButton') else QStyle.SP_TitleBarCloseButton)
+        act_close = menu.addAction(icon_close, "Cerrar")
         act_close.triggered.connect(self.close)
 
         menu.exec(event.globalPos())
 
-    def _open_settings(self):
-        try:
-            if hasattr(self, "_settings_dialog") and self._settings_dialog and self._settings_dialog.isVisible():
-                self._settings_dialog.raise_()
-                self._settings_dialog.activateWindow()
-                return
+    def _open_settings(self, _checked=False):
+        """Abre o trae al frente el diálogo de ajustes del Replicador."""
+        logger.info(f"[REPLICATOR MENU] _open_settings called for {self._title}")
+        
+        # 1. Reutilizar si ya existe y es válido
+        if hasattr(self, "_settings_dialog") and self._settings_dialog:
+            try:
+                if self._settings_dialog.isVisible():
+                    logger.info("[REPLICATOR MENU] Diálogo existente visible, activando")
+                    self._settings_dialog.raise_()
+                    self._settings_dialog.activateWindow()
+                    return
+            except (RuntimeError, ReferenceError):
+                logger.info("[REPLICATOR MENU] Referencia muerta detectada, limpiando")
+                self._settings_dialog = None
 
-            from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
+        # 2. Crear nueva instancia
+        try:
+            logger.info(f"[REPLICATOR MENU] Creando nueva instancia de ReplicatorSettingsDialog")
             dlg = ReplicatorSettingsDialog(self)
-            # Aseguramos que sea No Modal para permitir interactuar con réplicas
-            dlg.setModal(False)
-            dlg.setWindowModality(Qt.WindowModality.NonModal if hasattr(Qt.WindowModality, 'NonModal') else Qt.NonModal)
             
-            # Guardamos referencia para evitar GC
+            # Persistencia de referencia
             self._settings_dialog = dlg
+            
+            # Limpiar referencia al cerrar/destruir
+            dlg.destroyed.connect(lambda: self._on_settings_destroyed())
+            
+            # Configuración de ventana (No Modal)
+            dlg.setModal(False)
+            dlg.setWindowModality(Qt.WindowModality.NonModal if hasattr(Qt, 'WindowModality') else Qt.NonModal)
             
             dlg.show()
             dlg.raise_()
             dlg.activateWindow()
             
-            # Refuerzo topmost unificado
+            # Refuerzo topmost
             try:
                 from overlay.dialog_utils import make_replicator_dialog_topmost
-                make_replicator_dialog_topmost(dlg)
-            except Exception:
-                pass
-
+                make_replicator_dialog_topmost(dlg, modal=False)
+            except Exception as e:
+                logger.debug(f"Topmost reinforcement error: {e}")
+                
+            logger.info("[REPLICATOR MENU] Diálogo abierto con éxito")
+            
         except Exception as e:
-            logger.exception(f"[REPLICATOR SETTINGS] Error abriendo ajustes para {self._title}")
+            logger.exception(f"[REPLICATOR MENU] Error crítico instanciando Ajustes: {e}")
+            raise # Propagar para que el diagnóstico lo capture
+
+    def _on_settings_destroyed(self):
+        """Callback cuando el diálogo es destruido por Qt."""
+        logger.info(f"[REPLICATOR MENU] Diálogo de ajustes destruido para {self._title}")
+        self._settings_dialog = None
 
     def _show_info_dialog(self):
-        msg = (
-            "<b>Guía rápida de la réplica:</b><br><br>"
+        if hasattr(self, "_info_dialog") and self._info_dialog and self._info_dialog.isVisible():
+            self._info_dialog.raise_()
+            self._info_dialog.activateWindow()
+            return
+
+        from overlay.dialog_utils import REPLICATOR_STYLE, make_replicator_dialog_topmost
+        
+        dlg = QDialog(None) # Parent=None para evitar que bloquee al overlay padre de forma modal implícita
+        dlg.setWindowTitle("Información de la réplica")
+        dlg.setMinimumSize(320, 380)
+        dlg.setStyleSheet(REPLICATOR_STYLE)
+        
+        # Flags para que se comporte como ventana de herramientas flotante
+        flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
+        dlg.setWindowFlags(flags)
+        
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(15, 15, 15, 15)
+        
+        lbl_title = QLabel("GUÍA RÁPIDA DE COMANDOS")
+        lbl_title.setObjectName("section")
+        lay.addWidget(lbl_title)
+        
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setFrameStyle(0) # No border
+        txt.setStyleSheet("background: transparent; color: #e2e8f0; font-size: 11px;")
+        
+        guide_text = (
+            "<b>Interacciones del Ratón:</b><br>"
             "• <b>Click izquierdo:</b> Enfocar cliente EVE.<br>"
-            "• <b>Click derecho:</b> Abrir este menú.<br>"
-            "• <b>Rueda ratón:</b> Zoom +/- del área capturada.<br>"
-            "• <b>Flechas:</b> Desplazar vista del área.<br>"
+            "• <b>Click derecho:</b> Abrir menú de opciones.<br>"
+            "• <b>Rueda ratón:</b> Zoom +/- del área (ROI).<br>"
+            "• <b>Ctrl + Rueda:</b> Ajustar ancho de ventana.<br>"
+            "• <b>Shift + Rueda:</b> Ajustar alto de ventana.<br><br>"
+            "<b>Teclado (Foco en réplica):</b><br>"
+            "• <b>Flechas:</b> Desplazar vista capturada.<br>"
             "• <b>Shift + Flechas:</b> Desplazamiento rápido.<br>"
-            "• <b>Ctrl + Rueda:</b> Cambiar ancho de ventana.<br>"
-            "• <b>Shift + Rueda:</b> Cambiar alto de ventana.<br>"
-            "• <b>Ctrl + Flecha Arriba/Abajo:</b> Zoom preciso.<br><br>"
-            "<i>Usa 'Ajustes' para personalizar bordes, etiquetas y hotkeys.</i>"
+            "• <b>Ctrl + Arriba/Abajo:</b> Zoom preciso.<br><br>"
+            "<b>Configuración:</b><br>"
+            "• <b>Ajustes:</b> Personaliza bordes, etiquetas y hotkeys.<br>"
+            "• <b>Sincronizar réplicas:</b> Copia el layout actual a todas las demás ventanas activas."
         )
-        QMessageBox.information(self, "Información de la réplica", msg)
+        txt.setHtml(guide_text)
+        lay.addWidget(txt)
+        
+        btn_close = QPushButton("Entendido")
+        btn_close.clicked.connect(dlg.close)
+        lay.addWidget(btn_close)
+        
+        self._info_dialog = dlg
+        make_replicator_dialog_topmost(dlg)
+        dlg.show()
 
     def _reset_view(self):
         self._region['x'] = 0
@@ -799,6 +915,10 @@ class ReplicationOverlay(QWidget):
         if self._sync_active:
             self.sync_triggered.emit(self._region)
         event.accept()
+
+    def _zoom_roi(self, factor):
+        """Wrapper de compatibilidad para zoom uniforme."""
+        return self._zoom_roi_ex(factor, factor)
 
     def _zoom_roi_ex(self, f_w, f_h, mx_rel=0.5, my_rel=0.5):
         old_w, old_h = self._region['w'], self._region['h']
@@ -1064,6 +1184,12 @@ class ReplicationOverlay(QWidget):
                 self.setCursor(Qt.SizeFDiagCursor)
             else:
                 self.setCursor(Qt.ArrowCursor)
+
+    def enterEvent(self, event):
+        """Mejorar responsividad: tomar foco al entrar el ratón."""
+        if not self.hasFocus():
+            self.setFocus(Qt.FocusReason.MouseFocusReason if hasattr(Qt.FocusReason, 'MouseFocusReason') else Qt.MouseFocusReason)
+        super().enterEvent(event)
 
     def mouseReleaseEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton

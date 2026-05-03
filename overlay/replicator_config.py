@@ -182,6 +182,7 @@ LAYOUT_PROFILE_KEYS = [
     'w', 'h', 'maintain_aspect',
     'snap_enabled', 'snap_x', 'snap_y',
     'fps', 'opacity', 'label_visible', 'border_visible',
+    'region_x', 'region_y', 'region_w', 'region_h',
 ]
 
 # Keys copied when user clicks "copy all non-layout settings to all"
@@ -189,10 +190,16 @@ NON_LAYOUT_COPY_KEYS = [
     'always_on_top', 'hide_when_inactive', 'locked',
 ] + LABEL_COPY_KEYS + BORDER_COPY_KEYS
 
+# Full replicate keys (everything except identity/hwnd)
+FULL_REPLICATE_KEYS = list(set(
+    ['x', 'y'] + LAYOUT_PROFILE_KEYS + NON_LAYOUT_COPY_KEYS
+))
+
 _DEFAULT_LAYOUT_PROFILE = {
     'w': 280, 'h': 200, 'maintain_aspect': True,
     'snap_enabled': False, 'snap_x': 20, 'snap_y': 20,
     'fps': 30, 'opacity': 1.0, 'label_visible': True, 'border_visible': True,
+    'region_x': 0.0, 'region_y': 0.0, 'region_w': 1.0, 'region_h': 1.0,
 }
 
 _HOTKEY_DEFAULTS = {
