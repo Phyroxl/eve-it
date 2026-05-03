@@ -68,14 +68,51 @@ class ReplicatorSettingsDialog(QDialog):
         super().__init__(parent)
         self._ov = overlay
         self.setWindowTitle(f"Ajustes — {overlay._title}")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(380)
         self.setStyleSheet(_STYLE)
-        flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
-        self.setWindowFlags(flags | (Qt.WindowType.WindowCloseButtonHint
-                                     if hasattr(Qt, 'WindowType') else Qt.WindowCloseButtonHint))
         
+        # Premium: Frameless + Custom Drag Header
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool) if hasattr(Qt, 'WindowType') else (Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlags(flags)
+        
+        self._drag_pos = None
         self._build_ui()
         self._load_geometry()
+        
+        # Sync geometry in real-time from overlay
+        self._ov.geometryChanged.connect(self._on_overlay_geometry_changed)
+
+    def _on_overlay_geometry_changed(self, x, y, w, h):
+        # Update spinboxes if they exist (they are defined in _tab_layout)
+        if hasattr(self, '_sp_x'):
+            self._sp_x.blockSignals(True)
+            self._sp_y.blockSignals(True)
+            self._sp_w.blockSignals(True)
+            self._sp_h.blockSignals(True)
+            
+            self._sp_x.setValue(x)
+            self._sp_y.setValue(y)
+            self._sp_w.setValue(w)
+            self._sp_h.setValue(h)
+            
+            self._sp_x.blockSignals(False)
+            self._sp_y.blockSignals(False)
+            self._sp_w.blockSignals(False)
+            self._sp_h.blockSignals(False)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton and self._drag_pos:
+            gpos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            diff = gpos - self._drag_pos
+            self.move(self.pos() + diff)
+            self._drag_pos = gpos
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -109,16 +146,45 @@ class ReplicatorSettingsDialog(QDialog):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(8)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
 
+        # Custom Header
+        hdr = QWidget()
+        hdr.setFixedHeight(32)
+        hdr.setStyleSheet("background: #000; border-bottom: 1px solid #1e293b;")
+        h_lay = QHBoxLayout(hdr)
+        h_lay.setContentsMargins(12, 0, 6, 0)
+        
+        icon_lbl = QLabel("⚙️")
+        h_lay.addWidget(icon_lbl)
+        
+        title_lbl = QLabel(f"AJUSTES — {self._ov._title.upper()}")
+        title_lbl.setStyleSheet("color: #00c8ff; font-weight: 800; font-size: 10px; letter-spacing: 1px;")
+        h_lay.addWidget(title_lbl)
+        h_lay.addStretch()
+        
+        btn_x = QPushButton("×")
+        btn_x.setFixedSize(24, 24)
+        btn_x.setStyleSheet("""
+            QPushButton { background: transparent; border: none; color: #64748b; font-size: 18px; font-weight: normal; }
+            QPushButton:hover { color: #ff6666; background: rgba(255,50,50,0.1); border-radius: 3px; }
+        """)
+        btn_x.clicked.connect(self.reject)
+        h_lay.addWidget(btn_x)
+        lay.addWidget(hdr)
+
+        content_lay = QVBoxLayout()
+        content_lay.setContentsMargins(12, 12, 12, 12)
+        content_lay.setSpacing(8)
+        
         tabs = QTabWidget()
         tabs.addTab(self._tab_general(),  "General")
         tabs.addTab(self._tab_layout(),   "Layout")
         tabs.addTab(self._tab_label(),    "Etiqueta")
         tabs.addTab(self._tab_border(),   "Borde")
         tabs.addTab(self._tab_hotkeys(), "Hotkeys")
-        lay.addWidget(tabs)
+        content_lay.addWidget(tabs)
 
         btn_close = QPushButton("Cerrar")
         btn_close.setObjectName("close")
@@ -126,7 +192,8 @@ class ReplicatorSettingsDialog(QDialog):
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(btn_close)
-        lay.addLayout(row)
+        content_lay.addLayout(row)
+        lay.addLayout(content_lay)
 
     # ------------------------------------------------------------------ #
     # Tab: General
@@ -365,12 +432,15 @@ class ReplicatorSettingsDialog(QDialog):
         sp_w = QSpinBox(); sp_w.setRange(20, 4096); sp_w.setValue(self._ov.width())
         sp_h = QSpinBox(); sp_h.setRange(20, 4096); sp_h.setValue(self._ov.height())
 
+        # Guardar referencias para el sync en tiempo real
+        self._sp_x = sp_x; self._sp_y = sp_y; self._sp_w = sp_w; self._sp_h = sp_h
+
         sp_x.valueChanged.connect(lambda v: self._ov.move(v, self._ov.y()))
         sp_y.valueChanged.connect(lambda v: self._ov.move(self._ov.x(), v))
         sp_w.valueChanged.connect(lambda v: self._ov.resize(v, self._ov.height()))
         sp_h.valueChanged.connect(lambda v: self._ov.resize(self._ov.width(), v))
         
-        # [NUEVO] ENTER aplica cambios (editingFinished dispara la actualizacion final)
+        # ENTER aplica cambios (editingFinished dispara la actualizacion final)
         sp_x.editingFinished.connect(lambda: self._ov.move(sp_x.value(), sp_y.value()))
         sp_y.editingFinished.connect(lambda: self._ov.move(sp_x.value(), sp_y.value()))
         sp_w.editingFinished.connect(lambda: self._ov.resize(sp_w.value(), sp_h.value()))
@@ -694,8 +764,9 @@ class ReplicatorSettingsDialog(QDialog):
         def _save_all_hk():
             from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
             from overlay.replication_overlay import _OVERLAY_REGISTRY
-            # Save groups logic is handled per-group in _save_current_group, 
-            # but we still save the master hk config here if needed.
+            # Flush current group UI state first so its hotkey combo is in hk['groups']
+            # before register_hotkeys reads group_combos — prevents F14 registering globally.
+            _save_current_group()
             save_hotkeys_cfg(self._ov._cfg, hk)
             def _get_titles():
                 return [ov._title for ov in list(_OVERLAY_REGISTRY)]
@@ -782,10 +853,18 @@ class ReplicatorSettingsDialog(QDialog):
         
         list_box.addWidget(self._accounts_list)
         
-        # Botones de orden
+        # Botones de orden mejorados
         btn_lay = QVBoxLayout()
-        btn_up = QPushButton("▲"); btn_up.setFixedSize(24, 40)
-        btn_down = QPushButton("▼"); btn_down.setFixedSize(24, 40)
+        btn_up = QPushButton("↑"); btn_up.setFixedSize(26, 42)
+        btn_down = QPushButton("↓"); btn_down.setFixedSize(26, 42)
+        
+        order_btn_style = """
+            QPushButton { background: #1e293b; border: 1px solid #334155; color: #94a3b8; font-size: 14px; border-radius: 4px; }
+            QPushButton:hover { background: #334155; border-color: #00c8ff; color: #00c8ff; }
+            QPushButton:pressed { background: #0f172a; }
+        """
+        btn_up.setStyleSheet(order_btn_style); btn_down.setStyleSheet(order_btn_style)
+        btn_up.setToolTip("Subir cuenta"); btn_down.setToolTip("Bajar cuenta")
         
         def _move_item(up=True):
             curr = self._accounts_list.currentRow()
@@ -850,15 +929,11 @@ class ReplicatorSettingsDialog(QDialog):
                 self._accounts_list.item(i).setCheckState(Qt.Checked)
         btn_select_all.clicked.connect(_select_all_clients)
         
-        btn_log = QPushButton("📋 Log hotkeys")
-        btn_log.setFixedWidth(110)
-        btn_log.clicked.connect(self._view_hotkey_log)
-        
         btn_row_ops.addWidget(btn_refresh)
         btn_row_ops.addWidget(btn_select_all)
-        btn_row_ops.addWidget(btn_log)
         btn_row_ops.addStretch()
         lay.addLayout(btn_row_ops)
+        
 
         btn_save_group = QPushButton("💾 Guardar Grupo")
         btn_save_group.setObjectName("blue")
@@ -870,72 +945,11 @@ class ReplicatorSettingsDialog(QDialog):
         refresh_accounts()
         _load_group(0)
 
-        btn_hk_save = QPushButton("Aplicar Hotkeys")
-        btn_hk_save.setObjectName("green")
-        btn_hk_save.clicked.connect(_save_all_hk)
-        lay.addWidget(btn_hk_save)
+        btn_apply_hk = QPushButton("Aplicar Hotkeys")
+        btn_apply_hk.setObjectName("green")
+        btn_apply_hk.clicked.connect(_save_all_hk)
+        lay.addWidget(btn_apply_hk)
         lay.addWidget(lbl_hk_status)
 
         lay.addStretch()
         return w
-
-    def _view_hotkey_log(self):
-        """Abre un visor de log no modal para depuración de hotkeys."""
-        from utils.paths import ROOT_DIR
-        log_path = ROOT_DIR / "logs" / "hotkey_order_debug.log"
-        
-        d = QDialog(self)
-        d.setWindowTitle("Log de hotkeys — Diagnóstico")
-        d.setMinimumSize(600, 400)
-        d.setWindowFlags(d.windowFlags() | Qt.WindowType.WindowMinimizeButtonHint | Qt.WindowType.WindowMaximizeButtonHint)
-        d.setStyleSheet("QDialog { background: #0b0e14; color: #e1e7ef; }")
-        
-        lay = QVBoxLayout(d)
-        
-        txt = QTextEdit()
-        txt.setReadOnly(True)
-        txt.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        txt.setStyleSheet("""
-            QTextEdit { 
-                background: #0d1117; 
-                color: #00ff64; 
-                font-family: 'Consolas', 'Courier New'; 
-                font-size: 11px; 
-                border: 1px solid #1e293b;
-            }
-        """)
-        
-        content = "Todavía no hay log.\nGuarda el grupo, aplica hotkeys y pulsa Hotkey Sig./Ant. para generar datos."
-        if log_path.exists():
-            try:
-                content = log_path.read_text(encoding='utf-8')
-            except Exception as e:
-                content = f"Error leyendo log: {e}"
-        
-        txt.setPlainText(content)
-        lay.addWidget(txt)
-        
-        btns = QHBoxLayout()
-        
-        btn_copy = QPushButton("Copiar Log")
-        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(txt.toPlainText()))
-        
-        btn_clear = QPushButton("Limpiar")
-        def _clear():
-            if log_path.exists():
-                try: log_path.write_text("", encoding='utf-8')
-                except Exception: pass
-            txt.setPlainText("Log limpiado.")
-        btn_clear.clicked.connect(_clear)
-        
-        btn_close = QPushButton("Cerrar")
-        btn_close.clicked.connect(d.accept)
-        
-        btns.addWidget(btn_copy)
-        btns.addWidget(btn_clear)
-        btns.addStretch()
-        btns.addWidget(btn_close)
-        lay.addLayout(btns)
-        
-        d.show() # No modal
-        self._log_diag = d # Mantener referencia para evitar GC

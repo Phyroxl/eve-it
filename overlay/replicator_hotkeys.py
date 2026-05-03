@@ -152,6 +152,13 @@ def parse_hotkey(combo: str) -> tuple:
     return (mods, vk)
 
 
+def _normalize_hotkey(combo: str) -> str:
+    """Normalize a hotkey combo to canonical uppercase form (e.g. 'ctrl+f14' → 'CTRL+F14')."""
+    if not combo or not combo.strip():
+        return ''
+    return '+'.join(p.strip().upper() for p in combo.split('+'))
+
+
 def _next_id() -> int:
     global _id_seq
     _id_seq += 1
@@ -538,7 +545,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 group_combos[(p_m, p_v)] = g_id
                 logger.debug(f'[HOTKEY REG] group={g_id} prev={g_data.get("prev")}')
 
+    from functools import partial
+
     # Global cycle — skip if the combo is reserved by a group
+    n_global_skipped = 0
     for key, direction in [('cycle_next', +1), ('cycle_prev', -1)]:
         entry = hk_cfg.get(key, {})
         combo = entry.get('combo', '') if isinstance(entry, dict) else ''
@@ -548,10 +558,11 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 res_gid = group_combos[(mods, vk)]
                 logger.info(f'[HOTKEY] Global {key} ({combo}) reserved by group {res_gid} → skipping')
                 _perf_log(f'[HOTKEY REGISTER SKIP] hotkey={combo} reason=reserved_by_group group={res_gid} global={key}')
+                n_global_skipped += 1
             else:
                 logger.info(f'[HOTKEY] Registering global {key} → {combo}')
                 _perf_log(f'[HOTKEY REGISTER] scope=global hotkey={combo} callback=_cycle direction={"next" if direction>0 else "prev"}')
-                registrations.append((mods, vk, lambda d=direction: _cycle(d)))
+                registrations.append((mods, vk, partial(_cycle, direction)))
 
     # Group hotkeys (registered after globals; priority guaranteed by dedup above)
     for g_id, g_data in groups.items():
@@ -564,7 +575,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'[HOTKEY REGISTER] scope=group group_id={g_id} group_name={g_data.get("name","")} '
                 f'hotkey={g_data.get("next")} direction=next callback=_cycle_group'
             )
-            registrations.append((n_mods, n_vk, lambda gid=g_id: _cycle_group(gid, +1)))
+            registrations.append((n_mods, n_vk, partial(_cycle_group, g_id, +1)))
         p_mods, p_vk = parse_hotkey(g_data.get('prev', ''))
         if p_vk:
             logger.info(f'[HOTKEY] Registering group {g_id} prev → {g_data.get("prev")}')
@@ -572,7 +583,13 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'[HOTKEY REGISTER] scope=group group_id={g_id} group_name={g_data.get("name","")} '
                 f'hotkey={g_data.get("prev")} direction=prev callback=_cycle_group'
             )
-            registrations.append((p_mods, p_vk, lambda gid=g_id: _cycle_group(gid, -1)))
+            registrations.append((p_mods, p_vk, partial(_cycle_group, g_id, -1)))
+
+    _perf_log(
+        f'[HOTKEY REGISTER SUMMARY] total={len(registrations)} '
+        f'group_reserved={len(group_combos)} global_skipped={n_global_skipped} '
+        f'groups_enabled={sum(1 for g in groups.values() if g.get("enabled"))}'
+    )
 
     if not registrations:
         logger.debug('No hotkey combos configured')
