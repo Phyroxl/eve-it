@@ -252,7 +252,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             
         titles = group.get('clients_order', [])
         if not titles:
-            logger.warning(f"[HOTKEY ORDER] Grupo {group_id} sin miembros ordenados.")
+            logger.warning(f"[HOTKEY ORDER DEBUG] Grupo {group_id} sin miembros ordenados.")
             return
 
         fg_hwnd = get_foreground_hwnd()
@@ -275,12 +275,28 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         if current_idx == -1:
             current_idx = _last_group_index.get(group_id, -1)
             
-        # Logging de diagnóstico
-        logger.info(f"[HOTKEY ORDER DEBUG] Group='{group.get('name')}' Dir={'Next' if direction>0 else 'Prev'} Order={titles} ActiveTitle='{fg_title}' ActiveIdx={current_idx}")
+        # Logging de diagnóstico ULTRA-DETALLADO
+        logger.info("[HOTKEY ORDER DEBUG] --- START CYCLE ---")
+        logger.info(f"[HOTKEY ORDER DEBUG] hotkey_pressed={'Next' if direction>0 else 'Prev'}")
+        logger.info(f"[HOTKEY ORDER DEBUG] active_group_name='{group.get('name')}'")
+        logger.info(f"[HOTKEY ORDER DEBUG] group_raw_data={group}")
+        logger.info(f"[HOTKEY ORDER DEBUG] members_order={titles}")
+        
+        # Overlays abiertos
+        open_ovs = []
+        for i, ov in enumerate(list(_OVERLAY_REGISTRY)):
+            open_ovs.append({
+                'idx': i,
+                'overlay_title': ov._title,
+                'hwnd': ov._hwnd,
+                'visible': ov.isVisible()
+            })
+        logger.info(f"[HOTKEY ORDER DEBUG] open_overlays={open_ovs}")
+        logger.info(f"[HOTKEY ORDER DEBUG] foreground_hwnd={fg_hwnd}")
+        logger.info(f"[HOTKEY ORDER DEBUG] active_detected_id_title='{fg_title}'")
+        logger.info(f"[HOTKEY ORDER DEBUG] current_index={current_idx}")
 
         # 4. Calcular siguiente salto
-        # Si empezamos desde fuera del grupo, el primer salto (attempt=1) nos llevará 
-        # al primer (direction=1) o último (direction=-1) miembro.
         start_search_idx = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
         
         for attempt in range(1, len(titles) + 1):
@@ -295,18 +311,22 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 if hwnd: _hwnd_cache[target] = hwnd
             
             if hwnd and is_hwnd_valid(hwnd):
+                logger.info(f"[HOTKEY ORDER DEBUG] target_index_calculated={next_idx}")
+                logger.info(f"[HOTKEY ORDER DEBUG] target_id_title_chosen='{target}'")
+                logger.info(f"[HOTKEY ORDER DEBUG] method_exact_used='focus_eve_window_fast'")
+                
                 ok = focus_eve_window_fast(hwnd)
                 if ok:
                     _last_group_index[group_id] = next_idx
                     ReplicationOverlay.notify_active_client_changed(hwnd)
                     
                 dt = (time.perf_counter() - t0) * 1000
-                logger.info(f"[HOTKEY ORDER DEBUG] Target='{target}' Index={next_idx} ms={dt:.1f} ok={ok}")
+                logger.info(f"[HOTKEY ORDER DEBUG] --- CYCLE DONE ok={ok} ms={dt:.1f} ---")
                 return
             else:
                 logger.debug(f"[HOTKEY ORDER DEBUG] Saltando '{target}' (sin ventana válida)")
 
-        logger.warning(f"[HOTKEY ORDER DEBUG] No se encontraron ventanas válidas para el grupo {group_id}")
+        logger.warning(f"[HOTKEY ORDER DEBUG] --- CYCLE FAILED (No valid windows found) ---")
 
     for key, direction in [('cycle_next', +1), ('cycle_prev', -1)]:
         entry = hk_cfg.get(key, {})

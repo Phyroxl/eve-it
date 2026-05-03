@@ -673,7 +673,7 @@ class ReplicatorSettingsDialog(QDialog):
             save_hotkeys_cfg(self._ov._cfg, hk)
             _reload_group_combo()
             lbl_hk_status.setText(f"Grupo {gid} guardado.")
-            logger.info(f"[REPLICATOR SETTINGS] Group {gid} saved with {len(ordered_titles)} clients.")
+            logger.info(f"[HOTKEY ORDER DEBUG] Group {gid} saved. Order: {ordered_titles}")
 
         def _save_all_hk():
             from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
