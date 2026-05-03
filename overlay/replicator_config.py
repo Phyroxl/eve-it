@@ -174,7 +174,7 @@ LABEL_COPY_KEYS = [
 # Keys copied when user clicks "apply border settings to all"
 BORDER_COPY_KEYS = [
     'border_visible', 'border_width', 'border_shape',
-    'highlight_active', 'active_border_color',
+    'highlight_active', 'active_border_color', 'show_gray_frame',
 ]
 
 # Keys stored in a layout profile

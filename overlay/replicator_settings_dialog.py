@@ -132,8 +132,8 @@ class ReplicatorSettingsDialog(QDialog):
         except Exception:
             pass
 
-    def _cfg(self, key):
-        return self._ov._ov_cfg.get(key)
+    def _cfg(self, key, default=None):
+        return self._ov._ov_cfg.get(key, default)
 
     def _set(self, key, value):
         self._ov._ov_cfg[key] = value
@@ -528,7 +528,11 @@ class ReplicatorSettingsDialog(QDialog):
 
         chk_gray = QCheckBox("Mostrar borde gris")
         chk_gray.setChecked(bool(self._cfg('show_gray_frame', True)))
-        chk_gray.toggled.connect(lambda v: (self._set('show_gray_frame', v), self._ov.update()))
+        chk_gray.toggled.connect(lambda v: (
+            self._set('show_gray_frame', v),
+            self._ov.update(),
+            self._ov.repaint(),
+        ))
         lay.addWidget(chk_gray)
 
         sp_bw = QSpinBox(); sp_bw.setRange(1, 10); sp_bw.setValue(int(self._cfg('border_width') or 2))

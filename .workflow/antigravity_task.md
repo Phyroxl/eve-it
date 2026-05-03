@@ -20,6 +20,14 @@
 **Causa:** Falta de máscara de recorte (clipping) en el renderizado del pixmap.
 **Solución:** Implementación de `QPainterPath` con `setClipPath` en `paintEvent`. El contenido se recorta dinámicamente según la forma (`rounded`, `pill`, `glow`), asegurando que la imagen nunca se salga del marco visual.
 
+## 5) Toggle Marco Gris (show_gray_frame)
+**Problema:** Al desmarcar "Mostrar borde gris" en Ajustes > Borde, el rectángulo gris exterior seguía visible en formas pill/rounded.
+**Causa:** `show_gray_frame` no estaba en `BORDER_COPY_KEYS`, por lo que "Aplicar borde a todas" no lo propagaba; y la señal `toggled` del checkbox solo llamaba `update()` sin forzar repintado inmediato con `repaint()`. El paintEvent ya condicionaba correctamente el `drawRect(alpha=40)` pero el flag no llegaba actualizado en todos los casos.
+**Solución:**
+- `overlay/replicator_config.py`: añadido `'show_gray_frame'` a `BORDER_COPY_KEYS` para que "aplicar a todas" lo propague.
+- `overlay/replicator_settings_dialog.py`: checkbox `toggled` ahora llama `_set + update() + repaint()` para forzar repintado sincrónico inmediato.
+- `replication_overlay.py`: sin cambios — `paintEvent` ya tenía la lógica correcta.
+
 ## Pruebas Realizadas
 - `python -m py_compile`: Validado en todos los módulos afectados.
 - `pytest`: Tests de regresión pasados (31 tests).
