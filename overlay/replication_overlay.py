@@ -180,13 +180,19 @@ class ReplicationOverlay(QWidget):
         flags = (
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.NoDropShadowWindowHint
         ) if hasattr(Qt, 'WindowType') else (
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool |
+            Qt.NoDropShadowWindowHint
         )
         self.setWindowFlags(flags)
         self.setAttribute(
             Qt.WA_TranslucentBackground if hasattr(Qt, 'WA_TranslucentBackground') else 120,
+            True,
+        )
+        self.setAttribute(
+            Qt.WA_NoSystemBackground if hasattr(Qt, 'WA_NoSystemBackground') else 9,
             True,
         )
         self.setAutoFillBackground(False) # Asegura que Qt no pinte fondo por defecto
@@ -898,6 +904,12 @@ class ReplicationOverlay(QWidget):
             self._thread.set_output_size(self.width(), self.height())
         super().resizeEvent(event)
         self._apply_window_shape_mask()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-apply mask after show(): setWindowFlags + show() can reset the mask on Windows
+        self._apply_window_shape_mask()
+        self.update()
 
     # ------------------------------------------------------------------
     # Close

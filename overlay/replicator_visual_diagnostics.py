@@ -86,12 +86,20 @@ def build_visual_diagnostic_report(overlay) -> str:
     S("3) QT FLAGS Y ATRIBUTOS")
     try:
         flags = overlay.windowFlags()
-        fwh  = Qt.WindowType.FramelessWindowHint   if hasattr(Qt, 'WindowType') else Qt.FramelessWindowHint
-        wsot = Qt.WindowType.WindowStaysOnTopHint  if hasattr(Qt, 'WindowType') else Qt.WindowStaysOnTopHint
-        tool = Qt.WindowType.Tool                  if hasattr(Qt, 'WindowType') else Qt.Tool
-        I("FramelessWindowHint",    bool(flags & fwh))
-        I("WindowStaysOnTopHint",   bool(flags & wsot))
-        I("Tool flag",              bool(flags & tool))
+        def _f(name_new, name_old):
+            if hasattr(Qt, 'WindowType'):
+                v = getattr(Qt.WindowType, name_new, None)
+            else:
+                v = getattr(Qt, name_old, None)
+            return v
+        fwh   = _f('FramelessWindowHint',      'FramelessWindowHint')
+        wsot  = _f('WindowStaysOnTopHint',     'WindowStaysOnTopHint')
+        tool  = _f('Tool',                     'Tool')
+        ndsw  = _f('NoDropShadowWindowHint',   'NoDropShadowWindowHint')
+        I("FramelessWindowHint",          bool(flags & fwh)  if fwh  else "N/A")
+        I("WindowStaysOnTopHint",         bool(flags & wsot) if wsot else "N/A")
+        I("Tool flag",                    bool(flags & tool) if tool else "N/A")
+        I("NoDropShadowWindowHint",       bool(flags & ndsw) if ndsw else "N/A")
     except Exception as e:
         I("flags (error)", str(e))
 
@@ -128,6 +136,7 @@ def build_visual_diagnostic_report(overlay) -> str:
         I("total children",   len(all_children))
         I("widget children",  len(widget_children))
 
+        suspicious = []
         for i, c in enumerate(widget_children[:12]):
             cn  = type(c).__name__
             on  = c.objectName() if callable(getattr(c, 'objectName', None)) else ''
@@ -138,11 +147,23 @@ def build_visual_diagnostic_report(overlay) -> str:
             if css:
                 lines.append(f"    styleSheet         : {css[:120]}")
             if _QF and isinstance(c, _QF):
+                fs   = c.frameShape()
+                fval = fs.value if hasattr(fs, 'value') else int(fs)
                 lines.append(
-                    f"    frameShape={c.frameShape()}  "
+                    f"    frameShape={fval}  "
                     f"frameShadow={c.frameShadow()}  "
                     f"lineWidth={c.lineWidth()}"
                 )
+                if fval != 0:
+                    suspicious.append(f"  Child {cn!r} frameShape={fval} (≠0)")
+            if afb is True:
+                suspicious.append(f"  Child {cn!r} autoFillBackground=True")
+            if css and ('background' in css.lower() or 'border' in css.lower()):
+                if 'transparent' not in css.lower():
+                    suspicious.append(f"  Child {cn!r} stylesheet: {css[:80]}")
+        if suspicious:
+            lines.append("  ⚠ Suspicious children (may paint rectangle):")
+            lines.extend(suspicious)
     except Exception as e:
         I("children (error)", str(e))
 
@@ -206,10 +227,33 @@ def build_visual_diagnostic_report(overlay) -> str:
     S("7) POSIBLES CAUSAS DEL MARCO GRIS")
     hyp: list[str] = []
 
+    # NoDropShadowWindowHint check
+    try:
+        flags = overlay.windowFlags()
+        ndsw = (Qt.WindowType.NoDropShadowWindowHint
+                if hasattr(Qt, 'WindowType')
+                else getattr(Qt, 'NoDropShadowWindowHint', None))
+        if ndsw is not None and not bool(flags & ndsw):
+            hyp.append(
+                "⚠  NoDropShadowWindowHint ausente → DWM/Windows puede dibujar sombra "
+                "o borde alrededor de la ventana. Añadir este flag elimina la sombra nativa."
+            )
+        else:
+            hyp.append("✓  NoDropShadowWindowHint activo → sombra DWM desactivada.")
+    except Exception:
+        pass
+
     if not overlay.testAttribute(WA_TB):
         hyp.append(
             "⚠  WA_TranslucentBackground=False → el OS pinta el fondo de la ventana "
             "(gris por defecto en Windows). Activar este atributo hace el fondo transparente."
+        )
+
+    WA_NSB2 = Qt.WA_NoSystemBackground if hasattr(Qt, 'WA_NoSystemBackground') else 9
+    if not overlay.testAttribute(WA_NSB2):
+        hyp.append(
+            "⚠  WA_NoSystemBackground=False → Qt puede pedir al sistema que pinte el "
+            "fondo antes del paintEvent."
         )
 
     if overlay.autoFillBackground():
