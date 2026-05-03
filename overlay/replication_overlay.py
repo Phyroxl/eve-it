@@ -740,6 +740,24 @@ class ReplicationOverlay(QWidget):
     # Paint
     # ------------------------------------------------------------------
 
+    def _build_visual_shape_path(self) -> QPainterPath:
+        """Full-widget clip path matching the Win32 region and bitmap mask."""
+        shape = self._ov_cfg.get('border_shape', 'square')
+        path  = QPainterPath()
+        r     = QRectF(self.rect())
+        w, h  = self.width(), self.height()
+        if shape == 'pill':
+            if abs(w - h) <= 2:
+                path.addEllipse(r)
+            else:
+                radius = min(w, h) / 2.0
+                path.addRoundedRect(r, radius, radius)
+        elif shape == 'rounded':
+            path.addRoundedRect(r, 20.0, 20.0)
+        else:
+            path.addRect(r)
+        return path
+
     def _get_shape_path(self, rect: QRectF, shape: str, bw: float) -> QPainterPath:
         path = QPainterPath()
         if shape == 'pill':
@@ -753,54 +771,76 @@ class ReplicationOverlay(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        rh_smooth = QPainter.RenderHint.SmoothPixmapTransform \
-            if hasattr(QPainter.RenderHint, 'SmoothPixmapTransform') \
-            else QPainter.SmoothPixmapTransform
-        rh_aa = QPainter.RenderHint.Antialiasing \
-            if hasattr(QPainter.RenderHint, 'Antialiasing') \
-            else QPainter.Antialiasing
+        rh_smooth = (QPainter.RenderHint.SmoothPixmapTransform
+                     if hasattr(QPainter, 'RenderHint')
+                     else QPainter.SmoothPixmapTransform)
+        rh_aa = (QPainter.RenderHint.Antialiasing
+                 if hasattr(QPainter, 'RenderHint')
+                 else QPainter.Antialiasing)
         p.setRenderHint(rh_smooth)
         p.setRenderHint(rh_aa)
 
-        ov = self._ov_cfg
-        bw = max(1, int(ov.get('border_width', 2))) if ov.get('border_visible', True) else 0
+        ov    = self._ov_cfg
+        bw    = max(1, int(ov.get('border_width', 2))) if ov.get('border_visible', True) else 0
         shape = ov.get('border_shape', 'square')
-        
-        # [MIGRACIÓN] Fallback interno por si acaso
         if shape not in ('square', 'rounded', 'pill'):
             shape = 'rounded' if shape == 'glow' else 'square'
 
-        # [REDISEÑO] Solo pintar fondo rectangular si es SQUARE y show_gray_frame está activo.
-        # Para Pill/Rounded, NO pintamos nada global para evitar el marco gris.
+        # 1) Clear backing buffer to fully transparent.
+        # CompositionMode_Source writes alpha=0 everywhere regardless of destination,
+        # so stale pixels from previous frames outside the shape are erased.
+        # This MUST happen before setClipPath — otherwise corners stay dirty.
+        cm_src  = (QPainter.CompositionMode.CompositionMode_Source
+                   if hasattr(QPainter, 'CompositionMode')
+                   else QPainter.CompositionMode_Source)
+        cm_over = (QPainter.CompositionMode.CompositionMode_SourceOver
+                   if hasattr(QPainter, 'CompositionMode')
+                   else QPainter.CompositionMode_SourceOver)
+        _transparent = (Qt.GlobalColor.transparent
+                        if hasattr(Qt, 'GlobalColor') else Qt.transparent)
+        p.setCompositionMode(cm_src)
+        p.fillRect(self.rect(), _transparent)
+        p.setCompositionMode(cm_over)
+
+        # 2) Set the outer shape clip BEFORE any save()/restore() block.
+        # After p.save() the clip is preserved in the saved state, so p.restore()
+        # returns to this clip — keeping label, border and debug layers inside the shape.
+        shape_path = self._build_visual_shape_path()
+        if shape != 'square':
+            p.setClipPath(shape_path)
+
+        # 3) Optional gray frame — square only; never draw a rectangular frame on
+        # pill/rounded because it would leak outside the clipped shape.
         if shape == 'square' and ov.get('show_gray_frame', True):
             p.fillRect(self.rect(), Qt.black)
-        
-        # [NUEVO] Marco gris decorativo (opcional por el usuario)
-        # Se dibuja un marco de 1px muy sutil si la opción está activa.
-        if ov.get('show_gray_frame', True):
             p.setPen(QPen(QColor(100, 100, 100, 40), 1))
             p.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
-        # Border and Content rects
-        adj = bw / 2.0
-        border_rect = QRectF(self.rect()).adjusted(adj, adj, -adj, -adj)
+        # Border and content rects (computed once, shared by all paint stages)
+        adj          = bw / 2.0
+        border_rect  = QRectF(self.rect()).adjusted(adj, adj, -adj, -adj)
         content_rect = self.rect().adjusted(bw, bw, -bw, -bw)
 
+        # 4) Captured frame
         if self._pixmap:
             p.save()
             if shape in ('rounded', 'pill'):
-                # El fondo y el clip siguen el path de la forma
-                path = self._get_shape_path(QRectF(self.rect()).adjusted(bw/2, bw/2, -bw/2, -bw/2), shape, bw)
-                # Solo pintamos el fondo interno (negro)
-                p.fillPath(path, Qt.black)
-                p.setClipPath(path)
-            
-            pw, ph = self._pixmap.width(), self._pixmap.height()
+                # Tighter inner clip for content area (excludes the border strip).
+                # setClipPath inside save() overrides to inner_path; p.restore()
+                # returns us to the outer shape_path clip automatically.
+                inner_path = self._get_shape_path(
+                    QRectF(self.rect()).adjusted(bw / 2, bw / 2, -bw / 2, -bw / 2),
+                    shape, bw,
+                )
+                p.fillPath(inner_path, Qt.black)
+                p.setClipPath(inner_path)
+
+            pw, ph     = self._pixmap.width(), self._pixmap.height()
             src_aspect = pw / ph if ph > 0 else 1.0
-            dst_aspect = content_rect.width() / content_rect.height() if content_rect.height() > 0 else 1.0
+            dst_aspect = (content_rect.width() / content_rect.height()
+                          if content_rect.height() > 0 else 1.0)
 
             if ov.get('maintain_aspect', True) and abs(src_aspect - dst_aspect) > 0.05:
-                # Letterbox / pillarbox inside content_rect
                 if src_aspect > dst_aspect:
                     dw = content_rect.width()
                     dh = max(1, int(dw / src_aspect))
@@ -813,50 +853,40 @@ class ReplicationOverlay(QWidget):
                     p.drawPixmap(tx, content_rect.top(), dw, dh, self._pixmap)
             else:
                 p.drawPixmap(content_rect, self._pixmap)
-            
             p.restore()
+            # After restore, the outer shape_path clip is active again.
         else:
             p.setPen(Qt.cyan)
             p.drawText(self.rect(), Qt.AlignCenter, self._status)
 
-        # Draw Main Border (Cyan/Green)
+        # 5) Main border (cyan / green active) — within shape_path clip
         if ov.get('border_visible', True):
-            if ov.get('highlight_active', True) and self._is_active_client:
-                hex_col = ov.get('active_border_color', '#00ff64')
-            else:
-                hex_col = ov.get('client_color', '#00c8ff')
-            
-            color = QColor(hex_col)
-            p.setPen(QPen(color, bw))
-            
+            hex_col = (ov.get('active_border_color', '#00ff64')
+                       if ov.get('highlight_active', True) and self._is_active_client
+                       else ov.get('client_color', '#00c8ff'))
+            p.setPen(QPen(QColor(hex_col), bw))
             if shape in ('rounded', 'pill'):
-                path = self._get_shape_path(border_rect, shape, bw)
-                p.drawPath(path)
-            else: # square
+                p.drawPath(self._get_shape_path(border_rect, shape, bw))
+            else:
                 p.drawRect(border_rect)
 
-        # Overlay label
+        # 6) Label — within shape_path clip (clipped to circle if it falls in a corner)
         if ov.get('label_visible', True):
             label_text = self._extract_label()
-            fs = max(6, int(ov.get('label_font_size', 10)))
+            fs  = max(6, int(ov.get('label_font_size', 10)))
             pad = max(0, int(ov.get('label_padding', 4)))
-
             font = QFont()
             font.setPointSize(fs)
             p.setFont(font)
             fm = p.fontMetrics()
-            tw = fm.horizontalAdvance(label_text) \
-                if hasattr(fm, 'horizontalAdvance') else fm.width(label_text)
-            th = fm.height()
+            tw = (fm.horizontalAdvance(label_text)
+                  if hasattr(fm, 'horizontalAdvance') else fm.width(label_text))
+            th  = fm.height()
             lw, lh = tw + pad * 2, th + pad * 2
 
             pos_key = ov.get('label_pos', 'top_left')
-            if 'right' in pos_key:
-                lx = self.width() - lw - 2
-            elif 'center' in pos_key:
-                lx = (self.width() - lw) // 2
-            else:
-                lx = 2
+            lx = (self.width() - lw - 2  if 'right'  in pos_key else
+                  (self.width() - lw) // 2 if 'center' in pos_key else 2)
             ly = (self.height() - lh - 2) if 'bottom' in pos_key else 2
 
             if ov.get('label_bg', True):
@@ -867,27 +897,22 @@ class ReplicationOverlay(QWidget):
             p.setPen(QColor(ov.get('label_color', '#ffffff')))
             p.drawText(lx + pad, ly + pad + fm.ascent(), label_text)
 
-        # Debug: semi-transparent layer map (diagnostics dialog only)
+        # 7) Debug visual layers (diagnostics dialog only) — within shape_path clip
         if self._debug_visual_layers:
             try:
                 p.save()
-                # Outer widget rect — yellow
                 p.fillRect(self.rect(), QColor(255, 255, 0, 18))
                 p.setPen(QPen(QColor(255, 220, 0, 200), 1))
                 p.drawRect(self.rect().adjusted(0, 0, -1, -1))
-                # border_rect — red
                 p.setPen(QPen(QColor(255, 60, 60, 200), 1))
                 br_int = border_rect.toRect() if hasattr(border_rect, 'toRect') else border_rect
                 p.drawRect(br_int)
-                # content_rect — blue
                 p.fillRect(content_rect, QColor(0, 80, 255, 22))
                 p.setPen(QPen(QColor(0, 100, 255, 200), 1))
                 p.drawRect(content_rect)
-                # shape path — green (pill/rounded only)
                 if shape in ('rounded', 'pill'):
-                    dbg_path = self._get_shape_path(border_rect, shape, bw)
                     p.setPen(QPen(QColor(0, 255, 100, 200), 1))
-                    p.drawPath(dbg_path)
+                    p.drawPath(self._get_shape_path(border_rect, shape, bw))
                 p.restore()
             except Exception:
                 pass

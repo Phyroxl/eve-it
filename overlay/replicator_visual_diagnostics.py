@@ -448,19 +448,18 @@ def build_visual_diagnostic_report(overlay) -> str:
                 lines.append(
                     f"  ⚠ shape={shape_grab!r}: corner alpha máx={max_ca} > 10 → "
                     "Qt/Python está pintando píxeles fuera de la forma. "
-                    "Revisar paintEvent / fillRect / drawRect."
+                    "Revisar clipping del paintEvent, etiqueta, drawPixmap o fillRect."
                 )
-            elif native_st_8 == 'applied' and max_ca <= 10:
+            elif max_ca <= 10:
                 lines.append(
-                    f"  ℹ shape={shape_grab!r}: corner alpha máx={max_ca} (transparente) + "
-                    "SetWindowRgn aplicado → el rectángulo gris visible probablemente "
-                    "pertenece al contenido capturado o a composición externa (DWM/GPU)."
+                    f"  ✓ shape={shape_grab!r}: corner alpha máx={max_ca} ≤ 10 → "
+                    "paintEvent respeta la forma. Esquinas transparentes."
                 )
-            else:
-                lines.append(
-                    f"  ℹ shape={shape_grab!r}: corner alpha máx={max_ca}  "
-                    f"native_status={native_st_8!r}"
-                )
+                if native_st_8 != 'applied':
+                    lines.append(
+                        f"    ℹ SetWindowRgn status={native_st_8!r} → "
+                        "el recorte Qt funciona pero la región nativa no está aplicada."
+                    )
 
         if native_st_8 not in ('applied', 'cleared', 'not_win32'):
             lines.append(
