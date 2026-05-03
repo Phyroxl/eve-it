@@ -73,6 +73,8 @@ def build_visual_diagnostic_report(overlay) -> str:
     # ------------------------------------------------------------------
     S("2) CONFIG VISUAL (_ov_cfg)")
     ov = getattr(overlay, '_ov_cfg', {})
+    I("overlay_title", repr(getattr(overlay, '_title', '?')))
+    I("id(_ov_cfg)", id(ov))
     for k in [
         'border_shape', 'show_gray_frame', 'border_visible', 'border_width',
         'highlight_active', 'active_border_color', 'client_color',

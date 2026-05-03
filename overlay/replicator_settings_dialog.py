@@ -527,12 +527,20 @@ class ReplicatorSettingsDialog(QDialog):
         lay.addWidget(chk_ha)
 
         chk_gray = QCheckBox("Mostrar borde gris")
-        chk_gray.setChecked(bool(self._cfg('show_gray_frame', True)))
-        chk_gray.toggled.connect(lambda v: (
-            self._set('show_gray_frame', v),
-            self._ov.update(),
-            self._ov.repaint(),
-        ))
+        chk_gray.setChecked(bool(self._ov._ov_cfg.get('show_gray_frame', True)))
+
+        def _on_show_gray_frame_changed(v):
+            v = bool(v)
+            self._ov._ov_cfg['show_gray_frame'] = v
+            self._set('show_gray_frame', v)
+            logger.debug(
+                f"[REPLICATOR BORDER] show_gray_frame changed "
+                f"title={self._ov._title!r} value={v}"
+            )
+            self._ov.update()
+            self._ov.repaint()
+
+        chk_gray.toggled.connect(_on_show_gray_frame_changed)
         lay.addWidget(chk_gray)
 
         sp_bw = QSpinBox(); sp_bw.setRange(1, 10); sp_bw.setValue(int(self._cfg('border_width') or 2))
@@ -578,15 +586,31 @@ class ReplicatorSettingsDialog(QDialog):
         def _apply_border_all():
             from overlay.replicator_config import BORDER_COPY_KEYS, apply_settings_keys_to_all
             from overlay.replication_overlay import _OVERLAY_REGISTRY
-            apply_settings_keys_to_all(self._ov._cfg, self._ov._title, BORDER_COPY_KEYS, 
-                                        include_client_color=chk_inc_col.isChecked())
             keys = BORDER_COPY_KEYS[:]
-            if chk_inc_col.isChecked(): keys.append('client_color')
+            if chk_inc_col.isChecked():
+                keys.append('client_color')
+            # Flush current _ov_cfg values to cfg['overlays'] before apply_settings_keys_to_all
+            # reads them — avoids propagating a stale value when autosave hasn't fired yet.
+            src_title = self._ov._title
+            self._ov._cfg.setdefault('overlays', {}).setdefault(src_title, {})
+            for k in keys:
+                if k in self._ov._ov_cfg:
+                    self._ov._cfg['overlays'][src_title][k] = self._ov._ov_cfg[k]
+            apply_settings_keys_to_all(self._ov._cfg, src_title, BORDER_COPY_KEYS,
+                                        include_client_color=chk_inc_col.isChecked())
             src = {k: self._ov._ov_cfg[k] for k in keys if k in self._ov._ov_cfg}
             peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]
             for peer in peers:
                 try:
                     peer.apply_settings_dict(src, persist=False)
+                    peer.update()
+                    peer.repaint()
+                    if hasattr(peer, '_schedule_autosave'):
+                        peer._schedule_autosave()
+                    logger.debug(
+                        f"[REPLICATOR BORDER] copied show_gray_frame "
+                        f"title={peer._title!r} value={src.get('show_gray_frame')}"
+                    )
                 except Exception:
                     pass
             lbl_b_status.setText(f"Borde aplicado a {len(peers)} replicas.")
