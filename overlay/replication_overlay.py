@@ -20,7 +20,7 @@ for _qt_try in [
             if hasattr(_w, _n): globals()[_n] = getattr(_w, _n)
         for _n in ['Qt', 'QTimer', 'QThread', 'Signal', 'Slot', 'QPoint', 'QRect', 'QSize', 'QRectF', 'QPointF']:
             if hasattr(_c, _n): globals()[_n] = getattr(_c, _n)
-        for _n in ['QColor', 'QPainter', 'QPixmap', 'QImage', 'QFont', 'QCursor', 'QPen', 'QBrush']:
+        for _n in ['QColor', 'QPainter', 'QPixmap', 'QImage', 'QFont', 'QCursor', 'QPen', 'QBrush', 'QPainterPath']:
             if hasattr(_g, _n): globals()[_n] = getattr(_g, _n)
         _qt_ok = True
         break
@@ -156,6 +156,19 @@ class ReplicationOverlay(QWidget):
 
         # Fix 2: correct aspect ratio on first launch (when size is at defaults)
         self._fix_initial_aspect()
+
+        # Fix 3: initial active border detection (detect foreground client on start)
+        QTimer.singleShot(100, self._init_active_check)
+
+    def _init_active_check(self):
+        try:
+            fg = get_foreground_hwnd()
+            if fg and fg == (self._hwnd_getter() if callable(self._hwnd_getter) else self._hwnd):
+                self._is_active_client = True
+                self.update()
+                logger.info(f"[REPLICATOR ACTIVE INIT] title={self._title!r} is_active=True")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Setup
@@ -560,62 +573,79 @@ class ReplicationOverlay(QWidget):
 
         p.fillRect(self.rect(), Qt.black)
 
+        ov = self._ov_cfg
+        bw = max(1, int(ov.get('border_width', 2))) if ov.get('border_visible', True) else 0
+        shape = ov.get('border_shape', 'square')
+        
+        # Border and Content rects
+        # adj is for the pen (draw on center of line)
+        adj = bw / 2.0
+        border_rect = QRectF(self.rect()).adjusted(adj, adj, -adj, -adj)
+        # Content is strictly inside the border line
+        content_rect = self.rect().adjusted(bw, bw, -bw, -bw)
+
         if self._pixmap:
+            p.save()
+            # Apply clipping path based on shape
+            if shape in ('rounded', 'pill', 'glow'):
+                radius = 8 if shape == 'rounded' else 4
+                if shape == 'pill':
+                    radius = min(content_rect.width(), content_rect.height()) / 2.0
+                
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(self.rect()).adjusted(bw, bw, -bw, -bw), radius, radius)
+                p.setClipPath(path)
+
             pw, ph = self._pixmap.width(), self._pixmap.height()
             src_aspect = pw / ph if ph > 0 else 1.0
-            dst_aspect = self.width() / self.height() if self.height() > 0 else 1.0
+            dst_aspect = content_rect.width() / content_rect.height() if content_rect.height() > 0 else 1.0
 
-            if self._ov_cfg.get('maintain_aspect', True) and abs(src_aspect - dst_aspect) > 0.05:
-                # Letterbox / pillarbox to preserve source aspect ratio
+            if ov.get('maintain_aspect', True) and abs(src_aspect - dst_aspect) > 0.05:
+                # Letterbox / pillarbox inside content_rect
                 if src_aspect > dst_aspect:
-                    dw = self.width()
+                    dw = content_rect.width()
                     dh = max(1, int(dw / src_aspect))
-                    ty = (self.height() - dh) // 2
-                    p.drawPixmap(0, ty, dw, dh, self._pixmap)
+                    ty = content_rect.top() + (content_rect.height() - dh) // 2
+                    p.drawPixmap(content_rect.left(), ty, dw, dh, self._pixmap)
                 else:
-                    dh = self.height()
+                    dh = content_rect.height()
                     dw = max(1, int(dh * src_aspect))
-                    tx = (self.width() - dw) // 2
-                    p.drawPixmap(tx, 0, dw, dh, self._pixmap)
+                    tx = content_rect.left() + (content_rect.width() - dw) // 2
+                    p.drawPixmap(tx, content_rect.top(), dw, dh, self._pixmap)
             else:
-                p.drawPixmap(self.rect(), self._pixmap)
+                p.drawPixmap(content_rect, self._pixmap)
+            
+            p.restore()
         else:
             p.setPen(Qt.cyan)
             p.drawText(self.rect(), Qt.AlignCenter, self._status)
 
-        ov = self._ov_cfg
-
         # Configurable border (active vs client color)
         if ov.get('border_visible', True):
-            bw = max(1, int(ov.get('border_width', 2)))
             if ov.get('highlight_active', True) and self._is_active_client:
                 hex_col = ov.get('active_border_color', '#00ff64')
             else:
                 hex_col = ov.get('client_color', '#00c8ff')
             
-            shape = ov.get('border_shape', 'square')
             color = QColor(hex_col)
             p.setPen(QPen(color, bw))
             
-            adj = bw / 2.0
-            rect = QRectF(self.rect()).adjusted(adj, adj, -adj, -adj)
-            
             if shape == 'rounded':
-                p.drawRoundedRect(rect, 8, 8)
+                p.drawRoundedRect(border_rect, 8, 8)
             elif shape == 'pill':
-                rad = min(rect.width(), rect.height()) / 2.0
-                p.drawRoundedRect(rect, rad, rad)
+                rad = min(border_rect.width(), border_rect.height()) / 2.0
+                p.drawRoundedRect(border_rect, rad, rad)
             elif shape == 'glow':
                 # Subtile multi-layer glow
                 for i in range(2, -1, -1):
                     c_glow = QColor(color)
                     c_glow.setAlpha(int(120 / (i + 1)))
                     p.setPen(QPen(c_glow, bw + i * 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-                    p.drawRoundedRect(rect, 4, 4)
+                    p.drawRoundedRect(border_rect, 4, 4)
             elif shape == 'brackets':
                 # Tactical HUD brackets
-                sz = min(20, max(5, int(min(rect.width(), rect.height()) * 0.15)))
-                r = rect
+                sz = min(20, max(5, int(min(border_rect.width(), border_rect.height()) * 0.15)))
+                r = border_rect
                 # TL
                 p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left() + sz, r.top()))
                 p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left(), r.top() + sz))
@@ -629,7 +659,7 @@ class ReplicationOverlay(QWidget):
                 p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right() - sz, r.bottom()))
                 p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right(), r.bottom() - sz))
             else: # square
-                p.drawRect(rect)
+                p.drawRect(border_rect)
 
         # Overlay label
         if ov.get('label_visible', True):

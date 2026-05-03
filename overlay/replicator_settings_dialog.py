@@ -99,7 +99,7 @@ class ReplicatorSettingsDialog(QDialog):
         super().__init__(parent)
         self._ov = overlay
         self.setWindowTitle(f"Ajustes — {overlay._title}")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(340)
         self.setStyleSheet(_STYLE)
         flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setWindowFlags(flags | (Qt.WindowType.WindowCloseButtonHint
@@ -570,9 +570,25 @@ class ReplicatorSettingsDialog(QDialog):
 
         _section(lay, "GRUPO DE CICLO")
         
+        def _format_group_label(gid, gdata):
+            name = gdata.get('name', '').strip()
+            if name: return f"Grupo {gid} — {name}"
+            return f"Grupo {gid}"
+
         group_row = QHBoxLayout()
         cmb_group = QComboBox()
-        cmb_group.addItems(["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4", "Grupo 5"])
+        def _reload_group_combo():
+            cur_gid = cmb_group.currentData() or "1"
+            cmb_group.blockSignals(True)
+            cmb_group.clear()
+            for i in range(1, 6):
+                gid = str(i)
+                gdata = hk.get('groups', {}).get(gid, {})
+                cmb_group.addItem(_format_group_label(gid, gdata), gid)
+            idx = cmb_group.findData(cur_gid)
+            if idx >= 0: cmb_group.setCurrentIndex(idx)
+            cmb_group.blockSignals(False)
+
         group_row.addWidget(cmb_group)
         chk_grp_en = QCheckBox("Habilitado")
         group_row.addWidget(chk_grp_en)
@@ -629,7 +645,7 @@ class ReplicatorSettingsDialog(QDialog):
         lay.addWidget(btn_refresh)
 
         def _load_group(idx):
-            gid = str(idx + 1)
+            gid = cmb_group.itemData(idx) or str(idx + 1)
             gdata = hk.get('groups', {}).get(gid, {})
             chk_grp_en.setChecked(bool(gdata.get('enabled', False)))
             le_grp_name.setText(gdata.get('name', f"Grupo {gid}"))
@@ -640,7 +656,7 @@ class ReplicatorSettingsDialog(QDialog):
                 chk.setChecked(t in saved_clients)
 
         def _save_current_group():
-            gid = str(cmb_group.currentIndex() + 1)
+            gid = cmb_group.currentData() or str(cmb_group.currentIndex() + 1)
             checked = [t for t, chk in self._account_chks.items() if chk.isChecked()]
             hk.setdefault('groups', {})[gid] = {
                 'enabled': chk_grp_en.isChecked(),
@@ -650,6 +666,7 @@ class ReplicatorSettingsDialog(QDialog):
                 'clients_order': checked
             }
             save_hotkeys_cfg(self._ov._cfg, hk)
+            _reload_group_combo()
             lbl_hk_status.setText(f"Grupo {gid} guardado.")
 
         btn_save_group = QPushButton("💾 Guardar Grupo")
@@ -658,6 +675,7 @@ class ReplicatorSettingsDialog(QDialog):
         lay.addWidget(btn_save_group)
 
         cmb_group.currentIndexChanged.connect(_load_group)
+        _reload_group_combo()
         refresh_accounts()
         _load_group(0)
 
