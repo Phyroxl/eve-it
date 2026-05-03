@@ -33,6 +33,7 @@ OVERLAY_DEFAULTS = {
     # Task 7 — border
     'border_visible': True,
     'border_width': 2,
+    'border_shape': 'square', # square|rounded|pill|glow|brackets
     'client_color': '#00c8ff',
     'active_border_color': '#00ff64',
     'highlight_active': True,
@@ -129,14 +130,18 @@ COMMON_SETTING_KEYS = [
 
 def apply_common_settings_to_all(cfg, source_title: str,
                                   keys=None, include_client_color: bool = False):
-    """Copia las claves globalizables del overlay fuente a todos los demás.
-
-    No toca x, y, w, h, ni client_color (salvo include_client_color=True).
-    Guarda la config completa al terminar.
-    """
+    """Legacy helper."""
     if keys is None:
         keys = COMMON_SETTING_KEYS
+    apply_settings_keys_to_all(cfg, source_title, keys, include_client_color)
+
+def apply_settings_keys_to_all(cfg, source_title: str,
+                               keys: list, include_client_color: bool = False):
+    """Copia un set específico de keys a todos los overlays.
+    Si include_client_color es True, también copia client_color aunque no esté en keys.
+    """
     source = cfg.get('overlays', {}).get(source_title, {})
+    if not source: return
     for title, ov_data in cfg.get('overlays', {}).items():
         if title == source_title:
             continue
@@ -148,10 +153,17 @@ def apply_common_settings_to_all(cfg, source_title: str,
     save_config(cfg)
 
 
-# Keys copied when user clicks "apply general settings to all"
-GENERAL_COPY_KEYS = [
-    'always_on_top', 'hide_when_inactive', 'locked',
-    'highlight_active',
+# Keys copied when user clicks "apply label settings to all"
+LABEL_COPY_KEYS = [
+    'label_visible', 'label_pos', 'label_font_size',
+    'label_color', 'label_bg', 'label_bg_color',
+    'label_bg_opacity', 'label_padding',
+]
+
+# Keys copied when user clicks "apply border settings to all"
+BORDER_COPY_KEYS = [
+    'border_visible', 'border_width', 'border_shape',
+    'highlight_active', 'active_border_color',
 ]
 
 # Keys stored in a layout profile
@@ -161,6 +173,11 @@ LAYOUT_PROFILE_KEYS = [
     'fps', 'opacity', 'label_visible', 'border_visible',
 ]
 
+# Keys copied when user clicks "copy all non-layout settings to all"
+NON_LAYOUT_COPY_KEYS = [
+    'always_on_top', 'hide_when_inactive', 'locked',
+] + LABEL_COPY_KEYS + BORDER_COPY_KEYS
+
 _DEFAULT_LAYOUT_PROFILE = {
     'w': 280, 'h': 200, 'maintain_aspect': True,
     'snap_enabled': False, 'snap_x': 20, 'snap_y': 20,
@@ -168,10 +185,10 @@ _DEFAULT_LAYOUT_PROFILE = {
 }
 
 _HOTKEY_DEFAULTS = {
-    'global_enabled': False,
     'per_client': {},
-    'cycle_next': {'combo': ''},
-    'cycle_prev': {'combo': ''},
+    'cycle_next': {'combo': 'F14'},
+    'cycle_prev': {'combo': 'CTRL+F14'},
+    'groups': {}, # group_id: {enabled, name, clients_order, next, prev}
 }
 
 

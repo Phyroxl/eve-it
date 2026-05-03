@@ -50,6 +50,10 @@ _pending_registrations: list = []  # list of (mods, vk, callback)
 _id_seq = 0
 _lock = threading.Lock()
 
+# Cache for instant switching
+_hwnd_cache: Dict[str, int] = {}
+_cached_titles: List[str] = []
+
 
 def parse_hotkey(combo: str) -> tuple:
     """Parse 'CTRL+F13' -> (mods_int, vk_int).  Returns (0, 0) if invalid/empty."""
@@ -96,22 +100,49 @@ def _listener_thread(registrations: list):
     msg = wt.MSG()
     import time
     while _running:
+        # PeekMessage with a small sleep to remain responsive without high CPU
         if _user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
             if msg.message == WM_HOTKEY:
-                cb = registered.get(msg.wParam)
+                hk_id = msg.wParam
+                cb = registered.get(hk_id)
                 if cb:
                     try:
+                        t_start = time.perf_counter()
                         cb()
+                        ms = (time.perf_counter() - t_start) * 1000
+                        logger.debug(f"[REPLICATOR HOTKEY] Handled id={hk_id} in {ms:.1f}ms")
                     except Exception as e:
                         logger.error(f"Hotkey cb error: {e}")
             _user32.TranslateMessage(ctypes.byref(msg))
             _user32.DispatchMessageW(ctypes.byref(msg))
         else:
-            time.sleep(0.02)
+            time.sleep(0.005) # 5ms polling for near-instant feel
 
     for hk_id in registered:
         _user32.UnregisterHotKey(None, hk_id)
     logger.debug("Hotkey listener stopped, all hotkeys unregistered")
+
+
+def update_hotkey_cache(titles: List[str]):
+    """Update the internal cache of window handles for instant switching."""
+    global _hwnd_cache, _cached_titles
+    from overlay.win32_capture import resolve_eve_window_handle
+    new_cache = {}
+    for t in titles:
+        # Try to keep existing hwnd if still valid
+        existing = _hwnd_cache.get(t)
+        from overlay.win32_capture import is_hwnd_valid
+        if existing and is_hwnd_valid(existing):
+            new_cache[t] = existing
+        else:
+            hwnd = resolve_eve_window_handle(t)
+            if hwnd:
+                new_cache[t] = hwnd
+    
+    with _lock:
+        _hwnd_cache = new_cache
+        _cached_titles = list(titles)
+    logger.debug(f"[REPLICATOR HOTKEY] Cache updated: {len(_hwnd_cache)} clients")
 
 
 def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = None):
@@ -126,9 +157,6 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
     unregister_hotkeys()
 
     hk_cfg = cfg.get('hotkeys', {})
-    if not hk_cfg.get('global_enabled', False):
-        return
-
     registrations = []
 
     # Per-client hotkeys
@@ -137,36 +165,120 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         mods, vk = parse_hotkey(combo)
         if not vk:
             continue
+        
         def _focus_cb(t=title):
-            from overlay.win32_capture import focus_eve_window, resolve_eve_window_handle
-            hwnd = resolve_eve_window_handle(t)
+            from overlay.win32_capture import focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid
+            import time
+            t0 = time.perf_counter()
+            hwnd = _hwnd_cache.get(t)
+            cache_hit = True
+            if not hwnd or not is_hwnd_valid(hwnd):
+                cache_hit = False
+                hwnd = resolve_eve_window_handle(t)
+                if hwnd:
+                    _hwnd_cache[t] = hwnd
+            
             if hwnd:
-                ok = focus_eve_window(hwnd)
-                logger.debug(f"[HOTKEY] focus {t!r} hwnd={hwnd} ok={ok}")
+                ok = focus_eve_window_fast(hwnd)
+                if ok:
+                    from overlay.replication_overlay import ReplicationOverlay
+                    ReplicationOverlay.notify_active_client_changed(hwnd)
+                dt = (time.perf_counter() - t0) * 1000
+                logger.info(f"[REPLICATOR HOTKEY] mode=per_client target={t!r} hwnd={hwnd} cache_hit={cache_hit} ms={dt:.1f} success={ok}")
+            else:
+                logger.warning(f"[REPLICATOR HOTKEY] Could not resolve window for {t!r}")
+
         registrations.append((mods, vk, _focus_cb))
 
     # Cycle hotkeys
     def _cycle(direction: int):
-        titles = cycle_titles_getter() if cycle_titles_getter else []
-        if not titles:
-            return
         from overlay.win32_capture import (
             get_foreground_hwnd, get_window_title,
-            focus_eve_window, resolve_eve_window_handle,
+            focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid
         )
+        import time
+        t0 = time.perf_counter()
+        
+        titles = _cached_titles
+        if not titles:
+            titles = cycle_titles_getter() if cycle_titles_getter else []
+            if not titles: return
+
         fg_hwnd = get_foreground_hwnd()
         fg_title = get_window_title(fg_hwnd)
+        
         try:
-            idx = next(i for i, t in enumerate(titles)
-                       if t in fg_title or fg_title in t)
+            idx = next(i for i, t in enumerate(titles) if t in fg_title or fg_title in t)
         except StopIteration:
-            idx = -1
-        next_idx = (idx + direction) % len(titles)
-        target = titles[next_idx]
-        hwnd = resolve_eve_window_handle(target)
-        if hwnd:
-            focus_eve_window(hwnd)
-            logger.debug(f"[HOTKEY] cycle -> {target!r}")
+            idx = -1 if direction > 0 else 0 # Default starting point
+            
+        for attempt in range(1, len(titles) + 1):
+            next_idx = (idx + direction * attempt) % len(titles)
+            target = titles[next_idx]
+            
+            hwnd = _hwnd_cache.get(target)
+            cache_hit = True
+            if not hwnd or not is_hwnd_valid(hwnd):
+                cache_hit = False
+                hwnd = resolve_eve_window_handle(target)
+                if hwnd: _hwnd_cache[target] = hwnd
+                
+            if hwnd and is_hwnd_valid(hwnd):
+                ok = focus_eve_window_fast(hwnd)
+                if ok:
+                    from overlay.replication_overlay import ReplicationOverlay
+                    ReplicationOverlay.notify_active_client_changed(hwnd)
+                dt = (time.perf_counter() - t0) * 1000
+                logger.info(f"[REPLICATOR HOTKEY] mode=cycle direction={direction} target={target!r} cache_hit={cache_hit} ms={dt:.1f} ok={ok}")
+                return
+
+    # Group hotkeys
+    def _cycle_group(group_id: str, direction: int):
+        from overlay.win32_capture import (
+            get_foreground_hwnd, get_window_title,
+            focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid
+        )
+        import time
+        t0 = time.perf_counter()
+        
+        hk_cfg = cfg.get('hotkeys', {})
+        group = hk_cfg.get('groups', {}).get(group_id)
+        if not group or not group.get('enabled'):
+            return
+            
+        titles = group.get('clients_order', [])
+        if not titles:
+            return
+
+        fg_hwnd = get_foreground_hwnd()
+        fg_title = get_window_title(fg_hwnd)
+        
+        try:
+            idx = next(i for i, t in enumerate(titles) if t in fg_title or fg_title in t)
+        except StopIteration:
+            idx = -1 if direction > 0 else 0
+            
+        for attempt in range(1, len(titles) + 1):
+            next_idx = (idx + direction * attempt) % len(titles)
+            target = titles[next_idx]
+            
+            hwnd = _hwnd_cache.get(target)
+            cache_hit = True
+            if not hwnd or not is_hwnd_valid(hwnd):
+                cache_hit = False
+                hwnd = resolve_eve_window_handle(target)
+                if hwnd: _hwnd_cache[target] = hwnd
+            
+            if hwnd and is_hwnd_valid(hwnd):
+                ok = focus_eve_window_fast(hwnd)
+                if ok:
+                    from overlay.replication_overlay import ReplicationOverlay
+                    ReplicationOverlay.notify_active_client_changed(hwnd)
+                dt = (time.perf_counter() - t0) * 1000
+                logger.info(f"[REPLICATOR GROUP HOTKEY] group={group.get('name')} id={group_id} dir={direction} target={target!r} cache_hit={cache_hit} ms={dt:.1f} ok={ok}")
+                return
+        
+        logger.warning(f"[REPLICATOR GROUP HOTKEY] No valid windows found for group {group_id}")
 
     for key, direction in [('cycle_next', +1), ('cycle_prev', -1)]:
         entry = hk_cfg.get(key, {})
@@ -174,6 +286,20 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         mods, vk = parse_hotkey(combo)
         if vk:
             registrations.append((mods, vk, lambda d=direction: _cycle(d)))
+
+    # Register groups
+    groups = hk_cfg.get('groups', {})
+    for g_id, g_data in groups.items():
+        if not g_data.get('enabled'):
+            continue
+        # Next
+        n_mods, n_vk = parse_hotkey(g_data.get('next', ''))
+        if n_vk:
+            registrations.append((n_mods, n_vk, lambda gid=g_id: _cycle_group(gid, +1)))
+        # Prev
+        p_mods, p_vk = parse_hotkey(g_data.get('prev', ''))
+        if p_vk:
+            registrations.append((p_mods, p_vk, lambda gid=g_id: _cycle_group(gid, -1)))
 
     if not registrations:
         logger.debug("No hotkey combos configured")
@@ -196,8 +322,8 @@ def unregister_hotkeys():
 
 def get_hotkey_defaults() -> dict:
     return {
-        'global_enabled': False,
         'per_client': {},
-        'cycle_next': {'combo': ''},
-        'cycle_prev': {'combo': ''},
+        'cycle_next': {'combo': 'F14'},
+        'cycle_prev': {'combo': 'CTRL+F14'},
+        'groups': {},
     }

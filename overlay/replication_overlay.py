@@ -175,7 +175,7 @@ class ReplicationOverlay(QWidget):
             Qt.WA_TranslucentBackground if hasattr(Qt, 'WA_TranslucentBackground') else 120,
             False,
         )
-        self.setMinimumSize(64, 64)
+        self.setMinimumSize(20, 20)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setWindowTitle(f"Replica - {self._title}")
@@ -236,7 +236,7 @@ class ReplicationOverlay(QWidget):
                 if reg_h > 0:
                     aspect = reg_w / reg_h
                     w = self.width()
-                    correct_h = max(64, int(w / aspect))
+                    correct_h = max(20, int(w / aspect))
                     if abs(correct_h - self.height()) > 8:
                         self.resize(w, correct_h)
         except Exception:
@@ -254,13 +254,14 @@ class ReplicationOverlay(QWidget):
             cls._eve_hwnds_ts = now
         return cls._eve_hwnds_cache
 
-    # ------------------------------------------------------------------
-    # Monitor: active-border + hide_when_inactive (Fix #4)
-    # ------------------------------------------------------------------
-
     def _monitor_focus(self):
         try:
             fg = get_foreground_hwnd()
+            # If nothing changed, skip update to save CPU
+            if fg == getattr(self, '_last_monitor_fg', 0):
+                return
+            self._last_monitor_fg = fg
+            
             was_active = self._is_active_client
             self._is_active_client = bool(self._hwnd and fg == self._hwnd)
 
@@ -278,6 +279,23 @@ class ReplicationOverlay(QWidget):
         except Exception:
             pass
 
+    @staticmethod
+    def notify_active_client_changed(active_hwnd: int):
+        """Instant update of active border for all overlays."""
+        import time
+        t0 = time.perf_counter()
+        count = 0
+        for ov in list(_OVERLAY_REGISTRY):
+            was_active = ov._is_active_client
+            ov._is_active_client = bool(ov._hwnd and active_hwnd == ov._hwnd)
+            if was_active != ov._is_active_client:
+                ov.update()
+                count += 1
+        dt = (time.perf_counter() - t0) * 1000
+        logger.info(f"[REPLICATOR ACTIVE BORDER] target_hwnd={active_hwnd} updated={count} ms={dt:.2f}")
+
+    # ------------------------------------------------------------------
+    # Monitor: active-border + hide_when_inactive (Fix #4)
     # ------------------------------------------------------------------
     # Sync-resize support
     # ------------------------------------------------------------------
@@ -288,7 +306,7 @@ class ReplicationOverlay(QWidget):
             return
         self._applying_sync_resize = True
         try:
-            self.resize(max(50, w), max(50, h))
+            self.resize(max(20, w), max(20, h))
         finally:
             self._applying_sync_resize = False
 
@@ -565,9 +583,44 @@ class ReplicationOverlay(QWidget):
                 hex_col = ov.get('active_border_color', '#00ff64')
             else:
                 hex_col = ov.get('client_color', '#00c8ff')
-            p.setPen(QPen(QColor(hex_col), bw))
-            adj = bw // 2
-            p.drawRect(self.rect().adjusted(adj, adj, -adj, -adj))
+            
+            shape = ov.get('border_shape', 'square')
+            color = QColor(hex_col)
+            p.setPen(QPen(color, bw))
+            
+            adj = bw / 2.0
+            rect = QRectF(self.rect()).adjusted(adj, adj, -adj, -adj)
+            
+            if shape == 'rounded':
+                p.drawRoundedRect(rect, 8, 8)
+            elif shape == 'pill':
+                rad = min(rect.width(), rect.height()) / 2.0
+                p.drawRoundedRect(rect, rad, rad)
+            elif shape == 'glow':
+                # Subtile multi-layer glow
+                for i in range(2, -1, -1):
+                    c_glow = QColor(color)
+                    c_glow.setAlpha(int(120 / (i + 1)))
+                    p.setPen(QPen(c_glow, bw + i * 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                    p.drawRoundedRect(rect, 4, 4)
+            elif shape == 'brackets':
+                # Tactical HUD brackets
+                sz = min(20, max(5, int(min(rect.width(), rect.height()) * 0.15)))
+                r = rect
+                # TL
+                p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left() + sz, r.top()))
+                p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left(), r.top() + sz))
+                # TR
+                p.drawLine(QPointF(r.right(), r.top()), QPointF(r.right() - sz, r.top()))
+                p.drawLine(QPointF(r.right(), r.top()), QPointF(r.right(), r.top() + sz))
+                # BL
+                p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left() + sz, r.bottom()))
+                p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left(), r.bottom() - sz))
+                # BR
+                p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right() - sz, r.bottom()))
+                p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right(), r.bottom() - sz))
+            else: # square
+                p.drawRect(rect)
 
         # Overlay label
         if ov.get('label_visible', True):
@@ -635,7 +688,7 @@ class ReplicationOverlay(QWidget):
         if event.buttons() & left:
             if self._is_resizing:
                 pos = event.pos()
-                self.resize(max(50, pos.x()), max(50, pos.y()))
+                self.resize(max(20, pos.x()), max(20, pos.y()))
                 return
 
             if self._drag_start_global is not None and not self._ov_cfg.get('locked', False):
@@ -679,6 +732,8 @@ class ReplicationOverlay(QWidget):
                 if hwnd:
                     self._hwnd = hwnd
                 ok = focus_eve_window(self._hwnd) if self._hwnd else False
+                if ok:
+                    ReplicationOverlay.notify_active_client_changed(self._hwnd)
                 logger.debug(
                     f"[REPLICATOR FOCUS] title={self._title!r} "
                     f"hwnd={self._hwnd} success={ok}"

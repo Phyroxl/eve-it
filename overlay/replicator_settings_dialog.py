@@ -12,7 +12,7 @@ try:
         QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
         QLabel, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox,
         QPushButton, QColorDialog, QLineEdit, QSizePolicy,
-        QMessageBox,
+        QMessageBox, QTextEdit, QScrollArea,
     )
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QColor
@@ -21,10 +21,13 @@ except ImportError:
         QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
         QLabel, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox,
         QPushButton, QColorDialog, QLineEdit, QSizePolicy,
-        QMessageBox,
+        QMessageBox, QTextEdit, QScrollArea,
     )
     from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtGui import QColor
+
+# ... (skipping style and other tabs for brevity, focus on _tab_hotkeys overhaul)
+# Note: I will replace the entire _tab_hotkeys method content correctly this time.
 
 _STYLE = """
 QDialog { background: #05070a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
@@ -120,7 +123,7 @@ class ReplicatorSettingsDialog(QDialog):
         tabs.addTab(self._tab_layout(),   "Layout")
         tabs.addTab(self._tab_label(),    "Etiqueta")
         tabs.addTab(self._tab_border(),   "Borde")
-        tabs.addTab(self._tab_advanced(), "Avanzado")
+        tabs.addTab(self._tab_hotkeys(), "Hotkeys")
         lay.addWidget(tabs)
 
         btn_close = QPushButton("Cerrar")
@@ -163,36 +166,44 @@ class ReplicatorSettingsDialog(QDialog):
         chk_sync.toggled.connect(lambda v: setattr(self._ov, '_sync_active', v))
         lay.addWidget(chk_sync)
 
-        # --- Apply general settings to all ---
-        _section(lay, "APLICAR GENERALES A TODAS")
+        # --- Apply non-layout settings to all ---
+        _section(lay, "APLICAR CONFIGURACION A TODAS")
 
-        lbl_info = QLabel("Copia comportamiento (siempre encima, ocultar, bloquear) a todas las replicas.")
+        lbl_info = QLabel("Copia General, Etiqueta y Borde a todas las replicas. NO copia posicion, tamano, perfiles, snap, FPS ni region.")
         lbl_info.setWordWrap(True)
         lbl_info.setStyleSheet("color:#475569; font-size:10px;")
         lay.addWidget(lbl_info)
 
         lbl_gen_status = QLabel("")
         lbl_gen_status.setStyleSheet("color:#00ff64; font-size:10px;")
+ 
+        chk_inc_color = QCheckBox("Incluir color por cliente")
+        chk_inc_color.setStyleSheet("color:#cbd5e1; font-size:10px;")
+        lay.addWidget(chk_inc_color)
 
-        def _apply_general():
-            from overlay.replicator_config import apply_common_settings_to_all, GENERAL_COPY_KEYS
+        def _apply_non_layout():
+            from overlay.replicator_config import apply_common_settings_to_all, NON_LAYOUT_COPY_KEYS
             from overlay.replication_overlay import _OVERLAY_REGISTRY
-            apply_common_settings_to_all(self._ov._cfg, self._ov._title, keys=GENERAL_COPY_KEYS)
-            src = {k: self._ov._ov_cfg[k] for k in GENERAL_COPY_KEYS if k in self._ov._ov_cfg}
-            count = sum(1 for p in list(_OVERLAY_REGISTRY) if p is not self._ov
-                        and not p.apply_settings_dict(src, persist=False) or True) - 1
-            # simpler count
+            apply_common_settings_to_all(
+                self._ov._cfg, self._ov._title, 
+                keys=NON_LAYOUT_COPY_KEYS, 
+                include_client_color=chk_inc_color.isChecked()
+            )
+            src = {k: self._ov._ov_cfg[k] for k in NON_LAYOUT_COPY_KEYS if k in self._ov._ov_cfg}
+            if chk_inc_color.isChecked() and 'client_color' in self._ov._ov_cfg:
+                src['client_color'] = self._ov._ov_cfg['client_color']
+
             peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]
             for peer in peers:
                 try:
                     peer.apply_settings_dict(src, persist=False)
                 except Exception:
                     pass
-            lbl_gen_status.setText(f"Aplicado a {len(peers)} replica(s).")
+            lbl_gen_status.setText(f"Copiado a {len(peers)} replica(s).")
 
-        btn_gen = QPushButton("Copiar ajustes generales a todas")
+        btn_gen = QPushButton("Copiar ajustes no-layout a todas")
         btn_gen.setObjectName("green")
-        btn_gen.clicked.connect(_apply_general)
+        btn_gen.clicked.connect(_apply_non_layout)
         lay.addWidget(btn_gen)
         lay.addWidget(lbl_gen_status)
 
@@ -218,21 +229,23 @@ class ReplicatorSettingsDialog(QDialog):
 
         prof_row = QHBoxLayout()
         lp_combo = QComboBox()
-        lp_combo.setMinimumWidth(120)
-        lbl_lp = QLabel("Perfil:")
-        lbl_lp.setFixedWidth(50)
-        prof_row.addWidget(lbl_lp)
-        prof_row.addWidget(lp_combo)
+        lp_combo.setMinimumWidth(100)
+        prof_row.addWidget(QLabel("Perfil:"))
+        prof_row.addWidget(lp_combo, 1)
 
-        btn_lp_new  = QPushButton("Nuevo")
-        btn_lp_save = QPushButton("Guardar")
+        btn_lp_save = QPushButton("💾")
+        btn_lp_save.setToolTip("Guardar")
         btn_lp_apply = QPushButton("Aplicar")
-        btn_lp_del  = QPushButton("Borrar")
-        for b in [btn_lp_new, btn_lp_save, btn_lp_apply, btn_lp_del]:
-            b.setFixedHeight(24)
+        btn_lp_del = QPushButton("🗑️")
+        for b in [btn_lp_save, btn_lp_apply, btn_lp_del]:
+            b.setFixedWidth(50 if b.text() else 30)
+            b.setFixedHeight(22)
             prof_row.addWidget(b)
-        prof_row.addStretch()
         lay.addLayout(prof_row)
+
+        btn_lp_new = QPushButton("+ Nuevo perfil")
+        btn_lp_new.setFixedHeight(22)
+        lay.addWidget(btn_lp_new)
 
         def _reload_lp_combo():
             profiles = get_layout_profiles(self._ov._cfg)
@@ -436,9 +449,30 @@ class ReplicatorSettingsDialog(QDialog):
         sp_bop.valueChanged.connect(lambda v: (self._set('label_bg_opacity', v), self._ov.update()))
         _row(lay, "Opacidad fondo:", sp_bop)
 
-        sp_pad = QSpinBox(); sp_pad.setRange(0, 20); sp_pad.setValue(int(self._cfg('label_padding') or 4))
-        sp_pad.valueChanged.connect(lambda v: (self._set('label_padding', v), self._ov.update()))
         _row(lay, "Padding:", sp_pad)
+
+        lay.addSpacing(10)
+        lbl_status = QLabel("")
+        lbl_status.setStyleSheet("color:#00ff64; font-size:10px;")
+
+        def _apply_label_all():
+            from overlay.replicator_config import LABEL_COPY_KEYS, apply_settings_keys_to_all
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            apply_settings_keys_to_all(self._ov._cfg, self._ov._title, LABEL_COPY_KEYS)
+            src = {k: self._ov._ov_cfg[k] for k in LABEL_COPY_KEYS if k in self._ov._ov_cfg}
+            peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]
+            for peer in peers:
+                try:
+                    peer.apply_settings_dict(src, persist=False)
+                except Exception:
+                    pass
+            lbl_status.setText(f"Etiqueta aplicada a {len(peers)} replicas.")
+
+        btn_apply = QPushButton("Aplicar etiqueta a todas")
+        btn_apply.setObjectName("green")
+        btn_apply.clicked.connect(_apply_label_all)
+        lay.addWidget(btn_apply)
+        lay.addWidget(lbl_status)
 
         lay.addStretch()
         return w
@@ -468,6 +502,15 @@ class ReplicatorSettingsDialog(QDialog):
         sp_bw.valueChanged.connect(lambda v: (self._set('border_width', v), self._ov.update()))
         _row(lay, "Grosor borde:", sp_bw)
 
+        _shapes = ['square', 'rounded', 'pill', 'glow', 'brackets']
+        cmb_shape = QComboBox()
+        cmb_shape.addItems(_shapes)
+        cur_shape = self._cfg('border_shape') or 'square'
+        if cur_shape in _shapes:
+            cmb_shape.setCurrentText(cur_shape)
+        cmb_shape.currentTextChanged.connect(lambda v: (self._set('border_shape', v), self._ov.update()))
+        _row(lay, "Forma:", cmb_shape)
+
         _section(lay, "COLORES")
 
         btn_ac = _color_btn(self._cfg('active_border_color') or '#00ff64',
@@ -478,13 +521,43 @@ class ReplicatorSettingsDialog(QDialog):
                             lambda v: (self._set('client_color', v), self._ov.update()))
         _row(lay, "Color cliente:", btn_cc)
 
+        lay.addSpacing(10)
+        chk_inc_col = QCheckBox("Incluir color por cliente")
+        chk_inc_col.setChecked(False)
+        lay.addWidget(chk_inc_col)
+        
+        lbl_b_status = QLabel("")
+        lbl_b_status.setStyleSheet("color:#00ff64; font-size:10px;")
+
+        def _apply_border_all():
+            from overlay.replicator_config import BORDER_COPY_KEYS, apply_settings_keys_to_all
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            apply_settings_keys_to_all(self._ov._cfg, self._ov._title, BORDER_COPY_KEYS, 
+                                        include_client_color=chk_inc_col.isChecked())
+            keys = BORDER_COPY_KEYS[:]
+            if chk_inc_col.isChecked(): keys.append('client_color')
+            src = {k: self._ov._ov_cfg[k] for k in keys if k in self._ov._ov_cfg}
+            peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]
+            for peer in peers:
+                try:
+                    peer.apply_settings_dict(src, persist=False)
+                except Exception:
+                    pass
+            lbl_b_status.setText(f"Borde aplicado a {len(peers)} replicas.")
+
+        btn_apply_b = QPushButton("Aplicar borde a todas")
+        btn_apply_b.setObjectName("green")
+        btn_apply_b.clicked.connect(_apply_border_all)
+        lay.addWidget(btn_apply_b)
+        lay.addWidget(lbl_b_status)
+
         lay.addStretch()
         return w
 
     # ------------------------------------------------------------------ #
-    # Tab: Avanzado (Hotkeys Phase 2)
+    # Tab: Hotkeys (Phase 2)
     # ------------------------------------------------------------------ #
-    def _tab_advanced(self) -> QWidget:
+    def _tab_hotkeys(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(12, 12, 12, 8)
@@ -495,70 +568,129 @@ class ReplicatorSettingsDialog(QDialog):
 
         _section(lay, "HOTKEYS GLOBALES")
 
-        chk_hk = QCheckBox("Activar hotkeys globales")
-        chk_hk.setChecked(bool(hk.get('global_enabled', False)))
-        lay.addWidget(chk_hk)
-
-        lbl_hk_info = QLabel(
-            "Usa teclas como F13, F14, CTRL+F1, etc.\n"
-            "Ejemplo: CTRL+F13   o   F14   o   SHIFT+F15"
-        )
-        lbl_hk_info.setStyleSheet("color:#475569; font-size:10px;")
-        lbl_hk_info.setWordWrap(True)
-        lay.addWidget(lbl_hk_info)
-
-        le_next = QLineEdit(hk.get('cycle_next', {}).get('combo', ''))
-        le_next.setPlaceholderText("Ej: F15 o CTRL+F15")
+        le_next = QLineEdit(hk.get('cycle_next', {}).get('combo', 'F14'))
+        le_next.setPlaceholderText("Ej: F14")
         _row(lay, "Siguiente cliente:", le_next)
 
-        le_prev = QLineEdit(hk.get('cycle_prev', {}).get('combo', ''))
-        le_prev.setPlaceholderText("Ej: F16 o CTRL+F16")
-        _row(lay, "Cliente anterior:", le_prev)
+        le_prev = QLineEdit(hk.get('cycle_prev', {}).get('combo', 'CTRL+F14'))
+        le_prev.setPlaceholderText("Ej: CTRL+F14")
+        _row(lay, "Ventana anterior:", le_prev)
 
-        _section(lay, "HOTKEY PARA ESTE CLIENTE")
+        _section(lay, "GRUPOS DE CICLO")
+        
+        group_row = QHBoxLayout()
+        cmb_group = QComboBox()
+        cmb_group.addItems(["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4", "Grupo 5"])
+        group_row.addWidget(cmb_group)
+        chk_grp_en = QCheckBox("Habilitado")
+        group_row.addWidget(chk_grp_en)
+        lay.addLayout(group_row)
 
-        client_hk = hk.get('per_client', {}).get(self._ov._title, {})
-        le_client = QLineEdit(
-            client_hk.get('combo', '') if isinstance(client_hk, dict) else ''
-        )
-        le_client.setPlaceholderText("Ej: F13 o CTRL+F13")
-        _row(lay, f"Combo ({self._ov._extract_label()}):", le_client)
+        le_grp_name = QLineEdit()
+        le_grp_name.setPlaceholderText("Nombre del grupo (ej: Dps)")
+        _row(lay, "Nombre:", le_grp_name)
+
+        le_grp_next = QLineEdit()
+        le_grp_next.setPlaceholderText("Siguiente en grupo")
+        _row(lay, "Hotkey Sig:", le_grp_next)
+
+        le_grp_prev = QLineEdit()
+        le_grp_prev.setPlaceholderText("Anterior en grupo")
+        _row(lay, "Hotkey Ant:", le_grp_prev)
+
+        lay.addWidget(QLabel("Seleccionar cuentas para el grupo:"))
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFixedHeight(120)
+        scroll.setStyleSheet("background: #0d1117; border: 1px solid #1e293b; border-radius: 4px;")
+        
+        scroll_content = QWidget()
+        self._accounts_lay = QVBoxLayout(scroll_content)
+        self._accounts_lay.setContentsMargins(5, 5, 5, 5)
+        self._accounts_lay.setSpacing(2)
+        scroll.setWidget(scroll_content)
+        lay.addWidget(scroll)
+
+        self._account_chks = {}
+
+        def refresh_accounts():
+            while self._accounts_lay.count():
+                child = self._accounts_lay.takeAt(0)
+                if child.widget(): child.widget().deleteLater()
+            self._account_chks = {}
+            from overlay.win32_capture import find_eve_windows
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            ov_titles = {ov._title for ov in list(_OVERLAY_REGISTRY)}
+            win_titles = {w['title'] for w in find_eve_windows()}
+            all_titles = sorted(list(ov_titles | win_titles))
+            for t in all_titles:
+                chk = QCheckBox(t)
+                chk.setStyleSheet("color: #cbd5e1; font-size: 10px;")
+                self._accounts_lay.addWidget(chk)
+                self._account_chks[t] = chk
+            self._accounts_lay.addStretch()
+
+        btn_refresh = QPushButton("🔄 Refrescar clientes")
+        btn_refresh.setFixedWidth(120)
+        btn_refresh.clicked.connect(refresh_accounts)
+        lay.addWidget(btn_refresh)
+
+        def _load_group(idx):
+            gid = str(idx + 1)
+            gdata = hk.get('groups', {}).get(gid, {})
+            chk_grp_en.setChecked(bool(gdata.get('enabled', False)))
+            le_grp_name.setText(gdata.get('name', f"Grupo {gid}"))
+            le_grp_next.setText(gdata.get('next', ''))
+            le_grp_prev.setText(gdata.get('prev', ''))
+            saved_clients = gdata.get('clients_order', [])
+            for t, chk in self._account_chks.items():
+                chk.setChecked(t in saved_clients)
+
+        def _save_current_group():
+            gid = str(cmb_group.currentIndex() + 1)
+            checked = [t for t, chk in self._account_chks.items() if chk.isChecked()]
+            hk.setdefault('groups', {})[gid] = {
+                'enabled': chk_grp_en.isChecked(),
+                'name': le_grp_name.text().strip(),
+                'next': le_grp_next.text().strip().upper(),
+                'prev': le_grp_prev.text().strip().upper(),
+                'clients_order': checked
+            }
+            save_hotkeys_cfg(self._ov._cfg, hk)
+            lbl_hk_status.setText(f"Grupo {gid} guardado.")
+
+        btn_save_group = QPushButton("💾 Guardar Grupo")
+        btn_save_group.setObjectName("blue")
+        btn_save_group.clicked.connect(_save_current_group)
+        lay.addWidget(btn_save_group)
+
+        cmb_group.currentIndexChanged.connect(_load_group)
+        refresh_accounts()
+        _load_group(0)
 
         lbl_hk_status = QLabel("")
         lbl_hk_status.setStyleSheet("color:#00ff64; font-size:10px;")
 
-        def _save_hk():
-            hk2 = get_hotkeys_cfg(self._ov._cfg)
-            hk2['global_enabled'] = chk_hk.isChecked()
-            hk2.setdefault('cycle_next', {})['combo'] = le_next.text().strip().upper()
-            hk2.setdefault('cycle_prev', {})['combo'] = le_prev.text().strip().upper()
-            client_combo = le_client.text().strip().upper()
-            if client_combo:
-                hk2.setdefault('per_client', {})[self._ov._title] = {'combo': client_combo}
-            else:
-                hk2.get('per_client', {}).pop(self._ov._title, None)
-            save_hotkeys_cfg(self._ov._cfg, hk2)
-            # Re-register hotkeys if enabled
-            if hk2['global_enabled']:
-                try:
-                    from overlay.replicator_hotkeys import register_hotkeys
-                    from overlay.replication_overlay import _OVERLAY_REGISTRY
-                    def _get_titles():
-                        return [ov._title for ov in list(_OVERLAY_REGISTRY)]
-                    register_hotkeys(self._ov._cfg, cycle_titles_getter=_get_titles)
-                    lbl_hk_status.setText("Hotkeys registradas.")
-                except Exception as e:
-                    lbl_hk_status.setText(f"Error: {e}")
-            else:
-                try:
-                    from overlay.replicator_hotkeys import unregister_hotkeys
-                    unregister_hotkeys()
-                    lbl_hk_status.setText("Hotkeys desactivadas.")
-                except Exception:
-                    pass
+        def _save_all_hk():
+            from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            hk.setdefault('cycle_next', {})['combo'] = le_next.text().strip().upper()
+            hk.setdefault('cycle_prev', {})['combo'] = le_prev.text().strip().upper()
+            save_hotkeys_cfg(self._ov._cfg, hk)
+            def _get_titles():
+                return [ov._title for ov in list(_OVERLAY_REGISTRY)]
+            try:
+                titles = _get_titles()
+                update_hotkey_cache(titles)
+                register_hotkeys(self._ov._cfg, cycle_titles_getter=_get_titles)
+                lbl_hk_status.setText("Hotkeys aplicadas correctamente.")
+            except Exception as e:
+                lbl_hk_status.setText(f"Error: {e}")
 
-        btn_hk_save = QPushButton("Guardar y aplicar hotkeys")
-        btn_hk_save.clicked.connect(_save_hk)
+        btn_hk_save = QPushButton("Aplicar Hotkeys")
+        btn_hk_save.setObjectName("green")
+        btn_hk_save.clicked.connect(_save_all_hk)
         lay.addWidget(btn_hk_save)
         lay.addWidget(lbl_hk_status)
 
