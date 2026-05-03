@@ -392,23 +392,36 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         logger.warning(f"[HOTKEY ORDER DEBUG] --- CYCLE FAILED (No valid windows found) ---")
         _log_to_file("[CYCLE] --- FAILED (No valid windows found) ---")
 
+    # 1. Recolectar teclas usadas por grupos para evitar conflictos con el ciclo global
+    group_vks = set()
+    groups = hk_cfg.get('groups', {})
+    for g_data in groups.values():
+        if g_data.get('enabled'):
+            _, n_vk = parse_hotkey(g_data.get('next', ''))
+            _, p_vk = parse_hotkey(g_data.get('prev', ''))
+            if n_vk: group_vks.add(n_vk)
+            if p_vk: group_vks.add(p_vk)
+
+    # 2. Registrar ciclo global (solo si no hay conflicto con grupos)
     for key, direction in [('cycle_next', +1), ('cycle_prev', -1)]:
         entry = hk_cfg.get(key, {})
         combo = entry.get('combo', '') if isinstance(entry, dict) else ''
         mods, vk = parse_hotkey(combo)
         if vk:
+            if vk in group_vks:
+                logger.info(f"[HOTKEY] Omitiendo ciclo global para {combo} (asignado a grupo)")
+                continue
             registrations.append((mods, vk, lambda d=direction: _cycle(d)))
 
-    # Register groups
-    groups = hk_cfg.get('groups', {})
+    # 3. Registrar hotkeys de grupos
     for g_id, g_data in groups.items():
         if not g_data.get('enabled'):
             continue
-        # Next
+        # Siguiente
         n_mods, n_vk = parse_hotkey(g_data.get('next', ''))
         if n_vk:
             registrations.append((n_mods, n_vk, lambda gid=g_id: _cycle_group(gid, +1)))
-        # Prev
+        # Anterior
         p_mods, p_vk = parse_hotkey(g_data.get('prev', ''))
         if p_vk:
             registrations.append((p_mods, p_vk, lambda gid=g_id: _cycle_group(gid, -1)))
