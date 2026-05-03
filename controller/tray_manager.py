@@ -568,18 +568,18 @@ class TrayManager:
                 ov.apply_region(region_dict)
 
     def _on_reselect_region(self, overlay):
-        """Abre el wizard en paso 2/2 para configurar región sin forzar selector directo."""
+        """Abre el wizard para configurar región (pantalla única)."""
         logger.info(f"Petición de re-selección de región para: {overlay._title}")
 
-        # Asegurarnos de que el wizard se cree o reinicie correctamente
-        if not self._replicator_dialog:
+        if not self._replicator_dialog or not self._replicator_wizard_inst:
             self._launch_replicator_wizard()
 
         if self._replicator_wizard_inst:
-            # Si estaba aceptado/cerrado, volverlo a mostrar
-            self._replicator_wizard_inst.dlg.show()
-            self._replicator_wizard_inst.dlg.raise_()
-            self._replicator_wizard_inst.stack.setCurrentIndex(1)
+            # Si el wizard tiene el método específico, lo usamos
+            if hasattr(self._replicator_wizard_inst, "show_for_region_change"):
+                self._replicator_wizard_inst.show_for_region_change(overlay)
+            else:
+                self._replicator_wizard_inst.show()
         else:
             logger.error("No se pudo iniciar el asistente de replicación")
 

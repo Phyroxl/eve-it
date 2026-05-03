@@ -34,7 +34,7 @@ OVERLAY_DEFAULTS = {
     'border_visible': True,
     'border_width': 2,
     'border_shape': 'square', # square|rounded|pill
-    'show_gray_frame': True,
+    'show_gray_frame': False,
     'client_color': '#00c8ff',
     'active_border_color': '#00ff64',
     'highlight_active': True,

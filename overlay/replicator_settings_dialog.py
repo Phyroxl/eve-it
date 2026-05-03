@@ -45,6 +45,12 @@ QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {
     background: #1e293b; border: 1px solid #334155;
     color: #e2e8f0; padding: 3px 6px; border-radius: 3px; font-size: 11px;
 }
+QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {
+    background: #1e293b; border-left: 1px solid #334155; width: 18px;
+}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background: #2d3748;
+}
 QPushButton {
     background: rgba(0,200,255,0.1); border: 1px solid rgba(0,200,255,0.3);
     color: #00c8ff; padding: 5px 12px; border-radius: 4px; font-size: 11px; font-weight: 700;
@@ -62,7 +68,7 @@ QPushButton#green:hover { background: rgba(0,255,100,0.25); border-color: #00ff6
 def _row(parent_layout, label_text: str, widget) -> None:
     row = QHBoxLayout()
     lbl = QLabel(label_text)
-    lbl.setFixedWidth(130)
+    lbl.setFixedWidth(145) # Stretched ~10% (130 -> 145)
     row.addWidget(lbl)
     row.addWidget(widget)
     row.addStretch()
@@ -96,7 +102,7 @@ class ReplicatorSettingsDialog(QDialog):
         super().__init__(parent)
         self._ov = overlay
         self.setWindowTitle(f"Ajustes — {overlay._title}")
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(360)
         self.setStyleSheet(_STYLE)
         flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setWindowFlags(flags | (Qt.WindowType.WindowCloseButtonHint
@@ -128,7 +134,7 @@ class ReplicatorSettingsDialog(QDialog):
         try:
             size = self._ov._cfg.get('global', {}).get('settings_dialog_size')
             if size:
-                self.resize(size.get('w', 340), size.get('h', 400))
+                self.resize(size.get('w', 360), size.get('h', 420))
         except Exception:
             pass
 
@@ -333,13 +339,19 @@ class ReplicatorSettingsDialog(QDialog):
 
         sp_x = QSpinBox(); sp_x.setRange(0, 9999); sp_x.setValue(self._ov.x())
         sp_y = QSpinBox(); sp_y.setRange(0, 9999); sp_y.setValue(self._ov.y())
-        sp_w = QSpinBox(); sp_w.setRange(64, 4096); sp_w.setValue(self._ov.width())
-        sp_h = QSpinBox(); sp_h.setRange(64, 4096); sp_h.setValue(self._ov.height())
+        sp_w = QSpinBox(); sp_w.setRange(20, 4096); sp_w.setValue(self._ov.width())
+        sp_h = QSpinBox(); sp_h.setRange(20, 4096); sp_h.setValue(self._ov.height())
 
         sp_x.valueChanged.connect(lambda v: self._ov.move(v, self._ov.y()))
         sp_y.valueChanged.connect(lambda v: self._ov.move(self._ov.x(), v))
         sp_w.valueChanged.connect(lambda v: self._ov.resize(v, self._ov.height()))
         sp_h.valueChanged.connect(lambda v: self._ov.resize(self._ov.width(), v))
+        
+        # [NUEVO] ENTER aplica cambios (editingFinished dispara la actualizacion final)
+        sp_x.editingFinished.connect(lambda: self._ov.move(sp_x.value(), sp_y.value()))
+        sp_y.editingFinished.connect(lambda: self._ov.move(sp_x.value(), sp_y.value()))
+        sp_w.editingFinished.connect(lambda: self._ov.resize(sp_w.value(), sp_h.value()))
+        sp_h.editingFinished.connect(lambda: self._ov.resize(sp_w.value(), sp_h.value()))
 
         _row(lay, "X:", sp_x)
         _row(lay, "Y:", sp_y)
@@ -375,6 +387,9 @@ class ReplicatorSettingsDialog(QDialog):
         sp_gy = QSpinBox(); sp_gy.setRange(1, 200); sp_gy.setValue(int(self._cfg('snap_y') or 20))
         sp_gx.valueChanged.connect(lambda v: self._set('snap_x', v))
         sp_gy.valueChanged.connect(lambda v: self._set('snap_y', v))
+        sp_gx.editingFinished.connect(lambda: self._set('snap_x', sp_gx.value()))
+        sp_gy.editingFinished.connect(lambda: self._set('snap_y', sp_gy.value()))
+
         _row(lay, "Grid X (px):", sp_gx)
         _row(lay, "Grid Y (px):", sp_gy)
 
@@ -452,6 +467,7 @@ class ReplicatorSettingsDialog(QDialog):
 
         sp_fs = QSpinBox(); sp_fs.setRange(6, 24); sp_fs.setValue(int(self._cfg('label_font_size') or 10))
         sp_fs.valueChanged.connect(lambda v: (self._set('label_font_size', v), self._ov.update()))
+        sp_fs.editingFinished.connect(lambda: (self._set('label_font_size', sp_fs.value()), self._ov.update()))
         _row(lay, "Tamano fuente:", sp_fs)
 
         btn_col = _color_btn(self, self._cfg('label_color') or '#ffffff',
@@ -473,10 +489,12 @@ class ReplicatorSettingsDialog(QDialog):
         sp_bop.setRange(0.0, 1.0); sp_bop.setSingleStep(0.05)
         sp_bop.setValue(float(self._cfg('label_bg_opacity') or 0.65))
         sp_bop.valueChanged.connect(lambda v: (self._set('label_bg_opacity', v), self._ov.update()))
+        sp_bop.editingFinished.connect(lambda: (self._set('label_bg_opacity', sp_bop.value()), self._ov.update()))
         _row(lay, "Opacidad fondo:", sp_bop)
 
         sp_pad = QSpinBox(); sp_pad.setRange(0, 20); sp_pad.setValue(int(self._cfg('label_padding') or 4))
         sp_pad.valueChanged.connect(lambda v: (self._set('label_padding', v), self._ov.update()))
+        sp_pad.editingFinished.connect(lambda: (self._set('label_padding', sp_pad.value()), self._ov.update()))
         _row(lay, "Padding:", sp_pad)
 
         lay.addSpacing(10)
@@ -526,25 +544,9 @@ class ReplicatorSettingsDialog(QDialog):
         chk_ha.toggled.connect(lambda v: self._set('highlight_active', v))
         lay.addWidget(chk_ha)
 
-        chk_gray = QCheckBox("Mostrar borde gris")
-        chk_gray.setChecked(bool(self._ov._ov_cfg.get('show_gray_frame', True)))
-
-        def _on_show_gray_frame_changed(v):
-            v = bool(v)
-            self._ov._ov_cfg['show_gray_frame'] = v
-            self._set('show_gray_frame', v)
-            logger.debug(
-                f"[REPLICATOR BORDER] show_gray_frame changed "
-                f"title={self._ov._title!r} value={v}"
-            )
-            self._ov.update()
-            self._ov.repaint()
-
-        chk_gray.toggled.connect(_on_show_gray_frame_changed)
-        lay.addWidget(chk_gray)
-
         sp_bw = QSpinBox(); sp_bw.setRange(1, 10); sp_bw.setValue(int(self._cfg('border_width') or 2))
         sp_bw.valueChanged.connect(lambda v: (self._set('border_width', v), self._ov.update()))
+        sp_bw.editingFinished.connect(lambda: (self._set('border_width', sp_bw.value()), self._ov.update()))
         _row(lay, "Grosor borde:", sp_bw)
 
         _shapes = ['square', 'rounded', 'pill']
@@ -607,10 +609,6 @@ class ReplicatorSettingsDialog(QDialog):
                     peer.repaint()
                     if hasattr(peer, '_schedule_autosave'):
                         peer._schedule_autosave()
-                    logger.debug(
-                        f"[REPLICATOR BORDER] copied show_gray_frame "
-                        f"title={peer._title!r} value={src.get('show_gray_frame')}"
-                    )
                 except Exception:
                     pass
             lbl_b_status.setText(f"Borde aplicado a {len(peers)} replicas.")
@@ -620,20 +618,6 @@ class ReplicatorSettingsDialog(QDialog):
         btn_apply_b.clicked.connect(_apply_border_all)
         lay.addWidget(btn_apply_b)
         lay.addWidget(lbl_b_status)
-
-        lay.addSpacing(6)
-
-        def _open_diag():
-            try:
-                from overlay.replicator_visual_diagnostics import show_visual_diagnostic
-                self._ov._diag_dialog = show_visual_diagnostic(self._ov, parent=self)
-            except Exception as e:
-                lbl_b_status.setText(f"Error diagnóstico: {e}")
-
-        btn_diag = QPushButton("🔍 Diagnóstico visual")
-        btn_diag.setToolTip("Abre reporte de flags, stylesheet y posibles causas del marco gris")
-        btn_diag.clicked.connect(_open_diag)
-        lay.addWidget(btn_diag)
 
         lay.addStretch()
         return w
@@ -678,14 +662,17 @@ class ReplicatorSettingsDialog(QDialog):
 
         le_grp_name = QLineEdit()
         le_grp_name.setPlaceholderText("Nombre del grupo (ej: Dps)")
-        _row(lay, "Nombre:", le_grp_name)
-
         le_grp_next = QLineEdit()
         le_grp_next.setPlaceholderText("Siguiente en grupo")
-        _row(lay, "Hotkey Sig:", le_grp_next)
-
         le_grp_prev = QLineEdit()
         le_grp_prev.setPlaceholderText("Anterior en grupo")
+
+        le_grp_name.returnPressed.connect(_save_current_group)
+        le_grp_next.returnPressed.connect(_save_current_group)
+        le_grp_prev.returnPressed.connect(_save_current_group)
+
+        _row(lay, "Nombre:", le_grp_name)
+        _row(lay, "Hotkey Sig:", le_grp_next)
         _row(lay, "Hotkey Ant:", le_grp_prev)
 
         lay.addWidget(QLabel("Seleccionar cuentas para el grupo:"))

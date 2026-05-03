@@ -648,8 +648,10 @@ class ReplicationOverlay(QWidget):
         act_settings = menu.addAction("⚙ Ajustes")
         act_settings.triggered.connect(self._open_settings)
 
-        act_diag = menu.addAction("🔍 Diagnóstico visual")
-        act_diag.triggered.connect(self._open_visual_diagnostic)
+        menu.addSeparator()
+
+        act_info = menu.addAction("ℹ Información")
+        act_info.triggered.connect(self._show_info_dialog)
 
         menu.addSeparator()
 
@@ -688,12 +690,20 @@ class ReplicationOverlay(QWidget):
         except Exception as e:
             logger.exception(f"[REPLICATOR SETTINGS] Error abriendo ajustes para {self._title}")
 
-    def _open_visual_diagnostic(self):
-        try:
-            from overlay.replicator_visual_diagnostics import show_visual_diagnostic
-            self._diag_dialog = show_visual_diagnostic(self, parent=None)
-        except Exception:
-            logger.exception(f"[REPLICATOR DIAG] Error abriendo diagnóstico para {self._title}")
+    def _show_info_dialog(self):
+        msg = (
+            "<b>Guía rápida de la réplica:</b><br><br>"
+            "• <b>Click izquierdo:</b> Enfocar cliente EVE.<br>"
+            "• <b>Click derecho:</b> Abrir este menú.<br>"
+            "• <b>Rueda ratón:</b> Zoom +/- del área capturada.<br>"
+            "• <b>Flechas:</b> Desplazar vista del área.<br>"
+            "• <b>Shift + Flechas:</b> Desplazamiento rápido.<br>"
+            "• <b>Ctrl + Rueda:</b> Cambiar ancho de ventana.<br>"
+            "• <b>Shift + Rueda:</b> Cambiar alto de ventana.<br>"
+            "• <b>Ctrl + Flecha Arriba/Abajo:</b> Zoom preciso.<br><br>"
+            "<i>Usa 'Ajustes' para personalizar bordes, etiquetas y hotkeys.</i>"
+        )
+        QMessageBox.information(self, "Información de la réplica", msg)
 
     def _reset_view(self):
         self._region['x'] = 0
@@ -915,17 +925,15 @@ class ReplicationOverlay(QWidget):
             dst_aspect = (content_rect.width() / content_rect.height()
                           if content_rect.height() > 0 else 1.0)
 
-            if ov.get('maintain_aspect', True) and abs(src_aspect - dst_aspect) > 0.05:
-                if src_aspect > dst_aspect:
-                    dw = content_rect.width()
-                    dh = max(1, int(dw / src_aspect))
-                    ty = content_rect.top() + (content_rect.height() - dh) // 2
-                    p.drawPixmap(content_rect.left(), ty, dw, dh, self._pixmap)
-                else:
-                    dh = content_rect.height()
-                    dw = max(1, int(dh * src_aspect))
-                    tx = content_rect.left() + (content_rect.width() - dw) // 2
-                    p.drawPixmap(tx, content_rect.top(), dw, dh, self._pixmap)
+            if ov.get('maintain_aspect', True):
+                # "Cover" mode: Scale to cover the entire content_rect and crop excess
+                # This avoids black bars on the sides when the container ratio changes.
+                scale = max(content_rect.width() / pw, content_rect.height() / ph)
+                final_w = pw * scale
+                final_h = ph * scale
+                tx = content_rect.left() + (content_rect.width() - final_w) / 2.0
+                ty = content_rect.top() + (content_rect.height() - final_h) / 2.0
+                p.drawPixmap(QRectF(tx, ty, final_w, final_h).toRect(), self._pixmap)
             else:
                 p.drawPixmap(content_rect, self._pixmap)
             p.restore()

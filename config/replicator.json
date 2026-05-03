@@ -1,11 +1,7 @@
 {
   "global": {
     "capture_fps": 30,
-    "current_profile": "Default",
-    "settings_dialog_size": {
-      "w": 367,
-      "h": 690
-    }
+    "current_profile": "Default"
   },
   "regions": {
     "Default": {
@@ -16,43 +12,14 @@
     }
   },
   "selected_windows": [
-    "EVE — Nina Herrera",
-    "EVE — KonaN Herrera"
+    "EVE — KonaN Herrera",
+    "EVE — Nina Herrera"
   ],
   "overlays": {
-    "EVE — Nina Herrera": {
-      "fps": 30,
-      "x": 853,
-      "y": 333,
-      "w": 168,
-      "h": 148,
-      "opacity": 1.0,
-      "locked": false,
-      "maintain_aspect": true,
-      "always_on_top": true,
-      "hide_when_inactive": false,
-      "snap_enabled": false,
-      "snap_x": 20,
-      "snap_y": 20,
-      "label_visible": true,
-      "label_pos": "top_left",
-      "label_font_size": 10,
-      "label_color": "#ffffff",
-      "label_bg": true,
-      "label_bg_color": "#000000",
-      "label_bg_opacity": 0.65,
-      "label_padding": 4,
-      "border_visible": true,
-      "border_width": 2,
-      "border_shape": "pill",
-      "client_color": "#00c8ff",
-      "active_border_color": "#00ff64",
-      "highlight_active": true
-    },
     "EVE — KonaN Herrera": {
       "fps": 30,
-      "x": 1140,
-      "y": 332,
+      "x": 756,
+      "y": 355,
       "w": 200,
       "h": 200,
       "opacity": 1.0,
@@ -71,9 +38,40 @@
       "label_bg_color": "#000000",
       "label_bg_opacity": 0.65,
       "label_padding": 4,
-      "border_visible": false,
+      "border_visible": true,
       "border_width": 2,
       "border_shape": "square",
+      "show_gray_frame": false,
+      "client_color": "#00c8ff",
+      "active_border_color": "#00ff64",
+      "highlight_active": true
+    },
+    "EVE — Nina Herrera": {
+      "fps": 30,
+      "x": 1071,
+      "y": 293,
+      "w": 200,
+      "h": 200,
+      "opacity": 1.0,
+      "locked": false,
+      "maintain_aspect": true,
+      "always_on_top": true,
+      "hide_when_inactive": false,
+      "snap_enabled": false,
+      "snap_x": 20,
+      "snap_y": 20,
+      "label_visible": true,
+      "label_pos": "top_left",
+      "label_font_size": 10,
+      "label_color": "#ffffff",
+      "label_bg": true,
+      "label_bg_color": "#000000",
+      "label_bg_opacity": 0.65,
+      "label_padding": 4,
+      "border_visible": true,
+      "border_width": 2,
+      "border_shape": "square",
+      "show_gray_frame": false,
       "client_color": "#00c8ff",
       "active_border_color": "#00ff64",
       "highlight_active": true
@@ -85,26 +83,5 @@
     "w": 0.3,
     "h": 0.3
   },
-  "global_fps": 30,
-  "hotkeys": {
-    "per_client": {},
-    "cycle_next": {
-      "combo": "F14"
-    },
-    "cycle_prev": {
-      "combo": "CTRL+F14"
-    },
-    "groups": {
-      "1": {
-        "enabled": false,
-        "name": "Grupo 1",
-        "next": "F14",
-        "prev": "",
-        "clients_order": [
-          "EVE — KonaN Herrera",
-          "EVE — Nina Herrera"
-        ]
-      }
-    }
-  }
+  "global_fps": 30
 }

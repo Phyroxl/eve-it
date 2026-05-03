@@ -397,6 +397,12 @@ class ReplicatorWizard:
     def show(self):
         self.dlg.show(); self.dlg.raise_(); self.dlg.activateWindow()
 
+    def show_for_region_change(self, overlay):
+        """Muestra el wizard enfocándolo para cambio de región desde una réplica."""
+        self.show()
+        # Opcional: cargar datos del overlay si fuera necesario
+        logger.info(f"Wizard enfocado para cambio de región: {overlay._title}")
+
     def _animate_minimize(self, widget): widget.hide() # Simplified
     def _animate_restore(self, widget): widget.show() # Simplified
     def retranslate_ui(self, lang): pass # Stub for now to keep it clean
