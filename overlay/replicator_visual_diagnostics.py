@@ -138,10 +138,24 @@ def build_visual_diagnostic_report(overlay) -> str:
         I("total children",   len(all_children))
         I("widget children",  len(widget_children))
 
+        try:
+            from PySide6.QtWidgets import QMenu as _QMenu
+        except ImportError:
+            try:
+                from PyQt6.QtWidgets import QMenu as _QMenu
+            except ImportError:
+                _QMenu = None
+
         suspicious = []
         for i, c in enumerate(widget_children[:12]):
             cn  = type(c).__name__
             on  = c.objectName() if callable(getattr(c, 'objectName', None)) else ''
+            # QMenu instances are left over from context menu — harmless if not visible
+            if _QMenu and isinstance(c, _QMenu):
+                vis = c.isVisible() if hasattr(c, 'isVisible') else False
+                tag = 'visible — puede ser causa' if vis else 'no visible — ignorado'
+                lines.append(f"  Child[{i}]  {cn}  objectName={on!r}  [{tag}]")
+                continue
             css = c.styleSheet() or '' if hasattr(c, 'styleSheet') else ''
             afb = c.autoFillBackground() if hasattr(c, 'autoFillBackground') else '?'
             lines.append(f"  Child[{i}]  {cn}  objectName={on!r}")
@@ -199,12 +213,24 @@ def build_visual_diagnostic_report(overlay) -> str:
         I("widget.rect()",             f"0, 0, {wr}, {hr}")
         I("border_rect",               f"{adj:.1f}, {adj:.1f}, {wr-2*adj:.1f}, {hr-2*adj:.1f}")
         I("content_rect",              f"{bw}, {bw}, {wr-2*bw}, {hr-2*bw}")
-        if shape != 'square':
-            radius = min(wr, hr) if shape == 'pill' else 20
-            I("win32_rgn_expected",
-              f"CreateRoundRectRgn(0,0,{wr+1},{hr+1},{radius},{radius})")
     except Exception as e:
         I("shape/rects (error)", str(e))
+
+    # Actual Win32 SetWindowRgn state (populated by _apply_native_window_region)
+    rgn_status = getattr(overlay, '_last_native_region_status', '<N/A>')
+    rgn_kind   = getattr(overlay, '_last_native_region_kind',   '<N/A>')
+    rgn_shape  = getattr(overlay, '_last_native_region_shape',  '<N/A>')
+    rgn_hwnd   = getattr(overlay, '_last_native_region_hwnd',   '<N/A>')
+    rgn_size   = getattr(overlay, '_last_native_region_size',   '<N/A>')
+    rgn_err    = getattr(overlay, '_last_native_region_error',  None)
+    I("last_native_region_status", rgn_status)
+    I("last_native_region_kind",   rgn_kind)
+    I("last_native_region_shape",  rgn_shape)
+    I("last_native_region_hwnd",   rgn_hwnd)
+    sz_str = f"{rgn_size[0]}x{rgn_size[1]}" if isinstance(rgn_size, tuple) else str(rgn_size)
+    I("last_native_region_size",   sz_str)
+    if rgn_err is not None:
+        I("last_native_region_error",  rgn_err)
 
     # ------------------------------------------------------------------
     # 6) Screenshot
@@ -312,6 +338,27 @@ def build_visual_diagnostic_report(overlay) -> str:
             f"para que el OS recorte a esa forma."
         )
 
+    # Native Win32 region status
+    native_status_h = getattr(overlay, '_last_native_region_status', 'not_called')
+    native_kind_h   = getattr(overlay, '_last_native_region_kind',   '?')
+    if shape_now in ('pill', 'rounded'):
+        if native_status_h == 'applied':
+            hyp.append(
+                f"✓  SetWindowRgn aplicado (kind={native_kind_h!r}) → "
+                "DWM usa la región nativa como recorte autoritativo."
+            )
+        elif native_status_h in ('failed', 'exception', 'null_hrgn'):
+            hyp.append(
+                f"⚠  SetWindowRgn status={native_status_h!r} → "
+                "la región nativa NO se aplicó. El OS sigue viendo el widget como "
+                "un rectángulo completo, lo que puede generar el marco gris."
+            )
+        elif native_status_h == 'not_called':
+            hyp.append(
+                "⚠  _apply_native_window_region() aún no se ha llamado. "
+                "Genera el diagnóstico después de que la ventana sea visible."
+            )
+
     show_gray = ov.get('show_gray_frame', True)
     if not show_gray:
         hyp.append(
@@ -347,6 +394,81 @@ def build_visual_diagnostic_report(overlay) -> str:
 
     for h in hyp:
         lines.append(f"  {h}")
+
+    # ------------------------------------------------------------------
+    # 8) Pixel / alpha diagnostics
+    # ------------------------------------------------------------------
+    S("8) PIXEL / ALPHA DIAGNOSTICS")
+    try:
+        pix = overlay.grab()
+        img = pix.toImage()
+        iw, ih = img.width(), img.height()
+        I("grab size", f"{iw}x{ih}")
+
+        corners = [
+            ("corner TL (2,2)",      2,     2),
+            ("corner TR (w-3,2)",    iw-3,  2),
+            ("corner BL (2,h-3)",    2,     ih-3),
+            ("corner BR (w-3,h-3)",  iw-3,  ih-3),
+            ("near TL (10,10)",      10,    10),
+        ]
+        inside = [
+            ("center",               iw//2, ih//2),
+            ("top-center",           iw//2, 4),
+            ("left-center",          4,     ih//2),
+        ]
+
+        corner_alphas = []
+        for label, x, y in corners:
+            if 0 <= x < iw and 0 <= y < ih:
+                px = img.pixel(x, y)
+                a = (px >> 24) & 0xFF
+                r = (px >> 16) & 0xFF
+                g = (px >> 8)  & 0xFF
+                b =  px        & 0xFF
+                I(label, f"RGBA({r},{g},{b},{a})")
+                corner_alphas.append(a)
+            else:
+                I(label, f"fuera de rango ({x},{y})")
+
+        for label, x, y in inside:
+            if 0 <= x < iw and 0 <= y < ih:
+                px = img.pixel(x, y)
+                a = (px >> 24) & 0xFF
+                r = (px >> 16) & 0xFF
+                g = (px >> 8)  & 0xFF
+                b =  px        & 0xFF
+                I(label, f"RGBA({r},{g},{b},{a})")
+
+        shape_grab  = ov.get('border_shape', 'square')
+        native_st_8 = getattr(overlay, '_last_native_region_status', 'not_called')
+        if shape_grab in ('pill', 'rounded') and corner_alphas:
+            max_ca = max(corner_alphas)
+            if max_ca > 10:
+                lines.append(
+                    f"  ⚠ shape={shape_grab!r}: corner alpha máx={max_ca} > 10 → "
+                    "Qt/Python está pintando píxeles fuera de la forma. "
+                    "Revisar paintEvent / fillRect / drawRect."
+                )
+            elif native_st_8 == 'applied' and max_ca <= 10:
+                lines.append(
+                    f"  ℹ shape={shape_grab!r}: corner alpha máx={max_ca} (transparente) + "
+                    "SetWindowRgn aplicado → el rectángulo gris visible probablemente "
+                    "pertenece al contenido capturado o a composición externa (DWM/GPU)."
+                )
+            else:
+                lines.append(
+                    f"  ℹ shape={shape_grab!r}: corner alpha máx={max_ca}  "
+                    f"native_status={native_st_8!r}"
+                )
+
+        if native_st_8 not in ('applied', 'cleared', 'not_win32'):
+            lines.append(
+                f"  ⚠ SetWindowRgn status={native_st_8!r} → la región nativa no se aplicó. "
+                "Las esquinas del overlay pueden seguir siendo visibles para el OS."
+            )
+    except Exception as e:
+        I("pixel diagnostics (error)", str(e))
 
     report = "\n".join(lines)
     logger.info(

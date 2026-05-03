@@ -142,6 +142,14 @@ class ReplicationOverlay(QWidget):
 
         _OVERLAY_REGISTRY.add(self)
 
+        # Native region state (populated by _apply_native_window_region)
+        self._last_native_region_status = 'not_called'
+        self._last_native_region_kind   = 'none'
+        self._last_native_region_shape  = 'square'
+        self._last_native_region_hwnd   = 0
+        self._last_native_region_size   = (0, 0)
+        self._last_native_region_error  = None
+
         self._setup_ui()
         self._start_capture()
 
@@ -326,51 +334,83 @@ class ReplicationOverlay(QWidget):
         try:
             import sys
             if sys.platform != 'win32':
+                self._last_native_region_status = 'not_win32'
                 return
             import ctypes
             _gdi32  = ctypes.windll.gdi32
             _user32 = ctypes.windll.user32
 
+            # Explicit restype/argtypes avoid wrong calling convention on Win64
+            _user32.SetWindowRgn.restype      = ctypes.c_int
+            _user32.SetWindowRgn.argtypes     = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
+            _gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+            _gdi32.CreateEllipticRgn.restype  = ctypes.c_void_p
+            _gdi32.DeleteObject.argtypes      = [ctypes.c_void_p]
+
             hwnd = int(self.winId())
             if not hwnd:
+                self._last_native_region_status = 'no_hwnd'
                 return
 
             shape = self._ov_cfg.get('border_shape', 'square')
             w, h  = self.width(), self.height()
 
+            self._last_native_region_shape = shape
+            self._last_native_region_hwnd  = hwnd
+            self._last_native_region_size  = (w, h)
+            self._last_native_region_error = None
+
             if shape == 'square' or w <= 0 or h <= 0:
                 _user32.SetWindowRgn(hwnd, None, True)
+                self._last_native_region_status = 'cleared'
+                self._last_native_region_kind   = 'none'
                 logger.debug("[REPLICATOR REGION] hwnd=%d square → region cleared", hwnd)
                 return
 
             hrgn = None
+            kind = 'unknown'
             if shape == 'pill':
-                # Stadium pill: corner ellipse diameter = min(w,h) → semicircles on short side
-                radius = min(w, h)
-                hrgn = _gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius)
+                if abs(w - h) <= 2:
+                    # Near-square pill → true ellipse for pixel-perfect circle
+                    hrgn = _gdi32.CreateEllipticRgn(0, 0, w + 1, h + 1)
+                    kind = 'ellipse'
+                else:
+                    radius = min(w, h)
+                    hrgn = _gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius)
+                    kind = 'pill_roundrect'
             elif shape == 'rounded':
                 hrgn = _gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, 20, 20)
+                kind = 'rounded'
+
+            self._last_native_region_kind = kind
 
             if hrgn:
                 ok = _user32.SetWindowRgn(hwnd, hrgn, True)
                 if ok:
                     # Windows owns hrgn on success — do NOT DeleteObject
+                    self._last_native_region_status = 'applied'
                     logger.debug(
-                        "[REPLICATOR REGION] hwnd=%d shape=%s size=%dx%d native_region=applied",
-                        hwnd, shape, w, h,
+                        "[REPLICATOR REGION] hwnd=%d shape=%s kind=%s size=%dx%d status=applied",
+                        hwnd, shape, kind, w, h,
                     )
                 else:
+                    err = ctypes.GetLastError()
+                    self._last_native_region_status = 'failed'
+                    self._last_native_region_error  = err
                     _gdi32.DeleteObject(hrgn)
                     logger.debug(
-                        "[REPLICATOR REGION] hwnd=%d shape=%s size=%dx%d native_region=FAILED",
-                        hwnd, shape, w, h,
+                        "[REPLICATOR REGION] hwnd=%d shape=%s SetWindowRgn FAILED err=%d",
+                        hwnd, shape, err,
                     )
             else:
+                self._last_native_region_status = 'null_hrgn'
                 logger.debug(
-                    "[REPLICATOR REGION] hwnd=%d shape=%s CreateRoundRectRgn returned NULL",
+                    "[REPLICATOR REGION] hwnd=%d shape=%s CreateRgn returned NULL",
                     hwnd, shape,
                 )
         except Exception as e:
+            self._last_native_region_status = 'exception'
+            self._last_native_region_error  = str(e)
             logger.debug("[REPLICATOR REGION] error: %s", e)
 
     @classmethod
@@ -965,8 +1005,11 @@ class ReplicationOverlay(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Re-apply mask after show(): setWindowFlags + show() can reset the mask on Windows
+        # Re-apply mask after show(): setWindowFlags + show() can reset the mask on Windows.
+        # Extra deferred shots cover DWM re-compositing that happens after the initial show.
         self._apply_window_shape_mask()
+        QTimer.singleShot(50,  self._apply_window_shape_mask)
+        QTimer.singleShot(250, self._apply_window_shape_mask)
         self.update()
 
     # ------------------------------------------------------------------
