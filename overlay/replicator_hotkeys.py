@@ -58,9 +58,16 @@ _last_group_index: Dict[str, int] = {}
 
 # ── Fast-path performance state ──────────────────────────────────────────────
 
-# Minimum ms between accepted cycles — prevents accumulation when macro sends
-# multiple F14 presses faster than we can process them.
-MIN_CYCLE_INTERVAL_MS: int = 60
+# Minimum ms between accepted cycles.  120 ms gives the Win32 focus change time
+# to stabilise before the next press is honoured — safe for macros at any speed.
+MIN_CYCLE_INTERVAL_MS: int = 120
+
+# Extra settle guard: capture threads stay suspended for this many ms after focus.
+# Reduces BitBlt competition with the DWM compositing triggered by focus change.
+CAPTURE_SUSPEND_MS: int = 150
+
+# How long last_cycle_client_id is considered authoritative for index resolution.
+FOCUS_SETTLE_MS: int = 80
 
 _cycle_in_progress: bool = False          # Safety guard (same-thread re-entry)
 _last_cycle_time: float = 0.0             # monotonic() of last *accepted* cycle
@@ -236,22 +243,25 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             continue
 
         def _focus_cb(t=title):
-            global _last_cycle_client_id, _last_cycle_client_id_time
-            from overlay.win32_capture import focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid
+            global _last_cycle_client_id, _last_cycle_client_id_time, _capture_suspended_until
+            from overlay.win32_capture import focus_eve_window_perf, resolve_eve_window_handle, is_hwnd_valid
             import time as _time
-            t0 = _time.perf_counter()
+            t0  = _time.perf_counter()
+            now = _time.monotonic()
             hwnd = _hwnd_cache.get(t)
             if not hwnd or not is_hwnd_valid(hwnd):
                 hwnd = resolve_eve_window_handle(t)
                 if hwnd:
                     _hwnd_cache[t] = hwnd
             if hwnd:
-                ok = focus_eve_window_fast(hwnd)
+                _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
+                ok, focus_detail = focus_eve_window_perf(hwnd)
+                _perf_log(f'[FOCUS PERF] target={t!r} {focus_detail}')
                 if ok:
                     from overlay.replication_overlay import ReplicationOverlay
                     ReplicationOverlay.notify_active_client_changed(hwnd)
                     _last_cycle_client_id = t
-                    _last_cycle_client_id_time = _time.monotonic()
+                    _last_cycle_client_id_time = now
                 total_ms = (_time.perf_counter() - t0) * 1000
                 _perf_log(f'[HOTKEY PERF] per_client target={t!r} focus_ok={ok} total_ms={total_ms:.1f}')
 
@@ -292,7 +302,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         try:
             from overlay.win32_capture import (
                 get_foreground_hwnd, get_window_title,
-                focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid,
+                focus_eve_window_perf, resolve_eve_window_handle, is_hwnd_valid,
             )
             from overlay.replication_overlay import ReplicationOverlay, _OVERLAY_REGISTRY
 
@@ -302,8 +312,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
             # ── Resolve current index ─────────────────────────────────────
             # Priority: last_cycle_client_id (deterministic, avoids stale fg)
-            #           → foreground hwnd / title
-            #           → saved index
+            #           → foreground hwnd / title  → saved index
             t_res = _time.perf_counter()
             current_idx = -1
             used_last   = False
@@ -337,9 +346,9 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             resolve_ms = (_time.perf_counter() - t_res) * 1000
 
             # ── Find target ───────────────────────────────────────────────
-            start      = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
-            target     = target_hwnd = None
-            next_idx   = -1
+            start    = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
+            target   = target_hwnd = None
+            next_idx = -1
 
             for attempt in range(1, len(titles) + 1):
                 idx  = (start + direction * attempt) % len(titles)
@@ -354,16 +363,18 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     break
 
             if not target_hwnd:
-                _perf_log(f'[HOTKEY PERF] failed hotkey=cycle direction={"next" if direction>0 else "prev"} entry=_cycle reason=no_valid_window')
+                _perf_log(
+                    f'[HOTKEY PERF] failed hotkey=cycle direction={"next" if direction>0 else "prev"} '
+                    f'entry=_cycle reason=no_valid_window'
+                )
                 return
 
-            # ── Suspend capture for ~80 ms (skip one frame, reduce competition) ──
-            _capture_suspended_until = now + 0.08
+            # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──
+            _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
 
-            # ── Focus target ──────────────────────────────────────────────
-            t_foc    = _time.perf_counter()
-            ok       = focus_eve_window_fast(target_hwnd)
-            focus_ms = (_time.perf_counter() - t_foc) * 1000
+            # ── Focus target (non-blocking async Z-order + SetForegroundWindow) ──
+            ok, focus_detail = focus_eve_window_perf(target_hwnd)
+            _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
 
             if ok:
                 _last_group_index['__global__'] = next_idx
@@ -375,7 +386,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             _perf_log(
                 f'[HOTKEY PERF] accepted hotkey=cycle direction={"next" if direction>0 else "prev"} '
                 f'entry=_cycle source_idx={current_idx} target_idx={next_idx} target={target!r} '
-                f'resolve_ms={resolve_ms:.1f} focus_ms={focus_ms:.1f} total_ms={total_ms:.1f} '
+                f'resolve_ms={resolve_ms:.1f} total_ms={total_ms:.1f} '
                 f'focus_ok={ok} used_last_cycle={used_last}'
             )
         finally:
@@ -412,7 +423,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         try:
             from overlay.win32_capture import (
                 get_foreground_hwnd, get_window_title,
-                focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid,
+                focus_eve_window_perf, resolve_eve_window_handle, is_hwnd_valid,
             )
             from overlay.replication_overlay import ReplicationOverlay, _OVERLAY_REGISTRY
 
@@ -486,13 +497,12 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 )
                 return
 
-            # ── Suspend capture for ~80 ms ────────────────────────────────
-            _capture_suspended_until = now + 0.08
+            # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──
+            _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
 
-            # ── Focus target ──────────────────────────────────────────────
-            t_foc    = _time.perf_counter()
-            ok       = focus_eve_window_fast(target_hwnd)
-            focus_ms = (_time.perf_counter() - t_foc) * 1000
+            # ── Focus target (non-blocking async Z-order + SetForegroundWindow) ──
+            ok, focus_detail = focus_eve_window_perf(target_hwnd)
+            _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
 
             if ok:
                 _last_group_index[group_id]    = next_idx
@@ -505,7 +515,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'[HOTKEY PERF] accepted hotkey={hk_label} direction={"next" if direction>0 else "prev"} '
                 f'entry=_cycle_group group_id={group_id} group_name={group.get("name","")} '
                 f'source_idx={current_idx} target_idx={next_idx} target={target!r} '
-                f'resolve_ms={resolve_ms:.1f} focus_ms={focus_ms:.1f} total_ms={total_ms:.1f} '
+                f'resolve_ms={resolve_ms:.1f} total_ms={total_ms:.1f} '
                 f'focus_ok={ok} used_last_cycle={used_last}'
             )
         finally:

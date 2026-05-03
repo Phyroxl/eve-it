@@ -218,6 +218,66 @@ def focus_eve_window_fast(hwnd: int) -> bool:
     except Exception:
         return False
 
+
+# SetWindowPos flags for non-blocking Z-order raise
+# SWP_NOSIZE(0x0001) | SWP_NOMOVE(0x0002) | SWP_ASYNCWINDOWPOS(0x4000)
+# SWP_ASYNCWINDOWPOS: posts the request to the target thread instead of
+# blocking via SendMessage — eliminates 200-300 ms cross-process stall.
+_SWP_ASYNC_RAISE = 0x4003
+# HWND_TOP = 0  (raise above all non-topmost siblings, no topmost flag)
+_HWND_TOP = 0
+
+
+def focus_eve_window_perf(hwnd: int) -> tuple:
+    """Non-blocking focus with per-subfase timing.
+
+    Returns (ok: bool, perf_line: str) for compact perf logging.
+    Key change vs focus_eve_window_fast: replaces BringWindowToTop
+    (synchronous cross-process SendMessage, up to 300 ms) with
+    SetWindowPos+SWP_ASYNCWINDOWPOS (posts to target queue, returns
+    in < 1 ms regardless of EVE's render/message load).
+    """
+    if not hwnd:
+        return False, 'hwnd=0'
+
+    t0 = time.perf_counter()
+
+    # 1. Restore minimized window (only when iconic, usually fast)
+    restore_ms = 0.0
+    try:
+        if user32.IsIconic(hwnd):
+            tr = time.perf_counter()
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            restore_ms = (time.perf_counter() - tr) * 1000
+    except Exception:
+        pass
+
+    # 2. Async Z-order raise — posts to EVE's queue, returns immediately.
+    #    Does NOT block waiting for EVE to process WM_WINDOWPOSCHANGING.
+    t_bring = time.perf_counter()
+    try:
+        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _SWP_ASYNC_RAISE)
+    except Exception:
+        pass
+    bring_ms = (time.perf_counter() - t_bring) * 1000
+
+    # 3. SetForegroundWindow — hotkey thread already holds foreground rights
+    #    (granted by Windows when WM_HOTKEY is dispatched to our thread).
+    t_setfg = time.perf_counter()
+    ok = False
+    try:
+        ok = bool(user32.SetForegroundWindow(hwnd))
+    except Exception:
+        pass
+    setfg_ms = (time.perf_counter() - t_setfg) * 1000
+
+    total_ms = (time.perf_counter() - t0) * 1000
+    perf_line = (
+        f'hwnd={hwnd} restore={restore_ms:.1f} bring={bring_ms:.1f} '
+        f'setfg={setfg_ms:.1f} total={total_ms:.1f} ok={ok}'
+    )
+    return ok, perf_line
+
 def get_window_title(hwnd: int) -> str:
     """Devuelve el título de una ventana dado su HWND."""
     if not hwnd:
