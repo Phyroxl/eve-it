@@ -168,9 +168,13 @@ def build_visual_diagnostic_report(overlay) -> str:
         I("children (error)", str(e))
 
     # ------------------------------------------------------------------
-    # 5) Mask / clipping
+    # 5) Mask / clipping + native Win32 region
     # ------------------------------------------------------------------
-    S("5) MASK / CLIPPING")
+    S("5) MASK / CLIPPING + WIN32 REGION")
+    import sys as _sys, platform as _platform
+    I("platform",       _sys.platform)
+    I("OS",             _platform.platform())
+
     try:
         mask  = overlay.mask()
         empty = mask.isEmpty()
@@ -187,11 +191,16 @@ def build_visual_diagnostic_report(overlay) -> str:
         bw    = max(1, int(ov.get('border_width', 2))) if ov.get('border_visible', True) else 0
         adj   = bw / 2.0
         wr, hr = overlay.width(), overlay.height()
-        I("border_shape",  shape)
-        I("border_width",  bw)
-        I("widget.rect()", f"0, 0, {wr}, {hr}")
-        I("border_rect",   f"{adj:.1f}, {adj:.1f}, {wr - 2*adj:.1f}, {hr - 2*adj:.1f}")
-        I("content_rect",  f"{bw}, {bw}, {wr - 2*bw}, {hr - 2*bw}")
+        I("border_shape",              shape)
+        I("should_use_win32_region",   shape != 'square' and _sys.platform == 'win32')
+        I("border_width",              bw)
+        I("widget.rect()",             f"0, 0, {wr}, {hr}")
+        I("border_rect",               f"{adj:.1f}, {adj:.1f}, {wr-2*adj:.1f}, {hr-2*adj:.1f}")
+        I("content_rect",              f"{bw}, {bw}, {wr-2*bw}, {hr-2*bw}")
+        if shape != 'square':
+            radius = min(wr, hr) if shape == 'pill' else 20
+            I("win32_rgn_expected",
+              f"CreateRoundRectRgn(0,0,{wr+1},{hr+1},{radius},{radius})")
     except Exception as e:
         I("shape/rects (error)", str(e))
 

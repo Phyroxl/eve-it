@@ -269,18 +269,20 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_window_shape_mask(self):
-        """Apply a QBitmap mask so Windows/DWM clips the window to the
-        overlay shape.  square → clearMask, pill/rounded → setMask."""
+        """Apply a QBitmap mask (Qt layer) + Win32 SetWindowRgn (OS layer).
+        square → clear both,  pill/rounded → set both."""
         shape = self._ov_cfg.get('border_shape', 'square')
 
         if shape == 'square':
             self.clearMask()
+            self._apply_native_window_region()  # clears SetWindowRgn too
             return
 
         w, h = self.width(), self.height()
         if w <= 0 or h <= 0:
             return
 
+        # --- Qt QBitmap mask (fallback / extra layer) ---
         try:
             try:
                 from PySide6.QtGui import QBitmap
@@ -314,6 +316,62 @@ class ReplicationOverlay(QWidget):
             )
         except Exception as e:
             logger.debug("[REPLICATOR MASK] error: %s", e)
+
+        # --- Win32 SetWindowRgn (primary / authoritative layer) ---
+        self._apply_native_window_region()
+
+    def _apply_native_window_region(self):
+        """Apply Win32 SetWindowRgn so DWM clips the window at the OS level.
+        This is the authoritative clip; setMask is kept as a Qt-layer fallback."""
+        try:
+            import sys
+            if sys.platform != 'win32':
+                return
+            import ctypes
+            _gdi32  = ctypes.windll.gdi32
+            _user32 = ctypes.windll.user32
+
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+
+            shape = self._ov_cfg.get('border_shape', 'square')
+            w, h  = self.width(), self.height()
+
+            if shape == 'square' or w <= 0 or h <= 0:
+                _user32.SetWindowRgn(hwnd, None, True)
+                logger.debug("[REPLICATOR REGION] hwnd=%d square → region cleared", hwnd)
+                return
+
+            hrgn = None
+            if shape == 'pill':
+                # Stadium pill: corner ellipse diameter = min(w,h) → semicircles on short side
+                radius = min(w, h)
+                hrgn = _gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius)
+            elif shape == 'rounded':
+                hrgn = _gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, 20, 20)
+
+            if hrgn:
+                ok = _user32.SetWindowRgn(hwnd, hrgn, True)
+                if ok:
+                    # Windows owns hrgn on success — do NOT DeleteObject
+                    logger.debug(
+                        "[REPLICATOR REGION] hwnd=%d shape=%s size=%dx%d native_region=applied",
+                        hwnd, shape, w, h,
+                    )
+                else:
+                    _gdi32.DeleteObject(hrgn)
+                    logger.debug(
+                        "[REPLICATOR REGION] hwnd=%d shape=%s size=%dx%d native_region=FAILED",
+                        hwnd, shape, w, h,
+                    )
+            else:
+                logger.debug(
+                    "[REPLICATOR REGION] hwnd=%d shape=%s CreateRoundRectRgn returned NULL",
+                    hwnd, shape,
+                )
+        except Exception as e:
+            logger.debug("[REPLICATOR REGION] error: %s", e)
 
     @classmethod
     def _get_cached_eve_hwnds(cls) -> set:
