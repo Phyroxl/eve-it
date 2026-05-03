@@ -392,24 +392,26 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         logger.warning(f"[HOTKEY ORDER DEBUG] --- CYCLE FAILED (No valid windows found) ---")
         _log_to_file("[CYCLE] --- FAILED (No valid windows found) ---")
 
-    # 1. Recolectar teclas usadas por grupos para evitar conflictos con el ciclo global
-    group_vks = set()
+    # 1. Recolectar combinaciones (mods, vk) usadas por grupos
+    group_combos = set()
     groups = hk_cfg.get('groups', {})
-    for g_data in groups.values():
+    for g_id, g_data in groups.items():
         if g_data.get('enabled'):
-            _, n_vk = parse_hotkey(g_data.get('next', ''))
-            _, p_vk = parse_hotkey(g_data.get('prev', ''))
-            if n_vk: group_vks.add(n_vk)
-            if p_vk: group_vks.add(p_vk)
+            n_m, n_v = parse_hotkey(g_data.get('next', ''))
+            p_m, p_v = parse_hotkey(g_data.get('prev', ''))
+            if n_v: group_combos.add((n_m, n_v))
+            if p_v: group_combos.add((p_m, p_v))
+            logger.debug(f"[HOTKEY REG] Group {g_id} active. Next: {g_data.get('next')} Prev: {g_data.get('prev')}")
 
-    # 2. Registrar ciclo global (solo si no hay conflicto con grupos)
+    # 2. Registrar ciclo global (solo si no hay conflicto exacto con grupos)
     for key, direction in [('cycle_next', +1), ('cycle_prev', -1)]:
         entry = hk_cfg.get(key, {})
         combo = entry.get('combo', '') if isinstance(entry, dict) else ''
         mods, vk = parse_hotkey(combo)
         if vk:
-            if vk in group_vks:
-                logger.info(f"[HOTKEY] Omitiendo ciclo global para {combo} (asignado a grupo)")
+            if (mods, vk) in group_combos:
+                _log_to_file(f"[HOTKEY REG] Skipping global {key} ({combo}) because it belongs to an active group.")
+                logger.info(f"[HOTKEY] Omitiendo ciclo global para {combo} (prioridad al grupo)")
                 continue
             registrations.append((mods, vk, lambda d=direction: _cycle(d)))
 
