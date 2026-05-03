@@ -1,15 +1,23 @@
 import logging
 import sys
+import ctypes
 from pathlib import Path
+from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, 
+    QPushButton, QListWidget, QListWidgetItem, QStackedWidget,
+    QComboBox, QSpinBox, QGridLayout, QLineEdit, QApplication
+)
 
 # Configurar logger
 logger = logging.getLogger('eve.replicator_wizard')
 from utils.i18n import t
+from overlay.replicator_hotkeys import update_hotkey_cache, register_hotkeys, unregister_hotkeys
 
 class ReplicatorWizard:
     """
     Controlador del Asistente del Replicador 2.0.
-    Ahora implementado como una clase limpia que gestiona un QDialog.
+    Unificado en una sola pantalla para selección de ventanas, región y FPS.
     """
     def __init__(self, W, C, G, cfg, cfg_mod, lang='es', suite_win=None, callback=None):
         self._W = W
@@ -22,566 +30,267 @@ class ReplicatorWizard:
         self._callback = callback
         
         self._windows_cache = []
-        self._current_rect = {'x': 0, 'y': 0, 'w': 100, 'h': 100} # Píxeles reales de referencia
+        self._custom_cards = []
         self._drag_pos = None
         
         # UI Components
         self.dlg = None
-        self.hub = None # Referencia al HUB táctico
         self._setup_ui()
 
     def _reassert_topmost(self):
         try:
-            import ctypes
             hwnd = int(self.dlg.winId())
             ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
-        except Exception:
-            pass
+        except Exception: pass
         
-    def _setup_ui_content(self): # Helper or just continue in _setup_ui
-        pass
-
     def _setup_ui(self):
-        W, C, G = self._W, self._C, self._G
-        self.dlg = W.QDialog()
+        W, C = self._W, self._C
+        self.dlg = QDialog()
         self.dlg.setWindowTitle("EVE iT")
-        self.dlg.setMinimumSize(400, 360)
+        self.dlg.setMinimumSize(420, 480)
         
-        # Tool & Frameless & TopMost Window Hints
-        flags = (self._C.Qt.WindowType.FramelessWindowHint | 
-                 self._C.Qt.WindowType.WindowStaysOnTopHint | 
-                 self._C.Qt.WindowType.Tool) \
-                if hasattr(self._C.Qt, 'WindowType') else \
-                (self._C.Qt.FramelessWindowHint | 
-                 self._C.Qt.WindowStaysOnTopHint | 
-                 self._C.Qt.Tool)
-        
+        flags = (Qt.WindowType.FramelessWindowHint | 
+                 Qt.WindowType.WindowStaysOnTopHint | 
+                 Qt.WindowType.Tool)
         self.dlg.setWindowFlags(flags)
 
-        # Forzar TopMost via Win32 API inmediatamente
-        try:
-            import ctypes
-            hwnd = int(self.dlg.winId())
-            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
-        except Exception:
-            pass
+        # [NUEVO] Refuerzo topmost unificado
+        from overlay.dialog_utils import make_replicator_dialog_topmost
+        make_replicator_dialog_topmost(self.dlg)
 
-        # Re-afirmar cada 2 segundos mientras esté abierto
-        self._top_timer = self._C.QTimer(self.dlg)
+        self._top_timer = QTimer(self.dlg)
         self._top_timer.timeout.connect(self._reassert_topmost)
         self._top_timer.start(2000)
         
-        # Estilo Global (Neon Dark - Fondo negro puro)
         self.dlg.setStyleSheet("""
             QDialog { background: #000000; border: 1px solid rgba(0,180,255,0.3); color: #e1e9f5; font-family: 'Segoe UI', sans-serif; }
             QLabel { color: #a0b0c0; font-size: 11px; }
-            QLabel#title { color: #00c8ff; font-size: 16px; font-weight: bold; padding-bottom: 5px; }
             QPushButton { 
                 background: rgba(0,180,255,0.1); border: 1px solid rgba(0,180,255,0.3);
-                border-radius: 4px; color: #00c8ff; padding: 6px 15px; font-weight: bold;
+                border-radius: 4px; color: #00c8ff; padding: 4px 10px; font-weight: bold;
             }
             QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }
-            QPushButton:pressed { background: rgba(0,180,255,0.3); }
             QPushButton#primary { background: rgba(0,200,255,0.2); border-color: #00e0ff; color: #00ffff; }
-            QPushButton#primary:hover { background: rgba(0,200,255,0.4); }
             QListWidget { background: #040810; border: 1px solid #1a2533; border-radius: 5px; color: #e1e9f5; }
-            QListWidget::item { padding: 8px; border-bottom: 1px solid #0d1626; }
-            QListWidget::item:selected { background: rgba(0,180,255,0.15); color: #00c8ff; }
             QSpinBox, QComboBox { 
                 background: #0d1626; border: 1px solid #1a2533; border-radius: 3px; 
-                color: #00c8ff; padding: 4px; 
+                color: #00c8ff; padding: 3px; font-size: 11px;
             }
         """)
 
-        main_lay = W.QVBoxLayout(self.dlg)
+        main_lay = QVBoxLayout(self.dlg)
         main_lay.setContentsMargins(0,0,0,0); main_lay.setSpacing(0)
 
-        # Header Custom
-        hdr = W.QWidget(); hdr.setFixedHeight(28); hdr.setStyleSheet("background: #000000; border-bottom: 1px solid #1a2533;")
-        hl = W.QHBoxLayout(hdr); hl.setContentsMargins(10,0,10,0)
+        # Header
+        hdr = QWidget(); hdr.setFixedHeight(30); hdr.setStyleSheet("background: #000; border-bottom: 1px solid #1a2533;")
+        hl = QHBoxLayout(hdr); hl.setContentsMargins(10,0,10,0)
+        hl.addWidget(QLabel("🪟"))
+        title_lbl = QLabel("REPLICADOR"); title_lbl.setStyleSheet("color: #00c8ff; font-weight: bold; font-size: 11px;")
+        hl.addWidget(title_lbl); hl.addStretch()
         
-        icon_lbl = W.QLabel("🪟")
-        hl.addWidget(icon_lbl)
-        
-        title_lbl = W.QLabel(""); title_lbl.setStyleSheet("color: rgba(0,200,255,0.8); font-size: 10px; font-weight: normal;")
-        hl.addWidget(title_lbl)
-        
-        hl.addStretch()
-        self.step_lbl = W.QLabel("Paso 1 / 3"); self.step_lbl.setStyleSheet("color: #405060; font-weight: bold;")
+        self.step_lbl = QLabel("ASISTENTE"); self.step_lbl.setStyleSheet("color: #405060; font-weight: bold;")
         hl.addWidget(self.step_lbl)
         
-        # Botones Min / Close (Estandarizados con Translator)
-        btn_min = W.QPushButton("\u2212")
-        btn_min.setFixedSize(18, 18)
-        btn_min.setStyleSheet("QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);border-radius:3px;color:#00c8ff;font-size:10px;padding:0;margin:0;font-weight:normal;}QPushButton:hover{background:rgba(0,180,255,0.35);}")
-        btn_min.clicked.connect(lambda: self._animate_minimize(self.dlg))
-        hl.addWidget(btn_min)
-        
-        btn_close = W.QPushButton("\u00d7")
-        btn_close.setFixedSize(18, 18)
-        btn_close.setStyleSheet("QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);border-radius:3px;color:#ff6666;font-size:10px;padding:0;margin:0;font-weight:normal;}QPushButton:hover{background:rgba(255,50,50,0.35);}")
-        btn_close.clicked.connect(self.dlg.reject)
-        hl.addWidget(btn_close)
-        
+        btn_close = QPushButton("\u00d7"); btn_close.setFixedSize(20, 20)
+        btn_close.setStyleSheet("QPushButton{background:rgba(255,50,50,0.1);border-color:rgba(255,50,50,0.3);color:#ff6666;}QPushButton:hover{background:rgba(255,50,50,0.3);}")
+        btn_close.clicked.connect(self.dlg.reject); hl.addWidget(btn_close)
         main_lay.addWidget(hdr)
         
-        # Lógica de arrastre
+        # Drag logic
         def mousePressEvent(event):
-            left = C.Qt.MouseButton.LeftButton if hasattr(C.Qt, 'MouseButton') else C.Qt.LeftButton
-            if event.button() == left:
-                self._drag_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
-        
+            if event.button() == Qt.LeftButton: self._drag_pos = event.globalPosition().toPoint()
         def mouseMoveEvent(event):
-            left = C.Qt.MouseButton.LeftButton if hasattr(C.Qt, 'MouseButton') else C.Qt.LeftButton
-            if event.buttons() & left and self._drag_pos:
-                gpos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            if event.buttons() & Qt.LeftButton and self._drag_pos:
+                gpos = event.globalPosition().toPoint()
                 self.dlg.move(self.dlg.pos() + gpos - self._drag_pos)
                 self._drag_pos = gpos
-                
-        def mouseReleaseEvent(event):
-            self._drag_pos = None
-            self._save_position()
+        hdr.mousePressEvent = mousePressEvent; hdr.mouseMoveEvent = mouseMoveEvent; hdr.mouseReleaseEvent = lambda e: setattr(self, '_drag_pos', None)
 
-        hdr.mousePressEvent = mousePressEvent
-        hdr.mouseMoveEvent = mouseMoveEvent
-        hdr.mouseReleaseEvent = mouseReleaseEvent
+        # Content
+        p1 = QWidget(); l1 = QVBoxLayout(p1); l1.setContentsMargins(20,15,20,15); l1.setSpacing(10)
+        self.lbl_step1_title = QLabel(t('repl_p1_title', self._lang))
+        self.lbl_step1_title.setStyleSheet("color: #00c8ff; font-size: 13px; font-weight: bold;")
+        l1.addWidget(self.lbl_step1_title)
         
-        # Main Title (Step 1 visual title)
-        title_bar = W.QWidget(); title_bar.setFixedHeight(35); title_bar.setStyleSheet("background: transparent;")
-        tbl = W.QHBoxLayout(title_bar); tbl.setContentsMargins(20,5,20,0)
-        title_main = W.QLabel(""); title_main.setStyleSheet("color: rgba(0,200,255,0.7); font-size: 14px; font-weight: bold;"); tbl.addWidget(title_main)
-        tbl.addStretch()
-        main_lay.addWidget(title_bar)
+        self.win_list = QListWidget()
+        self.win_list.setDragEnabled(True); self.win_list.setAcceptDrops(True); self.win_list.setDropIndicatorShown(True)
+        self.win_list.setDragDropMode(QListWidget.InternalMove)
+        l1.addWidget(self.win_list)
+        
+        btn_row = QHBoxLayout()
+        self.btn_all = QPushButton("Todos"); btn_row.addWidget(self.btn_all)
+        self.btn_none = QPushButton("Ninguno"); btn_row.addWidget(self.btn_none)
+        self.btn_refresh = QPushButton("Refrescar"); btn_row.addWidget(self.btn_refresh)
+        btn_row.addStretch(); l1.addLayout(btn_row)
 
+        # Region & FPS Config (Merged)
+        conf_box = QWidget()
+        conf_box.setStyleSheet("background: rgba(0,200,255,0.03); border: 1px solid rgba(0,200,255,0.1); border-radius: 6px;")
+        conf_lay = QVBoxLayout(conf_box); conf_lay.setContentsMargins(15, 12, 15, 12); conf_lay.setSpacing(8)
 
-        # Stack logic
-        self.stack = W.QStackedWidget(); main_lay.addWidget(self.stack)
+        # Profile Row
+        prof_row = QHBoxLayout()
+        prof_row.addWidget(QLabel("Perfil:"))
+        self.prof_combo = QComboBox(); self.prof_combo.setMinimumWidth(120); prof_row.addWidget(self.prof_combo)
+        btn_p_add = QPushButton("+"); btn_p_add.setFixedSize(24,24); prof_row.addWidget(btn_p_add)
+        btn_p_del = QPushButton("-"); btn_p_del.setFixedSize(24,24); prof_row.addWidget(btn_p_del)
+        
+        prof_row.addSpacing(15); prof_row.addWidget(QLabel("FPS:"))
+        self.fps_combo = QComboBox(); self.fps_combo.addItems(["5", "10", "15", "20", "30", "60", "120"])
+        self.fps_combo.setCurrentText(str(self._cfg.get('global_fps', 30)))
+        self.fps_combo.setFixedWidth(50); prof_row.addWidget(self.fps_combo)
+        prof_row.addStretch(); conf_lay.addLayout(prof_row)
 
-        # STEP 1: Selección de Ventanas
-        self._setup_step1()
-        # STEP 2: Gestión de Regiones
-        self._setup_step2()
-        # STEP 3 ELIMINADO
+        # Region Numeric Grid
+        reg_grid = QGridLayout(); reg_grid.setSpacing(6)
+        for i, k in enumerate(['x', 'y', 'w', 'h']):
+            lbl = QLabel(f"{k.upper()}:")
+            sp = QSpinBox(); sp.setRange(0, 4096); sp.setFixedWidth(65)
+            setattr(self, f"sp_{k}", sp)
+            reg_grid.addWidget(lbl, 0, i*2)
+            reg_grid.addWidget(sp, 0, i*2 + 1)
+            sp.valueChanged.connect(self._sync_to_cfg)
+        conf_lay.addLayout(reg_grid)
 
-        # Bottom Bar
-        footer = W.QWidget(); footer.setFixedHeight(45); footer.setStyleSheet("background: #040810; border-top: 1px solid #1a2533;")
-        fl = W.QHBoxLayout(footer); fl.setContentsMargins(20,0,20,0)
-        self.btn_back = W.QPushButton("CERRAR"); fl.addWidget(self.btn_back)
+        # Region Select Button
+        self.btn_visual = QPushButton("SELECCIONAR REGIÓN")
+        self.btn_visual.setMinimumHeight(35); self.btn_visual.setObjectName("primary")
+        conf_lay.addWidget(self.btn_visual)
+        l1.addWidget(conf_box)
+
+        # Footer
+        footer = QWidget(); footer.setFixedHeight(50); footer.setStyleSheet("background: #040810; border-top: 1px solid #1a2533;")
+        fl = QHBoxLayout(footer); fl.setContentsMargins(20,0,20,0)
+        self.btn_back = QPushButton("CERRAR"); fl.addWidget(self.btn_back)
         fl.addStretch()
-        self.btn_next = W.QPushButton("SIGUIENTE"); fl.addWidget(self.btn_next)
+        self.btn_next = QPushButton("LANZAR RÉPLICAS"); self.btn_next.setObjectName("primary"); self.btn_next.setMinimumHeight(32); fl.addWidget(self.btn_next)
+        
+        main_lay.addWidget(p1)
         main_lay.addWidget(footer)
 
         # Connections
-        self.btn_next.clicked.connect(self._go_next)
-        self.btn_back.clicked.connect(self._go_back)
-        
-        # Re-translate initial
-        self.retranslate_ui(self._lang)
-        
-        # Load Position
-        self._load_position()
-
-    def retranslate_ui(self, lang: str):
-        self._lang = lang
-        from utils.i18n import t
-        idx = self.stack.currentIndex()
-        if idx == 0:
-            self.btn_back.setText(t('gui_btn_close', lang))
-        else:
-            self.btn_back.setText(t('repl_btn_back', lang))
-        if idx == 1:
-            self.btn_next.setText(t('repl_btn_launch', lang))
-        else:
-            self.btn_next.setText(t('repl_btn_next', lang))
-            
-        if hasattr(self, 'step_lbl'): self.step_lbl.setText(t('repl_step', lang) + f" {idx+1} / 2")
-        if hasattr(self, 'lbl_step1_title'): self.lbl_step1_title.setText(t('repl_p1_title', lang))
-        if hasattr(self, 'btn_all'): self.btn_all.setText(t('repl_btn_all', lang))
-        if hasattr(self, 'btn_none'): self.btn_none.setText(t('repl_btn_none', lang))
-        if hasattr(self, 'btn_refresh'): self.btn_refresh.setText(t('repl_btn_refresh', lang))
-        
-        if hasattr(self, 'lbl_step2_title'): self.lbl_step2_title.setText(t('repl_p2_title', lang))
-        if hasattr(self, 'lbl_profile'): self.lbl_profile.setText(t('repl_profile', lang))
-        if hasattr(self, 'lbl_w'): self.lbl_w.setText(t('repl_width', lang))
-        if hasattr(self, 'lbl_h'): self.lbl_h.setText(t('repl_height', lang))
-        if hasattr(self, 'btn_visual'): self.btn_visual.setText(t('repl_btn_select', lang))
-        
-        if hasattr(self, 'lbl_step3_title'): self.lbl_step3_title.setText(t('repl_p3_title', lang))
-        if idx == 2 and hasattr(self, 'summary_txt'):
-            wins = ", ".join(self._cfg.get('selected_windows', []))
-            s_out = t('repl_summary_wins', lang, wins=wins) + "\n" + t('repl_summary_reg', lang, profile=self.prof_combo.currentText())
-            self.summary_txt.setText(s_out)
-            
-        if hasattr(self, 'hub_window') and self.hub_window:
-            try:
-                self.hub_window.retranslate_ui(lang)
-            except Exception as e:
-                logger.debug(f"hub_window retranslate error: {e}")
-
-    def _save_position(self):
-        self._cfg.setdefault('sizes', {})['wizard_pos'] = {'x': self.dlg.x(), 'y': self.dlg.y()}
-        self._cfg_mod.save_config(self._cfg)
-        
-    def _load_position(self):
-        pos = self._cfg.get('sizes', {}).get('wizard_pos')
-        if pos:
-            self.dlg.move(pos['x'], pos['y'])
-
-    def _setup_step1(self):
-        W = self._W
-        # [NUEVO] Limpieza agresiva de memoria táctica al iniciar el asistente
-        # Esto evita que datos residuales de Phyrox Perez u otros interfieran con la nueva sesión.
-        try:
-            self._cfg['overlays'] = {}
-            self._cfg['selected_windows'] = []
-            self.diag_log.info("DIAG: Memoria de overlays purgada para nueva sesión.")
-        except Exception as e:
-            logger.debug(f"purge overlays config: {e}")
-
-        p1 = W.QWidget(); l1 = W.QVBoxLayout(p1); l1.setContentsMargins(25,20,25,20); l1.setSpacing(10)
-        self.lbl_step1_title = self._W.QLabel(t('repl_p1_title', self._lang))
-        self.lbl_step1_title.setObjectName("SectionTitle")
-        l1.addWidget(self.lbl_step1_title)
-        
-        # [NUEVO] Lista personalizada para manejar Drag & Drop robusto
-        class ReplicList(self._W.QListWidget):
-            def __init__(self, parent_ctrl):
-                super().__init__()
-                self.ctrl = parent_ctrl
-            def dropEvent(self, event):
-                super().dropEvent(event)
-                # Al terminar el drop, sincronizamos la caché y RE-DIBUJAMOS
-                self.ctrl._sync_cache_from_ui()
-
-        self.win_list = ReplicList(self)
-        self.win_list.setDragEnabled(True)
-        self.win_list.setAcceptDrops(True)
-        self.win_list.setDropIndicatorShown(True)
-        self.win_list.setDragDropMode(self._W.QAbstractItemView.InternalMove if hasattr(self._W.QAbstractItemView, 'InternalMove') else self._C.Qt.InternalMove)
-        
-        l1.addWidget(self.win_list)
-        
-        self._refresh_windows()
-
-        
-        btn_row = self._W.QHBoxLayout()
-        self.btn_all = self._W.QPushButton("Seleccionar Todos")
-        self.btn_all.setStyleSheet("font-size: 9px; padding: 4px 10px;")
-        btn_row.addWidget(self.btn_all)
-        
-        self.btn_none = W.QPushButton("Deseleccionar Todos")
-        self.btn_none.setStyleSheet("QPushButton { background: rgba(255,50,50,0.08); border: 1px solid rgba(255,60,60,0.25); color: rgba(255,120,120,0.7); font-size: 9px; padding: 4px 10px; } "
-                               "QPushButton:hover { background: rgba(255,50,50,0.22); border-color: #ff4444; color: #ff6666; }")
-        btn_row.addWidget(self.btn_none)
-        
-        self.btn_refresh = W.QPushButton("Refrescar Lista")
-        self.btn_refresh.setStyleSheet("font-size: 9px; padding: 4px 10px;")
-        btn_row.addWidget(self.btn_refresh)
-        
-        btn_row.addStretch()
-        l1.addLayout(btn_row)
-        
         self.btn_refresh.clicked.connect(self._refresh_windows)
-        def _sel_all():
-            if hasattr(self, '_set_checked_helper'):
-                for c in getattr(self, '_custom_cards', []): self._set_checked_helper(c, True)
-        def _sel_none():
-            if hasattr(self, '_set_checked_helper'):
-                for c in getattr(self, '_custom_cards', []): self._set_checked_helper(c, False)
-        
-        self.btn_all.clicked.connect(_sel_all)
-        self.btn_none.clicked.connect(_sel_none)
-        
-        self.stack.addWidget(p1)
-        self._refresh_windows()
-
-    def _setup_step2(self):
-        W = self._W
-        p2 = W.QWidget(); l2 = W.QVBoxLayout(p2); l2.setContentsMargins(15,10,15,10); l2.setSpacing(10)
-        
-        self.lbl_step2_title = W.QLabel("CONFIGURAR REGIÓN DE CAPTURA")
-        l2.addWidget(self.lbl_step2_title)
-        
-        # Profile & FPS Row
-        top_row = W.QHBoxLayout()
-        self.lbl_profile = W.QLabel("Perfil:")
-        top_row.addWidget(self.lbl_profile)
-        self.prof_combo = W.QComboBox(); self.prof_combo.setMinimumWidth(150); top_row.addWidget(self.prof_combo)
-        btn_add = W.QPushButton("+"); btn_add.setFixedSize(30,30); top_row.addWidget(btn_add)
-        btn_del = W.QPushButton("-"); btn_del.setFixedSize(30,30); top_row.addWidget(btn_del)
-        
-        top_row.addSpacing(20)
-        self.lbl_fps_w = W.QLabel("FPS:"); top_row.addWidget(self.lbl_fps_w)
-        self.fps_combo = W.QComboBox(); self.fps_combo.addItems(["5", "10", "30", "60", "120"])
-        self.fps_combo.setCurrentText(str(self._cfg.get('global_fps', 30)))
-        top_row.addWidget(self.fps_combo)
-        
-        top_row.addStretch()
-        l2.addLayout(top_row)
-
-        # Layout profile selector row
-        layout_row = W.QHBoxLayout()
-        lbl_layout = W.QLabel("Layout:"); layout_row.addWidget(lbl_layout)
-        self.layout_prof_combo = W.QComboBox()
-        self.layout_prof_combo.setMinimumWidth(130)
-        layout_row.addWidget(self.layout_prof_combo)
-        btn_apply_lp = W.QPushButton("Aplicar")
-        btn_apply_lp.setFixedSize(60, 28)
-        btn_apply_lp.setToolTip("Aplicar perfil de layout a los overlays al lanzar")
-        btn_apply_lp.clicked.connect(self._apply_layout_profile_to_cfg)
-        layout_row.addWidget(btn_apply_lp)
-        layout_row.addStretch()
-        l2.addLayout(layout_row)
-
-        # Numeric Control Grid (Match user image)
-        grid = W.QGridLayout(); grid.setSpacing(15)
-        
-        # X / Y
-        self.lbl_x = W.QLabel("X:"); grid.addWidget(self.lbl_x, 0, 0)
-        self.sp_x = W.QSpinBox(); self.sp_x.setRange(0, 10000); grid.addWidget(self.sp_x, 0, 1)
-        
-        self.lbl_w = W.QLabel("Anchura:"); grid.addWidget(self.lbl_w, 0, 2)
-        self.sp_w = W.QSpinBox(); self.sp_w.setRange(1, 10000); grid.addWidget(self.sp_w, 0, 3)
-        
-        self.lbl_y = W.QLabel("Y:"); grid.addWidget(self.lbl_y, 1, 0)
-        self.sp_y = W.QSpinBox(); self.sp_y.setRange(0, 10000); grid.addWidget(self.sp_y, 1, 1)
-        
-        self.lbl_h = W.QLabel("Altura:"); grid.addWidget(self.lbl_h, 1, 2)
-        self.sp_h = W.QSpinBox(); self.sp_h.setRange(1, 10000); grid.addWidget(self.sp_h, 1, 3)
-        
-        l2.addLayout(grid)
-        
-        # Visual Selector Button
-        self.btn_visual = W.QPushButton("SELECCIONAR REGIÓN EN PANTALLA")
-        self.btn_visual.setMinimumHeight(45)
-        self.btn_visual.setObjectName("primary")
-        self.btn_visual.setStyleSheet("QPushButton#primary { background: rgba(0,200,100,0.1); border-color: rgba(0,200,100,0.3); color: #00ff9d; } QPushButton#primary:hover { background: rgba(0,200,100,0.2); }")
-        l2.addWidget(self.btn_visual)
-        
-        l2.addStretch()
-        self.stack.addWidget(p2)
-
-        # Connections for Step 2
         self.btn_visual.clicked.connect(self._on_visual_select)
         self.prof_combo.currentIndexChanged.connect(self._on_profile_change)
         self.fps_combo.currentIndexChanged.connect(self._sync_to_cfg)
-        btn_add.clicked.connect(self._on_profile_add)
-        btn_del.clicked.connect(self._on_profile_del)
+        btn_p_add.clicked.connect(self._on_profile_add); btn_p_del.clicked.connect(self._on_profile_del)
+        self.btn_all.clicked.connect(lambda: [self._set_checked_helper(c, True) for c in self._custom_cards])
+        self.btn_none.clicked.connect(lambda: [self._set_checked_helper(c, False) for c in self._custom_cards])
+        self.btn_next.clicked.connect(self._go_next)
+        self.btn_back.clicked.connect(self.dlg.reject)
         
-        # Sync Spinboxes to internal state
-        for sp in [self.sp_x, self.sp_y, self.sp_w, self.sp_h]:
-            sp.valueChanged.connect(self._sync_to_cfg)
-
+        self._refresh_windows()
         self._load_profiles()
-        self._load_layout_profiles()
+        self._update_visual_button_state()
+        self._load_position()
 
-    def start_visual_selection(self):
-        """Inicia el modo de selección visual directamente."""
-        self._on_visual_select()
+    def _update_visual_button_state(self):
+        is_valid = self.sp_w.value() > 1 and self.sp_h.value() > 1
+        if is_valid:
+            self.btn_visual.setStyleSheet("QPushButton#primary { background: rgba(0,255,100,0.15); border: 1px solid rgba(0,255,100,0.4); color: #00ff64; } QPushButton#primary:hover { background: rgba(0,255,100,0.3); }")
+            self.btn_visual.setText("REGIÓN SELECCIONADA ✓")
+        else:
+            self.btn_visual.setStyleSheet("QPushButton#primary { background: rgba(255,50,50,0.15); border: 1px solid rgba(255,50,50,0.4); color: #ff6666; } QPushButton#primary:hover { background: rgba(255,50,50,0.3); }")
+            self.btn_visual.setText("SELECCIONAR REGIÓN")
 
-    def _setup_step3(self):
-        W = self._W
-        p3 = W.QWidget(); l3 = W.QVBoxLayout(p3); l3.setContentsMargins(25,20,25,20); l3.setSpacing(10)
-        self.lbl_step3_title = W.QLabel("RESUMEN DE CONFIGURACIÓN")
-        l3.addWidget(self.lbl_step3_title)
-        self.summary_txt = W.QLabel("Listo para lanzar..."); self.summary_txt.setStyleSheet("color: #00ff9d; font-size: 13px;")
-        l3.addWidget(self.summary_txt)
-        l3.addStretch()
-        self.stack.addWidget(p3)
+    def _sync_to_cfg(self):
+        self._cfg['region'] = self._get_current_relative_reg()
+        self._cfg['global_fps'] = int(self.fps_combo.currentText())
+        self._update_visual_button_state()
 
-    # --- Methods ---
+    def _get_current_relative_reg(self):
+        return {
+            'x': self.sp_x.value() / 1920.0, 'y': self.sp_y.value() / 1080.0,
+            'w': self.sp_w.value() / 1920.0, 'h': self.sp_h.value() / 1080.0
+        }
+
+    def _on_visual_select(self):
+        try:
+            if self.win_list.count() > 0:
+                first_it = self.win_list.item(0)
+                widget = self.win_list.itemWidget(first_it)
+                if widget:
+                    chk = widget.findChild(QLabel)
+                    anchor_title = chk.property("win_title")
+                    from overlay.win32_capture import resolve_eve_window_handle
+                    hwnd = resolve_eve_window_handle(anchor_title)
+                    if hwnd and ctypes.windll.user32.IsWindow(hwnd):
+                        ctypes.windll.user32.ShowWindow(hwnd, 9)
+                        ctypes.windll.user32.BringWindowToTop(hwnd)
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
+                        self._anchor_hwnd_ref = hwnd
+        except Exception: pass
+
+        self.dlg.hide()
+        if self._suite_win: self._suite_win.hide()
+        from overlay.region_selector import select_region
+        ref_hwnd = getattr(self, '_anchor_hwnd_ref', None)
+        if not ref_hwnd and self._windows_cache: ref_hwnd = self._windows_cache[0]['hwnd']
+        reg = select_region({'hwnd': ref_hwnd} if ref_hwnd else {'rect': (0,0,1920,1080)})
+        if self._suite_win: self._suite_win.show()
+        if reg:
+            self.sp_x.setValue(int(reg['x'] * 1920)); self.sp_y.setValue(int(reg['y'] * 1080))
+            self.sp_w.setValue(int(reg['w'] * 1920)); self.sp_h.setValue(int(reg['h'] * 1080))
+            self._sync_to_cfg()
+        self.dlg.show(); self.dlg.raise_(); self.dlg.activateWindow()
+
     def _refresh_windows(self):
-        self.win_list.clear()
-        self._custom_cards = []
+        self.win_list.clear(); self._custom_cards = []
         from overlay.win32_capture import find_eve_windows
         self._windows_cache = find_eve_windows()
-        
-        self.win_list.setStyleSheet(
-            "QListWidget { background: transparent; border: 1px solid rgba(0,180,255,0.1); border-radius: 6px; outline: none; padding: 4px; }"
-            "QListWidget::item { background: transparent; padding: 0px; margin: 2px 0; }"
-            "QListWidget::item:selected { background: transparent; }"
-            "QListWidget::item:hover { background: transparent; }"
-        )
+        self.win_list.setStyleSheet("QListWidget { background: transparent; border: none; outline: none; } QListWidget::item { background: transparent; padding: 0; margin: 2px 0; }")
 
-        # Helper for our custom pseudo-checkboxes
         def set_custom_chk(lbl, state):
             lbl.setProperty("is_checked", state)
             if state:
-                lbl.setText("✔")
-                lbl.setStyleSheet("border: 1px solid #00ff9d; border-radius: 3px; background: rgba(0,255,157,0.1); color: #00ff9d; font-weight: bold; font-size: 13px; padding-bottom: 2px;")
+                lbl.setText("✔"); lbl.setStyleSheet("border: 1px solid #00ff9d; border-radius: 3px; background: rgba(0,255,157,0.15); color: #00ff9d; font-weight: bold; font-size: 11px;")
             else:
-                lbl.setText("")
-                lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.5); border-radius: 3px; background: transparent; color: transparent;")
-        
+                lbl.setText(""); lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.3); border-radius: 3px; background: transparent;")
         self._set_checked_helper = set_custom_chk
-
-        # Actualizar título con el conteo (Task: Ventanas EvE Detectadas (X))
-        count = len(self._windows_cache)
-        self.lbl_step1_title.setText(f"{t('repl_p1_title', self._lang)} ({count})")
+        if hasattr(self, 'lbl_step1_title'): self.lbl_step1_title.setText(f"{t('repl_p1_title', self._lang)} ({len(self._windows_cache)})")
 
         for w in self._windows_cache:
-            it = self._W.QListWidgetItem()
-            it.setData(self._C.Qt.ItemDataRole.UserRole if hasattr(self._C.Qt, 'ItemDataRole') else 256, w['title'])
+            it = QListWidgetItem()
+            it.setData(256, w['title'])
             self.win_list.addItem(it)
-            
-            card = self._W.QWidget()
-            card.setObjectName("Card")
-            lay = self._W.QHBoxLayout(card)
-            lay.setContentsMargins(8, 6, 12, 6)
-            lay.setSpacing(10)
-            
-            # [NUEVO] Agarre para Drag & Drop (⠿)
-            grip = self._W.QLabel("\u283f")
-            grip.setStyleSheet("color: rgba(0,200,255,0.3); font-size: 14px; font-weight: bold; margin-right: 2px;")
-            grip.setFixedWidth(15)
-            # El grip NO debe capturar el ratón para que el QListWidget pueda detectar el arrastre
-            grip.setAttribute(self._C.Qt.WA_TransparentForMouseEvents, True)
-            lay.addWidget(grip)
-            
-            chk = self._W.QLabel()
-            chk.setFixedSize(16, 16)
-            AlignC = getattr(self._C.Qt, 'AlignCenter', getattr(self._C.Qt.AlignmentFlag, 'AlignCenter', 0x0084)) if hasattr(self._C, 'Qt') else 4
-            chk.setAlignment(AlignC)
-            chk.setProperty("win_title", w['title'])
-            set_custom_chk(chk, False)
-            self._custom_cards.append(chk)
-            
-            lbl_title = self._W.QLabel(w['title'])
-            lbl_title.setStyleSheet("color: #e1e9f5; font-weight: bold; font-size: 11px;")
-            
-            lbl_res = self._W.QLabel(f"{w['size'][0]}x{w['size'][1]}")
-            lbl_res.setStyleSheet("color: rgba(0,200,255,0.6); font-size: 10px; background: rgba(0,0,0,0.3); border-radius: 3px; padding: 2px 6px;")
-            
-            # Botones de Orden (▲/▼)
-            btn_v = self._W.QVBoxLayout(); btn_v.setSpacing(2); btn_v.setContentsMargins(0,0,0,0)
-            btn_up = self._W.QPushButton("▲"); btn_up.setFixedSize(18, 14)
-            btn_dn = self._W.QPushButton("▼"); btn_dn.setFixedSize(18, 14)
-            
-            style_arr = "QPushButton { background: rgba(0,180,255,0.05); border: 1px solid rgba(0,180,255,0.1); color: #00c8ff; font-size: 8px; padding: 0; } QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }"
-            btn_up.setStyleSheet(style_arr); btn_dn.setStyleSheet(style_arr)
-            
-            btn_up.clicked.connect(lambda _, _it=it: self._move_window_item(_it, -1))
-            btn_dn.clicked.connect(lambda _, _it=it: self._move_window_item(_it, 1))
-            
-            btn_v.addWidget(btn_up); btn_v.addWidget(btn_dn)
-            
-            # Lógica de Toggle mejorada para no bloquear el drag
-            def _toggle(ev, _chk=chk): 
-                # Solo toggle si es click izquierdo y no hay mucho movimiento
-                self._set_checked_helper(_chk, not _chk.property("is_checked"))
-            
-            # En lugar de capturar mousePressEvent en toda la card, 
-            # dejamos que el QListWidget gestione el foco/drag y capturamos solo el click
-            card.mouseReleaseEvent = _toggle
-            
-            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res); lay.addLayout(btn_v)
-            
-            it.setSizeHint(card.sizeHint())
-            self.win_list.setItemWidget(it, card)
-            
+            card = QWidget(); card.setObjectName("Card")
+            lay = QHBoxLayout(card); lay.setContentsMargins(8, 4, 8, 4); lay.setSpacing(10)
+            grip = QLabel("\u283f"); grip.setStyleSheet("color: rgba(0,200,255,0.2); font-size: 14px;"); grip.setFixedWidth(12)
+            grip.setAttribute(Qt.WA_TransparentForMouseEvents, True); lay.addWidget(grip)
+            chk = QLabel(); chk.setFixedSize(14, 14); chk.setProperty("win_title", w['title'])
+            set_custom_chk(chk, False); self._custom_cards.append(chk)
+            lbl_title = QLabel(w['title']); lbl_title.setStyleSheet("color: #e1e9f5; font-size: 11px; font-weight: bold;")
+            lbl_res = QLabel(f"{w['size'][0]}x{w['size'][1]}"); lbl_res.setStyleSheet("color: rgba(0,200,255,0.4); font-size: 9px;")
+            card.mouseReleaseEvent = lambda e, _chk=chk: set_custom_chk(_chk, not _chk.property("is_checked"))
+            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res)
+            it.setSizeHint(card.sizeHint()); self.win_list.setItemWidget(it, card)
+
     def _sync_cache_from_ui(self):
-        """Sincroniza la caché basándose en el orden REAL de la lista UI."""
         new_cache = []
-        # En lugar de buscar widgets (que pueden fallar tras un drop), 
-        # usamos la propiedad 'win_title' que guardamos en los items o widgets.
-        # Pero como InternalMove borra widgets, guardamos el título en el DATA del item.
         for i in range(self.win_list.count()):
-            it = self.win_list.item(i)
-            title = it.data(self._C.Qt.ItemDataRole.UserRole if hasattr(self._C.Qt, 'ItemDataRole') else 256)
-            
+            it = self.win_list.item(i); title = it.data(256)
             orig_w = next((w for w in self._windows_cache if w['title'] == title), None)
-            if orig_w:
-                new_cache.append(orig_w)
-        
-        if new_cache:
-            self._windows_cache = new_cache
-            # IMPORTANTE: Re-dibujar para restaurar los widgets (los botones y chks se pierden al mover)
-            self._refresh_list_ui_only()
-
-    def _on_rows_moved(self, parent, start, end, destination, row):
-        pass # Reemplazado por dropEvent en la clase ReplicList
-
-    def _move_window_item(self, item, direction):
-        """Mueve un personaje arriba o abajo en la lista de prioridad."""
-        row = self.win_list.row(item)
-        new_row = row + direction
-        if 0 <= new_row < self.win_list.count():
-            # Intercambiar en el cache
-            self._windows_cache[row], self._windows_cache[new_row] = self._windows_cache[new_row], self._windows_cache[row]
-            # Intercambiar en los cards (para el check de 'is_checked')
-            # Nota: _custom_cards debe seguir el mismo orden que la UI
-            self._custom_cards[row], self._custom_cards[new_row] = self._custom_cards[new_row], self._custom_cards[row]
-            
-            # Re-dibujar la lista para mantener widgets y conexiones (más simple y seguro en PySide)
-            self._refresh_list_ui_only()
+            if orig_w: new_cache.append(orig_w)
+        if new_cache: self._windows_cache = new_cache; self._refresh_list_ui_only()
 
     def _refresh_list_ui_only(self):
-        """Refresca solo los widgets de la lista sin volver a escanear Windows."""
-        # Guardar qué títulos estaban marcados
         selected_titles = [c.property("win_title") for c in self._custom_cards if c.property("is_checked")]
-        
-        self.win_list.clear()
-        self._custom_cards = []
-        
-        # Helper para los pseudo-checkboxes (mismo que en _refresh_windows)
-        def set_custom_chk(lbl, state):
-            lbl.setProperty("is_checked", state)
-            if state:
-                lbl.setText("✔")
-                lbl.setStyleSheet("border: 1px solid #00ff9d; border-radius: 3px; background: rgba(0,255,157,0.1); color: #00ff9d; font-weight: bold; font-size: 13px; padding-bottom: 2px;")
-            else:
-                lbl.setText("")
-                lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.5); border-radius: 3px; background: transparent; color: transparent;")
-
+        self.win_list.clear(); self._custom_cards = []
         for w in self._windows_cache:
-            it = self._W.QListWidgetItem()
-            it.setData(self._C.Qt.ItemDataRole.UserRole if hasattr(self._C.Qt, 'ItemDataRole') else 256, w['title'])
-            self.win_list.addItem(it)
-            
-            card = self._W.QWidget()
-            card.setStyleSheet("QWidget#Card { background: rgba(0,180,255,0.03); border: 1px solid rgba(0,180,255,0.1); border-radius: 4px; } QWidget#Card:hover { background: rgba(0,180,255,0.08); border-color: rgba(0,180,255,0.3); }")
-            card.setObjectName("Card")
-            lay = self._W.QHBoxLayout(card); lay.setContentsMargins(8, 6, 12, 6); lay.setSpacing(10)
-            
-            # Grip
-            grip = self._W.QLabel("\u283f")
-            grip.setStyleSheet("color: rgba(0,200,255,0.3); font-size: 14px; font-weight: bold; margin-right: 2px;")
-            grip.setFixedWidth(15)
-            grip.setAttribute(self._C.Qt.WA_TransparentForMouseEvents, True)
-            lay.addWidget(grip)
-
-            chk = self._W.QLabel(); chk.setFixedSize(16, 16); chk.setProperty("win_title", w['title'])
-            # Restaurar estado marcado
-            set_custom_chk(chk, w['title'] in selected_titles)
-            self._custom_cards.append(chk)
-            
-            lbl_title = self._W.QLabel(w['title']); lbl_title.setStyleSheet("color: #e1e9f5; font-weight: bold; font-size: 11px;")
-            lbl_res = self._W.QLabel(f"{w['size'][0]}x{w['size'][1]}"); lbl_res.setStyleSheet("color: rgba(0,200,255,0.6); font-size: 10px; background: rgba(0,0,0,0.3); border-radius: 3px; padding: 2px 6px;")
-            
-            # Botones de Orden
-            btn_v = self._W.QVBoxLayout(); btn_v.setSpacing(2); btn_v.setContentsMargins(0,0,0,0)
-            btn_up = self._W.QPushButton("▲"); btn_up.setFixedSize(18, 14)
-            btn_dn = self._W.QPushButton("▼"); btn_dn.setFixedSize(18, 14)
-            style_arr = "QPushButton { background: rgba(0,180,255,0.05); border: 1px solid rgba(0,180,255,0.1); color: #00c8ff; font-size: 8px; padding: 0; } QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }"
-            btn_up.setStyleSheet(style_arr); btn_dn.setStyleSheet(style_arr)
-            
-            btn_up.clicked.connect(lambda _, _it=it: self._move_window_item(_it, -1))
-            btn_dn.clicked.connect(lambda _, _it=it: self._move_window_item(_it, 1))
-            
-            btn_v.addWidget(btn_up); btn_v.addWidget(btn_dn)
-            
-            def _toggle(ev, _chk=chk): set_custom_chk(_chk, not _chk.property("is_checked"))
-            card.mouseReleaseEvent = _toggle
-            
-            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res); lay.addLayout(btn_v)
-            it.setSizeHint(card.sizeHint())
-            self.win_list.setItemWidget(it, card)
+            it = QListWidgetItem(); it.setData(256, w['title']); self.win_list.addItem(it)
+            card = QWidget(); card.setObjectName("Card")
+            lay = QHBoxLayout(card); lay.setContentsMargins(8, 4, 8, 4); lay.setSpacing(10)
+            grip = QLabel("\u283f"); grip.setStyleSheet("color: rgba(0,200,255,0.2); font-size: 14px;"); lay.addWidget(grip)
+            chk = QLabel(); chk.setFixedSize(14, 14); chk.setProperty("win_title", w['title'])
+            self._set_checked_helper(chk, w['title'] in selected_titles); self._custom_cards.append(chk)
+            lbl_title = QLabel(w['title']); lbl_title.setStyleSheet("color: #e1e9f5; font-size: 11px; font-weight: bold;")
+            card.mouseReleaseEvent = lambda e, _chk=chk: self._set_checked_helper(_chk, not _chk.property("is_checked"))
+            lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch()
+            it.setSizeHint(card.sizeHint()); self.win_list.setItemWidget(it, card)
 
     def _load_profiles(self):
         self.prof_combo.clear()
-        regions = self._cfg.get('regions', {})
-        for name in regions.keys():
-            self.prof_combo.addItem(name)
+        for name in self._cfg.get('regions', {}).keys(): self.prof_combo.addItem(name)
         curr = self._cfg.get('global', {}).get('current_profile', 'Default')
         idx = self.prof_combo.findText(curr)
         if idx >= 0: self.prof_combo.setCurrentIndex(idx)
@@ -591,15 +300,11 @@ class ReplicatorWizard:
         if not name: return
         reg = self._cfg.get('regions', {}).get(name)
         if reg:
-            # Note: stored as relative 0.0-1.0, convert to pixels for spinboxes
-            # We'll assume a base of 1920x1080 for manual input if no ref window
-            self.sp_x.setValue(int(reg.get('x',0) * 1920))
-            self.sp_y.setValue(int(reg.get('y',0) * 1080))
-            self.sp_w.setValue(int(reg.get('w',0.1) * 1920))
-            self.sp_h.setValue(int(reg.get('h',0.1) * 1080))
+            self.sp_x.setValue(int(reg.get('x',0) * 1920)); self.sp_y.setValue(int(reg.get('y',0) * 1080))
+            self.sp_w.setValue(int(reg.get('w',0.1) * 1920)); self.sp_h.setValue(int(reg.get('h',0.1) * 1080))
 
     def _on_profile_add(self):
-        text, ok = self._show_custom_dialog("Nuevo Perfil", "Nombre del perfil:", is_input=True)
+        text, ok = self._show_custom_dialog("Nuevo Perfil", "Nombre:", is_input=True)
         if ok and text:
             self._cfg.setdefault('regions', {})[text] = self._get_current_relative_reg()
             self._save_and_refresh_profiles(text)
@@ -607,242 +312,30 @@ class ReplicatorWizard:
     def _on_profile_del(self):
         name = self.prof_combo.currentText()
         if name and name != 'Default':
-            del self._cfg['regions'][name]
-            self._save_and_refresh_profiles('Default')
+            del self._cfg['regions'][name]; self._save_and_refresh_profiles('Default')
 
     def _save_and_refresh_profiles(self, select_name):
-        self._cfg_mod.save_config(self._cfg)
-        self._load_profiles()
+        self._cfg_mod.save_config(self._cfg); self._load_profiles()
         idx = self.prof_combo.findText(select_name)
         if idx >= 0: self.prof_combo.setCurrentIndex(idx)
 
-    def _get_current_relative_reg(self):
-        return {
-            'x': self.sp_x.value() / 1920.0,
-            'y': self.sp_y.value() / 1080.0,
-            'w': self.sp_w.value() / 1920.0,
-            'h': self.sp_h.value() / 1080.0
-        }
-
-    def _sync_to_cfg(self):
-        # Update current region in cfg
-        self._cfg['region'] = self._get_current_relative_reg()
-        # Guardar FPS global
-        self._cfg['global_fps'] = int(self.fps_combo.currentText())
-
-    def _on_visual_select(self):
-        # [NUEVO] Sistema de Ancla Táctica Reforzado V5: Protocolo de Promoción Agresiva
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            
-            if self.win_list.count() > 0:
-                first_it = self.win_list.item(0)
-                widget = self.win_list.itemWidget(first_it)
-                if widget:
-                    chk = widget.findChild(self._W.QLabel)
-                    anchor_title = chk.property("win_title")
-                    
-                    self.diag_log.info(f"DIAG: Iniciando Protocolo de Promoción para: '{anchor_title}'")
-                    
-                    from overlay.win32_capture import resolve_eve_window_handle
-                    hwnd = resolve_eve_window_handle(anchor_title)
-                    
-                    if hwnd and user32.IsWindow(hwnd):
-                        # --- TRUCO DE FOCO AGRESIVO (AttachThreadInput) ---
-                        # Obtenemos el ID del hilo de la ventana actual (la nuestra) y de la de EVE
-                        fore_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
-                        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
-                        curr_thread = kernel32.GetCurrentThreadId()
-                        
-                        if fore_thread != target_thread:
-                            user32.AttachThreadInput(curr_thread, target_thread, True)
-                            
-                        # Asegurar visibilidad (Restore garantiza que salte al frente si estaba minimizada)
-                        # Si ya estaba visible, Restore la "refresca" en el orden Z
-                        user32.ShowWindow(hwnd, 9) # SW_RESTORE (Más agresivo que SHOW)
-                        user32.BringWindowToTop(hwnd)
-                        user32.SetForegroundWindow(hwnd)
-                        
-                        if fore_thread != target_thread:
-                            user32.AttachThreadInput(curr_thread, target_thread, False)
-                            
-                        self.diag_log.info(f"DIAG: Promoción completada para HWND: {hwnd}")
-                        self._anchor_hwnd_ref = hwnd
-                    else:
-                        self.diag_log.warning(f"DIAG: No se pudo resolver HWND para '{anchor_title}'")
-        except Exception as e:
-            logger.warning(f"No se pudo ejecutar Promoción V5: {e}")
-
-        # Ahora sí, ocultamos la Suite y el Asistente
-        self.dlg.hide()
-        if self._suite_win:
-            try:
-                self._suite_win.hide()
-            except Exception as e:
-                logger.debug(f"suite_win.hide error: {e}")
-
-        from overlay.region_selector import select_region
-        # Usar el handle del ancla si lo encontramos, si no, fallback a la cache
-        ref_hwnd = getattr(self, '_anchor_hwnd_ref', None)
-        if not ref_hwnd and self._windows_cache:
-            ref_hwnd = self._windows_cache[0]['hwnd']
-            
-        ref = {'hwnd': ref_hwnd} if ref_hwnd else {'rect': (0,0,1920,1080)}
+    def _save_position(self):
+        self._cfg.setdefault('sizes', {})['wizard_pos'] = {'x': self.dlg.x(), 'y': self.dlg.y()}
+        self._cfg_mod.save_config(self._cfg)
         
-        reg = select_region(ref)
-        
-        # Restaurar visibilidad
-        if self._suite_win:
-            try:
-                self._suite_win.show()
-            except Exception as e:
-                logger.debug(f"suite_win.show error: {e}")
-        
-        if reg:
-            self.sp_x.setValue(int(reg['x'] * 1920))
-            self.sp_y.setValue(int(reg['y'] * 1080))
-            self.sp_w.setValue(int(reg['w'] * 1920))
-            self.sp_h.setValue(int(reg['h'] * 1080))
-            self._sync_to_cfg()
-            
-        self.dlg.show()
-        self.dlg.raise_()
-        self.dlg.activateWindow()
-
-    def _show_custom_dialog(self, title, msg, is_input=False):
-        W, C = self._W, self._C
-        d = W.QDialog(self.dlg)
-        d.setWindowTitle(title)
-        d.setFixedSize(300, 140)
-        flags = C.Qt.WindowType.FramelessWindowHint if hasattr(C.Qt, 'WindowType') else C.Qt.FramelessWindowHint
-        tool_flag = C.Qt.WindowType.Tool if hasattr(C.Qt, 'WindowType') else C.Qt.Tool
-        d.setWindowFlags(tool_flag | flags)
-        d.setStyleSheet(self.dlg.styleSheet() + " QDialog { border: 1px solid rgba(0,200,255,0.5); }")
-        
-        lay = W.QVBoxLayout(d)
-        lay.setContentsMargins(0, 0, 0, 0)
-        
-        # Header
-        hdr = W.QWidget(); hdr.setFixedHeight(30)
-        hdr.setStyleSheet("background: #000000; border-bottom: 1px solid #1a2533;")
-        hl = W.QHBoxLayout(hdr); hl.setContentsMargins(10, 0, 10, 0)
-        
-        lbl_title = W.QLabel(title)
-        lbl_title.setStyleSheet("color: rgba(200,230,255,0.8); font-size: 11px; font-weight: bold;")
-        hl.addWidget(lbl_title); hl.addStretch()
-        
-        btn_close = W.QPushButton("\u00d7"); btn_close.setFixedSize(16, 16)
-        btn_close.setStyleSheet("QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);border-radius:3px;color:#ff6666;font-size:10px;padding:0;margin:0;}QPushButton:hover{background:rgba(255,50,50,0.35);}")
-        btn_close.clicked.connect(d.reject)
-        hl.addWidget(btn_close)
-        lay.addWidget(hdr)
-        
-        # Dragging logic
-        self._d_drag_pos = None
-        def mp(e):
-            left = C.Qt.MouseButton.LeftButton if hasattr(C.Qt, 'MouseButton') else C.Qt.LeftButton
-            if e.button() == left: self._d_drag_pos = e.globalPosition().toPoint() if hasattr(e, 'globalPosition') else e.globalPos()
-        def mm(e):
-            left = C.Qt.MouseButton.LeftButton if hasattr(C.Qt, 'MouseButton') else C.Qt.LeftButton
-            if e.buttons() & left and self._d_drag_pos:
-                gpos = e.globalPosition().toPoint() if hasattr(e, 'globalPosition') else e.globalPos()
-                d.move(d.pos() + gpos - self._d_drag_pos)
-                self._d_drag_pos = gpos
-        def mr(e): self._d_drag_pos = None
-        hdr.mousePressEvent = mp; hdr.mouseMoveEvent = mm; hdr.mouseReleaseEvent = mr
-
-        # Body
-        body_lay = W.QVBoxLayout()
-        body_lay.setContentsMargins(20, 15, 20, 15)
-        
-        body_lbl = W.QLabel(msg)
-        body_lbl.setAlignment(C.Qt.AlignmentFlag.AlignCenter if hasattr(C.Qt, 'AlignmentFlag') else C.Qt.AlignCenter)
-        body_lbl.setStyleSheet("color: #e1e9f5; font-size: 11px;")
-        body_lbl.setWordWrap(True)
-        body_lay.addWidget(body_lbl)
-        
-        input_field = None
-        if is_input:
-            input_field = W.QLineEdit()
-            input_field.setStyleSheet("background: #0d1626; border: 1px solid #1a2533; border-radius: 3px; color: #00c8ff; padding: 4px;")
-            body_lay.addWidget(input_field)
-            
-        lay.addLayout(body_lay)
-        
-        # Footer
-        footer = W.QHBoxLayout(); footer.setContentsMargins(20, 0, 20, 15)
-        footer.addStretch()
-        if is_input:
-            btn_cancel = W.QPushButton("Cancelar")
-            btn_cancel.clicked.connect(d.reject)
-            footer.addWidget(btn_cancel)
-        
-        btn_ok = W.QPushButton("OK")
-        btn_ok.clicked.connect(d.accept)
-        footer.addWidget(btn_ok)
-        footer.addStretch()
-        lay.addLayout(footer)
-        
-        res = d.exec()
-        if is_input:
-            return input_field.text(), res == W.QDialog.DialogCode.Accepted if hasattr(W.QDialog, 'DialogCode') else res == 1
-        return res
-
-    def _load_layout_profiles(self):
-        """Load layout profiles into the combo."""
-        try:
-            from overlay.replicator_config import get_layout_profiles
-            profiles = get_layout_profiles(self._cfg)
-            active = self._cfg.get('active_layout_profile', 'Default')
-            self.layout_prof_combo.blockSignals(True)
-            self.layout_prof_combo.clear()
-            for name in profiles:
-                self.layout_prof_combo.addItem(name)
-            idx = self.layout_prof_combo.findText(active)
-            if idx >= 0:
-                self.layout_prof_combo.setCurrentIndex(idx)
-            self.layout_prof_combo.blockSignals(False)
-        except Exception as e:
-            logger.debug(f"_load_layout_profiles error: {e}")
-
-    def _apply_layout_profile_to_cfg(self):
-        """Store selected layout profile as active in cfg (applied on launch)."""
-        try:
-            name = self.layout_prof_combo.currentText()
-            if name:
-                self._cfg['active_layout_profile'] = name
-                self._cfg_mod.save_config(self._cfg)
-                logger.info(f"Active layout profile set to: {name!r}")
-        except Exception as e:
-            logger.debug(f"_apply_layout_profile_to_cfg error: {e}")
+    def _load_position(self):
+        pos = self._cfg.get('sizes', {}).get('wizard_pos')
+        if pos: self.dlg.move(pos['x'], pos['y'])
 
     def _go_next(self):
-        idx = self.stack.currentIndex()
-        if idx == 0:
-            sel = [c.property("win_title") for c in getattr(self, '_custom_cards', []) if c.property("is_checked")]
-            if not sel:
-                self._show_custom_dialog("Aviso", "Selecciona al menos una ventana.")
-                return
-            self._cfg['selected_windows'] = sel
-            self.stack.setCurrentIndex(1)
-            self.retranslate_ui(self._lang)
-        elif idx == 1:
-            self._cfg_mod.save_config(self._cfg)
-            self.dlg.accept()
-            # Lanzar solo si no hay callback (para evitar duplicados con el TrayManager)
-            if not self._callback:
-                self._launch_direct()
-            else:
-                self._callback(self._cfg, self._cfg_mod)
-        elif idx == 2:
-            self._cfg_mod.save_config(self._cfg)
-            self.dlg.accept()
-            self._launch_hub()
+        sel = [c.property("win_title") for c in self._custom_cards if c.property("is_checked")]
+        if not sel: self._show_custom_dialog("Aviso", "Selecciona al menos una ventana."); return
+        if self.sp_w.value() <= 1 or self.sp_h.value() <= 1: self._show_custom_dialog("Aviso", "Selecciona una región válida."); return
+        self._cfg['selected_windows'] = sel; self._cfg_mod.save_config(self._cfg); self.dlg.accept()
+        if not self._callback: self._launch_direct()
+        else: self._callback(self._cfg, self._cfg_mod)
 
     def _launch_direct(self):
-        """Lanza las réplicas seleccionadas directamente sin el panel de control (HUB)."""
         try:
             from overlay.win32_capture import find_eve_windows
             from overlay.replication_overlay import ReplicationOverlay
@@ -850,612 +343,60 @@ class ReplicatorWizard:
             
             titles = self._cfg.get('selected_windows', [])
             region = self._cfg.get('region', {'x':0, 'y':0, 'w':0.1, 'h':0.1})
-            
             current = find_eve_windows()
             handles = {w['title']: w['hwnd'] for w in current}
-            
-            self._overlays_refs = [] # Guardar referencias para evitar GC
+            self._overlays_refs = []
             
             for i, title in enumerate(titles):
                 h = handles.get(title)
                 if not h: continue
-                
                 ov_region = region.copy()
-                # Aplicar FPS global
                 fps = self._cfg.get('global_fps', 30)
                 self._cfg.setdefault('overlays', {}).setdefault(title, {})['fps'] = fps
+                ov = ReplicationOverlay(title=title, hwnd=h, region_rel=ov_region, cfg=self._cfg, 
+                                        save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
                 
-                ov = ReplicationOverlay(
-                    title=title, hwnd=h,
-                    region_rel=ov_region, cfg=self._cfg, 
-                    save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a)
-                )
-                
-                # Positionamiento inicial con aspect ratio correcto desde perfil activo
                 try:
                     from overlay.replicator_config import get_active_layout_profile
                     from overlay.win32_capture import get_window_size
-                    from PySide6.QtWidgets import QApplication
                     _, lp = get_active_layout_profile(self._cfg)
                     init_w = int(lp.get('w', 280))
-                    # Compute correct height from region aspect ratio
-                    ev_w, ev_h = get_window_size(h) if h else (0, 0)
-                    if ev_w > 0 and ev_h > 0:
-                        rw = ov_region.get('w', 0.3) * ev_w
-                        rh = ov_region.get('h', 0.2) * ev_h
-                        init_h = max(64, int(init_w / (rw / rh))) if rh > 0 else int(lp.get('h', 200))
-                    else:
-                        init_h = int(lp.get('h', 200))
+                    ev_w, ev_h = get_window_size(h)
+                    rw = ov_region.get('w', 0.3) * ev_w
+                    rh = ov_region.get('h', 0.2) * ev_h
+                    init_h = max(64, int(init_w / (rw / rh))) if rh > 0 else int(lp.get('h', 200))
                     screen = QApplication.primaryScreen().geometry()
-                    center_x = screen.x() + (screen.width() - init_w) // 2
-                    center_y = screen.y() + (screen.height() - init_h) // 2
                     ov.resize(init_w, init_h)
-                    ov.move(center_x + i * 20, center_y + i * 20)
+                    ov.move(screen.x() + (screen.width()-init_w)//2 + i*20, screen.y() + (screen.height()-init_h)//2 + i*20)
                 except Exception:
-                    ov.resize(280, 200)
-                    ov.move(400 + i * 20, 300 + i * 20)
+                    ov.resize(280, 200); ov.move(400+i*20, 300+i*20)
                 
-                ov.show()
-                self._overlays_refs.append(ov)
+                ov.show(); self._overlays_refs.append(ov)
+            update_hotkey_cache(titles)
+            register_hotkeys(self._cfg, cycle_titles_getter=lambda: self._cfg.get('selected_windows', []))
+        except Exception as e: logger.error(f"Error en lanzamiento directo: {e}")
 
-                # Conectar sincronización directa (pan/zoom y resize)
-                ov.sync_triggered.connect(lambda rd, _ov=ov: self._on_sync_direct(_ov, rd))
-                ov.sync_resize_triggered.connect(
-                    lambda w, h, _ov=ov: self._on_sync_resize_direct(_ov, w, h)
-                )
-                
-            logger.info(f"Ultra-Lite: {len(self._overlays_refs)} réplicas lanzadas directamente.")
-            
-            # Actualizar estado global si existe el controlador
-            if self._callback:
-                self._callback(self._cfg, self._cfg_mod)
-                
-        except Exception as e:
-            logger.error(f"Error en lanzamiento directo: {e}")
-
-    def _on_sync_direct(self, source_ov, region_dict):
-        """Sincroniza vistas en lanzamiento directo."""
-        for ov in getattr(self, '_overlays_refs', []):
-            if ov != source_ov:
-                ov.apply_region(region_dict)
-
-    def _on_sync_resize_direct(self, source_ov, w, h):
-        """Broadcast manual resize to all synced peers."""
-        for ov in getattr(self, '_overlays_refs', []):
-            if ov != source_ov:
-                ov.apply_size(w, h)
-
-    def _go_back(self):
-        idx = self.stack.currentIndex()
-        if idx == 0:
-            self.dlg.reject()
-        elif idx > 0:
-            self.stack.setCurrentIndex(idx - 1)
-            self.retranslate_ui(self._lang)
+    def _show_custom_dialog(self, title, msg, is_input=False):
+        d = QDialog(self.dlg); d.setWindowTitle(title); d.setFixedSize(320, 150)
+        d.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        d.setStyleSheet("QDialog { background: #000; border: 1px solid #00c8ff; color: #fff; }")
+        lay = QVBoxLayout(d); lay.setContentsMargins(15, 15, 15, 15)
+        lay.addWidget(QLabel(msg))
+        input_f = None
+        if is_input:
+            input_f = QLineEdit(); input_f.setStyleSheet("background:#0d1626; border:1px solid #1a2533; color:#00c8ff;"); lay.addWidget(input_f)
+        btns = QHBoxLayout(); btns.addStretch()
+        if is_input:
+            bc = QPushButton("Cancelar"); bc.clicked.connect(d.reject); btns.addWidget(bc)
+        bok = QPushButton("OK"); bok.setObjectName("primary"); bok.clicked.connect(d.accept); btns.addWidget(bok)
+        btns.addStretch(); lay.addLayout(btns)
+        res = d.exec()
+        if is_input: return input_f.text(), res == QDialog.Accepted
+        return res
 
     def show(self):
-        self.dlg.show()
-        self.dlg.raise_()
-        self.dlg.activateWindow()
+        self.dlg.show(); self.dlg.raise_(); self.dlg.activateWindow()
 
-    def _animate_minimize(self, widget):
-        """Anima una ventana deslizándose hacia el dock antes de ocultarla."""
-        try:
-            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
-            from PySide6.QtWidgets import QApplication
-
-            self._saved_geo = widget.geometry()
-            self._saved_opacity = widget.windowOpacity()
-            try:
-                from controller.control_window import _control_window_ref
-                if _control_window_ref and _control_window_ref._win:
-                    tg = _control_window_ref._win.geometry()
-                    end_x = tg.x() + tg.width() // 2 - 60
-                    end_y = tg.y() + tg.height() - 30
-                else: raise Exception()
-            except:
-                screen = QApplication.primaryScreen()
-                sg = screen.geometry()
-                end_x = sg.x() + sg.width() // 2 - 60
-                end_y = sg.y() + sg.height() - 50
-            end_geo = QRect(end_x, end_y, 120, 30)
-
-            group = QParallelAnimationGroup(widget)
-
-            anim_geo = QPropertyAnimation(widget, b'geometry')
-            anim_geo.setDuration(250)
-            anim_geo.setStartValue(self._saved_geo)
-            anim_geo.setEndValue(end_geo)
-            anim_geo.setEasingCurve(QEasingCurve.Type.InCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.InCubic)
-            group.addAnimation(anim_geo)
-
-            anim_op = QPropertyAnimation(widget, b'windowOpacity')
-            anim_op.setDuration(250)
-            anim_op.setStartValue(self._saved_opacity)
-            anim_op.setEndValue(0.0)
-            group.addAnimation(anim_op)
-
-            def _on_finished():
-                widget.setWindowOpacity(self._saved_opacity)
-                widget.setGeometry(self._saved_geo)
-                widget.hide()
-
-            group.finished.connect(_on_finished)
-            group.start()
-            self._anim_group = group
-        except Exception:
-            widget.hide()
-
-    def _animate_restore(self, widget):
-        try:
-            if not hasattr(self, '_saved_geo'): return
-            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
-            from PySide6.QtWidgets import QApplication
-
-            try:
-                from controller.control_window import _control_window_ref
-                if _control_window_ref and _control_window_ref._win:
-                    tg = _control_window_ref._win.geometry()
-                    start_x = tg.x() + tg.width() // 2 - 60
-                    start_y = tg.y() + tg.height() - 30
-                else: raise Exception()
-            except:
-                screen = QApplication.primaryScreen()
-                sg = screen.geometry()
-                start_x = sg.x() + sg.width() // 2 - 60
-                start_y = sg.y() + sg.height() - 50
-            
-            start_geo = QRect(start_x, start_y, 120, 30)
-            end_geo = self._saved_geo
-
-            widget.setGeometry(start_geo)
-            widget.setWindowOpacity(0.0)
-
-            group = QParallelAnimationGroup(widget)
-
-            anim_geo = QPropertyAnimation(widget, b'geometry')
-            anim_geo.setDuration(250)
-            anim_geo.setStartValue(start_geo)
-            anim_geo.setEndValue(end_geo)
-            anim_geo.setEasingCurve(QEasingCurve.Type.OutCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.OutCubic)
-            group.addAnimation(anim_geo)
-
-            anim_op = QPropertyAnimation(widget, b'windowOpacity')
-            anim_op.setDuration(250)
-            anim_op.setStartValue(0.0)
-            anim_op.setEndValue(self._saved_opacity if hasattr(self, '_saved_opacity') else 1.0)
-            group.addAnimation(anim_op)
-
-            group.start()
-            self._anim_group = group
-        except Exception:
-            pass
-
-    @property
-    def result(self):
-        return self.dlg.result()
-
-_GLOBAL_HUB = None
-
-class ReplicatorHub:
-    def __init__(self, W, C, G, cfg, initial_titles, region):
-        self._W = W; self._C = C; self._G = G
-        self._cfg = cfg; self._region = region
-        self._overlays = {}; self._handles = {}
-        self._drag_pos = None
-        self._is_closed = False # Marca de estado activo
-        
-        self.window = W.QWidget()
-        self.window.setObjectName("ReplicatorHub")
-        self.window.setWindowTitle("Panel de Control")
-        self.window.closeEvent = self._on_close
-
-        Qt = C.Qt
-        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
-        self.window.setWindowFlags(flags)
-        self.window.setMinimumSize(286, 350)
-        self.window.resize(286, 420)
-        
-        self._next_x = 100  # Para posicionamiento en cascada/tiled
-        self._sync_all = False # Estado del toggle
-        
-        # Estilo HUB Premium (Como el de ISK y Wizard)
-        self.window.setStyleSheet("""
-            QWidget#ReplicatorHub { 
-                background: #000; border: 1px solid rgba(0,200,255,0.3); border-radius: 6px; 
-            }
-            QLabel { color: rgba(200,230,255,0.9); font-family: 'Segoe UI', sans-serif; font-size: 11px; }
-            QListWidget { background: transparent; border: none; outline: none; }
-            QListWidget::item:selected { background: rgba(0,180,255,0.1); }
-            
-            QPushButton { 
-                background: rgba(0,180,255,0.08); border: 1px solid rgba(0,180,255,0.25);
-                border-radius: 4px; color: #00c8ff; padding: 5px; font-weight: bold; font-size: 10px;
-            }
-            QPushButton:hover { background: rgba(0,180,255,0.2); border-color: #00c8ff; }
-            
-            QCheckBox::indicator {
-                width: 18px; height: 18px;
-                background: rgba(0,255,157,0.05);
-                border: 2px solid rgba(0,255,157,0.3);
-                border-radius: 4px;
-            }
-            QCheckBox::indicator:checked {
-                background: #00ff9d;
-                border-color: #00ff9d;
-                image: url(none);
-            }
-            QCheckBox::indicator:hover {
-                border-color: #00ff9d;
-            }
-        """)
-        
-        lay = W.QVBoxLayout(self.window); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
-        
-        # Cabecera Arrastrable
-        BTN_MIN_STYLE = (
-            "QPushButton{background:rgba(0,180,255,0.15);border:1px solid rgba(0,180,255,0.4);"
-            "border-radius:3px;color:#00c8ff;font-size:10px;}QPushButton:hover{background:rgba(0,180,255,0.35);}"
-        )
-        BTN_CLS_STYLE = (
-            "QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);"
-            "border-radius:3px;color:#ff6666;font-size:10px;}QPushButton:hover{background:rgba(255,50,50,0.35);}"
-        )
-
-        self.hdr = W.QWidget(); self.hdr.setFixedHeight(30)
-        self.hdr.setStyleSheet("background: #000; border-bottom: 1px solid rgba(0,180,255,0.15);")
-        hl = W.QHBoxLayout(self.hdr); hl.setContentsMargins(12,0,8,0); hl.setSpacing(6)
-        from utils.i18n import t
-        self._lbl_title = W.QLabel("Panel de control")
-        self._lbl_title.setStyleSheet("font-weight: bold; color: rgba(0,180,255,0.8); letter-spacing: 1px; font-size: 11px;")
-        hl.addWidget(self._lbl_title); hl.addStretch()
-        
-        bm = W.QPushButton("\u2212"); bm.setFixedSize(18,18); bm.setStyleSheet(BTN_MIN_STYLE)
-        bm.clicked.connect(lambda: self._animate_minimize_hub()); hl.addWidget(bm)
-        
-        bc = W.QPushButton("\u00d7"); bc.setFixedSize(18,18); bc.setStyleSheet(BTN_CLS_STYLE)
-        bc.clicked.connect(self.window.close); hl.addWidget(bc)
-        lay.addWidget(self.hdr)
-        
-        # Cuerpo (Lista estilo Wizard)
-        body = W.QWidget(); bl = W.QVBoxLayout(body); bl.setContentsMargins(5,5,5,5)
-        self._list = W.QListWidget(); bl.addWidget(self._list)
-        lay.addWidget(body)
-        
-        # Footer
-        footer = W.QWidget(); footer.setFixedHeight(45); fl = W.QHBoxLayout(footer); fl.setContentsMargins(12,0,12,0)
-        br = W.QPushButton("🔄"); br.setFixedSize(28, 28); br.setToolTip("Refrescar"); br.clicked.connect(lambda: self.refresh_windows()); fl.addWidget(br)
-        fl.addStretch()
-        bo = W.QPushButton("\u2715 CERRAR TODO"); bo.setFixedHeight(28); 
-        bo.setStyleSheet("QPushButton { background: rgba(255,50,50,0.08); border: 1px solid rgba(255,60,60,0.25); color: rgba(255,120,120,0.7); font-size: 9px; padding: 4px 12px; font-weight:bold; } "
-                         "QPushButton:hover { background: rgba(255,50,50,0.22); border-color: #ff4444; color: #ff6666; }")
-        bo.clicked.connect(self.close_all); fl.addWidget(bo)
-        # Toggle de Sincronización
-        sync_row = W.QWidget(); sync_row.setFixedHeight(30)
-        sl = W.QHBoxLayout(sync_row); sl.setContentsMargins(12,0,12,0)
-        self.chk_sync = W.QCheckBox("Sincronizar Manipulación")
-        self.chk_sync.setStyleSheet("QCheckBox { color: #00ff9d; font-size: 10px; }")
-        self.chk_sync.stateChanged.connect(self._on_sync_toggled)
-        sl.addWidget(self.chk_sync)
-        # Botón de Limpieza de Configuración
-        clear_row = W.QWidget(); clear_row.setFixedHeight(30)
-        cl = W.QHBoxLayout(clear_row); cl.setContentsMargins(12,0,12,0)
-        btn_clear = W.QPushButton("🗑️ Limpiar Configuración Antigua")
-        btn_clear.setStyleSheet("QPushButton { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #aaa; font-size: 9px; padding: 2px; } "
-                                "QPushButton:hover { background: rgba(255,50,50,0.15); border-color: #ff4444; color: #fff; }")
-        btn_clear.clicked.connect(self._clear_all_config)
-        cl.addWidget(btn_clear)
-        lay.addWidget(clear_row)
-
-        lay.addWidget(footer)
-
-        # Lógica de Arrastre (Conectada directamente a la ventana)
-        def _press(e): 
-            if e.button() == Qt.MouseButton.LeftButton: 
-                self._drag_pos = e.globalPosition().toPoint() if hasattr(e, 'globalPosition') else e.globalPos()
-        def _move(e):
-            if e.buttons() & Qt.MouseButton.LeftButton and self._drag_pos:
-                gpos = e.globalPosition().toPoint() if hasattr(e, 'globalPosition') else e.globalPos()
-                self.window.move(self.window.pos() + gpos - self._drag_pos)
-                self._drag_pos = gpos
-        self.hdr.mousePressEvent = _press
-        self.hdr.mouseMoveEvent = _move
-        
-        # Lógica de Minimizado/Restaurado
-        def _change_event(e):
-            if e.type() == C.QEvent.WindowStateChange:
-                if self.window.isMinimized():
-                    logger.info("HUB Minimizado")
-                    # Aquí podríamos avisar al controlador
-                else:
-                    logger.info("HUB Restaurado")
-            self.window.old_change_event(e)
-            
-        self.window.old_change_event = self.window.changeEvent
-        self.window.changeEvent = _change_event
-        
-        self._timer = C.QTimer(); self._timer.timeout.connect(lambda: self.refresh_windows()); self._timer.start(5000)
-        C.QTimer.singleShot(200, lambda: self.refresh_windows(initial_titles))
-
-    def retranslate_ui(self, lang):
-        from utils.i18n import t
-        if hasattr(self, '_lbl_title'):
-            self._lbl_title.setText("Panel de control")
-        # Refrescar botones de la lista si es necesario
-        self.refresh_windows()
-
-    def show(self): self.window.show(); self.window.raise_(); self.window.activateWindow()
-
-    def _animate_minimize_hub(self):
-        """Anima la ventana del HUB deslizándose hacia el dock."""
-        try:
-            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
-            from PySide6.QtWidgets import QApplication
-
-            self._saved_geo = self.window.geometry()
-            self._saved_opacity = self.window.windowOpacity()
-            try:
-                from controller.control_window import _control_window_ref
-                if _control_window_ref and _control_window_ref._win:
-                    tg = _control_window_ref._win.geometry()
-                    end_x = tg.x() + tg.width() // 2 - 60
-                    end_y = tg.y() + tg.height() - 30
-                else: raise Exception()
-            except:
-                screen = QApplication.primaryScreen()
-                sg = screen.geometry()
-                end_x = sg.x() + sg.width() // 2 - 60
-                end_y = sg.y() + sg.height() - 50
-            end_geo = QRect(end_x, end_y, 120, 30)
-
-            group = QParallelAnimationGroup(self.window)
-
-            anim_geo = QPropertyAnimation(self.window, b'geometry')
-            anim_geo.setDuration(250)
-            anim_geo.setStartValue(self._saved_geo)
-            anim_geo.setEndValue(end_geo)
-            anim_geo.setEasingCurve(QEasingCurve.Type.InCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.InCubic)
-            group.addAnimation(anim_geo)
-
-            anim_op = QPropertyAnimation(self.window, b'windowOpacity')
-            anim_op.setDuration(250)
-            anim_op.setStartValue(self._saved_opacity)
-            anim_op.setEndValue(0.0)
-            group.addAnimation(anim_op)
-
-            def _on_finished():
-                self.window.setWindowOpacity(self._saved_opacity)
-                self.window.setGeometry(self._saved_geo)
-                self.window.hide()
-
-            group.finished.connect(_on_finished)
-            group.start()
-            self._hub_anim_group = group
-        except Exception:
-            self.window.hide()
-
-    def _animate_restore_hub(self):
-        try:
-            if not hasattr(self, '_saved_geo'): return
-            from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRect, QParallelAnimationGroup
-            from PySide6.QtWidgets import QApplication
-
-            try:
-                from controller.control_window import _control_window_ref
-                if _control_window_ref and _control_window_ref._win:
-                    tg = _control_window_ref._win.geometry()
-                    start_x = tg.x() + tg.width() // 2 - 60
-                    start_y = tg.y() + tg.height() - 30
-                else: raise Exception()
-            except:
-                screen = QApplication.primaryScreen()
-                sg = screen.geometry()
-                start_x = sg.x() + sg.width() // 2 - 60
-                start_y = sg.y() + sg.height() - 50
-            
-            start_geo = QRect(start_x, start_y, 120, 30)
-            end_geo = self._saved_geo
-
-            self.window.setGeometry(start_geo)
-            self.window.setWindowOpacity(0.0)
-
-            group = QParallelAnimationGroup(self.window)
-
-            anim_geo = QPropertyAnimation(self.window, b'geometry')
-            anim_geo.setDuration(250)
-            anim_geo.setStartValue(start_geo)
-            anim_geo.setEndValue(end_geo)
-            anim_geo.setEasingCurve(QEasingCurve.Type.OutCubic if hasattr(QEasingCurve, 'Type') else QEasingCurve.OutCubic)
-            group.addAnimation(anim_geo)
-
-            anim_op = QPropertyAnimation(self.window, b'windowOpacity')
-            anim_op.setDuration(250)
-            anim_op.setStartValue(0.0)
-            anim_op.setEndValue(self._saved_opacity if hasattr(self, '_saved_opacity') else 1.0)
-            group.addAnimation(anim_op)
-
-            group.start()
-            self._hub_anim_group = group
-        except Exception:
-            pass
-
-    def refresh_windows(self, force_titles=None):
-        if not isinstance(force_titles, (list, tuple)): force_titles = None
-        try:
-            from overlay.win32_capture import find_eve_windows
-            current = find_eve_windows()
-            self._handles = {w['title']: w['hwnd'] for w in current}
-            active = force_titles if force_titles is not None else [t for t, ov in self._overlays.items()]
-            
-            self._list.clear()
-            self._custom_cards = []
-            
-            for w in current:
-                title = w['title']
-                item = self._W.QListWidgetItem(self._list)
-                
-                card = self._W.QWidget()
-                card.setStyleSheet(
-                    "QWidget#Card { background: rgba(0,180,255,0.03); border: 1px solid rgba(0,180,255,0.08); border-radius: 4px; }"
-                    "QWidget#Card:hover { background: rgba(0,180,255,0.06); border-color: rgba(0,180,255,0.2); }"
-                )
-                card.setObjectName("Card")
-                rl = self._W.QHBoxLayout(card); rl.setContentsMargins(10, 6, 10, 6); rl.setSpacing(10)
-                
-                # Checkbox Estilo Wizard
-                chk = self._W.QLabel()
-                chk.setFixedSize(16, 16)
-                AlignC = getattr(self._C.Qt, 'AlignCenter', getattr(self._C.Qt.AlignmentFlag, 'AlignCenter', 0x0084))
-                chk.setAlignment(AlignC)
-                
-                is_on = (title in active or title in self._overlays)
-                
-                def set_custom_chk(lbl, state):
-                    lbl.setProperty("is_checked", state)
-                    if state:
-                        lbl.setText("✔"); lbl.setStyleSheet("border: 1px solid #00ff9d; border-radius: 3px; background: rgba(0,255,157,0.1); color: #00ff9d; font-weight: bold; font-size: 12px;")
-                    else:
-                        lbl.setText(""); lbl.setStyleSheet("border: 1px solid rgba(0,180,255,0.4); border-radius: 3px; background: transparent;")
-                
-                set_custom_chk(chk, is_on)
-                rl.addWidget(chk)
-                
-                # Nombre
-                name = self._W.QLabel(title)
-                name.setStyleSheet("font-weight: bold; color: #e1e9f5; font-size: 10px;")
-                rl.addWidget(name); rl.addStretch()
-                
-                # Botones de Opacidad
-                BTN_OP_STYLE = "QPushButton { background: rgba(0,180,255,0.05); border: 1px solid rgba(0,180,255,0.2); border-radius:3px; color: #00c8ff; font-weight:bold; } QPushButton:hover { background: rgba(0,180,255,0.15); }"
-                b1 = self._W.QPushButton("-"); b1.setFixedSize(20, 20); b1.setStyleSheet(BTN_OP_STYLE); b1.clicked.connect(lambda _, t=title: self._adj_op(t, -0.1))
-                b2 = self._W.QPushButton("+"); b2.setFixedSize(20, 20); b2.setStyleSheet(BTN_OP_STYLE); b2.clicked.connect(lambda _, t=title: self._adj_op(t, 0.1))
-                rl.addWidget(b1); rl.addWidget(b2)
-                
-                def _toggle_hub(ev, _t=title, _chk=chk):
-                    new_state = not _chk.property("is_checked")
-                    set_custom_chk(_chk, new_state)
-                    self._toggle(_t, new_state)
-                card.mousePressEvent = _toggle_hub
-                
-                item.setSizeHint(card.sizeHint())
-                self._list.setItemWidget(item, card)
-                if is_on and title not in self._overlays: self._launch_one(title)
-
-            # Ajuste de altura dinámico
-            item_count = len(current)
-            new_h = 30 + 45 + (item_count * 42) + 15 # header + footer + items + padding
-            new_h = max(150, min(600, new_h))
-            self.window.setFixedHeight(new_h)
-            
-        except Exception as e: 
-            logger.error(f"Error refresh HUB: {e}")
-
-    def _toggle(self, title, active):
-        if active: self._launch_one(title)
-        else: self._stop_one(title)
-
-    def _on_sync_toggled(self, state):
-        self._sync_all = bool(state)
-        logger.info(f"Sincronización global: {self._sync_all}")
-
-    def _on_hub_sync_resize(self, source_title, w, h):
-        """Hub: broadcast resize from one overlay to all others."""
-        for title, ov in self._overlays.items():
-            if title != source_title:
-                ov.apply_size(w, h)
-
-    def _on_region_changed(self, title, new_region):
-        """Callback cuando una réplica cambia su región (zoom/pan)."""
-        if not self._sync_all:
-            return
-        
-        # Sincronizar a todas las demás
-        self._region = new_region.copy()
-        for t, ov in self._overlays.items():
-            if t != title:
-                # Bloqueamos la emisión de señal para evitar bucles infinitos
-                ov.set_region(new_region, emit_signal=False)
-
-    def _launch_one(self, title):
-        if title in self._overlays: return
-        h = self._handles.get(title)
-        if not h: return
-        from overlay.replication_overlay import ReplicationOverlay
-        from overlay import replicator_config as cfg_lib
-        
-        # Cada réplica tiene su PROPIA COPIA de la región para ser independiente por defecto
-        ov_region = self._region.copy()
-
-        ov = ReplicationOverlay(title=title, hwnd=h,
-                                region_rel=ov_region, cfg=self._cfg, 
-                                save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
-        
-        # Conectar señal de cambio de región y resize para sincronización
-        try:
-            ov.region_changed.connect(self._on_region_changed)
-        except Exception:
-            pass
-        ov.sync_resize_triggered.connect(
-            lambda w, h, _t=title: self._on_hub_sync_resize(_t, w, h)
-        )
-
-        # Posicionamiento 100x100 en GRILLA (6 por fila)
-        # Usamos la cantidad de overlays activos para calcular la posición
-        count = len(self._overlays)
-        col = count % 6
-        row = count // 6
-        
-        ov.resize(100, 100)
-        ov.move(100 + col * 110, 100 + row * 110)
-
-        # CONEXIÓN CRÍTICA: Re-selección de zona desde el HUB
-        try:
-            from controller.tray_manager import _GLOBAL_TRAY
-            if _GLOBAL_TRAY:
-                ov.selection_requested.connect(_GLOBAL_TRAY._on_reselect_region)
-        except Exception as e:
-            logger.debug(f"tray connection error: {e}")
-        
-        ov.show(); self._overlays[title] = ov
-
-    def _stop_one(self, title):
-        try:
-            if title in self._overlays:
-                ov = self._overlays.pop(title)
-                # Desconectar señales de forma segura
-                try:
-                    ov.selection_requested.disconnect()
-                except Exception:
-                    pass
-                try:
-                    ov.region_changed.disconnect()
-                except Exception:
-                    pass
-                
-                ov.close()
-        except Exception as e:
-            logger.error(f"Error al detener réplica {title}: {e}")
-
-    def _clear_all_config(self):
-        """Limpia todos los estados guardados de las réplicas para empezar de cero."""
-        from PySide6.QtCore import QSettings
-        s = QSettings("EVE_iT", "Replicator")
-        s.clear()
-        logger.info("Configuración del Replicador reseteada.")
-        # Opcional: Cerrar todo para forzar recreación
-        self.close_all()
-
-    def _adj_op(self, title, d):
-        if title in self._overlays:
-            o = self._overlays[title]
-            o.setWindowOpacity(max(0.1, min(1.0, o.windowOpacity() + d)))
-
-    def close_all(self):
-        for t in list(self._overlays.keys()): self._stop_one(t)
-        self.refresh_windows([])
-
-    def _on_close(self, event):
-        """Limpia todo al cerrar la ventana principal del HUB."""
-        self.close_all()
-        self._is_closed = True
-        event.accept()
+    def _animate_minimize(self, widget): widget.hide() # Simplified
+    def _animate_restore(self, widget): widget.show() # Simplified
+    def retranslate_ui(self, lang): pass # Stub for now to keep it clean

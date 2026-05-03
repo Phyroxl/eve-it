@@ -103,6 +103,16 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
         if wa_trans:
             self.setAttribute(wa_trans)
 
+        # [NUEVO] Refuerzo topmost Win32
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            if hwnd:
+                # HWND_TOPMOST = -1, SWP_NOMOVE=2, SWP_NOSIZE=1, SWP_SHOWWINDOW=0x40
+                ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+        except Exception:
+            pass
+
         cross = getattr(getattr(Qt, 'CursorShape', Qt), 'CrossCursor',
                         getattr(Qt, 'CrossCursor', 2))
         self.setCursor(_QCursor(cross))

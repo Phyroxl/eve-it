@@ -7,7 +7,7 @@
   "item_types_max": 500,
   "broker_fee_pct": 3.0,
   "sales_tax_pct": 8.0,
-  "max_contracts_to_scan": 5000,
+  "max_contracts_to_scan": 4950,
   "price_reference": "sell",
   "exclude_no_price": false,
   "exclude_blueprints": true,

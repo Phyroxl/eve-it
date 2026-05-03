@@ -75,18 +75,16 @@ def _section(parent_layout, text: str) -> None:
     parent_layout.addWidget(lbl)
 
 
-def _color_btn(color_hex: str, callback) -> QPushButton:
+def _color_btn(parent_dlg, color_hex: str, callback) -> QPushButton:
+    from overlay.dialog_utils import pick_color_topmost
     btn = QPushButton()
     btn.setFixedSize(32, 22)
     btn.setStyleSheet(f"background:{color_hex}; border:1px solid #334155; border-radius:3px;")
     def _pick():
-        opt = QColorDialog.ColorDialogOption.ShowAlphaChannel \
-              if hasattr(QColorDialog, 'ColorDialogOption') else QColorDialog.ShowAlphaChannel
-        c = QColorDialog.getColor(QColor(color_hex), options=opt)
-        if c.isValid():
-            h = c.name()
-            btn.setStyleSheet(f"background:{h}; border:1px solid #334155; border-radius:3px;")
-            callback(h)
+        new_col = pick_color_topmost(parent_dlg, color_hex)
+        if new_col:
+            btn.setStyleSheet(f"background:{new_col}; border:1px solid #334155; border-radius:3px;")
+            callback(new_col)
     btn.clicked.connect(_pick)
     return btn
 
@@ -103,7 +101,36 @@ class ReplicatorSettingsDialog(QDialog):
         flags = (Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint) if hasattr(Qt, 'WindowType') else (Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setWindowFlags(flags | (Qt.WindowType.WindowCloseButtonHint
                                      if hasattr(Qt, 'WindowType') else Qt.WindowCloseButtonHint))
+        
+        # [NUEVO] Refuerzo topmost Win32 via util
+        from overlay.dialog_utils import make_replicator_dialog_topmost
+        make_replicator_dialog_topmost(self)
+        
         self._build_ui()
+        self._load_geometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._save_geometry()
+
+    def _save_geometry(self):
+        try:
+            self._ov._cfg.setdefault('global', {})['settings_dialog_size'] = {
+                'w': self.width(),
+                'h': self.height()
+            }
+            # Also save position if desired, but task only asks for size.
+            # We'll stick to size to keep it simple as requested.
+        except Exception:
+            pass
+
+    def _load_geometry(self):
+        try:
+            size = self._ov._cfg.get('global', {}).get('settings_dialog_size')
+            if size:
+                self.resize(size.get('w', 340), size.get('h', 400))
+        except Exception:
+            pass
 
     def _cfg(self, key):
         return self._ov._ov_cfg.get(key)
@@ -427,7 +454,7 @@ class ReplicatorSettingsDialog(QDialog):
         sp_fs.valueChanged.connect(lambda v: (self._set('label_font_size', v), self._ov.update()))
         _row(lay, "Tamano fuente:", sp_fs)
 
-        btn_col = _color_btn(self._cfg('label_color') or '#ffffff',
+        btn_col = _color_btn(self, self._cfg('label_color') or '#ffffff',
                              lambda v: (self._set('label_color', v), self._ov.update()))
         _row(lay, "Color texto:", btn_col)
 
@@ -438,7 +465,7 @@ class ReplicatorSettingsDialog(QDialog):
         chk_bg.toggled.connect(lambda v: (self._set('label_bg', v), self._ov.update()))
         lay.addWidget(chk_bg)
 
-        btn_bgcol = _color_btn(self._cfg('label_bg_color') or '#000000',
+        btn_bgcol = _color_btn(self, self._cfg('label_bg_color') or '#000000',
                                lambda v: (self._set('label_bg_color', v), self._ov.update()))
         _row(lay, "Color fondo:", btn_bgcol)
 
@@ -503,22 +530,26 @@ class ReplicatorSettingsDialog(QDialog):
         sp_bw.valueChanged.connect(lambda v: (self._set('border_width', v), self._ov.update()))
         _row(lay, "Grosor borde:", sp_bw)
 
-        _shapes = ['square', 'rounded', 'pill', 'glow', 'brackets']
+        _shapes = ['square', 'rounded', 'pill']
         cmb_shape = QComboBox()
         cmb_shape.addItems(_shapes)
         cur_shape = self._cfg('border_shape') or 'square'
         if cur_shape in _shapes:
             cmb_shape.setCurrentText(cur_shape)
+        else:
+            # Fallback visual en el combo si la config tiene algo raro
+            cmb_shape.setCurrentText('square')
+            
         cmb_shape.currentTextChanged.connect(lambda v: (self._set('border_shape', v), self._ov.update()))
         _row(lay, "Forma:", cmb_shape)
 
         _section(lay, "COLORES")
 
-        btn_ac = _color_btn(self._cfg('active_border_color') or '#00ff64',
+        btn_ac = _color_btn(self, self._cfg('active_border_color') or '#00ff64',
                             lambda v: (self._set('active_border_color', v), self._ov.update()))
         _row(lay, "Color activo:", btn_ac)
 
-        btn_cc = _color_btn(self._cfg('client_color') or '#00c8ff',
+        btn_cc = _color_btn(self, self._cfg('client_color') or '#00c8ff',
                             lambda v: (self._set('client_color', v), self._ov.update()))
         _row(lay, "Color cliente:", btn_cc)
 

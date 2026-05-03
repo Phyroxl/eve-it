@@ -186,13 +186,15 @@ class ReplicationOverlay(QWidget):
         self.setWindowFlags(flags)
         self.setAttribute(
             Qt.WA_TranslucentBackground if hasattr(Qt, 'WA_TranslucentBackground') else 120,
-            False,
+            True,
         )
+        self.setAutoFillBackground(False) # Asegura que Qt no pinte fondo por defecto
         self.setMinimumSize(20, 20)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setWindowTitle(f"Replica - {self._title}")
-        self.setStyleSheet("background-color: #000;")
+        # Forzar transparencia absoluta y quitar bordes en el root widget
+        self.setStyleSheet("background: transparent; border: none; outline: none;")
         set_no_activate(int(self.winId()))
 
         # Restore saved position / size
@@ -546,19 +548,26 @@ class ReplicationOverlay(QWidget):
 
     def apply_region(self, reg_dict):
         """Apply an external region change (pan/zoom sync from peer)."""
-        old_w, old_h = self._region['w'], self._region['h']
-        new_w, new_h = reg_dict['w'], reg_dict['h']
+        # [CORRECCIÓN] Sincronizar solo el transform de vista interno.
+        # NO debemos llamar a self.resize() aquí para evitar que el zoom 
+        # redimensione las ventanas de los peers.
         self._region.update(reg_dict)
-        if abs(new_w - old_w) > 0.001 or abs(new_h - old_h) > 0.001:
-            self.resize(
-                int(self.width() * (new_w / old_w)),
-                int(self.height() * (new_h / old_h)),
-            )
         self.update()
 
     # ------------------------------------------------------------------
     # Paint
     # ------------------------------------------------------------------
+
+    def _get_shape_path(self, rect: QRectF, shape: str, bw: float) -> QPainterPath:
+        path = QPainterPath()
+        if shape == 'pill':
+            radius = min(rect.width(), rect.height()) / 2.0
+            path.addRoundedRect(rect, radius, radius)
+        elif shape == 'rounded':
+            path.addRoundedRect(rect, 8, 8)
+        else:
+            path.addRect(rect)
+        return path
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -571,31 +580,32 @@ class ReplicationOverlay(QWidget):
         p.setRenderHint(rh_smooth)
         p.setRenderHint(rh_aa)
 
-        p.fillRect(self.rect(), Qt.black)
-
         ov = self._ov_cfg
         bw = max(1, int(ov.get('border_width', 2))) if ov.get('border_visible', True) else 0
         shape = ov.get('border_shape', 'square')
         
+        # [MIGRACIÓN] Fallback interno por si acaso
+        if shape not in ('square', 'rounded', 'pill'):
+            shape = 'rounded' if shape == 'glow' else 'square'
+
+        # [REDISEÑO] Solo pintar fondo rectangular si es SQUARE.
+        # Para Pill/Rounded, NO pintamos nada global para evitar el marco gris.
+        if shape == 'square':
+            p.fillRect(self.rect(), Qt.black)
+
         # Border and Content rects
-        # adj is for the pen (draw on center of line)
         adj = bw / 2.0
         border_rect = QRectF(self.rect()).adjusted(adj, adj, -adj, -adj)
-        # Content is strictly inside the border line
         content_rect = self.rect().adjusted(bw, bw, -bw, -bw)
 
         if self._pixmap:
             p.save()
-            # Apply clipping path based on shape
-            if shape in ('rounded', 'pill', 'glow'):
-                radius = 8 if shape == 'rounded' else 4
-                if shape == 'pill':
-                    radius = min(content_rect.width(), content_rect.height()) / 2.0
-                
-                path = QPainterPath()
-                path.addRoundedRect(QRectF(self.rect()).adjusted(bw, bw, -bw, -bw), radius, radius)
+            if shape in ('rounded', 'pill'):
+                # El fondo y el clip siguen el path de la forma
+                path = self._get_shape_path(QRectF(self.rect()).adjusted(bw/2, bw/2, -bw/2, -bw/2), shape, bw)
+                p.fillPath(path, Qt.black)
                 p.setClipPath(path)
-
+            
             pw, ph = self._pixmap.width(), self._pixmap.height()
             src_aspect = pw / ph if ph > 0 else 1.0
             dst_aspect = content_rect.width() / content_rect.height() if content_rect.height() > 0 else 1.0
@@ -620,7 +630,7 @@ class ReplicationOverlay(QWidget):
             p.setPen(Qt.cyan)
             p.drawText(self.rect(), Qt.AlignCenter, self._status)
 
-        # Configurable border (active vs client color)
+        # Draw Border
         if ov.get('border_visible', True):
             if ov.get('highlight_active', True) and self._is_active_client:
                 hex_col = ov.get('active_border_color', '#00ff64')
@@ -630,34 +640,9 @@ class ReplicationOverlay(QWidget):
             color = QColor(hex_col)
             p.setPen(QPen(color, bw))
             
-            if shape == 'rounded':
-                p.drawRoundedRect(border_rect, 8, 8)
-            elif shape == 'pill':
-                rad = min(border_rect.width(), border_rect.height()) / 2.0
-                p.drawRoundedRect(border_rect, rad, rad)
-            elif shape == 'glow':
-                # Subtile multi-layer glow
-                for i in range(2, -1, -1):
-                    c_glow = QColor(color)
-                    c_glow.setAlpha(int(120 / (i + 1)))
-                    p.setPen(QPen(c_glow, bw + i * 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-                    p.drawRoundedRect(border_rect, 4, 4)
-            elif shape == 'brackets':
-                # Tactical HUD brackets
-                sz = min(20, max(5, int(min(border_rect.width(), border_rect.height()) * 0.15)))
-                r = border_rect
-                # TL
-                p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left() + sz, r.top()))
-                p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left(), r.top() + sz))
-                # TR
-                p.drawLine(QPointF(r.right(), r.top()), QPointF(r.right() - sz, r.top()))
-                p.drawLine(QPointF(r.right(), r.top()), QPointF(r.right(), r.top() + sz))
-                # BL
-                p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left() + sz, r.bottom()))
-                p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left(), r.bottom() - sz))
-                # BR
-                p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right() - sz, r.bottom()))
-                p.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right(), r.bottom() - sz))
+            if shape in ('rounded', 'pill'):
+                path = self._get_shape_path(border_rect, shape, bw)
+                p.drawPath(path)
             else: # square
                 p.drawRect(border_rect)
 

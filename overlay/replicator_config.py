@@ -33,7 +33,7 @@ OVERLAY_DEFAULTS = {
     # Task 7 — border
     'border_visible': True,
     'border_width': 2,
-    'border_shape': 'square', # square|rounded|pill|glow|brackets
+    'border_shape': 'square', # square|rounded|pill
     'client_color': '#00c8ff',
     'active_border_color': '#00ff64',
     'highlight_active': True,
@@ -86,6 +86,16 @@ def get_overlay_cfg(cfg, title: str) -> dict:
     stored = cfg.get('overlays', {}).get(title, {})
     merged = OVERLAY_DEFAULTS.copy()
     merged.update(stored)
+    
+    # [NUEVO] Migración / Fallback de formas eliminadas
+    shape = merged.get('border_shape', 'square')
+    if shape == 'glow':
+        merged['border_shape'] = 'rounded'
+    elif shape == 'brackets':
+        merged['border_shape'] = 'square'
+    elif shape not in ('square', 'rounded', 'pill'):
+        merged['border_shape'] = 'square'
+        
     return merged
 
 

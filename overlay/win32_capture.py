@@ -201,6 +201,23 @@ def get_foreground_hwnd() -> int:
     except Exception:
         return 0
 
+def is_hwnd_valid(hwnd: int) -> bool:
+    """Check if window handle is still valid and visible."""
+    if not hwnd: return False
+    return bool(user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd))
+
+def focus_eve_window_fast(hwnd: int) -> bool:
+    """Optimized focus with minimal checks for hotkey speed."""
+    if not hwnd: return False
+    try:
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9) # SW_RESTORE
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
 def get_window_title(hwnd: int) -> str:
     """Devuelve el título de una ventana dado su HWND."""
     if not hwnd:
