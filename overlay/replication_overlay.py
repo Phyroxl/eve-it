@@ -18,7 +18,7 @@ for _qt_try in [
         _g = importlib.import_module(_qt_try[3])
         for _n in ['QApplication', 'QWidget', 'QLabel', 'QMenu']:
             if hasattr(_w, _n): globals()[_n] = getattr(_w, _n)
-        for _n in ['Qt', 'QTimer', 'QThread', 'Signal', 'Slot', 'QPoint', 'QRect', 'QSize']:
+        for _n in ['Qt', 'QTimer', 'QThread', 'Signal', 'Slot', 'QPoint', 'QRect', 'QSize', 'QRectF', 'QPointF']:
             if hasattr(_c, _n): globals()[_n] = getattr(_c, _n)
         for _n in ['QColor', 'QPainter', 'QPixmap', 'QImage', 'QFont', 'QCursor', 'QPen', 'QBrush']:
             if hasattr(_g, _n): globals()[_n] = getattr(_g, _n)
