@@ -592,6 +592,20 @@ class ReplicatorSettingsDialog(QDialog):
         lay.addWidget(btn_apply_b)
         lay.addWidget(lbl_b_status)
 
+        lay.addSpacing(6)
+
+        def _open_diag():
+            try:
+                from overlay.replicator_visual_diagnostics import show_visual_diagnostic
+                self._ov._diag_dialog = show_visual_diagnostic(self._ov, parent=self)
+            except Exception as e:
+                lbl_b_status.setText(f"Error diagnóstico: {e}")
+
+        btn_diag = QPushButton("🔍 Diagnóstico visual")
+        btn_diag.setToolTip("Abre reporte de flags, stylesheet y posibles causas del marco gris")
+        btn_diag.clicked.connect(_open_diag)
+        lay.addWidget(btn_diag)
+
         lay.addStretch()
         return w
 

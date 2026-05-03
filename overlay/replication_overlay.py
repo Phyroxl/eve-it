@@ -138,6 +138,7 @@ class ReplicationOverlay(QWidget):
         self._drag_start_pos = None      # widget pos at press, never mutated during drag
         self._drag_moved = False         # True once mouse exceeded _DRAG_THRESHOLD
         self._is_resizing = False
+        self._debug_visual_layers = False  # toggled by diagnostics dialog only
 
         _OVERLAY_REGISTRY.add(self)
 
@@ -414,6 +415,9 @@ class ReplicationOverlay(QWidget):
         act_settings = menu.addAction("⚙ Ajustes")
         act_settings.triggered.connect(self._open_settings)
 
+        act_diag = menu.addAction("🔍 Diagnóstico visual")
+        act_diag.triggered.connect(self._open_visual_diagnostic)
+
         menu.addSeparator()
 
         act_close = menu.addAction("✕ Cerrar")
@@ -422,21 +426,41 @@ class ReplicationOverlay(QWidget):
         menu.exec(event.globalPos())
 
     def _open_settings(self):
-        if hasattr(self, "_settings_dialog") and self._settings_dialog and self._settings_dialog.isVisible():
-            self._settings_dialog.raise_()
-            self._settings_dialog.activateWindow()
-            return
         try:
+            if hasattr(self, "_settings_dialog") and self._settings_dialog and self._settings_dialog.isVisible():
+                self._settings_dialog.raise_()
+                self._settings_dialog.activateWindow()
+                return
+
             from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
             dlg = ReplicatorSettingsDialog(self)
+            # Aseguramos que sea No Modal para permitir interactuar con réplicas
             dlg.setModal(False)
             dlg.setWindowModality(Qt.WindowModality.NonModal if hasattr(Qt.WindowModality, 'NonModal') else Qt.NonModal)
+            
+            # Guardamos referencia para evitar GC
             self._settings_dialog = dlg
+            
             dlg.show()
             dlg.raise_()
             dlg.activateWindow()
+            
+            # Refuerzo topmost unificado
+            try:
+                from overlay.dialog_utils import make_replicator_dialog_topmost
+                make_replicator_dialog_topmost(dlg)
+            except Exception:
+                pass
+
         except Exception as e:
-            logger.error(f"Error abriendo ajustes: {e}")
+            logger.exception(f"[REPLICATOR SETTINGS] Error abriendo ajustes para {self._title}")
+
+    def _open_visual_diagnostic(self):
+        try:
+            from overlay.replicator_visual_diagnostics import show_visual_diagnostic
+            self._diag_dialog = show_visual_diagnostic(self, parent=None)
+        except Exception:
+            logger.exception(f"[REPLICATOR DIAG] Error abriendo diagnóstico para {self._title}")
 
     def _reset_view(self):
         self._region['x'] = 0
@@ -684,6 +708,31 @@ class ReplicationOverlay(QWidget):
 
             p.setPen(QColor(ov.get('label_color', '#ffffff')))
             p.drawText(lx + pad, ly + pad + fm.ascent(), label_text)
+
+        # Debug: semi-transparent layer map (diagnostics dialog only)
+        if self._debug_visual_layers:
+            try:
+                p.save()
+                # Outer widget rect — yellow
+                p.fillRect(self.rect(), QColor(255, 255, 0, 18))
+                p.setPen(QPen(QColor(255, 220, 0, 200), 1))
+                p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+                # border_rect — red
+                p.setPen(QPen(QColor(255, 60, 60, 200), 1))
+                br_int = border_rect.toRect() if hasattr(border_rect, 'toRect') else border_rect
+                p.drawRect(br_int)
+                # content_rect — blue
+                p.fillRect(content_rect, QColor(0, 80, 255, 22))
+                p.setPen(QPen(QColor(0, 100, 255, 200), 1))
+                p.drawRect(content_rect)
+                # shape path — green (pill/rounded only)
+                if shape in ('rounded', 'pill'):
+                    dbg_path = self._get_shape_path(border_rect, shape, bw)
+                    p.setPen(QPen(QColor(0, 255, 100, 200), 1))
+                    p.drawPath(dbg_path)
+                p.restore()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Mouse events
