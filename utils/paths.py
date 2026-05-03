@@ -1,13 +1,28 @@
+import sys
 import os
 from pathlib import Path
 import logging
 
 logger = logging.getLogger('eve.paths')
 
-# Raíz del proyecto
-ROOT_DIR = Path(__file__).resolve().parent.parent
+def get_resource_path(relative_path: str = "") -> Path:
+    """Obtiene la ruta absoluta a un recurso, compatible con desarrollo y PyInstaller."""
+    if hasattr(sys, '_MEIPASS'):
+        # Ruta cuando se ejecuta como EXE (PyInstaller extrae aquí)
+        base_path = Path(sys._MEIPASS)
+    else:
+        # Ruta en modo desarrollo (raíz del proyecto)
+        base_path = Path(__file__).resolve().parent.parent
+        
+    if relative_path:
+        return base_path / relative_path
+    return base_path
 
-# Carpeta de datos runtime
+# Raíz del proyecto (centralizada)
+ROOT_DIR = get_resource_path()
+
+# Carpeta de datos runtime (Persistente fuera del EXE si es necesario, 
+# pero mantenemos la lógica actual del repo por defecto)
 DATA_DIR = ROOT_DIR / "data"
 
 def ensure_dirs():

@@ -54,6 +54,9 @@ _lock = threading.Lock()
 _hwnd_cache: Dict[str, int] = {}
 _cached_titles: List[str] = []
 
+# Persistencia del último índice activado por grupo para ciclos deterministas
+_last_group_index: Dict[str, int] = {}
+
 
 def parse_hotkey(combo: str) -> tuple:
     """Parse 'CTRL+F13' -> (mods_int, vk_int).  Returns (0, 0) if invalid/empty."""
@@ -238,6 +241,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             get_foreground_hwnd, get_window_title,
             focus_eve_window_fast, resolve_eve_window_handle, is_hwnd_valid
         )
+        from overlay.replication_overlay import ReplicationOverlay, _OVERLAY_REGISTRY
         import time
         t0 = time.perf_counter()
         
@@ -248,18 +252,39 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             
         titles = group.get('clients_order', [])
         if not titles:
+            logger.warning(f"[HOTKEY ORDER] Grupo {group_id} sin miembros ordenados.")
             return
 
         fg_hwnd = get_foreground_hwnd()
         fg_title = get_window_title(fg_hwnd)
         
+        # 1. Intentar detectar índice actual por ventana en primer plano
+        current_idx = -1
         try:
-            idx = next(i for i, t in enumerate(titles) if t in fg_title or fg_title in t)
+            current_idx = next(i for i, t in enumerate(titles) if t == fg_title or (t and t in fg_title))
         except StopIteration:
-            idx = -1 if direction > 0 else 0
+            # 2. Si falla, buscar si alguna réplica del grupo tiene el foco de Windows
+            for ov in list(_OVERLAY_REGISTRY):
+                if ov._hwnd and ov._hwnd == fg_hwnd:
+                    ov_title = ov._title
+                    if ov_title in titles:
+                        current_idx = titles.index(ov_title)
+                        break
+        
+        # 3. Si sigue fallando, usar el último índice recordado para este grupo
+        if current_idx == -1:
+            current_idx = _last_group_index.get(group_id, -1)
             
+        # Logging de diagnóstico
+        logger.info(f"[HOTKEY ORDER DEBUG] Group='{group.get('name')}' Dir={'Next' if direction>0 else 'Prev'} Order={titles} ActiveTitle='{fg_title}' ActiveIdx={current_idx}")
+
+        # 4. Calcular siguiente salto
+        # Si empezamos desde fuera del grupo, el primer salto (attempt=1) nos llevará 
+        # al primer (direction=1) o último (direction=-1) miembro.
+        start_search_idx = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
+        
         for attempt in range(1, len(titles) + 1):
-            next_idx = (idx + direction * attempt) % len(titles)
+            next_idx = (start_search_idx + direction * attempt) % len(titles)
             target = titles[next_idx]
             
             hwnd = _hwnd_cache.get(target)
@@ -272,13 +297,16 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             if hwnd and is_hwnd_valid(hwnd):
                 ok = focus_eve_window_fast(hwnd)
                 if ok:
-                    from overlay.replication_overlay import ReplicationOverlay
+                    _last_group_index[group_id] = next_idx
                     ReplicationOverlay.notify_active_client_changed(hwnd)
+                    
                 dt = (time.perf_counter() - t0) * 1000
-                logger.info(f"[REPLICATOR GROUP HOTKEY] group={group.get('name')} id={group_id} dir={direction} target={target!r} cache_hit={cache_hit} ms={dt:.1f} ok={ok}")
+                logger.info(f"[HOTKEY ORDER DEBUG] Target='{target}' Index={next_idx} ms={dt:.1f} ok={ok}")
                 return
-        
-        logger.warning(f"[REPLICATOR GROUP HOTKEY] No valid windows found for group {group_id}")
+            else:
+                logger.debug(f"[HOTKEY ORDER DEBUG] Saltando '{target}' (sin ventana válida)")
+
+        logger.warning(f"[HOTKEY ORDER DEBUG] No se encontraron ventanas válidas para el grupo {group_id}")
 
     for key, direction in [('cycle_next', +1), ('cycle_prev', -1)]:
         entry = hk_cfg.get(key, {})

@@ -4,7 +4,17 @@ from pathlib import Path
 
 logger = logging.getLogger('eve.replicator_config')
 
-CFG_PATH = Path(__file__).resolve().parent.parent / 'config' / 'replicator.json'
+from utils.paths import ROOT_DIR
+CFG_PATH = ROOT_DIR / 'config' / 'replicator.json'
+
+# Región de captura estándar de referencia (proporcional 0.0-1.0)
+# Orientada por defecto a la zona inferior central (Módulos/Capacitor)
+DEFAULT_REPLICATOR_CAPTURE_REGION = {
+    'x': 0.46875,    # 900 / 1920
+    'y': 0.3425926,  # 370 / 1080
+    'w': 0.078125,   # 150 / 1920
+    'h': 0.1388889   # 150 / 1080
+}
 
 # Default per-overlay settings (all new EVE-O style fields)
 OVERLAY_DEFAULTS = {
@@ -49,7 +59,7 @@ def load_config():
             'current_profile': 'Default',
         },
         'regions': {
-            'Default': {'x': 0.2, 'y': 0.2, 'w': 0.3, 'h': 0.3}
+            'Default': DEFAULT_REPLICATOR_CAPTURE_REGION.copy()
         },
         'selected_windows': [],
         'overlays': {},
@@ -199,7 +209,10 @@ _DEFAULT_LAYOUT_PROFILE = {
     'w': 280, 'h': 200, 'maintain_aspect': True,
     'snap_enabled': False, 'snap_x': 20, 'snap_y': 20,
     'fps': 30, 'opacity': 1.0, 'label_visible': True, 'border_visible': True,
-    'region_x': 0.0, 'region_y': 0.0, 'region_w': 1.0, 'region_h': 1.0,
+    'region_x': DEFAULT_REPLICATOR_CAPTURE_REGION['x'],
+    'region_y': DEFAULT_REPLICATOR_CAPTURE_REGION['y'],
+    'region_w': DEFAULT_REPLICATOR_CAPTURE_REGION['w'],
+    'region_h': DEFAULT_REPLICATOR_CAPTURE_REGION['h'],
 }
 
 _HOTKEY_DEFAULTS = {

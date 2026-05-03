@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 logger = logging.getLogger('eve.replicator_wizard')
 from utils.i18n import t
 from overlay.replicator_hotkeys import update_hotkey_cache, register_hotkeys, unregister_hotkeys
+from overlay.replicator_config import DEFAULT_REPLICATOR_CAPTURE_REGION
 
 class ReplicatorWizard:
     """
@@ -122,7 +123,7 @@ class ReplicatorWizard:
         btn_p_del = QPushButton("-"); btn_p_del.setFixedSize(24,24); prof_row.addWidget(btn_p_del)
         
         prof_row.addSpacing(15); prof_row.addWidget(QLabel("FPS:"))
-        self.fps_combo = QComboBox(); self.fps_combo.addItems(["5", "10", "15", "20", "30", "60", "120"])
+        self.fps_combo = QComboBox(); self.fps_combo.addItems(["1", "5", "10", "15", "20", "30", "60", "120"])
         self.fps_combo.setCurrentText(str(self._cfg.get('global_fps', 30)))
         self.fps_combo.setFixedWidth(50); prof_row.addWidget(self.fps_combo)
         prof_row.addStretch(); conf_lay.addLayout(prof_row)
@@ -167,6 +168,12 @@ class ReplicatorWizard:
         
         self._refresh_windows()
         self._load_profiles()
+        
+        # [NUEVO] Forzar región estándar 900,370,150,150 por defecto al abrir
+        self.sp_x.setValue(900); self.sp_y.setValue(370)
+        self.sp_w.setValue(150); self.sp_h.setValue(150)
+        self._sync_to_cfg()
+        
         self._update_visual_button_state()
         self._load_position()
 
@@ -328,7 +335,7 @@ class ReplicatorWizard:
             from overlay import replicator_config as cfg_lib
             
             titles = self._cfg.get('selected_windows', [])
-            region = self._cfg.get('region', {'x':0, 'y':0, 'w':0.1, 'h':0.1})
+            region = self._cfg.get('region', DEFAULT_REPLICATOR_CAPTURE_REGION.copy())
             current = find_eve_windows()
             handles = {w['title']: w['hwnd'] for w in current}
             self._overlays_refs = []

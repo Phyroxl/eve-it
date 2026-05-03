@@ -520,7 +520,9 @@ class ReplicationOverlay(QWidget):
             self._is_active_client = bool(self._hwnd and fg == self._hwnd)
 
             if was_active != self._is_active_client:
-                self.update()
+                # Si nosotros hemos detectado el cambio de foco, lo notificamos a todos
+                # para que los bordes se actualicen de forma síncrona.
+                ReplicationOverlay.notify_active_client_changed(fg)
 
             if self._ov_cfg.get('hide_when_inactive', False):
                 eve_hwnds = self._get_cached_eve_hwnds()
@@ -647,9 +649,8 @@ class ReplicationOverlay(QWidget):
     def _get_asset_icon(self, name: str) -> QIcon:
         """Helper para cargar iconos personalizados desde el directorio assets."""
         try:
-            # Ruta relativa al archivo actual: ../assets/name.png
-            assets_path = Path(__file__).resolve().parent.parent / "assets"
-            icon_file = assets_path / f"{name}.png"
+            from utils.paths import get_resource_path
+            icon_file = get_resource_path(f"assets/{name}.png")
             if icon_file.exists():
                 return QIcon(str(icon_file))
         except Exception:
@@ -680,7 +681,7 @@ class ReplicationOverlay(QWidget):
         # 2. FPS
         fps_menu = menu.addMenu(self._get_asset_icon("fps"), "Fotogramas (FPS)")
         cur_fps = self._thread._fps if hasattr(self, '_thread') else 30
-        for val in [5, 10, 15, 30, 60, 120]:
+        for val in [1, 5, 10, 15, 30, 60, 120]:
             label = f"✓ {val} FPS" if val == cur_fps else f"{val} FPS"
             act = fps_menu.addAction(placeholder, label)
             act.triggered.connect(lambda _, v=val: self._set_fps(v))

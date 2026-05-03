@@ -350,7 +350,7 @@ class ReplicatorSettingsDialog(QDialog):
         _section(lay, "CAPTURA")
 
         cmb_fps = QComboBox()
-        cmb_fps.addItems(['5', '10', '15', '30', '60', '120'])
+        cmb_fps.addItems(['1', '5', '10', '15', '30', '60', '120'])
         fps_now = str(getattr(self._ov._thread, '_fps', 30) if hasattr(self._ov, '_thread') else 30)
         if cmb_fps.findText(fps_now) >= 0:
             cmb_fps.setCurrentText(fps_now)
@@ -653,18 +653,27 @@ class ReplicatorSettingsDialog(QDialog):
 
         def _save_current_group():
             gid = cmb_group.currentData() or str(cmb_group.currentIndex() + 1)
-            checked = [t for t, chk in self._account_chks.items() if chk.isChecked()]
+            
+            # Leer el orden visual desde el QListWidget
+            ordered_titles = []
+            for i in range(self._accounts_list.count()):
+                item = self._accounts_list.item(i)
+                title = item.data(Qt.UserRole)
+                
+                if item.checkState() == Qt.Checked:
+                    ordered_titles.append(title)
+
             hk.setdefault('groups', {})[gid] = {
                 'enabled': chk_grp_en.isChecked(),
                 'name': le_grp_name.text().strip(),
                 'next': le_grp_next.text().strip().upper(),
                 'prev': le_grp_prev.text().strip().upper(),
-                'clients_order': checked
+                'clients_order': ordered_titles
             }
             save_hotkeys_cfg(self._ov._cfg, hk)
             _reload_group_combo()
             lbl_hk_status.setText(f"Grupo {gid} guardado.")
-            logger.info(f"[REPLICATOR SETTINGS] Group {gid} saved with {len(checked)} clients.")
+            logger.info(f"[REPLICATOR SETTINGS] Group {gid} saved with {len(ordered_titles)} clients.")
 
         def _save_all_hk():
             from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache, unregister_hotkeys
@@ -689,9 +698,39 @@ class ReplicatorSettingsDialog(QDialog):
             le_grp_name.setText(gdata.get('name', f"Grupo {gid}"))
             le_grp_next.setText(gdata.get('next', ''))
             le_grp_prev.setText(gdata.get('prev', ''))
+            
             saved_clients = gdata.get('clients_order', [])
-            for t, chk in self._account_chks.items():
-                chk.setChecked(t in saved_clients)
+            
+            # Reordenar y marcar según guardado
+            # 1. Obtener todos los items actuales
+            items_data = []
+            for i in range(self._accounts_list.count()):
+                it = self._accounts_list.item(i)
+                title = it.data(Qt.UserRole)
+                items_data.append((title, it.checkState()))
+            
+            # 2. Reordenar: los que están en saved_clients primero, en su orden
+            new_order = []
+            found_titles = set()
+            for s_t in saved_clients:
+                # Buscar si existe en los detectados
+                match = next((x for x in items_data if x[0] == s_t), None)
+                if match:
+                    new_order.append((s_t, Qt.Checked))
+                    found_titles.add(s_t)
+            
+            # Añadir el resto (no estaban en el grupo)
+            for title, _ in items_data:
+                if title not in found_titles:
+                    new_order.append((title, Qt.Unchecked))
+            
+            # 3. Re-poblar lista
+            self._accounts_list.clear()
+            for i, (title, state) in enumerate(new_order, 1):
+                it = QListWidgetItem(f"{i}. {title}")
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                it.setCheckState(state)
+                self._accounts_list.addItem(it)
 
         # Conexiones ENTER para guardar
         le_grp_name.returnPressed.connect(_save_current_group)
@@ -702,43 +741,102 @@ class ReplicatorSettingsDialog(QDialog):
         _row(lay, "Hotkey Sig:", le_grp_next)
         _row(lay, "Hotkey Ant:", le_grp_prev)
 
-        lay.addWidget(QLabel("Seleccionar cuentas para el grupo:"))
+        lay.addWidget(QLabel("Seleccionar cuentas y orden (1 = primero):"))
         
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(120)
-        scroll.setStyleSheet("background: #0d1117; border: 1px solid #1e293b; border-radius: 4px;")
+        list_box = QHBoxLayout()
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
+        self._accounts_list = QListWidget()
+        self._accounts_list.setMinimumHeight(180) # Mostrar al menos 5-6 cuentas
+        self._accounts_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self._accounts_list.setStyleSheet("""
+            QListWidget { background: #0d1117; border: 1px solid #1e293b; border-radius: 4px; color: #cbd5e1; font-size: 10px; }
+            QListWidget::item { padding: 2px; border-bottom: 1px solid #1a2533; }
+            QListWidget::item:selected { background: #1e293b; color: #00c8ff; }
+        """)
         
-        scroll_content = QWidget()
-        self._accounts_lay = QVBoxLayout(scroll_content)
-        self._accounts_lay.setContentsMargins(5, 5, 5, 5)
-        self._accounts_lay.setSpacing(2)
-        scroll.setWidget(scroll_content)
-        lay.addWidget(scroll)
+        # Actualizar números tras mover
+        def _update_numbers():
+            for i in range(self._accounts_list.count()):
+                it = self._accounts_list.item(i)
+                title = it.data(Qt.UserRole)
+                it.setText(f"{i+1}. {title}")
+        
+        self._accounts_list.model().rowsMoved.connect(lambda: QTimer.singleShot(0, _update_numbers))
+        
+        list_box.addWidget(self._accounts_list)
+        
+        # Botones de orden
+        btn_lay = QVBoxLayout()
+        btn_up = QPushButton("▲"); btn_up.setFixedSize(24, 40)
+        btn_down = QPushButton("▼"); btn_down.setFixedSize(24, 40)
+        
+        def _move_item(up=True):
+            curr = self._accounts_list.currentRow()
+            if curr < 0: return
+            target = curr - 1 if up else curr + 1
+            if 0 <= target < self._accounts_list.count():
+                it = self._accounts_list.takeItem(curr)
+                self._accounts_list.insertItem(target, it)
+                self._accounts_list.setCurrentRow(target)
+                _update_numbers()
 
-        self._account_chks = {}
+        btn_up.clicked.connect(lambda: _move_item(True))
+        btn_down.clicked.connect(lambda: _move_item(False))
+        btn_lay.addWidget(btn_up); btn_lay.addWidget(btn_down); btn_lay.addStretch()
+        list_box.addLayout(btn_lay)
+        lay.addLayout(list_box)
 
         def refresh_accounts():
-            while self._accounts_lay.count():
-                child = self._accounts_lay.takeAt(0)
-                if child.widget(): child.widget().deleteLater()
-            self._account_chks = {}
+            # Preservar el orden visual actual si es posible
+            current_order = []
+            for i in range(self._accounts_list.count()):
+                it = self._accounts_list.item(i)
+                title = it.data(Qt.UserRole)
+                current_order.append((title, it.checkState()))
+
+            self._accounts_list.clear()
             from overlay.win32_capture import find_eve_windows
             from overlay.replication_overlay import _OVERLAY_REGISTRY
             ov_titles = {ov._title for ov in list(_OVERLAY_REGISTRY)}
             win_titles = {w['title'] for w in find_eve_windows()}
-            all_titles = sorted(list(ov_titles | win_titles))
-            for t in all_titles:
-                chk = QCheckBox(t)
-                chk.setStyleSheet("color: #cbd5e1; font-size: 10px;")
-                self._accounts_lay.addWidget(chk)
-                self._account_chks[t] = chk
-            self._accounts_lay.addStretch()
+            all_detected = list(ov_titles | win_titles)
+            
+            # Re-poblar siguiendo el orden previo si existe
+            final_list = []
+            found = set()
+            for title, state in current_order:
+                if title in all_detected:
+                    final_list.append((title, state))
+                    found.add(title)
+            
+            # Añadir nuevos
+            for t in sorted(all_detected):
+                if t not in found:
+                    final_list.append((t, Qt.Unchecked))
+            
+            for i, (t, state) in enumerate(final_list, 1):
+                it = QListWidgetItem(f"{i}. {t}")
+                it.setData(Qt.UserRole, t)
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsDragEnabled)
+                it.setCheckState(state)
+                self._accounts_list.addItem(it)
 
+        btn_row_ops = QHBoxLayout()
         btn_refresh = QPushButton("🔄 Refrescar clientes")
-        btn_refresh.setFixedWidth(120)
+        btn_refresh.setFixedWidth(140)
         btn_refresh.clicked.connect(refresh_accounts)
-        lay.addWidget(btn_refresh)
+        
+        btn_select_all = QPushButton("✅ Seleccionar todos")
+        btn_select_all.setFixedWidth(140)
+        def _select_all_clients():
+            for i in range(self._accounts_list.count()):
+                self._accounts_list.item(i).setCheckState(Qt.Checked)
+        btn_select_all.clicked.connect(_select_all_clients)
+        
+        btn_row_ops.addWidget(btn_refresh)
+        btn_row_ops.addWidget(btn_select_all)
+        btn_row_ops.addStretch()
+        lay.addLayout(btn_row_ops)
 
         btn_save_group = QPushButton("💾 Guardar Grupo")
         btn_save_group.setObjectName("blue")

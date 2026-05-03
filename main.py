@@ -30,9 +30,8 @@ if sys.executable.endswith("pythonw.exe"):
     except Exception:
         pass
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from utils.paths import ROOT_DIR, get_resource_path
+PROJECT_ROOT = ROOT_DIR
 
 APP_DATA = Path(os.environ.get('APPDATA', Path.home())) / 'EVEISKTracker'
 APP_DATA.mkdir(parents=True, exist_ok=True)
