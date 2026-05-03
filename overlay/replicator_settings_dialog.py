@@ -526,6 +526,11 @@ class ReplicatorSettingsDialog(QDialog):
         chk_ha.toggled.connect(lambda v: self._set('highlight_active', v))
         lay.addWidget(chk_ha)
 
+        chk_gray = QCheckBox("Mostrar borde gris")
+        chk_gray.setChecked(bool(self._cfg('show_gray_frame', True)))
+        chk_gray.toggled.connect(lambda v: (self._set('show_gray_frame', v), self._ov.update()))
+        lay.addWidget(chk_gray)
+
         sp_bw = QSpinBox(); sp_bw.setRange(1, 10); sp_bw.setValue(int(self._cfg('border_width') or 2))
         sp_bw.valueChanged.connect(lambda v: (self._set('border_width', v), self._ov.update()))
         _row(lay, "Grosor borde:", sp_bw)

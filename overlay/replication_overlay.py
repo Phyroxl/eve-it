@@ -588,10 +588,16 @@ class ReplicationOverlay(QWidget):
         if shape not in ('square', 'rounded', 'pill'):
             shape = 'rounded' if shape == 'glow' else 'square'
 
-        # [REDISEÑO] Solo pintar fondo rectangular si es SQUARE.
+        # [REDISEÑO] Solo pintar fondo rectangular si es SQUARE y show_gray_frame está activo.
         # Para Pill/Rounded, NO pintamos nada global para evitar el marco gris.
-        if shape == 'square':
+        if shape == 'square' and ov.get('show_gray_frame', True):
             p.fillRect(self.rect(), Qt.black)
+        
+        # [NUEVO] Marco gris decorativo (opcional por el usuario)
+        # Se dibuja un marco de 1px muy sutil si la opción está activa.
+        if ov.get('show_gray_frame', True):
+            p.setPen(QPen(QColor(100, 100, 100, 40), 1))
+            p.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
         # Border and Content rects
         adj = bw / 2.0
@@ -603,6 +609,7 @@ class ReplicationOverlay(QWidget):
             if shape in ('rounded', 'pill'):
                 # El fondo y el clip siguen el path de la forma
                 path = self._get_shape_path(QRectF(self.rect()).adjusted(bw/2, bw/2, -bw/2, -bw/2), shape, bw)
+                # Solo pintamos el fondo interno (negro)
                 p.fillPath(path, Qt.black)
                 p.setClipPath(path)
             
@@ -630,7 +637,7 @@ class ReplicationOverlay(QWidget):
             p.setPen(Qt.cyan)
             p.drawText(self.rect(), Qt.AlignCenter, self._status)
 
-        # Draw Border
+        # Draw Main Border (Cyan/Green)
         if ov.get('border_visible', True):
             if ov.get('highlight_active', True) and self._is_active_client:
                 hex_col = ov.get('active_border_color', '#00ff64')
