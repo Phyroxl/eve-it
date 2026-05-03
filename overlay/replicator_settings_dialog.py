@@ -449,6 +449,8 @@ class ReplicatorSettingsDialog(QDialog):
         sp_bop.valueChanged.connect(lambda v: (self._set('label_bg_opacity', v), self._ov.update()))
         _row(lay, "Opacidad fondo:", sp_bop)
 
+        sp_pad = QSpinBox(); sp_pad.setRange(0, 20); sp_pad.setValue(int(self._cfg('label_padding') or 4))
+        sp_pad.valueChanged.connect(lambda v: (self._set('label_padding', v), self._ov.update()))
         _row(lay, "Padding:", sp_pad)
 
         lay.addSpacing(10)
