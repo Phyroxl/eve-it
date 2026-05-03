@@ -26,8 +26,7 @@ except ImportError:
     from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtGui import QColor
 
-# ... (skipping style and other tabs for brevity, focus on _tab_hotkeys overhaul)
-# Note: I will replace the entire _tab_hotkeys method content correctly this time.
+# ... (General, Layout, Etiqueta, Borde, Hotkeys)
 
 _STYLE = """
 QDialog { background: #05070a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
@@ -63,7 +62,7 @@ QPushButton#green:hover { background: rgba(0,255,100,0.25); border-color: #00ff6
 def _row(parent_layout, label_text: str, widget) -> None:
     row = QHBoxLayout()
     lbl = QLabel(label_text)
-    lbl.setFixedWidth(160)
+    lbl.setFixedWidth(130)
     row.addWidget(lbl)
     row.addWidget(widget)
     row.addStretch()
@@ -668,6 +667,7 @@ class ReplicatorSettingsDialog(QDialog):
             save_hotkeys_cfg(self._ov._cfg, hk)
             _reload_group_combo()
             lbl_hk_status.setText(f"Grupo {gid} guardado.")
+            logger.info(f"[REPLICATOR SETTINGS] Group {gid} saved with {len(checked)} clients.")
 
         btn_save_group = QPushButton("💾 Guardar Grupo")
         btn_save_group.setObjectName("blue")
