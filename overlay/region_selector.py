@@ -202,15 +202,15 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
                        _QColor(0, 0, 0, 80))
 
             # Interior iluminado
-            p.fillRect(sel, _QColor(0, 200, 255, 15))
-            p.setPen(_QPen(_QColor(0, 255, 200), 2))
+            p.fillRect(sel, _QColor(255, 255, 255, 15))
+            p.setPen(_QPen(_QColor(255, 255, 255), 2))
             p.drawRect(sel)
 
             # Asas en esquinas
             cs = 10
             for cx, cy in [(sel.left(), sel.top()), (sel.right(), sel.top()),
                            (sel.left(), sel.bottom()), (sel.right(), sel.bottom())]:
-                p.fillRect(cx - cs//2, cy - cs//2, cs, cs, _QColor(0, 255, 200))
+                p.fillRect(cx - cs//2, cy - cs//2, cs, cs, _QColor(255, 255, 255))
 
             # Dimensiones
             p.setPen(_QPen(_QColor(220, 255, 255)))

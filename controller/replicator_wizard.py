@@ -75,11 +75,11 @@ class ReplicatorWizard:
         title_lbl = QLabel("REPLICADOR"); title_lbl.setStyleSheet("color: #00c8ff; font-weight: bold; font-size: 11px;")
         hl.addWidget(title_lbl); hl.addStretch()
         
-        self.step_lbl = QLabel("ASISTENTE"); self.step_lbl.setStyleSheet("color: #405060; font-weight: bold;")
+        self.step_lbl = QLabel("ASISTENTE"); self.step_lbl.setStyleSheet("color: #ffffff; font-weight: bold;")
         hl.addWidget(self.step_lbl)
         
         btn_close = QPushButton("\u00d7"); btn_close.setFixedSize(20, 20)
-        btn_close.setStyleSheet("QPushButton{background:rgba(255,50,50,0.1);border-color:rgba(255,50,50,0.3);color:#ff6666;}QPushButton:hover{background:rgba(255,50,50,0.3);}")
+        btn_close.setStyleSheet("QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);border-radius:3px;color:#ff6666;}QPushButton:hover{background:rgba(255,50,50,0.35);}")
         btn_close.clicked.connect(self.dlg.reject); hl.addWidget(btn_close)
         main_lay.addWidget(hdr)
         
@@ -159,7 +159,9 @@ class ReplicatorWizard:
         fl = QHBoxLayout(footer); fl.setContentsMargins(20,0,20,0)
         self.btn_back = QPushButton("CERRAR"); self.btn_back.setObjectName("close"); self.btn_back.setMinimumHeight(32); fl.addWidget(self.btn_back)
         fl.addStretch()
-        self.btn_next = QPushButton("LANZAR RÉPLICAS"); self.btn_next.setObjectName("close"); self.btn_next.setMinimumHeight(32); fl.addWidget(self.btn_next)
+        self.btn_next = QPushButton("LANZAR RÉPLICAS"); self.btn_next.setMinimumHeight(32)
+        self.btn_next.setStyleSheet("QPushButton{background:rgba(0,180,60,0.25);border:1px solid rgba(0,255,100,0.5);color:#00ff64;font-weight:bold;}QPushButton:hover{background:rgba(0,220,80,0.4);border-color:#00ff64;}QPushButton:pressed{background:rgba(0,140,40,0.3);}")
+        fl.addWidget(self.btn_next)
         
         main_lay.addWidget(p1)
         main_lay.addWidget(footer)
@@ -258,7 +260,7 @@ class ReplicatorWizard:
             chk = QLabel(); chk.setFixedSize(14, 14); chk.setProperty("win_title", w['title'])
             set_custom_chk(chk, False); self._custom_cards.append(chk)
             lbl_title = QLabel(w['title']); lbl_title.setStyleSheet("color: #e1e9f5; font-size: 11px; font-weight: bold;")
-            lbl_res = QLabel(f"{w['size'][0]}x{w['size'][1]}"); lbl_res.setStyleSheet("color: rgba(0,200,255,0.4); font-size: 9px;")
+            lbl_res = QLabel(f"{w['size'][0]}x{w['size'][1]}"); lbl_res.setStyleSheet("color: #00c8ff; font-size: 9px;")
             card.mouseReleaseEvent = lambda e, _chk=chk: set_custom_chk(_chk, not _chk.property("is_checked"))
             lay.addWidget(chk); lay.addWidget(lbl_title); lay.addStretch(); lay.addWidget(lbl_res)
             it.setSizeHint(card.sizeHint()); self.win_list.setItemWidget(it, card)

@@ -67,9 +67,32 @@
 **Solución:** Añadidos campos `label_text_x`/`label_text_y` (default 0) a `OVERLAY_DEFAULTS`, `LABEL_COPY_KEYS` y `FULL_PROFILE_KEYS` en config. Dos spinboxes (rango ±2000) en `_tab_label()`. En `paintEvent()`, `lx` y `ly` reciben el offset tras el cálculo de posición base — X=0/Y=0 idéntico a antes.
 **Archivos:** `overlay/replicator_config.py`, `overlay/replicator_settings_dialog.py`, `overlay/replication_overlay.py`
 
+## 8) Reset 150x150 global + Asistente visual fixes + Borde región blanco
+
+### 8a — Reset posición + tamaño 150x150
+**Problema:** "Resetear posición" no cambiaba el tamaño, solo la posición.
+**Solución:** `_reset_one_position(ov)` ahora usa `ov.setGeometry(new_x, new_y, 150, 150)` con constantes `_RESET_W=150`/`_RESET_H=150`. La posición centrada se calcula con 150px. `_reset_position()` envuelve todo en `self._resize_from_spinbox = True/False` para suprimir el broadcaster durante el reset y evitar cascadas. Con "aplicar a todas" ON resetea todas las réplicas a 150×150.
+**Archivo:** `overlay/replicator_settings_dialog.py`
+
+### 8b — Ajustes visuales del Asistente del Replicador
+**Cambios en `controller/replicator_wizard.py`:**
+- "ASISTENTE": color `#405060` → `#ffffff`
+- Botón cerrar: estilo igualado al traductor (`border:1px solid rgba(255,50,50,0.4); border-radius:3px; background rgba 0.15 → 0.35 hover`)
+- "LANZAR RÉPLICAS": verde explícito (`rgba(0,180,60,...)`), eliminado `objectName("close")`
+- `lbl_res` (resolución): color `rgba(0,200,255,0.4)` → `#00c8ff` (igual que título)
+
+**Cambios en `utils/i18n.py`:**
+- `repl_p1_title` español (es): `'Ventanas EvE Detectadas'` → `'Ventanas detectadas'`
+- `repl_p1_title` español (es_LA): `'Ventanales EVE Detectadas'` → `'Ventanas detectadas'`
+
+### 8c — Borde blanco en Seleccionar Región
+**Problema:** El borde de selección se veía en cyan-verde (0,255,200) que podía confundirse con oscuro.
+**Solución:** En `overlay/region_selector.py` (`paintEvent`): colores (0,255,200) → (255,255,255) para el borde de selección, asas de esquinas y fill interior del área seleccionada.
+**Archivo:** `overlay/region_selector.py`
+
 ## Pruebas Realizadas
 - `python -m py_compile`: Validado en todos los módulos afectados.
-- `pytest`: 87 tests de replicador pasados (incluye sync_resize, apply_settings_to_all, layout_profiles, focus_click, hide_inactive, snap, etc.).
+- `pytest`: 63 tests de replicador pasados.
 - Verificación de clipping visual con formas `pill` y `rounded`.
 - Verificación de detección inmediata de borde activo al lanzar la suite.
 
@@ -77,4 +100,7 @@
 - `overlay/replication_overlay.py`
 - `overlay/replicator_settings_dialog.py`
 - `overlay/replicator_config.py`
+- `controller/replicator_wizard.py`
+- `overlay/region_selector.py`
+- `utils/i18n.py`
 - `.workflow/antigravity_task.md`

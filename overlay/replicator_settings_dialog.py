@@ -579,35 +579,39 @@ class ReplicatorSettingsDialog(QDialog):
         chk_ma.toggled.connect(_on_ma_toggled)
         lay.addWidget(chk_ma)
 
+        _RESET_W = 150
+        _RESET_H = 150
+
         def _reset_one_position(ov):
             try:
                 from PySide6.QtWidgets import QApplication
             except ImportError:
                 from PyQt6.QtWidgets import QApplication
             screen = QApplication.primaryScreen()
-            cur_w = max(20, ov.width())
-            cur_h = max(20, ov.height())
             if screen:
                 sg = screen.availableGeometry()
-                new_x = sg.x() + (sg.width() - cur_w) // 2
-                new_y = sg.y() + (sg.height() - cur_h) // 2
+                new_x = sg.x() + (sg.width() - _RESET_W) // 2
+                new_y = sg.y() + (sg.height() - _RESET_H) // 2
             else:
                 new_x, new_y = 400, 300
-            ov.move(new_x, new_y)
+            ov.setGeometry(new_x, new_y, _RESET_W, _RESET_H)
             ov._schedule_autosave()
+            logger.debug(f"[REPLICATOR RESET] Resetting one replica to default position and 150x150: title={ov._title!r}")
 
         def _reset_position():
-            if chk_lp_all.isChecked():
-                from overlay.replication_overlay import _OVERLAY_REGISTRY
-                targets = list(_OVERLAY_REGISTRY)
-                for ov in targets:
-                    _reset_one_position(ov)
-                logger.info(f"[REPLICATOR RESET] apply_to_all enabled, resetting positions for {len(targets)} replicas")
-            else:
-                old_x, old_y = self._ov.x(), self._ov.y()
-                _reset_one_position(self._ov)
-                logger.info(f"[LAYOUT RESET POSITION] title={self._ov._title!r} "
-                            f"old=x={old_x} y={old_y}")
+            self._resize_from_spinbox = True
+            try:
+                if chk_lp_all.isChecked():
+                    from overlay.replication_overlay import _OVERLAY_REGISTRY
+                    targets = list(_OVERLAY_REGISTRY)
+                    for ov in targets:
+                        _reset_one_position(ov)
+                    logger.info(f"[REPLICATOR RESET] apply_to_all enabled, resetting {len(targets)} replicas to default position and 150x150")
+                else:
+                    _reset_one_position(self._ov)
+                    logger.info(f"[REPLICATOR RESET] Resetting one replica to default position and 150x150")
+            finally:
+                self._resize_from_spinbox = False
 
         btn_reset = QPushButton("Resetear posicion")
         btn_reset.clicked.connect(_reset_position)
