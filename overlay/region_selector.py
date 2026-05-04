@@ -70,10 +70,11 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
       5. Escape o click derecho → cancela
     """
 
-    def __init__(self, ref_rect: tuple, screenshot=None):
+    def __init__(self, ref_rect: tuple, screenshot=None, screen=None):
         super().__init__()
         self._ref_rect   = ref_rect
         self._screenshot = screenshot
+        self._screen     = screen   # target screen; None → primaryScreen
         self._start      = None
         self._end        = None
         self._selection  = None   # QRect final
@@ -121,7 +122,8 @@ class RegionSelectorWidget(_QWidget if _qt_ok else object):
                             getattr(Qt, 'StrongFocus', 11))
         self.setFocusPolicy(focus_pol)
 
-        screen = _QApp.primaryScreen()
+        # Use caller-supplied screen, fall back to primary
+        screen = self._screen or _QApp.primaryScreen()
         geom   = screen.geometry()
         self.setGeometry(geom)
         self.showFullScreen()
@@ -483,26 +485,32 @@ def _get_ref_rect_qt(reference_window: dict, screen) -> tuple:
     return (sg.left(), sg.top(), sg.left() + sg.width(), sg.top() + sg.height())
 
 
-def select_region(reference_window: dict) -> Optional[dict]:
+def select_region(reference_window: dict, screen=None) -> Optional[dict]:
     """
     Muestra el selector de región y bloquea hasta que el usuario confirma.
 
     reference_window: dict con 'hwnd' y 'rect' (l,t,r,b) de la ventana EVE.
-    Retorna región relativa {x,y,w,h} relativa a la ventana, o None.
+    screen: QScreen opcional; si se omite usa primaryScreen.
+    Retorna región relativa {x,y,w,h} relativa a la ventana (o pantalla), o None.
     """
     if not _qt_ok:
         print("[region_selector] Qt no disponible")
         return None
 
     app = _QApp.instance() or _QApp(sys.argv)
-    screen = app.primaryScreen()
+    if screen is None:
+        screen = app.primaryScreen()
 
-    # Capturar screenshot del escritorio como fondo
+    # Capturar screenshot de la pantalla seleccionada como fondo
     screenshot = None
     try:
-        screenshot = screen.grabWindow(0)
+        g = screen.geometry()
+        screenshot = screen.grabWindow(0, g.x(), g.y(), g.width(), g.height())
     except Exception:
-        pass
+        try:
+            screenshot = screen.grabWindow(0)
+        except Exception:
+            pass
 
     # CRÍTICO: Obtener ref_rect en coordenadas LÓGICAS Qt (no Win32 físicas).
     # Win32 GetWindowRect devuelve coords físicas; Qt usa coords lógicas.
@@ -519,7 +527,10 @@ def select_region(reference_window: dict) -> Optional[dict]:
     else:
         ref_win_for_qt = reference_window
     ref_rect = _get_ref_rect_qt(ref_win_for_qt, screen)
-    widget   = RegionSelectorWidget(ref_rect, screenshot)
+    import logging as _log
+    _log.getLogger('eve.region_selector').info(
+        "[REGION SELECTOR] Opening selector on screen geometry=%s", screen.geometry())
+    widget   = RegionSelectorWidget(ref_rect, screenshot, screen=screen)
 
     # Usar exec() del widget como diálogo para bloquear correctamente
     # Alternativa robusta: QEventLoop explícito

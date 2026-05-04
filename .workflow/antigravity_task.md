@@ -96,6 +96,25 @@
 - Verificación de clipping visual con formas `pill` y `rounded`.
 - Verificación de detección inmediata de borde activo al lanzar la suite.
 
+## 9) Seleccionar pantalla en Asistente + botón HUD
+
+### 9a — Nueva opción "Seleccionar pantalla"
+**Qué:** Combo `scr_combo` en el bloque de configuración del asistente. Detecta todas las pantallas conectadas con `QApplication.screens()` e indica resolución, posición y si es principal.
+**Cómo:** `_populate_screens()` y `_get_selected_screen()` añadidos a `ReplicatorWizard`. `_on_visual_select()` llama `select_region(..., screen=selected_screen)`.
+**region_selector.py:** `select_region()` acepta `screen=None`; cuando se provee, lo pasa a `RegionSelectorWidget` (que lo usa en `_setup_window` para `setGeometry(screen.geometry())`). El screenshot se captura con `screen.grabWindow(0, x, y, w, h)` para obtener solo esa pantalla.
+**Coordenadas multi-monitor:** el widget se posiciona sobre la geometría virtual correcta (`screen.geometry()`) incluyendo coordenadas negativas (monitores a la izquierda). El `_ref_rect` fallback usa la geometría de la pantalla seleccionada.
+**Archivos:** `controller/replicator_wizard.py`, `overlay/region_selector.py`
+
+### 9b — Botón de cierre HUD azul oscuro
+**Qué:** Botón cerrar y nuevo botón minimizar con estilo HUD oscuro (`#0B1B33` / `#294466` / `#DDEBFF`). Sin rojo, bordes redondeados, tamaño compacto 20×18.
+**Archivo:** `controller/replicator_wizard.py`
+
+## Pruebas Realizadas
+- `python -m py_compile`: Validado en todos los módulos afectados.
+- `pytest`: 63 tests de replicador pasados.
+- Verificación de clipping visual con formas `pill` y `rounded`.
+- Verificación de detección inmediata de borde activo al lanzar la suite.
+
 **Archivos Tocados:**
 - `overlay/replication_overlay.py`
 - `overlay/replicator_settings_dialog.py`

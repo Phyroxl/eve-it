@@ -77,10 +77,23 @@ class ReplicatorWizard:
         
         self.step_lbl = QLabel("ASISTENTE"); self.step_lbl.setStyleSheet("color: #ffffff; font-weight: bold;")
         hl.addWidget(self.step_lbl)
-        
-        btn_close = QPushButton("\u00d7"); btn_close.setFixedSize(20, 20)
-        btn_close.setStyleSheet("QPushButton{background:rgba(255,50,50,0.15);border:1px solid rgba(255,50,50,0.4);border-radius:3px;color:#ff6666;}QPushButton:hover{background:rgba(255,50,50,0.35);}")
-        btn_close.clicked.connect(self.dlg.reject); hl.addWidget(btn_close)
+
+        _WIN_BTN_STYLE = (
+            "QPushButton{background:#0B1B33;color:#DDEBFF;border:1px solid #294466;"
+            "border-radius:3px;min-width:20px;max-width:20px;min-height:18px;max-height:18px;"
+            "padding:0px;font-size:11px;font-weight:bold;}"
+            "QPushButton:hover{background:#132A4A;border:1px solid #3F6D9A;}"
+            "QPushButton:pressed{background:#071426;}"
+        )
+        btn_min = QPushButton("\u2014"); btn_min.setFixedSize(20, 18)
+        btn_min.setStyleSheet(_WIN_BTN_STYLE)
+        btn_min.clicked.connect(self.dlg.showMinimized)
+        hl.addWidget(btn_min)
+
+        btn_close = QPushButton("\u00d7"); btn_close.setFixedSize(20, 18)
+        btn_close.setStyleSheet(_WIN_BTN_STYLE)
+        btn_close.clicked.connect(self.dlg.reject)
+        hl.addWidget(btn_close)
         main_lay.addWidget(hdr)
         
         # Drag logic
@@ -152,6 +165,16 @@ class ReplicatorWizard:
         self.btn_visual = QPushButton("SELECCIONAR REGIÓN")
         self.btn_visual.setMinimumHeight(35); self.btn_visual.setObjectName("primary")
         conf_lay.addWidget(self.btn_visual)
+
+        # Screen selector — populated later in _populate_screens()
+        scr_row = QHBoxLayout(); scr_row.setSpacing(8)
+        scr_lbl = QLabel("Seleccionar pantalla:")
+        scr_lbl.setFixedWidth(145)
+        scr_row.addWidget(scr_lbl)
+        self.scr_combo = QComboBox(); self.scr_combo.setMinimumWidth(180)
+        scr_row.addWidget(self.scr_combo); scr_row.addStretch()
+        conf_lay.addLayout(scr_row)
+
         l1.addWidget(conf_box)
 
         # Footer
@@ -186,7 +209,42 @@ class ReplicatorWizard:
         self._sync_to_cfg()
         
         self._update_visual_button_state()
+        self._populate_screens()
         self._load_position()
+
+    def _populate_screens(self):
+        """Detect connected screens and populate the screen selector combo."""
+        screens = QApplication.screens()
+        primary = QApplication.primaryScreen()
+        self.scr_combo.blockSignals(True)
+        prev_idx = self.scr_combo.currentIndex()
+        self.scr_combo.clear()
+        primary_idx = 0
+        for i, s in enumerate(screens):
+            g = s.geometry()
+            label = f"Pantalla {i + 1}  {g.width()}×{g.height()}"
+            if s == primary:
+                label += "  [Principal]"
+                primary_idx = i
+            if g.x() != 0 or g.y() != 0:
+                label += f"  @{g.x()},{g.y()}"
+            self.scr_combo.addItem(label)
+        # Restore previous selection if still valid, else use primary
+        restore = prev_idx if 0 <= prev_idx < len(screens) else primary_idx
+        self.scr_combo.setCurrentIndex(restore)
+        self.scr_combo.blockSignals(False)
+        logger.info("[REPLICATOR SCREEN] Detected %d screen(s)", len(screens))
+
+    def _get_selected_screen(self):
+        """Return the QScreen corresponding to the current combo selection."""
+        idx = self.scr_combo.currentIndex()
+        screens = QApplication.screens()
+        if 0 <= idx < len(screens):
+            s = screens[idx]
+            logger.info("[REPLICATOR SCREEN] Selected screen index=%d name=%s geometry=%s",
+                        idx, s.name(), s.geometry())
+            return s
+        return QApplication.primaryScreen()
 
     def _update_visual_button_state(self):
         # Simplificado: ya no cambia texto ni color a "Región seleccionada"
@@ -226,7 +284,11 @@ class ReplicatorWizard:
         from overlay.region_selector import select_region
         ref_hwnd = getattr(self, '_anchor_hwnd_ref', None)
         if not ref_hwnd and self._windows_cache: ref_hwnd = self._windows_cache[0]['hwnd']
-        reg = select_region({'hwnd': ref_hwnd} if ref_hwnd else {'rect': (0,0,1920,1080)})
+        selected_screen = self._get_selected_screen()
+        reg = select_region(
+            {'hwnd': ref_hwnd} if ref_hwnd else {'rect': (0, 0, 1920, 1080)},
+            screen=selected_screen,
+        )
         if self._suite_win: self._suite_win.show()
         if reg:
             self.sp_x.setValue(int(reg['x'] * 1920)); self.sp_y.setValue(int(reg['y'] * 1080))
