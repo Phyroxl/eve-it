@@ -57,41 +57,83 @@ _DRAG_THRESHOLD = 5
 # ---------------------------------------------------------------------------
 # WH_MOUSE_LL — global low-level mouse hook so wheel events reach overlays
 # even when EVE Online has OS focus (WM_MOUSEWHEEL normally goes to the fg window).
+#
+# Win64 type rules:
+#   LRESULT  = c_ssize_t (64-bit signed)  — NOT c_long (32-bit on Windows!)
+#   WPARAM   = wintypes.WPARAM  (UINT_PTR, 64-bit)
+#   LPARAM   = wintypes.LPARAM  (LONG_PTR, 64-bit)
+# CallNextHookEx argtypes MUST be declared explicitly; without them ctypes
+# defaults to c_int for lParam which overflows on every WM_MOUSEMOVE pointer.
 # ---------------------------------------------------------------------------
-_WH_MOUSE_LL = 14
-_WM_MOUSEWHEEL = 0x020A
-_mouse_hook_handle = None
-_mouse_hook_proc_ref = None  # prevent GC of CFUNCTYPE callback
+_WH_MOUSE_LL   = 14
+_WM_MOUSEWHEEL  = 0x020A
+_WM_MOUSEHWHEEL = 0x020E
+_mouse_hook_handle   = None
+_mouse_hook_proc_ref = None   # keep CFUNCTYPE alive to prevent GC crash
+_hook_error_count    = 0
+_hook_error_ts       = 0.0
 
 if IS_WINDOWS:
     import ctypes
-    import ctypes.wintypes
+    import ctypes.wintypes as _wt
+
+    # Correct Win64 types
+    _LRESULT  = ctypes.c_ssize_t
+    _WPARAM   = _wt.WPARAM
+    _LPARAM   = _wt.LPARAM
+    _HHOOK    = _wt.HHOOK
+
+    # Declare argtypes/restype on the user32 functions we use from the hook
+    # so ctypes marshals 64-bit values correctly.
+    _u32h = ctypes.windll.user32
+    _u32h.CallNextHookEx.restype   = _LRESULT
+    _u32h.CallNextHookEx.argtypes  = [_HHOOK, ctypes.c_int, _WPARAM, _LPARAM]
+    _u32h.SetWindowsHookExW.restype  = _HHOOK
+    _u32h.SetWindowsHookExW.argtypes = [
+        ctypes.c_int, ctypes.c_void_p, _wt.HINSTANCE, _wt.DWORD,
+    ]
+    _u32h.UnhookWindowsHookEx.restype  = _wt.BOOL
+    _u32h.UnhookWindowsHookEx.argtypes = [_HHOOK]
+
+    _HOOKPROC = ctypes.WINFUNCTYPE(_LRESULT, ctypes.c_int, _WPARAM, _LPARAM)
 
     class _MSLLHOOKSTRUCT(ctypes.Structure):
         _fields_ = [
-            ('pt',          ctypes.wintypes.POINT),
-            ('mouseData',   ctypes.wintypes.DWORD),
-            ('flags',       ctypes.wintypes.DWORD),
-            ('time',        ctypes.wintypes.DWORD),
+            ('pt',          _wt.POINT),
+            ('mouseData',   _wt.DWORD),
+            ('flags',       _wt.DWORD),
+            ('time',        _wt.DWORD),
             ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong)),
         ]
 
-    _HOOKPROC = ctypes.WINFUNCTYPE(
-        ctypes.c_long, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM
-    )
-
     def _mouse_ll_hook_proc(nCode, wParam, lParam):
-        if nCode >= 0 and wParam == _WM_MOUSEWHEEL:
-            try:
-                ms    = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
-                delta = ctypes.c_short(ms.mouseData >> 16).value
-                ov    = ReplicationOverlay._hover_overlay
-                if ov is not None:
-                    _ov_ref = weakref.ref(ov)
-                    QTimer.singleShot(0, lambda d=delta, r=_ov_ref: _deliver_hook_wheel(r, d))
-            except Exception:
-                pass
-        return ctypes.windll.user32.CallNextHookEx(_mouse_hook_handle, nCode, wParam, lParam)
+        # ── Fast-path: pass through everything that is not a wheel event ──────
+        # WM_MOUSEMOVE fires hundreds of times/second; any work here causes lag.
+        if nCode < 0 or wParam not in (_WM_MOUSEWHEEL, _WM_MOUSEHWHEEL):
+            return _u32h.CallNextHookEx(_mouse_hook_handle, nCode, wParam, lParam)
+
+        # ── Wheel event: decode delta and route to the hovered overlay ─────────
+        global _hook_error_count, _hook_error_ts
+        try:
+            ms    = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+            delta = ctypes.c_short(ms.mouseData >> 16).value
+            ov    = ReplicationOverlay._hover_overlay
+            if ov is not None:
+                _ov_ref = weakref.ref(ov)
+                QTimer.singleShot(0, lambda d=delta, r=_ov_ref: _deliver_hook_wheel(r, d))
+        except Exception as e:
+            _hook_error_count += 1
+            _now = time.monotonic()
+            if _now - _hook_error_ts > 30.0:   # log at most once per 30 s
+                _hook_error_ts = _now
+                logger.warning(f"[MOUSE HOOK] wheel proc error (#{_hook_error_count}): {e}")
+                if _hook_error_count >= 5:
+                    # Too many errors: self-disable to protect app performance
+                    logger.warning("[MOUSE HOOK] auto-disabling after repeated errors")
+                    _uninstall_global_mouse_hook()
+                    return 0
+
+        return _u32h.CallNextHookEx(_mouse_hook_handle, nCode, wParam, lParam)
 
     def _deliver_hook_wheel(ov_ref, delta):
         o = ov_ref()
@@ -101,6 +143,7 @@ if IS_WINDOWS:
             except Exception:
                 pass
 
+
 def _install_global_mouse_hook():
     global _mouse_hook_handle, _mouse_hook_proc_ref
     if not IS_WINDOWS or _mouse_hook_handle:
@@ -108,13 +151,42 @@ def _install_global_mouse_hook():
     try:
         proc = _HOOKPROC(_mouse_ll_hook_proc)
         _mouse_hook_proc_ref = proc
-        _mouse_hook_handle = ctypes.windll.user32.SetWindowsHookExW(_WH_MOUSE_LL, proc, None, 0)
+        _mouse_hook_handle = _u32h.SetWindowsHookExW(_WH_MOUSE_LL, proc, None, 0)
         if _mouse_hook_handle:
             logger.info(f"[MOUSE HOOK] WH_MOUSE_LL installed handle={_mouse_hook_handle}")
+            _log_hook_event("installed ok", f"handle={_mouse_hook_handle}")
         else:
             logger.warning("[MOUSE HOOK] SetWindowsHookExW returned NULL")
+            _log_hook_event("install failed", "handle=NULL")
     except Exception as e:
         logger.warning(f"[MOUSE HOOK] Failed to install: {e}")
+        _log_hook_event("install error", str(e))
+
+
+def _uninstall_global_mouse_hook():
+    global _mouse_hook_handle
+    if _mouse_hook_handle and IS_WINDOWS:
+        try:
+            ok = _u32h.UnhookWindowsHookEx(_mouse_hook_handle)
+            logger.info(f"[MOUSE HOOK] uninstalled ok={bool(ok)}")
+            _log_hook_event("uninstalled", f"ok={bool(ok)}")
+        except Exception as e:
+            logger.warning(f"[MOUSE HOOK] uninstall error: {e}")
+        _mouse_hook_handle = None
+
+
+def _log_hook_event(event: str, detail: str = ""):
+    """Write a single line to logs/replicator_mouse_hook_debug.log."""
+    try:
+        import datetime
+        from utils.paths import ROOT_DIR
+        lp = ROOT_DIR / 'logs' / 'replicator_mouse_hook_debug.log'
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        with open(lp, 'a', encoding='utf-8') as f:
+            f.write(f"[{ts}] [MOUSE HOOK] {event} {detail}\n")
+    except Exception:
+        pass
 
 
 class CaptureThread(QThread):
