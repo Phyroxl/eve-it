@@ -579,25 +579,35 @@ class ReplicatorSettingsDialog(QDialog):
         chk_ma.toggled.connect(_on_ma_toggled)
         lay.addWidget(chk_ma)
 
-        def _reset_position():
+        def _reset_one_position(ov):
             try:
                 from PySide6.QtWidgets import QApplication
             except ImportError:
                 from PyQt6.QtWidgets import QApplication
             screen = QApplication.primaryScreen()
-            cur_w = max(20, self._ov.width())
-            cur_h = max(20, self._ov.height())
+            cur_w = max(20, ov.width())
+            cur_h = max(20, ov.height())
             if screen:
                 sg = screen.availableGeometry()
                 new_x = sg.x() + (sg.width() - cur_w) // 2
                 new_y = sg.y() + (sg.height() - cur_h) // 2
             else:
                 new_x, new_y = 400, 300
-            old_x, old_y = self._ov.x(), self._ov.y()
-            self._ov.move(new_x, new_y)
-            self._ov._schedule_autosave()
-            logger.info(f"[LAYOUT RESET POSITION] title={self._ov._title!r} "
-                        f"old=x={old_x} y={old_y} new=x={new_x} y={new_y}")
+            ov.move(new_x, new_y)
+            ov._schedule_autosave()
+
+        def _reset_position():
+            if chk_lp_all.isChecked():
+                from overlay.replication_overlay import _OVERLAY_REGISTRY
+                targets = list(_OVERLAY_REGISTRY)
+                for ov in targets:
+                    _reset_one_position(ov)
+                logger.info(f"[REPLICATOR RESET] apply_to_all enabled, resetting positions for {len(targets)} replicas")
+            else:
+                old_x, old_y = self._ov.x(), self._ov.y()
+                _reset_one_position(self._ov)
+                logger.info(f"[LAYOUT RESET POSITION] title={self._ov._title!r} "
+                            f"old=x={old_x} y={old_y}")
 
         btn_reset = QPushButton("Resetear posicion")
         btn_reset.clicked.connect(_reset_position)
@@ -676,6 +686,16 @@ class ReplicatorSettingsDialog(QDialog):
         sp_fs.valueChanged.connect(lambda v: (self._set('label_font_size', v), self._ov.update()))
         sp_fs.editingFinished.connect(lambda: (self._set('label_font_size', sp_fs.value()), self._ov.update()))
         _row(lay, "Tamano fuente:", sp_fs)
+
+        sp_tx = QSpinBox(); sp_tx.setRange(-2000, 2000); sp_tx.setValue(int(self._cfg('label_text_x') or 0))
+        sp_tx.valueChanged.connect(lambda v: (self._set('label_text_x', v), self._ov.update()))
+        sp_tx.editingFinished.connect(lambda: (self._set('label_text_x', sp_tx.value()), self._ov.update()))
+        _row(lay, "Texto X:", sp_tx)
+
+        sp_ty = QSpinBox(); sp_ty.setRange(-2000, 2000); sp_ty.setValue(int(self._cfg('label_text_y') or 0))
+        sp_ty.valueChanged.connect(lambda v: (self._set('label_text_y', v), self._ov.update()))
+        sp_ty.editingFinished.connect(lambda: (self._set('label_text_y', sp_ty.value()), self._ov.update()))
+        _row(lay, "Texto Y:", sp_ty)
 
         btn_col = _color_btn(self, self._cfg('label_color') or '#ffffff',
                              lambda v: (self._set('label_color', v), self._ov.update()))
@@ -756,7 +776,7 @@ class ReplicatorSettingsDialog(QDialog):
         sp_bw.editingFinished.connect(lambda: (self._set('border_width', sp_bw.value()), self._ov.update()))
         _row(lay, "Grosor borde:", sp_bw)
 
-        _shapes = ['square', 'rounded', 'pill']
+        _shapes = ['square', 'rounded', 'pill', 'diamond']
         cmb_shape = QComboBox()
         cmb_shape.addItems(_shapes)
         cur_shape = self._cfg('border_shape') or 'square'

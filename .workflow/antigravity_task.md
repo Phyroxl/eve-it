@@ -44,13 +44,37 @@
 4. Border-drag X/Y → no propaga (broadcaster filtra 'x'/'y').
 5. Checkbox OFF → broadcaster devuelve inmediatamente, no propaga.
 
+## 7) Reset Position global + Diamond shape + Label Text X/Y
+
+### 7a — Resetear posición en todas las réplicas
+**Problema:** El botón "Resetear posición" solo afectaba a la réplica activa aunque "Aplicar a todas las réplicas" estuviera ON.
+**Solución:** Extraída la función `_reset_one_position(ov)` reutilizable. El handler `_reset_position()` ahora itera `_OVERLAY_REGISTRY` cuando `chk_lp_all.isChecked()`. Si está OFF, comportamiento original intacto.
+**Archivo:** `overlay/replicator_settings_dialog.py`
+
+### 7b — Nueva forma de borde "Diamante"
+**Problema:** No existía forma diamond en el replicador.
+**Solución:** Añadido 'diamond' al pipeline completo:
+- `_tab_border()`: añadido a `_shapes` list y combo UI.
+- `paintEvent()`: shape check actualizado a include 'diamond'; inner clip, border draw y debug layer también.
+- `_build_visual_shape_path()`: path moveTo/lineTo con 4 vértices (top/right/bottom/left).
+- `_get_shape_path()`: mismo path para borde y clip interno.
+- `_apply_window_shape_mask()`: QBitmap path con diamond polygon.
+- `_apply_native_window_region()`: `CreatePolygonRgn` con 4 POINT structs (ALTERNATE fill).
+**Archivos:** `overlay/replication_overlay.py`, `overlay/replicator_settings_dialog.py`
+
+### 7c — Label Text X/Y offset
+**Problema:** No había forma de desplazar manualmente el texto de la etiqueta.
+**Solución:** Añadidos campos `label_text_x`/`label_text_y` (default 0) a `OVERLAY_DEFAULTS`, `LABEL_COPY_KEYS` y `FULL_PROFILE_KEYS` en config. Dos spinboxes (rango ±2000) en `_tab_label()`. En `paintEvent()`, `lx` y `ly` reciben el offset tras el cálculo de posición base — X=0/Y=0 idéntico a antes.
+**Archivos:** `overlay/replicator_config.py`, `overlay/replicator_settings_dialog.py`, `overlay/replication_overlay.py`
+
 ## Pruebas Realizadas
 - `python -m py_compile`: Validado en todos los módulos afectados.
-- `pytest`: 46 tests de replicador pasados (test_sync_resize_broadcast, test_replicator_apply_settings_to_all, test_replicator_layout_profiles, etc.).
+- `pytest`: 87 tests de replicador pasados (incluye sync_resize, apply_settings_to_all, layout_profiles, focus_click, hide_inactive, snap, etc.).
 - Verificación de clipping visual con formas `pill` y `rounded`.
 - Verificación de detección inmediata de borde activo al lanzar la suite.
 
 **Archivos Tocados:**
 - `overlay/replication_overlay.py`
 - `overlay/replicator_settings_dialog.py`
+- `overlay/replicator_config.py`
 - `.workflow/antigravity_task.md`

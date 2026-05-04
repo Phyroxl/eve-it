@@ -524,8 +524,15 @@ class ReplicationOverlay(QWidget):
                     painter.setPen(no_pen)
 
                     path = QPainterPath()
-                    radius = min(w, h) / 2.0 if shape == 'pill' else 10.0
-                    path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+                    if shape == 'diamond':
+                        path.moveTo(w / 2.0, 0)
+                        path.lineTo(w, h / 2.0)
+                        path.lineTo(w / 2.0, h)
+                        path.lineTo(0, h / 2.0)
+                        path.closeSubpath()
+                    else:
+                        radius = min(w, h) / 2.0 if shape == 'pill' else 10.0
+                        path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
                     painter.drawPath(path)
                     painter.end()
 
@@ -596,6 +603,19 @@ class ReplicationOverlay(QWidget):
             elif shape == 'rounded':
                 hrgn = _gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, 20, 20)
                 kind = 'rounded'
+            elif shape == 'diamond':
+                import ctypes.wintypes as _cwt
+                _pts_type = (_cwt.POINT * 4)
+                _pts = _pts_type(
+                    _cwt.POINT(w // 2, 0),
+                    _cwt.POINT(w, h // 2),
+                    _cwt.POINT(w // 2, h),
+                    _cwt.POINT(0, h // 2),
+                )
+                _gdi32.CreatePolygonRgn.restype  = ctypes.c_void_p
+                _gdi32.CreatePolygonRgn.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+                hrgn = _gdi32.CreatePolygonRgn(_pts, 4, 1)  # 1 = ALTERNATE fill
+                kind = 'diamond'
 
             self._last_native_region_kind = kind
 
@@ -1208,6 +1228,12 @@ class ReplicationOverlay(QWidget):
                 path.addRoundedRect(r, radius, radius)
         elif shape == 'rounded':
             path.addRoundedRect(r, 20.0, 20.0)
+        elif shape == 'diamond':
+            path.moveTo(w / 2.0, 0)
+            path.lineTo(w, h / 2.0)
+            path.lineTo(w / 2.0, h)
+            path.lineTo(0, h / 2.0)
+            path.closeSubpath()
         else:
             path.addRect(r)
         return path
@@ -1219,6 +1245,14 @@ class ReplicationOverlay(QWidget):
             path.addRoundedRect(rect, radius, radius)
         elif shape == 'rounded':
             path.addRoundedRect(rect, 8, 8)
+        elif shape == 'diamond':
+            cx = rect.left() + rect.width() / 2.0
+            cy = rect.top() + rect.height() / 2.0
+            path.moveTo(cx, rect.top())
+            path.lineTo(rect.right(), cy)
+            path.lineTo(cx, rect.bottom())
+            path.lineTo(rect.left(), cy)
+            path.closeSubpath()
         else:
             path.addRect(rect)
         return path
@@ -1237,7 +1271,7 @@ class ReplicationOverlay(QWidget):
         ov    = self._ov_cfg
         bw    = max(1, int(ov.get('border_width', 2))) if ov.get('border_visible', True) else 0
         shape = ov.get('border_shape', 'square')
-        if shape not in ('square', 'rounded', 'pill'):
+        if shape not in ('square', 'rounded', 'pill', 'diamond'):
             shape = 'rounded' if shape == 'glow' else 'square'
 
         # 1) Clear backing buffer to fully transparent.
@@ -1264,7 +1298,7 @@ class ReplicationOverlay(QWidget):
             p.setClipPath(shape_path)
 
         # 3) Optional gray frame — square only; never draw a rectangular frame on
-        # pill/rounded because it would leak outside the clipped shape.
+        # pill/rounded/diamond because it would leak outside the clipped shape.
         if shape == 'square' and ov.get('show_gray_frame', True):
             p.fillRect(self.rect(), Qt.black)
             p.setPen(QPen(QColor(100, 100, 100, 40), 1))
@@ -1278,7 +1312,7 @@ class ReplicationOverlay(QWidget):
         # 4) Captured frame
         if self._pixmap:
             p.save()
-            if shape in ('rounded', 'pill'):
+            if shape in ('rounded', 'pill', 'diamond'):
                 # Tighter inner clip for content area (excludes the border strip).
                 # setClipPath inside save() overrides to inner_path; p.restore()
                 # returns us to the outer shape_path clip automatically.
@@ -1317,7 +1351,7 @@ class ReplicationOverlay(QWidget):
                        if ov.get('highlight_active', True) and self._is_active_client
                        else ov.get('client_color', '#00c8ff'))
             p.setPen(QPen(QColor(hex_col), bw))
-            if shape in ('rounded', 'pill'):
+            if shape in ('rounded', 'pill', 'diamond'):
                 p.drawPath(self._get_shape_path(border_rect, shape, bw))
             else:
                 p.drawRect(border_rect)
@@ -1340,6 +1374,8 @@ class ReplicationOverlay(QWidget):
             lx = (self.width() - lw - 2  if 'right'  in pos_key else
                   (self.width() - lw) // 2 if 'center' in pos_key else 2)
             ly = (self.height() - lh - 2) if 'bottom' in pos_key else 2
+            lx += int(ov.get('label_text_x', 0))
+            ly += int(ov.get('label_text_y', 0))
 
             if ov.get('label_bg', True):
                 bg = QColor(ov.get('label_bg_color', '#000000'))
@@ -1362,7 +1398,7 @@ class ReplicationOverlay(QWidget):
                 p.fillRect(content_rect, QColor(0, 80, 255, 22))
                 p.setPen(QPen(QColor(0, 100, 255, 200), 1))
                 p.drawRect(content_rect)
-                if shape in ('rounded', 'pill'):
+                if shape in ('rounded', 'pill', 'diamond'):
                     p.setPen(QPen(QColor(0, 255, 100, 200), 1))
                     p.drawPath(self._get_shape_path(border_rect, shape, bw))
                 p.restore()

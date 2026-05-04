@@ -55,6 +55,8 @@ OVERLAY_DEFAULTS = {
     'label_bg_color': '#000000',
     'label_bg_opacity': 0.65,
     'label_padding': 4,
+    'label_text_x': 0,
+    'label_text_y': 0,
     # Task 7 — border
     'border_visible': True,
     'border_width': 2,
@@ -198,6 +200,7 @@ LABEL_COPY_KEYS = [
     'label_visible', 'label_pos', 'label_font_size',
     'label_color', 'label_bg', 'label_bg_color',
     'label_bg_opacity', 'label_padding',
+    'label_text_x', 'label_text_y',
 ]
 
 # Keys copied when user clicks "apply border settings to all"
@@ -229,6 +232,7 @@ FULL_PROFILE_KEYS = [
     'label_visible', 'label_pos', 'label_font_size',
     'label_color', 'label_bg', 'label_bg_color',
     'label_bg_opacity', 'label_padding',
+    'label_text_x', 'label_text_y',
     # Border
     'border_visible', 'border_width', 'border_shape',
     'show_gray_frame', 'client_color',
