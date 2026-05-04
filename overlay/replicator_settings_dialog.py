@@ -92,29 +92,41 @@ class ReplicatorSettingsDialog(QDialog):
         self.setWindowFlags(flags)
         
         self._drag_pos = None
+        self._resize_from_spinbox = False
+        self._layout_change_broadcaster = None
         self._build_ui()
         self._load_geometry()
-        
+
         # Sync geometry in real-time from overlay
         self._ov.geometryChanged.connect(self._on_overlay_geometry_changed)
 
     def _on_overlay_geometry_changed(self, x, y, w, h):
         # Update spinboxes if they exist (they are defined in _tab_layout)
         if hasattr(self, '_sp_x'):
+            prev_w = self._sp_w.value()
+            prev_h = self._sp_h.value()
+
             self._sp_x.blockSignals(True)
             self._sp_y.blockSignals(True)
             self._sp_w.blockSignals(True)
             self._sp_h.blockSignals(True)
-            
+
             self._sp_x.setValue(x)
             self._sp_y.setValue(y)
             self._sp_w.setValue(w)
             self._sp_h.setValue(h)
-            
+
             self._sp_x.blockSignals(False)
             self._sp_y.blockSignals(False)
             self._sp_w.blockSignals(False)
             self._sp_h.blockSignals(False)
+
+            # Propagate manual border-drag resize to all peers (skip if spinbox triggered this)
+            if not self._resize_from_spinbox and self._layout_change_broadcaster:
+                if w != prev_w:
+                    self._layout_change_broadcaster('w', w)
+                if h != prev_h:
+                    self._layout_change_broadcaster('h', h)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -503,6 +515,9 @@ class ReplicatorSettingsDialog(QDialog):
             logger.info(f"[LIVE LAYOUT APPLY] key={key} value={value} "
                         f"apply_to_all=True overlays={len(peers)+1} exclude_xy=True")
 
+        # Store broadcaster so _on_overlay_geometry_changed can call it for manual resizes
+        self._layout_change_broadcaster = _on_layout_change
+
         # --- FPS ---
         _section(lay, "CAPTURA")
 
@@ -532,10 +547,14 @@ class ReplicatorSettingsDialog(QDialog):
         sp_x.valueChanged.connect(lambda v: self._ov.move(v, self._ov.y()))
         sp_y.valueChanged.connect(lambda v: self._ov.move(self._ov.x(), v))
         def _on_w_changed(v):
+            self._resize_from_spinbox = True
             self._ov.resize(v, self._ov.height())
+            self._resize_from_spinbox = False
             _on_layout_change('w', v)
         def _on_h_changed(v):
+            self._resize_from_spinbox = True
             self._ov.resize(self._ov.width(), v)
+            self._resize_from_spinbox = False
             _on_layout_change('h', v)
         sp_w.valueChanged.connect(_on_w_changed)
         sp_h.valueChanged.connect(_on_h_changed)

@@ -28,9 +28,25 @@
 - `overlay/replicator_settings_dialog.py`: checkbox `toggled` ahora llama `_set + update() + repaint()` para forzar repintado sincrónico inmediato.
 - `replication_overlay.py`: sin cambios — `paintEvent` ya tenía la lógica correcta.
 
+## 6) Sync Manual Resize to All Replicas
+**Problema:** Al redimensionar una réplica manualmente arrastrando sus bordes, el nuevo W/H no se propagaba a las demás réplicas aunque "Aplicar a todas las réplicas" estuviera marcado. Solo los cambios vía spinbox se propagaban.
+**Causa:** `_on_overlay_geometry_changed` actualizaba los spinboxes con `blockSignals(True)`, impidiendo que `valueChanged` disparara `_on_layout_change`. El manual drag resize nunca llegaba al dispatcher.
+**Solución:**
+- `__init__`: añadidos `self._resize_from_spinbox = False` y `self._layout_change_broadcaster = None`.
+- `_tab_layout`: tras definir `_on_layout_change`, se guarda `self._layout_change_broadcaster = _on_layout_change`.
+- `_on_w_changed`/`_on_h_changed`: envuelven `self._ov.resize()` con `self._resize_from_spinbox = True/False` para distinguir la fuente.
+- `_on_overlay_geometry_changed`: captura `prev_w`/`prev_h` antes del blockSignals; tras desbloquearlo, si `not self._resize_from_spinbox` y cambió w o h, llama al broadcaster — propagando el resize manual a todas las réplicas peer.
+
+**Casos validados:**
+1. Spinbox W/H → propaga sin doble-sync (guard `_resize_from_spinbox`).
+2. Border-drag W → propaga a peers si checkbox ON.
+3. Border-drag H → propaga a peers si checkbox ON.
+4. Border-drag X/Y → no propaga (broadcaster filtra 'x'/'y').
+5. Checkbox OFF → broadcaster devuelve inmediatamente, no propaga.
+
 ## Pruebas Realizadas
 - `python -m py_compile`: Validado en todos los módulos afectados.
-- `pytest`: Tests de regresión pasados (31 tests).
+- `pytest`: 46 tests de replicador pasados (test_sync_resize_broadcast, test_replicator_apply_settings_to_all, test_replicator_layout_profiles, etc.).
 - Verificación de clipping visual con formas `pill` y `rounded`.
 - Verificación de detección inmediata de borde activo al lanzar la suite.
 
