@@ -329,6 +329,14 @@ class TrayManager:
             if not overlays:
                 return
 
+            # 0. Desinstalar hook global primero para que no dispare callbacks
+            #    sobre overlays que ya están en proceso de cierre.
+            try:
+                from overlay.replication_overlay import _uninstall_global_mouse_hook
+                _uninstall_global_mouse_hook()
+            except Exception:
+                pass
+
             # 1. Marcar shutdown + parar todos los timers y threads ANTES de close()
             for ov in overlays:
                 ov._shutting_down = True
@@ -345,6 +353,7 @@ class TrayManager:
             # 2. Ocultar todos de golpe → el usuario ve desaparición instantánea
             for ov in overlays:
                 try:
+                    ov.setUpdatesEnabled(False)
                     ov.setVisible(False)
                 except Exception:
                     pass

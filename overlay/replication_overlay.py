@@ -483,6 +483,8 @@ class ReplicationOverlay(QWidget):
         """Apply QBitmap mask + Win32 SetWindowRgn + DWM chrome suppression.
         square → clear both,  pill/rounded → set both.
         DWM suppression always runs so corners/borders are always suppressed."""
+        if getattr(self, '_shutting_down', False):
+            return
         shape = self._ov_cfg.get('border_shape', 'square')
 
         if shape == 'square':
@@ -1443,6 +1445,8 @@ class ReplicationOverlay(QWidget):
 
     def _restore_and_verify(self, x: int, y: int, w: int, h: int):
         """Deferred geometry restore with mismatch logging (called ~60 ms after show)."""
+        if getattr(self, '_shutting_down', False):
+            return
         try:
             self.setGeometry(x, y, w, h)
             g = self.geometry()

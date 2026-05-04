@@ -411,26 +411,34 @@ class ReplicatorSettingsDialog(QDialog):
             self._ov._cfg['active_layout_profile'] = name
             replicas = prof.get('replicas', {})
 
+            # W/H come from the spinboxes (authoritative current values),
+            # NOT from the profile snapshot, which may be stale.
+            src_w = self._sp_w.value()
+            src_h = self._sp_h.value()
+
             def _apply_to_peer(peer, replica_cfg: dict, fallback_cfg: dict):
-                """Apply per-overlay config or fall back to global profile template."""
+                """Apply non-geometry settings from profile; use spinbox W/H and peer's own X/Y."""
                 cfg_to_use = replica_cfg if (replica_cfg and 'w' in replica_cfg) else fallback_cfg
+                # Apply fps, label, border, region, always_on_top etc. from profile
                 apply_layout_profile_to_ov_cfg(peer._ov_cfg, cfg_to_use)
-                peer.apply_settings_dict(cfg_to_use, persist=True)
-                x_v = int(cfg_to_use.get('x', peer.x()))
-                y_v = int(cfg_to_use.get('y', peer.y()))
-                w_v = int(cfg_to_use.get('w', 280))
-                h_v = int(cfg_to_use.get('h', 200))
-                peer.setGeometry(x_v, y_v, w_v, h_v)
-                return x_v, y_v, w_v, h_v
+                peer.apply_settings_dict(cfg_to_use, persist=False)
+                # Override geometry: keep peer's current X/Y; use spinbox W/H
+                x_v = peer.x()
+                y_v = peer.y()
+                peer._ov_cfg['w'] = src_w
+                peer._ov_cfg['h'] = src_h
+                peer.setGeometry(x_v, y_v, src_w, src_h)
+                peer._schedule_autosave()
+                return x_v, y_v, src_w, src_h
 
             if chk_lp_all.isChecked():
                 from overlay.replication_overlay import _OVERLAY_REGISTRY
                 peers = list(_OVERLAY_REGISTRY)
-                logger.info(f"[PROFILE APPLY GLOBAL] name='{name}' replicas={len(replicas)} peers={len(peers)}")
+                logger.info(f"[PROFILE APPLY GLOBAL] name='{name}' src_w={src_w} src_h={src_h} peers={len(peers)}")
                 for peer in peers:
                     try:
                         x_v, y_v, w_v, h_v = _apply_to_peer(peer, replicas.get(peer._title, {}), prof)
-                        logger.info(f"  - {peer._title} applied geometry=x={x_v} y={y_v} w={w_v} h={h_v}")
+                        logger.info(f"  - {peer._title} geometry=x={x_v} y={y_v} w={w_v} h={h_v}")
                     except Exception as e:
                         logger.error(f"Error aplicando perfil a peer {peer._title!r}: {e}")
             else:
