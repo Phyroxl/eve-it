@@ -364,6 +364,37 @@ class ReplicatorSettingsDialog(QDialog):
 
         _reload_lp_combo()
 
+        # Guard: skip auto-apply triggered programmatically (e.g. during profile creation/reload)
+        _profile_auto_applying = [False]
+
+        def _lp_apply_profile(name: str):
+            """Auto-apply: full profile restore (geometry + all settings) when user selects combo."""
+            if not name or _profile_auto_applying[0]: return
+            profiles = get_layout_profiles(self._ov._cfg)
+            prof = profiles.get(name, {})
+            if not prof: return
+            self._ov._cfg['active_layout_profile'] = name
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            peers = list(_OVERLAY_REGISTRY)
+            replicas = prof.get('replicas', {})
+            for peer in peers:
+                try:
+                    cfg_to_use = replicas.get(peer._title) or prof
+                    apply_layout_profile_to_ov_cfg(peer._ov_cfg, cfg_to_use)
+                    peer.apply_settings_dict(cfg_to_use, persist=False)
+                    x_v = int(cfg_to_use.get('x', peer.x()))
+                    y_v = int(cfg_to_use.get('y', peer.y()))
+                    w_v = int(cfg_to_use.get('w', peer.width()))
+                    h_v = int(cfg_to_use.get('h', peer.height()))
+                    peer.setGeometry(x_v, y_v, w_v, h_v)
+                    peer._schedule_autosave()
+                except Exception as e:
+                    logger.error(f"[PROFILE AUTO-APPLY] error for {peer._title!r}: {e}")
+            logger.info(f"[PROFILE AUTO-APPLY] name='{name}' peers={len(peers)}")
+            self._ov.update()
+
+        lp_combo.currentTextChanged.connect(_lp_apply_profile)
+
         def _collect_global_replicas() -> dict:
             """Snapshot geometry+config of ALL active overlays for multi-replica profile save."""
             from overlay.replication_overlay import _OVERLAY_REGISTRY
@@ -388,8 +419,10 @@ class ReplicatorSettingsDialog(QDialog):
                 replicas = _collect_global_replicas()
                 save_layout_profile(self._ov._cfg, name.strip(), profile, replicas=replicas)
                 logger.info(f"[PROFILE SAVE GLOBAL] name='{name.strip()}' replicas={len(replicas)}")
+                _profile_auto_applying[0] = True
                 _reload_lp_combo()
                 lp_combo.setCurrentText(name.strip())
+                _profile_auto_applying[0] = False
 
         def _lp_save():
             name = lp_combo.currentText()
@@ -400,55 +433,26 @@ class ReplicatorSettingsDialog(QDialog):
                 save_layout_profile(self._ov._cfg, name, profile, replicas=replicas)
                 logger.info(f"[PROFILE SAVE GLOBAL] name='{name}' replicas={len(replicas)}")
 
-        def _lp_apply():
-            name = lp_combo.currentText()
-            if not name: return
-
-            profiles = get_layout_profiles(self._ov._cfg)
-            prof = profiles.get(name, {})
-            if not prof: return
-
-            self._ov._cfg['active_layout_profile'] = name
-            replicas = prof.get('replicas', {})
-
-            # W/H come from the spinboxes (authoritative current values),
-            # NOT from the profile snapshot, which may be stale.
-            src_w = self._sp_w.value()
-            src_h = self._sp_h.value()
-
-            def _apply_to_peer(peer, replica_cfg: dict, fallback_cfg: dict):
-                """Apply non-geometry settings from profile; use spinbox W/H and peer's own X/Y."""
-                cfg_to_use = replica_cfg if (replica_cfg and 'w' in replica_cfg) else fallback_cfg
-                # Apply fps, label, border, region, always_on_top etc. from profile
-                apply_layout_profile_to_ov_cfg(peer._ov_cfg, cfg_to_use)
-                peer.apply_settings_dict(cfg_to_use, persist=False)
-                # Override geometry: keep peer's current X/Y; use spinbox W/H
-                x_v = peer.x()
-                y_v = peer.y()
-                peer._ov_cfg['w'] = src_w
-                peer._ov_cfg['h'] = src_h
-                peer.setGeometry(x_v, y_v, src_w, src_h)
-                peer._schedule_autosave()
-                return x_v, y_v, src_w, src_h
-
-            if chk_lp_all.isChecked():
-                from overlay.replication_overlay import _OVERLAY_REGISTRY
-                peers = list(_OVERLAY_REGISTRY)
-                logger.info(f"[PROFILE APPLY GLOBAL] name='{name}' src_w={src_w} src_h={src_h} peers={len(peers)}")
-                for peer in peers:
-                    try:
-                        x_v, y_v, w_v, h_v = _apply_to_peer(peer, replicas.get(peer._title, {}), prof)
-                        logger.info(f"  - {peer._title} geometry=x={x_v} y={y_v} w={w_v} h={h_v}")
-                    except Exception as e:
-                        logger.error(f"Error aplicando perfil a peer {peer._title!r}: {e}")
-            else:
-                replica_cfg = replicas.get(self._ov._title, {})
-                x_val, y_val, w_val, h_val = _apply_to_peer(self._ov, replica_cfg, prof)
-                logger.info(f"[REPLICATOR PROFILE APPLY] profile={name!r} title={self._ov._title!r} "
-                            f"x={x_val} y={y_val} w={w_val} h={h_val} "
-                            f"source={'replica' if replica_cfg else 'global'}")
-
-            self._ov.update()
+        def _lp_apply_non_geom():
+            """Apply current Layout UI values (FPS, aspect, snap) to overlay(s) — NO geometry changes."""
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            apply_all = chk_lp_all.isChecked()
+            peers = list(_OVERLAY_REGISTRY) if apply_all else [self._ov]
+            fps_v = int(cmb_fps.currentText())
+            non_geom = {
+                'maintain_aspect': chk_ma.isChecked(),
+                'snap_enabled': chk_snap.isChecked(),
+                'snap_x': sp_gx.value(),
+                'snap_y': sp_gy.value(),
+            }
+            for peer in peers:
+                try:
+                    peer._ov_cfg.update(non_geom)
+                    peer._set_fps(fps_v)  # also persists via _schedule_autosave
+                except Exception as e:
+                    logger.error(f"[LAYOUT APPLY NON_GEOMETRY] error for {peer._title!r}: {e}")
+            logger.info(f"[LAYOUT APPLY NON_GEOMETRY] apply_to_all={apply_all} "
+                        f"fps={fps_v} peers={len(peers)}")
 
         def _lp_del():
             name = lp_combo.currentText()
@@ -458,7 +462,7 @@ class ReplicatorSettingsDialog(QDialog):
 
         btn_lp_new.clicked.connect(_lp_new)
         btn_lp_save.clicked.connect(_lp_save)
-        btn_lp_apply.clicked.connect(_lp_apply)
+        btn_lp_apply.clicked.connect(_lp_apply_non_geom)
         btn_lp_del.clicked.connect(_lp_del)
 
         # --- FPS ---
@@ -504,14 +508,29 @@ class ReplicatorSettingsDialog(QDialog):
         chk_ma.toggled.connect(lambda v: (self._set('maintain_aspect', v), self._ov.update()))
         lay.addWidget(chk_ma)
 
-        btn_save = QPushButton("Guardar layout")
-        btn_save.clicked.connect(self._ov._do_save)
+        def _reset_position():
+            try:
+                from PySide6.QtWidgets import QApplication
+            except ImportError:
+                from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            cur_w = max(20, self._ov.width())
+            cur_h = max(20, self._ov.height())
+            if screen:
+                sg = screen.availableGeometry()
+                new_x = sg.x() + (sg.width() - cur_w) // 2
+                new_y = sg.y() + (sg.height() - cur_h) // 2
+            else:
+                new_x, new_y = 400, 300
+            old_x, old_y = self._ov.x(), self._ov.y()
+            self._ov.move(new_x, new_y)
+            self._ov._schedule_autosave()
+            logger.info(f"[LAYOUT RESET POSITION] title={self._ov._title!r} "
+                        f"old=x={old_x} y={old_y} new=x={new_x} y={new_y}")
+
         btn_reset = QPushButton("Resetear posicion")
-        btn_reset.clicked.connect(lambda: (self._ov.move(400, 300),
-                                            self._ov.resize(280, 200),
-                                            self._ov._schedule_autosave()))
+        btn_reset.clicked.connect(_reset_position)
         row_btns = QHBoxLayout()
-        row_btns.addWidget(btn_save)
         row_btns.addWidget(btn_reset)
         row_btns.addStretch()
         lay.addLayout(row_btns)
@@ -521,7 +540,19 @@ class ReplicatorSettingsDialog(QDialog):
 
         chk_snap = QCheckBox("Alinear a cuadricula al mover (ALT para omitir)")
         chk_snap.setChecked(bool(self._cfg('snap_enabled')))
-        chk_snap.toggled.connect(lambda v: self._set('snap_enabled', v))
+
+        def _snap_toggled(v):
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            ovs = list(_OVERLAY_REGISTRY)
+            for ov in ovs:
+                try:
+                    ov._ov_cfg['snap_enabled'] = v
+                    ov._schedule_autosave()
+                except Exception:
+                    pass
+            logger.info(f"[LAYOUT SNAP] enabled={v} overlays={len(ovs)}")
+
+        chk_snap.toggled.connect(_snap_toggled)
         lay.addWidget(chk_snap)
 
         sp_gx = QSpinBox(); sp_gx.setRange(1, 200); sp_gx.setValue(int(self._cfg('snap_x') or 20))
