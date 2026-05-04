@@ -7,6 +7,21 @@ logger = logging.getLogger('eve.replicator_config')
 from utils.paths import ROOT_DIR
 CFG_PATH = ROOT_DIR / 'config' / 'replicator.json'
 
+
+def _profile_log(event: str, **kw):
+    """Log compacto de eventos save/load de perfiles a consola + archivo."""
+    msg = f"[PROFILE {event}] path={str(CFG_PATH)!r} " + " ".join(f"{k}={v!r}" for k, v in kw.items())
+    logger.info(msg)
+    try:
+        _lp = CFG_PATH.parent.parent / 'logs' / 'replicator_profiles_debug.log'
+        _lp.parent.mkdir(parents=True, exist_ok=True)
+        import datetime
+        ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        with open(_lp, 'a', encoding='utf-8') as _f:
+            _f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
 # Región de captura estándar de referencia (proporcional 0.0-1.0)
 # Orientada por defecto a la zona inferior central (Módulos/Capacitor)
 DEFAULT_REPLICATOR_CAPTURE_REGION = {
@@ -74,10 +89,14 @@ def load_config():
                 data['global'] = default_cfg['global']
             if 'overlays' not in data:
                 data['overlays'] = {}
+            _profiles = data.get('layout_profiles', {})
+            _profile_log('LOAD', count=len(_profiles), names=list(_profiles.keys()))
             return data
         except Exception as e:
             logger.error(f"Error cargando config: {e}")
+            _profile_log('LOAD_ERROR', error=str(e))
 
+    _profile_log('LOAD_DEFAULT', reason='file_not_found')
     return default_cfg
 
 
@@ -253,7 +272,9 @@ def save_layout_profile(cfg: dict, name: str, data: dict):
     cfg.setdefault('layout_profiles', {})
     # Save full profile (all FULL_PROFILE_KEYS present in data) for complete config restore
     cfg['layout_profiles'][name] = {k: data[k] for k in FULL_PROFILE_KEYS if k in data}
-    save_config(cfg)
+    ok = save_config(cfg)
+    _profile_log('SAVE', name=name, keys=list(cfg['layout_profiles'][name].keys()),
+                 total_profiles=list(cfg['layout_profiles'].keys()), ok=ok)
 
 
 def delete_layout_profile(cfg: dict, name: str):

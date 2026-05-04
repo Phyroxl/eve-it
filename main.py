@@ -226,22 +226,36 @@ def main():
     log.info("Cerrando Salva Suite...")
     _play_sound("logoff")
     
-    # [NUEVO] Purga de Configuración del Replicador (Evitar datos residuales corruptos)
+    # [NUEVO] Secuencia de apagado ultra-rápida
     try:
+        # 1. Notificar apagado global a todos los módulos
+        controller.shutdown()
+        
+        # 2. Reset de sesión del Replicador — conserva perfiles, hotkeys y tamaños de ventana
         repl_cfg = PROJECT_ROOT / 'config' / 'replicator.json'
         if repl_cfg.exists():
-            # En lugar de borrar el archivo, lo reseteamos a un estado vacío limpio
-            with open(repl_cfg, 'w', encoding='utf-8') as f:
-                f.write('{"global":{"capture_fps":30,"current_profile":"Default"},"regions":{"Default":{"x":0.2,"y":0.2,"w":0.3,"h":0.3}},"selected_windows":[],"overlays":{},"region":{"x":0,"y":0,"w":0.1,"h":0.1}}')
-            log.info("Configuración del Replicador purgada exitosamente.")
+            try:
+                import json as _json
+                _existing = _json.loads(repl_cfg.read_text(encoding='utf-8'))
+                _reset = {
+                    'global':  _existing.get('global',  {"capture_fps": 30, "current_profile": "Default"}),
+                    'regions': _existing.get('regions', {"Default": {"x": 0.2, "y": 0.2, "w": 0.3, "h": 0.3}}),
+                    'selected_windows': [],   # Reset intencional: no auto-lanzar réplicas al reiniciar
+                    'overlays': {},
+                    'region':  _existing.get('region',  {"x": 0, "y": 0, "w": 0.1, "h": 0.1}),
+                }
+                # Preservar configuraciones de usuario que deben persistir entre sesiones
+                for _key in ('layout_profiles', 'active_layout_profile', 'hotkeys', 'sizes'):
+                    if _key in _existing:
+                        _reset[_key] = _existing[_key]
+                repl_cfg.write_text(_json.dumps(_reset, indent=2, ensure_ascii=False), encoding='utf-8')
+                _n_profiles = len(_existing.get('layout_profiles', {}))
+                log.info(f"Replicador: sesión reseteada, {_n_profiles} perfil(es) preservado(s).")
+            except Exception as _e:
+                log.warning(f"Error en reset de config replicador: {_e}")
     except Exception as e:
-        log.warning(f"No se pudo purgar la configuración: {e}")
+        log.warning(f"Error en secuencia de cierre: {e}")
 
-    # Esperamos a que el sonido termine
-    import time
-    time.sleep(2.5)
-
-    controller.shutdown()
     lock.release()
     os._exit(ret)
 

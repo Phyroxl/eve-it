@@ -870,17 +870,25 @@ class ReplicatorSettingsDialog(QDialog):
         
         list_box.addWidget(self._accounts_list)
         
-        # Botones de orden — usan objectName para que el stylesheet del diálogo tenga máxima prioridad
+        # Botones de orden — objectName + setStyleSheet directo para máxima garantía
+        _rb_style = (
+            "QPushButton { background:#1e293b; border:1px solid #334155; color:#94a3b8;"
+            " font-size:18px; font-weight:bold; border-radius:5px; }"
+            " QPushButton:hover { background:#1e3a4a; border-color:#00c8ff; color:#00c8ff; }"
+            " QPushButton:pressed { background:#0f172a; border-color:#00c8ff; }"
+        )
         btn_lay = QVBoxLayout()
         btn_up = QPushButton("↑")
         btn_up.setObjectName("reorderUp")
         btn_up.setFixedSize(30, 44)
         btn_up.setToolTip("Subir cuenta")
+        btn_up.setStyleSheet(_rb_style)
 
         btn_down = QPushButton("↓")
         btn_down.setObjectName("reorderDown")
         btn_down.setFixedSize(30, 44)
         btn_down.setToolTip("Bajar cuenta")
+        btn_down.setStyleSheet(_rb_style)
         
         def _move_item(up=True):
             curr = self._accounts_list.currentRow()

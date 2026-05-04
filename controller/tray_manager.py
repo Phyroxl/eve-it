@@ -314,34 +314,67 @@ class TrayManager:
     # ── Creación de ventanas Qt ───────────────────────────────────────────────
 
     def close_replicator_overlays(self):
-        """Cierra todos los overlays del replicador y el asistente de forma ultra-rápida."""
+        """Cierra todos los overlays del replicador en batch instantáneo (<100 ms)."""
+        import time as _time
+        t0 = _time.perf_counter()
         try:
             if self._replicator_dialog:
-                self._replicator_dialog.close()
+                try:
+                    self._replicator_dialog.close()
+                except Exception:
+                    pass
                 self._replicator_dialog = None
-            
-            # 1. Notificar apagado rápido a todos para que no bloqueen con stop() o save()
+
             overlays = list(self._replicator_overlays)
+            if not overlays:
+                return
+
+            # 1. Marcar shutdown + parar todos los timers y threads ANTES de close()
             for ov in overlays:
                 ov._shutting_down = True
-                
-            # 2. Cierre masivo inmediato
+                try:
+                    if hasattr(ov, '_monitor_timer'):  ov._monitor_timer.stop()
+                    if hasattr(ov, '_autosave_timer'): ov._autosave_timer.stop()
+                    if hasattr(ov, '_top_timer'):      ov._top_timer.stop()
+                    if hasattr(ov, '_thread'):
+                        ov._thread.set_fast_stop(True)
+                        ov._thread._running = False
+                except Exception:
+                    pass
+
+            # 2. Ocultar todos de golpe → el usuario ve desaparición instantánea
+            for ov in overlays:
+                try:
+                    ov.setVisible(False)
+                except Exception:
+                    pass
+
+            dt_hide = (_time.perf_counter() - t0) * 1000
+
+            # 3. close() + deleteLater() (ya sin timers ni hilos activos, muy rápido)
             for ov in overlays:
                 try:
                     ov.close()
                     ov.deleteLater()
                 except Exception as e:
                     logger.warning(f"Error cerrando overlay: {e}")
-            
+
             self._replicator_overlays.clear()
 
-            # También cerrar el HUB global si existe
+            dt_total = (_time.perf_counter() - t0) * 1000
+            logger.info(
+                f"[REPLICATOR SHUTDOWN] overlays={len(overlays)} "
+                f"hide_ms={dt_hide:.1f} total_ms={dt_total:.1f}"
+            )
+
+            # Cerrar HUB global si existe
             try:
                 from controller.replicator_wizard import _GLOBAL_HUB
                 if _GLOBAL_HUB and hasattr(_GLOBAL_HUB, 'window'):
                     _GLOBAL_HUB.window.close()
             except Exception as e:
                 logger.warning(f"Error cerrando HUB global: {e}")
+
         except Exception as e:
             logger.error(f"Error cerrando overlays del replicador: {e}")
 

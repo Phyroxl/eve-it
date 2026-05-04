@@ -564,18 +564,24 @@ class ReplicationOverlay(QWidget):
 
             if self._ov_cfg.get('hide_when_inactive', False):
                 eve_hwnds = self._get_cached_eve_hwnds()
-                if should_show_overlays(fg, eve_hwnds):
+                # Belt-and-suspenders: include every overlay's target hwnd even if
+                # find_eve_windows() missed it (e.g., client just launched or borderless mode)
+                _extra = {ov._hwnd for ov in list(_OVERLAY_REGISTRY) if ov._hwnd}
+                if _extra - eve_hwnds:
+                    eve_hwnds = eve_hwnds | _extra
+                _context_ok = should_show_overlays(fg, eve_hwnds)
+                if _context_ok:
                     if not self.isVisible():
-                        # Restore exact geometry saved before hiding
                         saved = getattr(self, '_last_visible_geometry', None)
                         self.show()
                         if saved is not None:
                             QTimer.singleShot(0, lambda g=saved: self.setGeometry(g))
+                        logger.debug(f"[HIDE FILTER] fg={fg} context=eve/app action=show title={self._title!r}")
                 else:
                     if self.isVisible():
-                        # Save geometry before hiding so it can be restored exactly
                         self._last_visible_geometry = self.geometry()
                         self.hide()
+                        logger.debug(f"[HIDE FILTER] fg={fg} context=external action=hide title={self._title!r}")
         except Exception:
             pass
 
@@ -937,7 +943,9 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event):
-        if not self.hasFocus():
+        # Accept keys when this widget has Qt focus OR the mouse is currently hovering over it
+        if not self.hasFocus() and not self.underMouse():
+            super().keyPressEvent(event)
             return
         step = 0.01 if event.modifiers() & Qt.ShiftModifier else 0.002
         k = event.key()
@@ -955,8 +963,7 @@ class ReplicationOverlay(QWidget):
         super().keyPressEvent(event)
 
     def wheelEvent(self, event):
-        if not self.hasFocus():
-            return
+        # No hasFocus() check — wheel events arrive at the widget under the cursor regardless of focus
         delta = event.angleDelta().y()
         mods = event.modifiers()
         pos = event.position() if hasattr(event, 'position') else event.pos()
@@ -1318,15 +1325,14 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
-        if hasattr(self, '_monitor_timer'):
-            self._monitor_timer.stop()
-        if hasattr(self, '_autosave_timer'):
-            self._autosave_timer.stop()
-        
-        # Saltamos el guardado individual si estamos en apagado global (TrayManager lo hará)
+        for _attr in ('_monitor_timer', '_autosave_timer', '_top_timer'):
+            if hasattr(self, _attr):
+                getattr(self, _attr).stop()
+
+        # Skip per-overlay save during global shutdown (TrayManager handles the final write)
         if not self._shutting_down:
             self._do_save()
-            
+
         self.closed.emit(self._title)
         if hasattr(self, '_thread'):
             if self._shutting_down:
