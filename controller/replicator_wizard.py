@@ -366,30 +366,48 @@ class ReplicatorWizard:
             current = find_eve_windows()
             handles = {w['title']: w['hwnd'] for w in current}
             self._overlays_refs = []
-            
+
+            # Per-overlay geometry from active profile (Bug 1 fix)
+            from overlay.replicator_config import get_active_layout_profile
+            active_prof_name, _ = get_active_layout_profile(self._cfg)
+            profile_replicas = (self._cfg.get('layout_profiles', {})
+                                         .get(active_prof_name, {})
+                                         .get('replicas', {}))
+
             for i, title in enumerate(titles):
                 h = handles.get(title)
                 if not h: continue
                 ov_region = region.copy()
                 fps = self._cfg.get('global_fps', 30)
-                self._cfg.setdefault('overlays', {}).setdefault(title, {})['fps'] = fps
-                ov = ReplicationOverlay(title=title, hwnd=h, region_rel=ov_region, cfg=self._cfg, 
+                # Bug 2 fix: only write global_fps if overlay has no per-overlay fps saved
+                ov_stored = self._cfg.setdefault('overlays', {}).setdefault(title, {})
+                if 'fps' not in ov_stored:
+                    ov_stored['fps'] = fps
+                ov = ReplicationOverlay(title=title, hwnd=h, region_rel=ov_region, cfg=self._cfg,
                                         save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
-                
-                try:
-                    from overlay.replicator_config import get_active_layout_profile
-                    from overlay.win32_capture import get_window_size
-                    _, lp = get_active_layout_profile(self._cfg)
-                    init_w = int(lp.get('w', 280))
-                    ev_w, ev_h = get_window_size(h)
-                    rw = ov_region.get('w', 0.3) * ev_w
-                    rh = ov_region.get('h', 0.2) * ev_h
-                    init_h = max(64, int(init_w / (rw / rh))) if rh > 0 else int(lp.get('h', 200))
-                    screen = QApplication.primaryScreen().geometry()
-                    ov.resize(init_w, init_h)
-                    ov.move(screen.x() + (screen.width()-init_w)//2 + i*20, screen.y() + (screen.height()-init_h)//2 + i*20)
-                except Exception:
-                    ov.resize(280, 200); ov.move(400+i*20, 300+i*20)
+
+                # Priority: 1. profile replicas, 2. aspect-ratio default
+                replica_prof = profile_replicas.get(title, {})
+                if replica_prof and 'x' in replica_prof and 'y' in replica_prof:
+                    rx = int(replica_prof['x']); ry = int(replica_prof['y'])
+                    rw = int(replica_prof.get('w', 280)); rh = int(replica_prof.get('h', 200))
+                    ov.setGeometry(rx, ry, rw, rh)
+                    logger.info(f"[PROFILE LAUNCH GLOBAL] profile='{active_prof_name}' title='{title}' geometry=x={rx} y={ry} w={rw} h={rh}")
+                else:
+                    try:
+                        from overlay.win32_capture import get_window_size
+                        _, lp = get_active_layout_profile(self._cfg)
+                        init_w = int(lp.get('w', 280))
+                        ev_w, ev_h = get_window_size(h)
+                        rw_px = ov_region.get('w', 0.3) * ev_w
+                        rh_px = ov_region.get('h', 0.2) * ev_h
+                        init_h = max(64, int(init_w / (rw_px / rh_px))) if rh_px > 0 else int(lp.get('h', 200))
+                        screen = QApplication.primaryScreen().geometry()
+                        ov.resize(init_w, init_h)
+                        ov.move(screen.x() + (screen.width()-init_w)//2 + i*20,
+                                screen.y() + (screen.height()-init_h)//2 + i*20)
+                    except Exception:
+                        ov.resize(280, 200); ov.move(400+i*20, 300+i*20)
                 
                 ov.show(); self._overlays_refs.append(ov)
             update_hotkey_cache(titles)

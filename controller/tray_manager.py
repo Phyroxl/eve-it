@@ -458,11 +458,22 @@ class TrayManager:
                     return None
                 return getter
 
+            # Per-overlay geometry from the active layout profile (Bug 1 fix)
+            from overlay.replicator_config import get_active_layout_profile
+            active_prof_name, _ = get_active_layout_profile(cfg)
+            profile_replicas = (cfg.get('layout_profiles', {})
+                                   .get(active_prof_name, {})
+                                   .get('replicas', {}))
+
             created = 0
             for i, title in enumerate(titles):
                 try:
                     fps = cfg.get('global_fps', 30)
-                    cfg.setdefault('overlays', {}).setdefault(title, {})['fps'] = fps
+                    # Bug 2 fix: only write global_fps if overlay has no per-overlay fps saved
+                    ov_stored_fps = cfg.setdefault('overlays', {}).setdefault(title, {})
+                    if 'fps' not in ov_stored_fps:
+                        ov_stored_fps['fps'] = fps
+
                     ov_region = region.copy() if region else {'x':0, 'y':0, 'w':1, 'h':1}
 
                     ov = ReplicationOverlay(
@@ -474,9 +485,20 @@ class TrayManager:
                         save_callback= lambda *a, c=cfg, m=cfg_mod: m.save_overlay_state(c, *a),
                     )
 
+                    # Priority order for initial geometry:
+                    # 1. Profile replicas (user explicitly saved this layout)
+                    # 2. cfg['overlays'][title] x/y (preserved from last session)
+                    # 3. Default center position
+                    replica_prof = profile_replicas.get(title, {})
                     ov_cfg_stored = cfg.get('overlays', {}).get(title, {})
                     has_saved_geometry = 'x' in ov_cfg_stored and 'y' in ov_cfg_stored
-                    if not has_saved_geometry:
+
+                    if replica_prof and 'x' in replica_prof and 'y' in replica_prof:
+                        rx = int(replica_prof['x']); ry = int(replica_prof['y'])
+                        rw = int(replica_prof.get('w', 280)); rh = int(replica_prof.get('h', 200))
+                        ov.setGeometry(rx, ry, rw, rh)
+                        logger.info(f"[PROFILE LAUNCH GLOBAL] profile='{active_prof_name}' title='{title}' geometry=x={rx} y={ry} w={rw} h={rh}")
+                    elif not has_saved_geometry:
                         try:
                             from PySide6.QtWidgets import QApplication
                             screen = QApplication.primaryScreen().geometry()

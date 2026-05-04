@@ -270,13 +270,45 @@ def get_layout_profiles(cfg: dict) -> dict:
     return profiles
 
 
-def save_layout_profile(cfg: dict, name: str, data: dict):
+def save_layout_profile(cfg: dict, name: str, data: dict, replicas: dict = None):
+    """Save a layout profile. 'replicas' is an optional dict mapping title → per-overlay config."""
     cfg.setdefault('layout_profiles', {})
-    # Save full profile (all FULL_PROFILE_KEYS present in data) for complete config restore
-    cfg['layout_profiles'][name] = {k: data[k] for k in FULL_PROFILE_KEYS if k in data}
+    profile = {k: data[k] for k in FULL_PROFILE_KEYS if k in data}
+    if replicas:
+        profile['replicas'] = {title: dict(snap) for title, snap in replicas.items()}
+    cfg['layout_profiles'][name] = profile
     ok = save_config(cfg)
-    _profile_log('SAVE', name=name, keys=list(cfg['layout_profiles'][name].keys()),
+    _profile_log('SAVE', name=name, keys=list(profile.keys()),
+                 replica_count=len(replicas) if replicas else 0,
                  total_profiles=list(cfg['layout_profiles'].keys()), ok=ok)
+    if replicas:
+        _log_profile_save_global(name, replicas, action='SAVE')
+
+
+def get_replica_config_from_profile(cfg: dict, profile_name: str, title: str) -> dict:
+    """Return saved per-overlay config for 'title' from a named profile, or {}."""
+    profiles = cfg.get('layout_profiles', {})
+    profile = profiles.get(profile_name, {})
+    return profile.get('replicas', {}).get(title, {})
+
+
+def _log_profile_save_global(name: str, replicas: dict, action: str = 'SAVE'):
+    """Write a compact per-replica log to logs/replicator_profiles_debug.log."""
+    try:
+        import datetime
+        from utils.paths import ROOT_DIR
+        lp = ROOT_DIR / 'logs' / 'replicator_profiles_debug.log'
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        lines = [f"[{ts}] [PROFILE {action} GLOBAL] name='{name}' replicas={len(replicas)}"]
+        for title, snap in replicas.items():
+            x = snap.get('x', '?'); y = snap.get('y', '?')
+            w = snap.get('w', '?'); h = snap.get('h', '?')
+            lines.append(f"  - {title} geometry=x={x} y={y} w={w} h={h}")
+        with open(lp, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(lines) + '\n')
+    except Exception:
+        pass
 
 
 def delete_layout_profile(cfg: dict, name: str):

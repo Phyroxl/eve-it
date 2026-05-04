@@ -364,14 +364,30 @@ class ReplicatorSettingsDialog(QDialog):
 
         _reload_lp_combo()
 
+        def _collect_global_replicas() -> dict:
+            """Snapshot geometry+config of ALL active overlays for multi-replica profile save."""
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            replicas = {}
+            for ov in list(_OVERLAY_REGISTRY):
+                try:
+                    ov._do_save()
+                    snap = {k: ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in ov._ov_cfg}
+                    snap['x'] = ov.x(); snap['y'] = ov.y()
+                    snap['w'] = ov.width(); snap['h'] = ov.height()
+                    replicas[ov._title] = snap
+                except Exception as e:
+                    logger.error(f"Error collecting replica snapshot for {ov._title!r}: {e}")
+            return replicas
+
         def _lp_new():
             from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getText(self, "Nuevo perfil", "Nombre:")
             if ok and name.strip():
                 self._ov._do_save()
-                # Save full profile (all settings, not just layout)
                 profile = {k: self._ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in self._ov._ov_cfg}
-                save_layout_profile(self._ov._cfg, name.strip(), profile)
+                replicas = _collect_global_replicas()
+                save_layout_profile(self._ov._cfg, name.strip(), profile, replicas=replicas)
+                logger.info(f"[PROFILE SAVE GLOBAL] name='{name.strip()}' replicas={len(replicas)}")
                 _reload_lp_combo()
                 lp_combo.setCurrentText(name.strip())
 
@@ -379,46 +395,50 @@ class ReplicatorSettingsDialog(QDialog):
             name = lp_combo.currentText()
             if name:
                 self._ov._do_save()
-                # Save full profile (all settings, not just layout)
                 profile = {k: self._ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in self._ov._ov_cfg}
-                save_layout_profile(self._ov._cfg, name, profile)
+                replicas = _collect_global_replicas()
+                save_layout_profile(self._ov._cfg, name, profile, replicas=replicas)
+                logger.info(f"[PROFILE SAVE GLOBAL] name='{name}' replicas={len(replicas)}")
 
         def _lp_apply():
             name = lp_combo.currentText()
             if not name: return
-            
+
             profiles = get_layout_profiles(self._ov._cfg)
             prof = profiles.get(name, {})
             if not prof: return
 
             self._ov._cfg['active_layout_profile'] = name
-            
-            # ¿Aplicar a todas?
+            replicas = prof.get('replicas', {})
+
+            def _apply_to_peer(peer, replica_cfg: dict, fallback_cfg: dict):
+                """Apply per-overlay config or fall back to global profile template."""
+                cfg_to_use = replica_cfg if (replica_cfg and 'w' in replica_cfg) else fallback_cfg
+                apply_layout_profile_to_ov_cfg(peer._ov_cfg, cfg_to_use)
+                peer.apply_settings_dict(cfg_to_use, persist=True)
+                x_v = int(cfg_to_use.get('x', peer.x()))
+                y_v = int(cfg_to_use.get('y', peer.y()))
+                w_v = int(cfg_to_use.get('w', 280))
+                h_v = int(cfg_to_use.get('h', 200))
+                peer.setGeometry(x_v, y_v, w_v, h_v)
+                return x_v, y_v, w_v, h_v
+
             if chk_lp_all.isChecked():
                 from overlay.replication_overlay import _OVERLAY_REGISTRY
                 peers = list(_OVERLAY_REGISTRY)
-                logger.info(f"[REPLICATOR SETTINGS] Aplicando perfil '{name}' a {len(peers)} replicas")
+                logger.info(f"[PROFILE APPLY GLOBAL] name='{name}' replicas={len(replicas)} peers={len(peers)}")
                 for peer in peers:
                     try:
-                        apply_layout_profile_to_ov_cfg(peer._ov_cfg, prof)
-                        peer.apply_settings_dict(prof, persist=True)
-                        x_v = int(peer._ov_cfg.get('x', peer.x()))
-                        y_v = int(peer._ov_cfg.get('y', peer.y()))
-                        w_v = int(peer._ov_cfg.get('w', 280))
-                        h_v = int(peer._ov_cfg.get('h', 200))
-                        peer.setGeometry(x_v, y_v, w_v, h_v)
+                        x_v, y_v, w_v, h_v = _apply_to_peer(peer, replicas.get(peer._title, {}), prof)
+                        logger.info(f"  - {peer._title} applied geometry=x={x_v} y={y_v} w={w_v} h={h_v}")
                     except Exception as e:
-                        logger.error(f"Error aplicando perfil a peer: {e}")
+                        logger.error(f"Error aplicando perfil a peer {peer._title!r}: {e}")
             else:
-                # Solo a la actual
-                apply_layout_profile_to_ov_cfg(self._ov._ov_cfg, prof)
-                self._ov.apply_settings_dict(prof, persist=True)
-                x_val = int(self._ov._ov_cfg.get('x', self._ov.x()))
-                y_val = int(self._ov._ov_cfg.get('y', self._ov.y()))
-                w_val = int(self._ov._ov_cfg.get('w', 280))
-                h_val = int(self._ov._ov_cfg.get('h', 200))
-                self._ov.setGeometry(x_val, y_val, w_val, h_val)
-                logger.info(f"[REPLICATOR PROFILE APPLY] profile={name!r} x={x_val} y={y_val} w={w_val} h={h_val}")
+                replica_cfg = replicas.get(self._ov._title, {})
+                x_val, y_val, w_val, h_val = _apply_to_peer(self._ov, replica_cfg, prof)
+                logger.info(f"[REPLICATOR PROFILE APPLY] profile={name!r} title={self._ov._title!r} "
+                            f"x={x_val} y={y_val} w={w_val} h={h_val} "
+                            f"source={'replica' if replica_cfg else 'global'}")
 
             self._ov.update()
 

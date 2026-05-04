@@ -189,6 +189,20 @@ def _log_hook_event(event: str, detail: str = ""):
         pass
 
 
+def _log_hide_show_event(action: str, title: str, detail: str = ""):
+    """Write hide/show geometry events to logs/replicator_hide_debug.log."""
+    try:
+        import datetime
+        from utils.paths import ROOT_DIR
+        lp = ROOT_DIR / 'logs' / 'replicator_hide_debug.log'
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        with open(lp, 'a', encoding='utf-8') as f:
+            f.write(f"[{ts}] [{action}] title='{title}' {detail}\n")
+    except Exception:
+        pass
+
+
 class CaptureThread(QThread):
     frame_ready = Signal(object, int, int)  # (data, w, h)
     error_signal = Signal(str)
@@ -714,14 +728,26 @@ class ReplicationOverlay(QWidget):
                 _context_ok = should_show_overlays(fg, eve_hwnds)
                 if _context_ok:
                     if not self.isVisible():
-                        saved = getattr(self, '_last_visible_geometry', None)
+                        # Restore geometry as plain ints (not QRect) to survive Qt's show() dance
+                        saved = getattr(self, '_last_visible_geom', None)
+                        if saved:
+                            sx, sy, sw, sh = saved
                         self.show()
-                        if saved is not None:
-                            QTimer.singleShot(0, lambda g=saved: self.setGeometry(g))
+                        if saved:
+                            # Apply immediately + deferred (DWM compositing can shift window)
+                            self.setGeometry(sx, sy, sw, sh)
+                            QTimer.singleShot(0,  lambda x=sx,y=sy,w=sw,h=sh: self.setGeometry(x,y,w,h))
+                            QTimer.singleShot(60, lambda x=sx,y=sy,w=sw,h=sh: self._restore_and_verify(x,y,w,h))
+                        _log_hide_show_event('SHOW', self._title,
+                                             f"restore_geometry=x={sx} y={sy} w={sw} h={sh}" if saved else "no_saved_geom")
                         logger.debug(f"[HIDE FILTER] fg={fg} context=eve/app action=show title={self._title!r}")
                 else:
                     if self.isVisible():
-                        self._last_visible_geometry = self.geometry()
+                        g = self.geometry()
+                        # Store as a plain tuple — avoids QRect lifetime issues
+                        self._last_visible_geom = (g.x(), g.y(), g.width(), g.height())
+                        _log_hide_show_event('HIDE', self._title,
+                                             f"save_geometry=x={g.x()} y={g.y()} w={g.width()} h={g.height()}")
                         self.hide()
                         logger.debug(f"[HIDE FILTER] fg={fg} context=external action=hide title={self._title!r}")
         except Exception:
@@ -1338,6 +1364,9 @@ class ReplicationOverlay(QWidget):
     def moveEvent(self, event):
         super().moveEvent(event)
         self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
+        # Keep _last_visible_geom current so hide/show restores the latest position
+        if self.isVisible():
+            self._last_visible_geom = (self.x(), self.y(), self.width(), self.height())
 
     def mousePressEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
@@ -1411,6 +1440,20 @@ class ReplicationOverlay(QWidget):
         if ReplicationOverlay._hover_overlay is self:
             ReplicationOverlay._hover_overlay = None
         super().leaveEvent(event)
+
+    def _restore_and_verify(self, x: int, y: int, w: int, h: int):
+        """Deferred geometry restore with mismatch logging (called ~60 ms after show)."""
+        try:
+            self.setGeometry(x, y, w, h)
+            g = self.geometry()
+            if g.x() != x or g.y() != y or g.width() != w or g.height() != h:
+                _log_hide_show_event('SHOW VERIFY WARN', self._title,
+                                     f"expected=x={x} y={y} w={w} h={h} "
+                                     f"actual=x={g.x()} y={g.y()} w={g.width()} h={g.height()}")
+                # One final forced correction
+                self.setGeometry(x, y, w, h)
+        except Exception:
+            pass
 
     def _do_hover_wheel(self, delta: int):
         """Deliver a synthesized wheel event from the WH_MOUSE_LL hook (EVE has OS focus)."""
