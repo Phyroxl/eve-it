@@ -401,21 +401,24 @@ class ReplicatorSettingsDialog(QDialog):
                 for peer in peers:
                     try:
                         apply_layout_profile_to_ov_cfg(peer._ov_cfg, prof)
-                        # Usar el helper unificado para aplicar cambios visuales (incluyendo región)
                         peer.apply_settings_dict(prof, persist=True)
-                        # Forzar redimensionado manual ya que apply_settings_dict no toca x/y/w/h de ventana directamente
+                        x_v = int(peer._ov_cfg.get('x', peer.x()))
+                        y_v = int(peer._ov_cfg.get('y', peer.y()))
                         w_v = int(peer._ov_cfg.get('w', 280))
                         h_v = int(peer._ov_cfg.get('h', 200))
-                        peer.resize(w_v, h_v)
+                        peer.setGeometry(x_v, y_v, w_v, h_v)
                     except Exception as e:
                         logger.error(f"Error aplicando perfil a peer: {e}")
             else:
                 # Solo a la actual
                 apply_layout_profile_to_ov_cfg(self._ov._ov_cfg, prof)
                 self._ov.apply_settings_dict(prof, persist=True)
+                x_val = int(self._ov._ov_cfg.get('x', self._ov.x()))
+                y_val = int(self._ov._ov_cfg.get('y', self._ov.y()))
                 w_val = int(self._ov._ov_cfg.get('w', 280))
                 h_val = int(self._ov._ov_cfg.get('h', 200))
-                self._ov.resize(w_val, h_val)
+                self._ov.setGeometry(x_val, y_val, w_val, h_val)
+                logger.info(f"[REPLICATOR PROFILE APPLY] profile={name!r} x={x_val} y={y_val} w={w_val} h={h_val}")
 
             self._ov.update()
 

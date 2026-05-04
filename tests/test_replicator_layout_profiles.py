@@ -41,7 +41,8 @@ class TestLayoutProfiles(unittest.TestCase):
             finally:
                 rc.CFG_PATH = orig
 
-    def test_save_profile_excludes_non_layout_keys(self):
+    def test_save_profile_includes_xy(self):
+        # Full profiles now save x/y so that "apply profile" restores exact position.
         cfg = self._empty_cfg()
         data = {'w': 300, 'h': 200, 'x': 100, 'y': 50, 'fps': 30,
                 'snap_enabled': False, 'snap_x': 20, 'snap_y': 20,
@@ -54,8 +55,10 @@ class TestLayoutProfiles(unittest.TestCase):
             try:
                 save_layout_profile(cfg, 'Test2', data)
                 profiles = get_layout_profiles(cfg)
-                self.assertNotIn('x', profiles.get('Test2', {}))
-                self.assertNotIn('y', profiles.get('Test2', {}))
+                self.assertIn('x', profiles.get('Test2', {}))
+                self.assertIn('y', profiles.get('Test2', {}))
+                self.assertEqual(profiles['Test2']['x'], 100)
+                self.assertEqual(profiles['Test2']['y'], 50)
             finally:
                 rc.CFG_PATH = orig
 
@@ -98,7 +101,7 @@ class TestLayoutProfiles(unittest.TestCase):
         apply_layout_profile_to_ov_cfg(ov_cfg, profile)
         self.assertEqual(ov_cfg['w'], 400)
         self.assertEqual(ov_cfg['fps'], 60)
-        # Position must NOT be touched
+        # Profile has no x/y, so ov_cfg keeps its original position
         self.assertEqual(ov_cfg['x'], 100)
         self.assertEqual(ov_cfg['y'], 200)
 

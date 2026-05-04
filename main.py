@@ -245,7 +245,7 @@ def main():
                     'region':  _existing.get('region',  {"x": 0, "y": 0, "w": 0.1, "h": 0.1}),
                 }
                 # Preservar configuraciones de usuario que deben persistir entre sesiones
-                for _key in ('layout_profiles', 'active_layout_profile', 'hotkeys', 'sizes'):
+                for _key in ('layout_profiles', 'active_layout_profile', 'hotkeys', 'sizes', 'overlays'):
                     if _key in _existing:
                         _reset[_key] = _existing[_key]
                 repl_cfg.write_text(_json.dumps(_reset, indent=2, ensure_ascii=False), encoding='utf-8')

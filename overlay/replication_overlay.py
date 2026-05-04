@@ -54,6 +54,68 @@ _OVERLAY_REGISTRY: 'weakref.WeakSet' = weakref.WeakSet()
 # Minimum pixel movement before a press is considered a drag (not a click)
 _DRAG_THRESHOLD = 5
 
+# ---------------------------------------------------------------------------
+# WH_MOUSE_LL — global low-level mouse hook so wheel events reach overlays
+# even when EVE Online has OS focus (WM_MOUSEWHEEL normally goes to the fg window).
+# ---------------------------------------------------------------------------
+_WH_MOUSE_LL = 14
+_WM_MOUSEWHEEL = 0x020A
+_mouse_hook_handle = None
+_mouse_hook_proc_ref = None  # prevent GC of CFUNCTYPE callback
+
+if IS_WINDOWS:
+    import ctypes
+    import ctypes.wintypes
+
+    class _MSLLHOOKSTRUCT(ctypes.Structure):
+        _fields_ = [
+            ('pt',          ctypes.wintypes.POINT),
+            ('mouseData',   ctypes.wintypes.DWORD),
+            ('flags',       ctypes.wintypes.DWORD),
+            ('time',        ctypes.wintypes.DWORD),
+            ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    _HOOKPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_long, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM
+    )
+
+    def _mouse_ll_hook_proc(nCode, wParam, lParam):
+        if nCode >= 0 and wParam == _WM_MOUSEWHEEL:
+            try:
+                ms    = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+                delta = ctypes.c_short(ms.mouseData >> 16).value
+                ov    = ReplicationOverlay._hover_overlay
+                if ov is not None:
+                    _ov_ref = weakref.ref(ov)
+                    QTimer.singleShot(0, lambda d=delta, r=_ov_ref: _deliver_hook_wheel(r, d))
+            except Exception:
+                pass
+        return ctypes.windll.user32.CallNextHookEx(_mouse_hook_handle, nCode, wParam, lParam)
+
+    def _deliver_hook_wheel(ov_ref, delta):
+        o = ov_ref()
+        if o is not None:
+            try:
+                o._do_hover_wheel(delta)
+            except Exception:
+                pass
+
+def _install_global_mouse_hook():
+    global _mouse_hook_handle, _mouse_hook_proc_ref
+    if not IS_WINDOWS or _mouse_hook_handle:
+        return
+    try:
+        proc = _HOOKPROC(_mouse_ll_hook_proc)
+        _mouse_hook_proc_ref = proc
+        _mouse_hook_handle = ctypes.windll.user32.SetWindowsHookExW(_WH_MOUSE_LL, proc, None, 0)
+        if _mouse_hook_handle:
+            logger.info(f"[MOUSE HOOK] WH_MOUSE_LL installed handle={_mouse_hook_handle}")
+        else:
+            logger.warning("[MOUSE HOOK] SetWindowsHookExW returned NULL")
+    except Exception as e:
+        logger.warning(f"[MOUSE HOOK] Failed to install: {e}")
+
 
 class CaptureThread(QThread):
     frame_ready = Signal(object, int, int)  # (data, w, h)
@@ -149,6 +211,9 @@ class ReplicationOverlay(QWidget):
     _active_hwnd_override: int = 0
     _active_hwnd_override_until: float = 0.0
 
+    # Overlay currently under the mouse cursor — used by the WH_MOUSE_LL hook to route wheel events
+    _hover_overlay: 'ReplicationOverlay | None' = None
+
     def __init__(self, title, hwnd=None, region_rel=None, cfg=None,
                  save_callback=None, hwnd_getter=None):
         super().__init__(None)
@@ -177,6 +242,11 @@ class ReplicationOverlay(QWidget):
         self._shutting_down = False
 
         _OVERLAY_REGISTRY.add(self)
+
+        # Install the global mouse hook on first overlay creation so scroll
+        # events are delivered even when EVE has OS focus.
+        if not _mouse_hook_handle:
+            _install_global_mouse_hook()
 
         # Native region state (populated by _apply_native_window_region)
         self._last_native_region_status = 'not_called'
@@ -1260,9 +1330,41 @@ class ReplicationOverlay(QWidget):
 
     def enterEvent(self, event):
         """Mejorar responsividad: tomar foco al entrar el ratón."""
+        ReplicationOverlay._hover_overlay = self
         if not self.hasFocus():
             self.setFocus(Qt.FocusReason.MouseFocusReason if hasattr(Qt.FocusReason, 'MouseFocusReason') else Qt.MouseFocusReason)
         super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if ReplicationOverlay._hover_overlay is self:
+            ReplicationOverlay._hover_overlay = None
+        super().leaveEvent(event)
+
+    def _do_hover_wheel(self, delta: int):
+        """Deliver a synthesized wheel event from the WH_MOUSE_LL hook (EVE has OS focus)."""
+        try:
+            import ctypes
+            import ctypes.wintypes
+            pt = ctypes.wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            local = self.mapFromGlobal(QPoint(pt.x, pt.y))
+            mx_rel = local.x() / self.width()  if self.width()  > 0 else 0.5
+            my_rel = local.y() / self.height() if self.height() > 0 else 0.5
+            shift = ctypes.windll.user32.GetKeyState(0x10) & 0x8000  # VK_SHIFT
+            ctrl  = ctypes.windll.user32.GetKeyState(0x11) & 0x8000  # VK_CONTROL
+            factor = 1.03 if delta > 0 else 0.97
+            if shift:
+                self.resize(self.width(), max(20, int(self.height() * factor)))
+            elif ctrl:
+                self.resize(max(20, int(self.width() * factor)), self.height())
+            else:
+                f_inv = 0.97 if delta > 0 else 1.03
+                self._zoom_roi_ex(f_inv, f_inv, mx_rel, my_rel)
+            self.update()
+            if self._sync_active:
+                self.sync_triggered.emit(self._region)
+        except Exception:
+            pass
 
     def mouseReleaseEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton

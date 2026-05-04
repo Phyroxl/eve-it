@@ -349,6 +349,13 @@ class TrayManager:
                 except Exception:
                     pass
 
+            # Flush the hide events immediately so the screen updates before we block on close()
+            try:
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
+            except Exception:
+                pass
+
             dt_hide = (_time.perf_counter() - t0) * 1000
 
             # 3. close() + deleteLater() (ya sin timers ni hilos activos, muy rápido)
@@ -467,16 +474,19 @@ class TrayManager:
                         save_callback= lambda *a, c=cfg, m=cfg_mod: m.save_overlay_state(c, *a),
                     )
 
-                    try:
-                        from PySide6.QtWidgets import QApplication
-                        screen = QApplication.primaryScreen().geometry()
-                        center_x = screen.x() + (screen.width() - 200) // 2
-                        center_y = screen.y() + (screen.height() - 200) // 2
-                        ov.resize(200, 200)
-                        ov.move(center_x + i*20, center_y + i*20)
-                    except Exception:
-                        ov.resize(200, 200)
-                        ov.move(400 + i*20, 300 + i*20)
+                    ov_cfg_stored = cfg.get('overlays', {}).get(title, {})
+                    has_saved_geometry = 'x' in ov_cfg_stored and 'y' in ov_cfg_stored
+                    if not has_saved_geometry:
+                        try:
+                            from PySide6.QtWidgets import QApplication
+                            screen = QApplication.primaryScreen().geometry()
+                            center_x = screen.x() + (screen.width() - 200) // 2
+                            center_y = screen.y() + (screen.height() - 200) // 2
+                            ov.resize(200, 200)
+                            ov.move(center_x + i*20, center_y + i*20)
+                        except Exception:
+                            ov.resize(200, 200)
+                            ov.move(400 + i*20, 300 + i*20)
 
                     def _on_closed(t, _ov=ov):
                         if _ov in self._replicator_overlays:

@@ -214,8 +214,10 @@ LAYOUT_PROFILE_KEYS = [
     'region_x', 'region_y', 'region_w', 'region_h',
 ]
 
-# Full profile keys — all per-overlay settings except x/y position (which is per-instance)
+# Full profile keys — all per-overlay settings including x/y position (full snapshot)
 FULL_PROFILE_KEYS = [
+    # Position (saved in full profiles so layout restore is exact)
+    'x', 'y',
     # Capture
     'fps', 'region_x', 'region_y', 'region_w', 'region_h',
     # Layout
@@ -294,10 +296,9 @@ def get_active_layout_profile(cfg: dict) -> tuple:
 
 
 def apply_layout_profile_to_ov_cfg(ov_cfg: dict, profile: dict):
-    """Copy all profile keys into an overlay config dict (does NOT touch x/y position)."""
+    """Copy all profile keys into an overlay config dict. x/y are included when present in profile."""
     for k, v in profile.items():
-        if k not in ('x', 'y'):  # Never overwrite per-instance position
-            ov_cfg[k] = v
+        ov_cfg[k] = v
 
 
 def get_hotkeys_cfg(cfg: dict) -> dict:
