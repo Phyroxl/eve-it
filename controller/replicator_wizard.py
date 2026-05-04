@@ -119,8 +119,17 @@ class ReplicatorWizard:
         prof_row = QHBoxLayout()
         prof_row.addWidget(QLabel("Perfil:"))
         self.prof_combo = QComboBox(); self.prof_combo.setMinimumWidth(120); prof_row.addWidget(self.prof_combo)
+        
         btn_p_add = QPushButton("+"); btn_p_add.setFixedSize(24,24); prof_row.addWidget(btn_p_add)
         btn_p_del = QPushButton("-"); btn_p_del.setFixedSize(24,24); prof_row.addWidget(btn_p_del)
+        
+        profile_btn_style = """
+            QPushButton { background: #1e293b; border: 1px solid #334155; color: #94a3b8; font-size: 14px; border-radius: 4px; padding: 0px; }
+            QPushButton:hover { background: #334155; border-color: #00c8ff; color: #00c8ff; }
+            QPushButton:pressed { background: #0f172a; border-color: #00c8ff; }
+        """
+        btn_p_add.setStyleSheet(profile_btn_style); btn_p_del.setStyleSheet(profile_btn_style)
+        btn_p_add.setToolTip("Agregar perfil"); btn_p_del.setToolTip("Quitar perfil")
         
         prof_row.addSpacing(15); prof_row.addWidget(QLabel("FPS:"))
         self.fps_combo = QComboBox(); self.fps_combo.addItems(["1", "5", "10", "15", "20", "30", "60", "120"])
@@ -148,9 +157,9 @@ class ReplicatorWizard:
         # Footer
         footer = QWidget(); footer.setFixedHeight(50); footer.setStyleSheet("background: #040810; border-top: 1px solid #1a2533;")
         fl = QHBoxLayout(footer); fl.setContentsMargins(20,0,20,0)
-        self.btn_back = QPushButton("CERRAR"); fl.addWidget(self.btn_back)
+        self.btn_back = QPushButton("CERRAR"); self.btn_back.setObjectName("close"); self.btn_back.setMinimumHeight(32); fl.addWidget(self.btn_back)
         fl.addStretch()
-        self.btn_next = QPushButton("LANZAR RÉPLICAS"); self.btn_next.setObjectName("primary"); self.btn_next.setMinimumHeight(32); fl.addWidget(self.btn_next)
+        self.btn_next = QPushButton("LANZAR RÉPLICAS"); self.btn_next.setObjectName("close"); self.btn_next.setMinimumHeight(32); fl.addWidget(self.btn_next)
         
         main_lay.addWidget(p1)
         main_lay.addWidget(footer)
@@ -178,13 +187,9 @@ class ReplicatorWizard:
         self._load_position()
 
     def _update_visual_button_state(self):
-        is_valid = self.sp_w.value() > 1 and self.sp_h.value() > 1
-        if is_valid:
-            self.btn_visual.setStyleSheet("QPushButton#primary { background: rgba(0,255,100,0.15); border: 1px solid rgba(0,255,100,0.4); color: #00ff64; } QPushButton#primary:hover { background: rgba(0,255,100,0.3); }")
-            self.btn_visual.setText("REGIÓN SELECCIONADA ✓")
-        else:
-            self.btn_visual.setStyleSheet("QPushButton#primary { background: rgba(255,50,50,0.15); border: 1px solid rgba(255,50,50,0.4); color: #ff6666; } QPushButton#primary:hover { background: rgba(255,50,50,0.3); }")
-            self.btn_visual.setText("SELECCIONAR REGIÓN")
+        # Simplificado: ya no cambia texto ni color a "Región seleccionada"
+        # Mantenemos el estilo primary para que sepa que es el botón de acción
+        pass
 
     def _sync_to_cfg(self):
         self._cfg['region'] = self._get_current_relative_reg()
@@ -282,30 +287,52 @@ class ReplicatorWizard:
             it.setSizeHint(card.sizeHint()); self.win_list.setItemWidget(it, card)
 
     def _load_profiles(self):
+        from overlay.replicator_config import get_layout_profiles, get_active_layout_profile
+        self.prof_combo.blockSignals(True)
         self.prof_combo.clear()
-        for name in self._cfg.get('regions', {}).keys(): self.prof_combo.addItem(name)
-        curr = self._cfg.get('global', {}).get('current_profile', 'Default')
+        profiles = get_layout_profiles(self._cfg)
+        for name in profiles.keys(): 
+            self.prof_combo.addItem(name)
+        curr, _ = get_active_layout_profile(self._cfg)
         idx = self.prof_combo.findText(curr)
         if idx >= 0: self.prof_combo.setCurrentIndex(idx)
+        self.prof_combo.blockSignals(False)
 
     def _on_profile_change(self):
+        from overlay.replicator_config import get_layout_profiles
         name = self.prof_combo.currentText()
         if not name: return
-        reg = self._cfg.get('regions', {}).get(name)
+        profiles = get_layout_profiles(self._cfg)
+        reg = profiles.get(name, {})
         if reg:
-            self.sp_x.setValue(int(reg.get('x',0) * 1920)); self.sp_y.setValue(int(reg.get('y',0) * 1080))
-            self.sp_w.setValue(int(reg.get('w',0.1) * 1920)); self.sp_h.setValue(int(reg.get('h',0.1) * 1080))
+            # Los perfiles de layout guardan region_x, region_y, etc. (normalizado 0-1)
+            # El asistente usa sp_x (pixels 0-1920)
+            self.sp_x.setValue(int(reg.get('region_x', 0) * 1920))
+            self.sp_y.setValue(int(reg.get('region_y', 0) * 1080))
+            self.sp_w.setValue(int(reg.get('region_w', 0.1) * 1920))
+            self.sp_h.setValue(int(reg.get('region_h', 0.1) * 1080))
 
     def _on_profile_add(self):
+        from overlay.replicator_config import save_layout_profile, LAYOUT_PROFILE_KEYS
         text, ok = self._show_custom_dialog("Nuevo Perfil", "Nombre:", is_input=True)
         if ok and text:
-            self._cfg.setdefault('regions', {})[text] = self._get_current_relative_reg()
-            self._save_and_refresh_profiles(text)
+            # Crear un perfil con la región actual
+            profile = {
+                'region_x': self.sp_x.value() / 1920.0,
+                'region_y': self.sp_y.value() / 1080.0,
+                'region_w': self.sp_w.value() / 1920.0,
+                'region_h': self.sp_h.value() / 1080.0,
+                'fps': int(self.fps_combo.currentText())
+            }
+            save_layout_profile(self._cfg, text.strip(), profile)
+            self._save_and_refresh_profiles(text.strip())
 
     def _on_profile_del(self):
+        from overlay.replicator_config import delete_layout_profile
         name = self.prof_combo.currentText()
         if name and name != 'Default':
-            del self._cfg['regions'][name]; self._save_and_refresh_profiles('Default')
+            delete_layout_profile(self._cfg, name)
+            self._save_and_refresh_profiles('Default')
 
     def _save_and_refresh_profiles(self, select_name):
         self._cfg_mod.save_config(self._cfg); self._load_profiles()

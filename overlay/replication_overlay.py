@@ -145,6 +145,10 @@ class ReplicationOverlay(QWidget):
     _eve_hwnds_cache: set = set()
     _eve_hwnds_ts: float = 0.0
 
+    # Settle period after programmatic focus change — prevents monitor timer from undoing F14/click
+    _active_hwnd_override: int = 0
+    _active_hwnd_override_until: float = 0.0
+
     def __init__(self, title, hwnd=None, region_rel=None, cfg=None,
                  save_callback=None, hwnd_getter=None):
         super().__init__(None)
@@ -535,35 +539,45 @@ class ReplicationOverlay(QWidget):
     def _monitor_focus(self):
         try:
             fg = get_foreground_hwnd()
+            # Honour settle period: if F14 or click just changed focus programmatically,
+            # use the intended hwnd instead of the real (possibly lagging) Windows fg.
+            if time.perf_counter() < ReplicationOverlay._active_hwnd_override_until:
+                fg = ReplicationOverlay._active_hwnd_override
             # If nothing changed, skip update to save CPU
             if fg == getattr(self, '_last_monitor_fg', 0):
                 return
             self._last_monitor_fg = fg
-            
+
             was_active = self._is_active_client
             self._is_active_client = bool(self._hwnd and fg == self._hwnd)
 
             if was_active != self._is_active_client:
-                # Si nosotros hemos detectado el cambio de foco, lo notificamos a todos
-                # para que los bordes se actualicen de forma síncrona.
                 ReplicationOverlay.notify_active_client_changed(fg)
 
             if self._ov_cfg.get('hide_when_inactive', False):
                 eve_hwnds = self._get_cached_eve_hwnds()
                 if should_show_overlays(fg, eve_hwnds):
                     if not self.isVisible():
+                        # Restore exact geometry saved before hiding
+                        saved = getattr(self, '_last_visible_geometry', None)
                         self.show()
+                        if saved is not None:
+                            QTimer.singleShot(0, lambda g=saved: self.setGeometry(g))
                 else:
                     if self.isVisible():
+                        # Save geometry before hiding so it can be restored exactly
+                        self._last_visible_geometry = self.geometry()
                         self.hide()
         except Exception:
             pass
 
     @staticmethod
     def notify_active_client_changed(active_hwnd: int):
-        """Instant update of active border for all overlays."""
-        import time
+        """Instant update of active border for all overlays. Single source of truth."""
         t0 = time.perf_counter()
+        # 300ms settle: prevents the 500ms monitor timer from undoing programmatic focus changes
+        ReplicationOverlay._active_hwnd_override = active_hwnd
+        ReplicationOverlay._active_hwnd_override_until = t0 + 0.3
         count = 0
         for ov in list(_OVERLAY_REGISTRY):
             was_active = ov._is_active_client
@@ -741,15 +755,20 @@ class ReplicationOverlay(QWidget):
     def _open_settings(self, _checked=False):
         """Abre o trae al frente el diálogo de ajustes del Replicador."""
         logger.info(f"[REPLICATOR MENU] _open_settings called for {self._title}")
-        
-        # 1. Reutilizar si ya existe y es válido
-        if hasattr(self, "_settings_dialog") and self._settings_dialog:
+
+        # 1. Reutilizar si ya existe (visible u oculto) — evita crear múltiples instancias
+        # y el bug donde destroyed() del diálogo viejo nulifica la referencia al nuevo.
+        if hasattr(self, "_settings_dialog") and self._settings_dialog is not None:
             try:
-                if self._settings_dialog.isVisible():
+                is_visible = self._settings_dialog.isVisible()
+                if not is_visible:
+                    logger.info("[REPLICATOR MENU] Diálogo existente oculto, mostrando")
+                    self._settings_dialog.show()
+                else:
                     logger.info("[REPLICATOR MENU] Diálogo existente visible, activando")
-                    self._settings_dialog.raise_()
-                    self._settings_dialog.activateWindow()
-                    return
+                self._settings_dialog.raise_()
+                self._settings_dialog.activateWindow()
+                return
             except (RuntimeError, ReferenceError):
                 logger.info("[REPLICATOR MENU] Referencia muerta detectada, limpiando")
                 self._settings_dialog = None
@@ -758,33 +777,40 @@ class ReplicationOverlay(QWidget):
         try:
             logger.info(f"[REPLICATOR MENU] Creando nueva instancia de ReplicatorSettingsDialog")
             dlg = ReplicatorSettingsDialog(self)
-            
+
             # Persistencia de referencia
             self._settings_dialog = dlg
-            
-            # Limpiar referencia al cerrar/destruir
-            dlg.destroyed.connect(lambda: self._on_settings_destroyed())
-            
+
+            # Limpiar referencia solo al destruir (no al ocultar con accept/reject)
+            dlg.destroyed.connect(self._on_settings_destroyed)
+
             # Configuración de ventana (No Modal)
             dlg.setModal(False)
             dlg.setWindowModality(Qt.WindowModality.NonModal if hasattr(Qt, 'WindowModality') else Qt.NonModal)
-            
+
             dlg.show()
             dlg.raise_()
             dlg.activateWindow()
-            
+
             # Refuerzo topmost
             try:
                 from overlay.dialog_utils import make_replicator_dialog_topmost
                 make_replicator_dialog_topmost(dlg, modal=False)
             except Exception as e:
                 logger.debug(f"Topmost reinforcement error: {e}")
-                
+
             logger.info("[REPLICATOR MENU] Diálogo abierto con éxito")
-            
+
         except Exception as e:
+            import traceback
+            try:
+                log_path = Path(__file__).parent.parent / 'logs' / 'replicator_settings_debug.log'
+                log_path.parent.mkdir(exist_ok=True)
+                with open(log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"\n[{self._title}] {traceback.format_exc()}\n")
+            except Exception:
+                pass
             logger.exception(f"[REPLICATOR MENU] Error crítico instanciando Ajustes: {e}")
-            raise # Propagar para que el diagnóstico lo capture
 
     def _on_settings_destroyed(self):
         """Callback cuando el diálogo es destruido por Qt."""
@@ -1156,16 +1182,6 @@ class ReplicationOverlay(QWidget):
         super().moveEvent(event)
         self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Sincronizar el hilo de captura si es necesario
-        if hasattr(self, '_thread'):
-            self._thread.set_output_size(self.width(), self.height())
-        # Notificar al diálogo de ajustes
-        self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
-        # Aplicar máscara de forma si es necesario
-        self._apply_window_shape_mask()
-
     def mousePressEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
         if event.button() == left:
@@ -1277,6 +1293,7 @@ class ReplicationOverlay(QWidget):
                 self._region['h'] = max(0.01, min(1.0, self._region['h'] * rh))
             self._thread.set_output_size(self.width(), self.height())
         super().resizeEvent(event)
+        self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
         self._apply_window_shape_mask()
 
     def showEvent(self, event):
