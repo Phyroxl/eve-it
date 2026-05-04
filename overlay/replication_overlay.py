@@ -201,10 +201,10 @@ class ReplicationOverlay(QWidget):
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.timeout.connect(self._do_save)
 
-        # 500 ms monitor: active-border + hide_when_inactive
+        # 75 ms monitor: fast hide/show + active-border (early-exit cache prevents excess Win32 calls)
         self._monitor_timer = QTimer(self)
         self._monitor_timer.timeout.connect(self._monitor_focus)
-        self._monitor_timer.start(500)
+        self._monitor_timer.start(75)
 
         # Fix 2: correct aspect ratio on first launch (when size is at defaults)
         self._fix_initial_aspect()
@@ -214,8 +214,12 @@ class ReplicationOverlay(QWidget):
 
     def _init_active_check(self):
         try:
+            # Eagerly resolve hwnd if not set (covers _restore_replicator_overlays path
+            # where hwnd_getter is provided but hwnd=None was passed)
+            if not self._hwnd and callable(self._hwnd_getter):
+                self._hwnd = self._hwnd_getter()
             fg = get_foreground_hwnd()
-            if fg and fg == (self._hwnd_getter() if callable(self._hwnd_getter) else self._hwnd):
+            if fg and self._hwnd and fg == self._hwnd:
                 self._is_active_client = True
                 self.update()
                 logger.info(f"[REPLICATOR ACTIVE INIT] title={self._title!r} is_active=True")
@@ -538,12 +542,16 @@ class ReplicationOverlay(QWidget):
 
     def _monitor_focus(self):
         try:
+            # Lazily resolve hwnd for overlays created without explicit hwnd (restore path)
+            if not self._hwnd and callable(self._hwnd_getter):
+                self._hwnd = self._hwnd_getter()
+
             fg = get_foreground_hwnd()
             # Honour settle period: if F14 or click just changed focus programmatically,
             # use the intended hwnd instead of the real (possibly lagging) Windows fg.
             if time.perf_counter() < ReplicationOverlay._active_hwnd_override_until:
                 fg = ReplicationOverlay._active_hwnd_override
-            # If nothing changed, skip update to save CPU
+            # If nothing changed, skip update to save CPU (most ticks hit this early-exit)
             if fg == getattr(self, '_last_monitor_fg', 0):
                 return
             self._last_monitor_fg = fg

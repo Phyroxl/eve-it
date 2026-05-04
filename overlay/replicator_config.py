@@ -187,12 +187,31 @@ BORDER_COPY_KEYS = [
     'highlight_active', 'active_border_color', 'show_gray_frame',
 ]
 
-# Keys stored in a layout profile
+# Keys stored in a layout profile (legacy subset — kept for backward compat with older profiles/tests)
 LAYOUT_PROFILE_KEYS = [
     'w', 'h', 'maintain_aspect',
     'snap_enabled', 'snap_x', 'snap_y',
     'fps', 'opacity', 'label_visible', 'border_visible',
     'region_x', 'region_y', 'region_w', 'region_h',
+]
+
+# Full profile keys — all per-overlay settings except x/y position (which is per-instance)
+FULL_PROFILE_KEYS = [
+    # Capture
+    'fps', 'region_x', 'region_y', 'region_w', 'region_h',
+    # Layout
+    'w', 'h', 'maintain_aspect', 'opacity',
+    'snap_enabled', 'snap_x', 'snap_y',
+    # General
+    'always_on_top', 'hide_when_inactive', 'locked',
+    # Label
+    'label_visible', 'label_pos', 'label_font_size',
+    'label_color', 'label_bg', 'label_bg_color',
+    'label_bg_opacity', 'label_padding',
+    # Border
+    'border_visible', 'border_width', 'border_shape',
+    'show_gray_frame', 'client_color',
+    'active_border_color', 'highlight_active',
 ]
 
 # Keys copied when user clicks "copy all non-layout settings to all"
@@ -232,7 +251,8 @@ def get_layout_profiles(cfg: dict) -> dict:
 
 def save_layout_profile(cfg: dict, name: str, data: dict):
     cfg.setdefault('layout_profiles', {})
-    cfg['layout_profiles'][name] = {k: data[k] for k in LAYOUT_PROFILE_KEYS if k in data}
+    # Save full profile (all FULL_PROFILE_KEYS present in data) for complete config restore
+    cfg['layout_profiles'][name] = {k: data[k] for k in FULL_PROFILE_KEYS if k in data}
     save_config(cfg)
 
 
@@ -253,10 +273,10 @@ def get_active_layout_profile(cfg: dict) -> tuple:
 
 
 def apply_layout_profile_to_ov_cfg(ov_cfg: dict, profile: dict):
-    """Copy profile keys into an overlay config dict (does NOT touch x/y)."""
-    for k in LAYOUT_PROFILE_KEYS:
-        if k in profile:
-            ov_cfg[k] = profile[k]
+    """Copy all profile keys into an overlay config dict (does NOT touch x/y position)."""
+    for k, v in profile.items():
+        if k not in ('x', 'y'):  # Never overwrite per-instance position
+            ov_cfg[k] = v
 
 
 def get_hotkeys_cfg(cfg: dict) -> dict:

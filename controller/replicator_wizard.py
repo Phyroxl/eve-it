@@ -394,6 +394,17 @@ class ReplicatorWizard:
                 ov.show(); self._overlays_refs.append(ov)
             update_hotkey_cache(titles)
             register_hotkeys(self._cfg, cycle_titles_getter=lambda: self._cfg.get('selected_windows', []))
+            # Initialize active border after overlays settle
+            try:
+                from overlay.win32_capture import get_foreground_hwnd
+                from PySide6.QtCore import QTimer as _QTimer
+                def _init_active():
+                    fg = get_foreground_hwnd()
+                    if fg:
+                        ReplicationOverlay.notify_active_client_changed(fg)
+                _QTimer.singleShot(350, _init_active)
+            except Exception:
+                pass
         except Exception as e: logger.error(f"Error en lanzamiento directo: {e}")
 
     def _show_custom_dialog(self, title, msg, is_input=False):

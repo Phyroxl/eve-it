@@ -12,6 +12,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
+from PySide6.QtCore import QTimer
 
 if TYPE_CHECKING:
     from controller.app_controller import AppController
@@ -76,12 +77,9 @@ def _make_tray_icon(G):
     p.setPen(QPen(QColor(255, 210, 0), 0))
     p.setBrush(G.QBrush(QColor(255, 210, 0)))
     try:
-        QPolygon = G.QPolygon if hasattr(G, 'QPolygon') else None
-        QPointF  = G.QPointF if hasattr(G, 'QPointF') else None
         C_mod = __import__('importlib').import_module('PySide6.QtCore' if 'PySide6' in str(type(p)) else
                            'PyQt6.QtCore' if 'PyQt6' in str(type(p)) else
                            'PyQt5.QtCore')
-        QPointF = C_mod.QPointF
         path_cls = G.QPainterPath if hasattr(G, 'QPainterPath') else None
         if path_cls:
             path = path_cls()
@@ -232,8 +230,6 @@ class TrayManager:
         logger.info("DIAG: Ejecutando REFUERZO AGRESIVO DE VISIBILIDAD.")
         if hasattr(self, '_suite_window') and self._suite_window:
             self._suite_window.hide()
-            import time
-            from PySide6.QtCore import QTimer
             QTimer.singleShot(500, lambda: self._on_show_suite())
         else:
             logger.error("DIAG: Error crítico - Suite no instanciada.")
@@ -275,7 +271,6 @@ class TrayManager:
 
     def _on_autostart(self):
         """Toggle autoarranque con Windows."""
-        act = self._act_tracker  # reutilizamos para detectar estado
         sender = self._menu.sender() if hasattr(self._menu, 'sender') else None
         enabled = sender.isChecked() if sender else False
         _toggle_autostart(enabled)
@@ -317,19 +312,27 @@ class TrayManager:
                 self._on_dashboard()
 
     # ── Creación de ventanas Qt ───────────────────────────────────────────────
+
     def close_replicator_overlays(self):
-        """Cierra todos los overlays del replicador y el asistente."""
+        """Cierra todos los overlays del replicador y el asistente de forma ultra-rápida."""
         try:
             if self._replicator_dialog:
                 self._replicator_dialog.close()
                 self._replicator_dialog = None
             
-            for ov in list(self._replicator_overlays):
+            # 1. Notificar apagado rápido a todos para que no bloqueen con stop() o save()
+            overlays = list(self._replicator_overlays)
+            for ov in overlays:
+                ov._shutting_down = True
+                
+            # 2. Cierre masivo inmediato
+            for ov in overlays:
                 try:
-                    ov.stop()
                     ov.close()
+                    ov.deleteLater()
                 except Exception as e:
                     logger.warning(f"Error cerrando overlay: {e}")
+            
             self._replicator_overlays.clear()
 
             # También cerrar el HUB global si existe
@@ -341,7 +344,6 @@ class TrayManager:
                 logger.warning(f"Error cerrando HUB global: {e}")
         except Exception as e:
             logger.error(f"Error cerrando overlays del replicador: {e}")
-
 
     def _create_overlay_window(self):
         """Crea el overlay HUD Qt en el hilo principal."""
@@ -362,28 +364,17 @@ class TrayManager:
     def _launch_replicator_wizard(self):
         """
         Lanza el wizard del replicador DIRECTAMENTE en el hilo Qt.
-        
-        CRÍTICO: No usar threads secundarios para crear ventanas Qt.
-        QTimer.singleShot desde threads no-Qt es silencioso y no funciona.
-        Los widgets Qt DEBEN crearse en el hilo principal Qt.
         """
-        # Llamar directamente — ya estamos en el hilo Qt (este método
-        # se llama desde un slot de QAction, que siempre es hilo Qt)
         self._show_replicator_wizard()
 
     def _show_replicator_wizard(self):
         """
         Crea y muestra el wizard del replicador en el hilo Qt actual.
-        Usa show() en lugar de exec() para no bloquear el event loop del tray.
         """
         try:
             from overlay import replicator_config as cfg_mod
-
             cfg = cfg_mod.load_config()
-            # SIEMPRE abrir el wizard — nunca restaurar automáticamente.
-            # El usuario debe elegir las ventanas y región en cada sesión.
             self._open_replicator_wizard_dialog(cfg, cfg_mod)
-
         except Exception as e:
             logger.error(f"Error en replicator: {e}", exc_info=True)
             self._tray.showMessage(
@@ -411,12 +402,13 @@ class TrayManager:
                 return
 
             # Cerrar overlays anteriores
-            for ov in list(self._replicator_overlays):
-                try:
-                    ov.close()
-                except Exception as e:
-                    logger.warning(f"Error cerrando overlay anterior: {e}")
-            self._replicator_overlays = []
+            self.close_replicator_overlays()
+
+            # Resolver hwnds iniciales una sola vez (evita find_eve_windows N veces)
+            try:
+                initial_hwnds = {w['title']: w['hwnd'] for w in find_eve_windows()}
+            except Exception:
+                initial_hwnds = {}
 
             def make_hwnd_getter(win_title):
                 def getter():
@@ -429,46 +421,41 @@ class TrayManager:
             created = 0
             for i, title in enumerate(titles):
                 try:
-                    # Aplicar FPS global
                     fps = cfg.get('global_fps', 30)
                     cfg.setdefault('overlays', {}).setdefault(title, {})['fps'] = fps
-                    
-                    # IMPORTANTE: Pasar una COPIA de la región para evitar sincronización fantasma
                     ov_region = region.copy() if region else {'x':0, 'y':0, 'w':1, 'h':1}
-                    
+
                     ov = ReplicationOverlay(
                         title        = title,
+                        hwnd         = initial_hwnds.get(title),   # ← hwnd inicial para notify_active
                         hwnd_getter  = make_hwnd_getter(title),
                         region_rel   = ov_region,
                         cfg          = cfg,
                         save_callback= lambda *a, c=cfg, m=cfg_mod: m.save_overlay_state(c, *a),
                     )
-                    
-                    # Posicionamiento: Centrado en pantalla (una encima de otra)
+
                     try:
                         from PySide6.QtWidgets import QApplication
                         screen = QApplication.primaryScreen().geometry()
                         center_x = screen.x() + (screen.width() - 200) // 2
                         center_y = screen.y() + (screen.height() - 200) // 2
                         ov.resize(200, 200)
-                        ov.move(center_x, center_y)
+                        ov.move(center_x + i*20, center_y + i*20)
                     except Exception:
                         ov.resize(200, 200)
-                        ov.move(400, 300) # Fallback
-                    
+                        ov.move(400 + i*20, 300 + i*20)
+
                     def _on_closed(t, _ov=ov):
                         if _ov in self._replicator_overlays:
                             self._replicator_overlays.remove(_ov)
                     ov.closed.connect(_on_closed)
                     ov.selection_requested.connect(lambda _ov=ov: self._on_reselect_region(_ov))
-                    # Conectar sincronización
                     ov.sync_triggered.connect(lambda rd, _ov=ov: self._on_sync_replicas(_ov, rd))
                     ov.show()
                     ov.raise_()
                     ov.activateWindow()
                     self._replicator_overlays.append(ov)
                     created += 1
-                    logger.info(f"Overlay creado: {title} en rejilla (col:{col}, row:{row})")
                 except Exception as e:
                     logger.error(f"Error overlay '{title}': {e}", exc_info=True)
 
@@ -476,6 +463,21 @@ class TrayManager:
                 self._ctrl.state.update(replicator_active=True)
                 self._act_replic.setChecked(True)
                 logger.info(f"Replicador: {created} overlay(s) activos")
+
+                # Inicializar borde activo tras breve settle (overlays recién creados)
+                try:
+                    from overlay.win32_capture import get_foreground_hwnd as _get_fg
+                    from PySide6.QtCore import QTimer as _QTimer
+                    def _init_active_border():
+                        try:
+                            fg = _get_fg()
+                            if fg:
+                                ReplicationOverlay.notify_active_client_changed(fg)
+                        except Exception:
+                            pass
+                    _QTimer.singleShot(350, _init_active_border)
+                except Exception:
+                    pass
             else:
                 self._act_replic.setChecked(False)
 
@@ -488,7 +490,6 @@ class TrayManager:
         Crea el wizard refactorizado y lo muestra.
         """
         try:
-            # Importación robusta para evitar errores de ruta en Windows
             try:
                 from controller.replicator_wizard import ReplicatorWizard
             except ImportError:
@@ -501,24 +502,18 @@ class TrayManager:
                 callback=lambda c, m: self._restore_replicator_overlays(c, m)
             )
             self._replicator_wizard_inst.show()
-            # Guardar referencia para evitar GC (Garbage Collector)
             self._replicator_dialog = self._replicator_wizard_inst.dlg
             
         except Exception as e:
             import traceback
             err_stack = traceback.format_exc()
             logger.error(f"Error lanzando ReplicatorWizard: {e}\n{err_stack}")
-            
-            # Mostrar alerta visual para el usuario
             self._W.QMessageBox.critical(
                 None, "Fallo Crítico: Replicador", 
                 f"No se pudo iniciar el asistente del replicador.\n\nError: {e}\n\nDetalles técnicos:\n{err_stack}"
             )
-            
             self._act_replic.setChecked(False)
             self._ctrl.state.update(replicator_active=False)
-
-    # ── Estado ────────────────────────────────────────────────────────────────
 
     def _on_state_change(self, state):
         """Actualiza el menú cuando cambia el estado del controlador."""
@@ -534,7 +529,6 @@ class TrayManager:
         self._act_replic.setChecked(state.replicator_active)
         self._act_tracker.setChecked(state.tracker_running)
 
-        # Tooltip con estado actual
         parts = []
         if state.tracker_running:   parts.append("Tracker ✓")
         if state.dashboard_running: parts.append("Dashboard ✓")
@@ -555,8 +549,6 @@ class TrayManager:
         self._act_restart.setText(t('tray_restart', lang))
         self._act_auto.setText(t('tray_autostart', lang))
         self._act_quit.setText(t('tray_quit', lang))
-        
-        # Tooltip también podría ser traducido si quisiéramos
 
     def _on_overlay_closed(self):
         self._ctrl.state.update(overlay_active=False)
@@ -569,19 +561,13 @@ class TrayManager:
 
     def _on_reselect_region(self, overlay):
         """Abre el wizard para configurar región (pantalla única)."""
-        logger.info(f"Petición de re-selección de región para: {overlay._title}")
-
         if not self._replicator_dialog or not self._replicator_wizard_inst:
             self._launch_replicator_wizard()
-
         if self._replicator_wizard_inst:
-            # Si el wizard tiene el método específico, lo usamos
             if hasattr(self._replicator_wizard_inst, "show_for_region_change"):
                 self._replicator_wizard_inst.show_for_region_change(overlay)
             else:
                 self._replicator_wizard_inst.show()
-        else:
-            logger.error("No se pudo iniciar el asistente de replicación")
 
     def set_control_window(self, win):
         self._control_window = win
@@ -597,29 +583,23 @@ class TrayManager:
         self._tray.showMessage(title, msg, info, duration_ms)
 
 
-# ── Autoarranque ──────────────────────────────────────────────────────────────
-
 def _toggle_autostart(enable: bool):
     """Configura o elimina el autoarranque de Windows via registro."""
     import platform
     if platform.system() != 'Windows':
-        logger.info("Autoarranque solo disponible en Windows")
         return
     try:
         import winreg
         key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
         app_name = "EVEISKTracker"
-        exe_path = sys.executable  # o main.exe cuando se empaqueta
-
+        exe_path = sys.executable
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
                             winreg.KEY_SET_VALUE) as key:
             if enable:
                 winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{exe_path}"')
-                logger.info("Autoarranque activado")
             else:
                 try:
                     winreg.DeleteValue(key, app_name)
-                    logger.info("Autoarranque desactivado")
                 except FileNotFoundError:
                     pass
     except Exception as e:

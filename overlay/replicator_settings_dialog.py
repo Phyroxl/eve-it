@@ -28,7 +28,23 @@ except ImportError:
 
 # ... (General, Layout, Etiqueta, Borde, Hotkeys)
 
-from overlay.dialog_utils import REPLICATOR_STYLE as _STYLE
+from overlay.dialog_utils import REPLICATOR_STYLE as _STYLE_BASE
+
+# Extra CSS: reorder buttons get named selectors so the dialog stylesheet wins over any inline style
+_REORDER_STYLE = """
+QPushButton#reorderUp, QPushButton#reorderDown {
+    background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+    font-size: 16px; font-weight: bold; border-radius: 5px; padding: 0;
+    min-width: 30px; min-height: 42px;
+}
+QPushButton#reorderUp:hover, QPushButton#reorderDown:hover {
+    background: #1e3a4a; border-color: #00c8ff; color: #00c8ff;
+}
+QPushButton#reorderUp:pressed, QPushButton#reorderDown:pressed {
+    background: #0f172a; border-color: #00c8ff;
+}
+"""
+_STYLE = _STYLE_BASE + _REORDER_STYLE
 
 
 def _row(parent_layout, label_text: str, widget) -> None:
@@ -302,7 +318,8 @@ class ReplicatorSettingsDialog(QDialog):
 
         from overlay.replicator_config import (
             get_layout_profiles, save_layout_profile, delete_layout_profile,
-            get_active_layout_profile, apply_layout_profile_to_ov_cfg, LAYOUT_PROFILE_KEYS,
+            get_active_layout_profile, apply_layout_profile_to_ov_cfg,
+            LAYOUT_PROFILE_KEYS, FULL_PROFILE_KEYS,
         )
 
         prof_row = QHBoxLayout()
@@ -351,9 +368,9 @@ class ReplicatorSettingsDialog(QDialog):
             from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getText(self, "Nuevo perfil", "Nombre:")
             if ok and name.strip():
-                # Sincronizar región actual a ov_cfg antes de guardar
                 self._ov._do_save()
-                profile = {k: self._ov._ov_cfg[k] for k in LAYOUT_PROFILE_KEYS if k in self._ov._ov_cfg}
+                # Save full profile (all settings, not just layout)
+                profile = {k: self._ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in self._ov._ov_cfg}
                 save_layout_profile(self._ov._cfg, name.strip(), profile)
                 _reload_lp_combo()
                 lp_combo.setCurrentText(name.strip())
@@ -361,9 +378,9 @@ class ReplicatorSettingsDialog(QDialog):
         def _lp_save():
             name = lp_combo.currentText()
             if name:
-                # Sincronizar región actual a ov_cfg antes de guardar
                 self._ov._do_save()
-                profile = {k: self._ov._ov_cfg[k] for k in LAYOUT_PROFILE_KEYS if k in self._ov._ov_cfg}
+                # Save full profile (all settings, not just layout)
+                profile = {k: self._ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in self._ov._ov_cfg}
                 save_layout_profile(self._ov._cfg, name, profile)
 
         def _lp_apply():
@@ -853,18 +870,17 @@ class ReplicatorSettingsDialog(QDialog):
         
         list_box.addWidget(self._accounts_list)
         
-        # Botones de orden mejorados
+        # Botones de orden — usan objectName para que el stylesheet del diálogo tenga máxima prioridad
         btn_lay = QVBoxLayout()
-        btn_up = QPushButton("↑"); btn_up.setFixedSize(26, 42)
-        btn_down = QPushButton("↓"); btn_down.setFixedSize(26, 42)
-        
-        order_btn_style = """
-            QPushButton { background: #1e293b; border: 1px solid #334155; color: #94a3b8; font-size: 14px; border-radius: 4px; }
-            QPushButton:hover { background: #334155; border-color: #00c8ff; color: #00c8ff; }
-            QPushButton:pressed { background: #0f172a; }
-        """
-        btn_up.setStyleSheet(order_btn_style); btn_down.setStyleSheet(order_btn_style)
-        btn_up.setToolTip("Subir cuenta"); btn_down.setToolTip("Bajar cuenta")
+        btn_up = QPushButton("↑")
+        btn_up.setObjectName("reorderUp")
+        btn_up.setFixedSize(30, 44)
+        btn_up.setToolTip("Subir cuenta")
+
+        btn_down = QPushButton("↓")
+        btn_down.setObjectName("reorderDown")
+        btn_down.setFixedSize(30, 44)
+        btn_down.setToolTip("Bajar cuenta")
         
         def _move_item(up=True):
             curr = self._accounts_list.currentRow()
