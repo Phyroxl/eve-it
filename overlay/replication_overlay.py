@@ -218,6 +218,7 @@ class CaptureThread(QThread):
         self._out_w, self._out_h = 400, 300
         self._lock = threading.Lock()
         self._fast_stop = False
+        self._stop_event = threading.Event()
 
     def set_fast_stop(self, enabled=True):
         self._fast_stop = enabled
@@ -232,6 +233,7 @@ class CaptureThread(QThread):
 
     def stop(self):
         self._running = False
+        self._stop_event.set()  # interrupt any ongoing time.sleep immediately
         if not self._fast_stop:
             self.wait(500)
 
@@ -255,7 +257,8 @@ class CaptureThread(QThread):
             if _hk_mod is not None:
                 try:
                     if time.monotonic() < _hk_mod._capture_suspended_until:
-                        time.sleep(max(0.0, (1.0 / fps) - (time.perf_counter() - t_start)))
+                        self._stop_event.wait(max(0.0, (1.0 / fps) - (time.perf_counter() - t_start)))
+                        self._stop_event.clear()
                         continue
                 except Exception:
                     pass
@@ -279,7 +282,8 @@ class CaptureThread(QThread):
                 self.frame_ready.emit(b"ERROR", 0, 0)
 
             elapsed = time.perf_counter() - t_start
-            time.sleep(max(0, (1.0 / fps) - elapsed))
+            self._stop_event.wait(max(0, (1.0 / fps) - elapsed))
+            self._stop_event.clear()
 
 
 class ReplicationOverlay(QWidget):
@@ -299,6 +303,11 @@ class ReplicationOverlay(QWidget):
 
     # Overlay currently under the mouse cursor — used by the WH_MOUSE_LL hook to route wheel events
     _hover_overlay: 'ReplicationOverlay | None' = None
+
+    # Fast shutdown: set True during app-wide close so closeEvent fast-paths for all overlays
+    _global_shutdown: bool = False
+    # Prevents N^2 hide/show operations across overlays: only first overlay per fg-change acts
+    _global_hide_last_fg: int = 0
 
     def __init__(self, title, hwnd=None, region_rel=None, cfg=None,
                  save_callback=None, hwnd_getter=None):
@@ -720,38 +729,42 @@ class ReplicationOverlay(QWidget):
             if was_active != self._is_active_client:
                 ReplicationOverlay.notify_active_client_changed(fg)
 
-            if self._ov_cfg.get('hide_when_inactive', False):
+            # Global hide/show: if ANY overlay has hide_when_inactive, apply to ALL.
+            # _global_hide_last_fg ensures only the FIRST overlay to see a fg change acts
+            # (prevents N^2 hide/show operations when many overlays are open).
+            any_hide = any(ov._ov_cfg.get('hide_when_inactive', False)
+                           for ov in list(_OVERLAY_REGISTRY))
+            if any_hide and fg != ReplicationOverlay._global_hide_last_fg:
+                ReplicationOverlay._global_hide_last_fg = fg
                 eve_hwnds = self._get_cached_eve_hwnds()
-                # Belt-and-suspenders: include every overlay's target hwnd even if
-                # find_eve_windows() missed it (e.g., client just launched or borderless mode)
                 _extra = {ov._hwnd for ov in list(_OVERLAY_REGISTRY) if ov._hwnd}
                 if _extra - eve_hwnds:
                     eve_hwnds = eve_hwnds | _extra
                 _context_ok = should_show_overlays(fg, eve_hwnds)
+                all_ovs = list(_OVERLAY_REGISTRY)
                 if _context_ok:
-                    if not self.isVisible():
-                        # Restore geometry as plain ints (not QRect) to survive Qt's show() dance
-                        saved = getattr(self, '_last_visible_geom', None)
+                    hidden = [ov for ov in all_ovs if not ov.isVisible()]
+                    for ov in hidden:
+                        saved = getattr(ov, '_last_visible_geom', None)
                         if saved:
                             sx, sy, sw, sh = saved
-                        self.show()
+                        ov.show()
                         if saved:
-                            # Apply immediately + deferred (DWM compositing can shift window)
-                            self.setGeometry(sx, sy, sw, sh)
-                            QTimer.singleShot(0,  lambda x=sx,y=sy,w=sw,h=sh: self.setGeometry(x,y,w,h))
-                            QTimer.singleShot(60, lambda x=sx,y=sy,w=sw,h=sh: self._restore_and_verify(x,y,w,h))
-                        _log_hide_show_event('SHOW', self._title,
-                                             f"restore_geometry=x={sx} y={sy} w={sw} h={sh}" if saved else "no_saved_geom")
-                        logger.debug(f"[HIDE FILTER] fg={fg} context=eve/app action=show title={self._title!r}")
+                            ov.setGeometry(sx, sy, sw, sh)
+                            QTimer.singleShot(0,  lambda x=sx,y=sy,w=sw,h=sh,o=ov: o.setGeometry(x,y,w,h))
+                            QTimer.singleShot(60, lambda x=sx,y=sy,w=sw,h=sh,o=ov: o._restore_and_verify(x,y,w,h))
+                    if hidden:
+                        _log_hide_show_event('SHOW GLOBAL', 'all',
+                                             f"count={len(hidden)} fg={fg}")
                 else:
-                    if self.isVisible():
-                        g = self.geometry()
-                        # Store as a plain tuple — avoids QRect lifetime issues
-                        self._last_visible_geom = (g.x(), g.y(), g.width(), g.height())
-                        _log_hide_show_event('HIDE', self._title,
-                                             f"save_geometry=x={g.x()} y={g.y()} w={g.width()} h={g.height()}")
-                        self.hide()
-                        logger.debug(f"[HIDE FILTER] fg={fg} context=external action=hide title={self._title!r}")
+                    visible = [ov for ov in all_ovs if ov.isVisible()]
+                    for ov in visible:
+                        g = ov.geometry()
+                        ov._last_visible_geom = (g.x(), g.y(), g.width(), g.height())
+                        ov.hide()
+                    if visible:
+                        _log_hide_show_event('HIDE GLOBAL', 'all',
+                                             f"count={len(visible)} fg={fg}")
         except Exception:
             pass
 
@@ -1546,6 +1559,10 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
+        if ReplicationOverlay._global_shutdown:
+            # Timers already stopped and thread already signaled by close_replicator_overlays
+            super().closeEvent(event)
+            return
         for _attr in ('_monitor_timer', '_autosave_timer', '_top_timer'):
             if hasattr(self, _attr):
                 getattr(self, _attr).stop()

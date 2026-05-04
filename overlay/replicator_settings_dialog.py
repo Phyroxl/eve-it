@@ -230,7 +230,29 @@ class ReplicatorSettingsDialog(QDialog):
 
         chk_hide = QCheckBox("Ocultar si EVE no esta activo")
         chk_hide.setChecked(bool(self._cfg('hide_when_inactive')))
-        chk_hide.toggled.connect(lambda v: self._set('hide_when_inactive', v))
+
+        def _hide_toggled(v):
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            ovs = list(_OVERLAY_REGISTRY)
+            for ov in ovs:
+                try:
+                    ov._ov_cfg['hide_when_inactive'] = v
+                    ov._schedule_autosave()
+                except Exception:
+                    pass
+            if not v:
+                for ov in ovs:
+                    if not ov.isVisible():
+                        saved = getattr(ov, '_last_visible_geom', None)
+                        if saved:
+                            sx, sy, sw, sh = saved
+                            ov.show()
+                            ov.setGeometry(sx, sy, sw, sh)
+                        else:
+                            ov.show()
+            logger.info(f"[HIDE GLOBAL TOGGLE] enabled={v} overlays={len(ovs)}")
+
+        chk_hide.toggled.connect(_hide_toggled)
         lay.addWidget(chk_hide)
 
         chk_lock = QCheckBox("Bloquear posicion")
@@ -341,11 +363,6 @@ class ReplicatorSettingsDialog(QDialog):
             prof_row.addWidget(b)
         lay.addLayout(prof_row)
 
-        btn_lp_apply = QPushButton("Aplicar")
-        btn_lp_apply.setObjectName("blue")
-        btn_lp_apply.setFixedHeight(24)
-        lay.addWidget(btn_lp_apply)
-
         chk_lp_all = QCheckBox("Aplicar a todas las réplicas")
         chk_lp_all.setStyleSheet("font-size: 10px; color: #94a3b8;")
         lay.addWidget(chk_lp_all)
@@ -433,27 +450,6 @@ class ReplicatorSettingsDialog(QDialog):
                 save_layout_profile(self._ov._cfg, name, profile, replicas=replicas)
                 logger.info(f"[PROFILE SAVE GLOBAL] name='{name}' replicas={len(replicas)}")
 
-        def _lp_apply_non_geom():
-            """Apply current Layout UI values (FPS, aspect, snap) to overlay(s) — NO geometry changes."""
-            from overlay.replication_overlay import _OVERLAY_REGISTRY
-            apply_all = chk_lp_all.isChecked()
-            peers = list(_OVERLAY_REGISTRY) if apply_all else [self._ov]
-            fps_v = int(cmb_fps.currentText())
-            non_geom = {
-                'maintain_aspect': chk_ma.isChecked(),
-                'snap_enabled': chk_snap.isChecked(),
-                'snap_x': sp_gx.value(),
-                'snap_y': sp_gy.value(),
-            }
-            for peer in peers:
-                try:
-                    peer._ov_cfg.update(non_geom)
-                    peer._set_fps(fps_v)  # also persists via _schedule_autosave
-                except Exception as e:
-                    logger.error(f"[LAYOUT APPLY NON_GEOMETRY] error for {peer._title!r}: {e}")
-            logger.info(f"[LAYOUT APPLY NON_GEOMETRY] apply_to_all={apply_all} "
-                        f"fps={fps_v} peers={len(peers)}")
-
         def _lp_del():
             name = lp_combo.currentText()
             if name and name != 'Default':
@@ -462,8 +458,50 @@ class ReplicatorSettingsDialog(QDialog):
 
         btn_lp_new.clicked.connect(_lp_new)
         btn_lp_save.clicked.connect(_lp_save)
-        btn_lp_apply.clicked.connect(_lp_apply_non_geom)
         btn_lp_del.clicked.connect(_lp_del)
+
+        # --- Live-apply dispatcher: broadcasts non-X/Y changes to all overlays when checkbox is on ---
+        _syncing = [False]
+
+        def _on_layout_change(key, value):
+            """Broadcast a layout setting to all overlays when 'apply to all' is active. Never copies X/Y."""
+            if _syncing[0] or not chk_lp_all.isChecked():
+                return
+            if key in ('x', 'y'):
+                return
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            peers = [ov for ov in list(_OVERLAY_REGISTRY) if ov is not self._ov]
+            if not peers:
+                return
+            _syncing[0] = True
+            try:
+                for peer in peers:
+                    try:
+                        if key == 'w':
+                            peer.setGeometry(peer.x(), peer.y(), value, peer.height())
+                            peer._ov_cfg['w'] = value
+                            peer._schedule_autosave()
+                        elif key == 'h':
+                            peer.setGeometry(peer.x(), peer.y(), peer.width(), value)
+                            peer._ov_cfg['h'] = value
+                            peer._schedule_autosave()
+                        elif key == 'fps':
+                            peer._set_fps(value)
+                        elif key == 'maintain_aspect':
+                            peer._ov_cfg['maintain_aspect'] = value
+                            peer._schedule_autosave()
+                        elif key == 'snap_x':
+                            peer._ov_cfg['snap_x'] = value
+                            peer._schedule_autosave()
+                        elif key == 'snap_y':
+                            peer._ov_cfg['snap_y'] = value
+                            peer._schedule_autosave()
+                    except Exception as e:
+                        logger.error(f"[LIVE LAYOUT APPLY] error for {peer._title!r}: {e}")
+            finally:
+                _syncing[0] = False
+            logger.info(f"[LIVE LAYOUT APPLY] key={key} value={value} "
+                        f"apply_to_all=True overlays={len(peers)+1} exclude_xy=True")
 
         # --- FPS ---
         _section(lay, "CAPTURA")
@@ -473,7 +511,11 @@ class ReplicatorSettingsDialog(QDialog):
         fps_now = str(getattr(self._ov._thread, '_fps', 30) if hasattr(self._ov, '_thread') else 30)
         if cmb_fps.findText(fps_now) >= 0:
             cmb_fps.setCurrentText(fps_now)
-        cmb_fps.currentTextChanged.connect(lambda v: self._ov._set_fps(int(v)))
+        def _on_fps_changed(v_str):
+            fps_v = int(v_str)
+            self._ov._set_fps(fps_v)
+            _on_layout_change('fps', fps_v)
+        cmb_fps.currentTextChanged.connect(_on_fps_changed)
         _row(lay, "Fotogramas (FPS):", cmb_fps)
 
         # --- Position / size ---
@@ -489,8 +531,14 @@ class ReplicatorSettingsDialog(QDialog):
 
         sp_x.valueChanged.connect(lambda v: self._ov.move(v, self._ov.y()))
         sp_y.valueChanged.connect(lambda v: self._ov.move(self._ov.x(), v))
-        sp_w.valueChanged.connect(lambda v: self._ov.resize(v, self._ov.height()))
-        sp_h.valueChanged.connect(lambda v: self._ov.resize(self._ov.width(), v))
+        def _on_w_changed(v):
+            self._ov.resize(v, self._ov.height())
+            _on_layout_change('w', v)
+        def _on_h_changed(v):
+            self._ov.resize(self._ov.width(), v)
+            _on_layout_change('h', v)
+        sp_w.valueChanged.connect(_on_w_changed)
+        sp_h.valueChanged.connect(_on_h_changed)
         
         # ENTER aplica cambios (editingFinished dispara la actualizacion final)
         sp_x.editingFinished.connect(lambda: self._ov.move(sp_x.value(), sp_y.value()))
@@ -505,7 +553,11 @@ class ReplicatorSettingsDialog(QDialog):
 
         chk_ma = QCheckBox("Mantener proporcion de captura")
         chk_ma.setChecked(bool(self._cfg('maintain_aspect')))
-        chk_ma.toggled.connect(lambda v: (self._set('maintain_aspect', v), self._ov.update()))
+        def _on_ma_toggled(v):
+            self._set('maintain_aspect', v)
+            self._ov.update()
+            _on_layout_change('maintain_aspect', v)
+        chk_ma.toggled.connect(_on_ma_toggled)
         lay.addWidget(chk_ma)
 
         def _reset_position():
@@ -557,8 +609,14 @@ class ReplicatorSettingsDialog(QDialog):
 
         sp_gx = QSpinBox(); sp_gx.setRange(1, 200); sp_gx.setValue(int(self._cfg('snap_x') or 20))
         sp_gy = QSpinBox(); sp_gy.setRange(1, 200); sp_gy.setValue(int(self._cfg('snap_y') or 20))
-        sp_gx.valueChanged.connect(lambda v: self._set('snap_x', v))
-        sp_gy.valueChanged.connect(lambda v: self._set('snap_y', v))
+        def _on_gx_changed(v):
+            self._set('snap_x', v)
+            _on_layout_change('snap_x', v)
+        def _on_gy_changed(v):
+            self._set('snap_y', v)
+            _on_layout_change('snap_y', v)
+        sp_gx.valueChanged.connect(_on_gx_changed)
+        sp_gy.valueChanged.connect(_on_gy_changed)
         sp_gx.editingFinished.connect(lambda: self._set('snap_x', sp_gx.value()))
         sp_gy.editingFinished.connect(lambda: self._set('snap_y', sp_gy.value()))
 
