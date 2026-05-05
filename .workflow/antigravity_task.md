@@ -109,9 +109,22 @@
 **Qué:** Botón cerrar y nuevo botón minimizar con estilo HUD oscuro (`#0B1B33` / `#294466` / `#DDEBFF`). Sin rojo, bordes redondeados, tamaño compacto 20×18.
 **Archivo:** `controller/replicator_wizard.py`
 
+## 10) REVERTIDO — Performance Mode experiments eliminados (commit 80bb315)
+
+**Qué:** Los commits 8220c10 y 39ab960 (Ultra Fast Cycle Mode + selector UI de rendimiento) fueron completamente revertidos.
+**Motivo:** La implementación rompió el Replicador en uso real con macros AHK Sleep 50ms.
+**Archivos restaurados a 9007ab6:**
+- `overlay/replicator_config.py` — sin `PERFORMANCE_MODE_CONFIGS` ni `get_perf_cfg`
+- `overlay/win32_capture.py` — sin `focus_eve_window_ultra` ni `focus_eve_window_ultra_verified`
+- `overlay/replicator_hotkeys.py` — sin `_cycle_group_ultra`, `_hotkey_ultra_events`, `_dump_ultra_summary`
+- `controller/replicator_wizard.py` — sin combo "Modo de rendimiento"
+- `tests/test_replicator_perf_mode.py` — eliminado (`git rm`)
+
+**Fix preservado:** `get_overlay_cfg` acepta `'diamond'` como forma válida (feature de 98ec9ec, regresión introducida en 9007ab6 y re-aplicada manualmente tras el revert).
+
 ## Pruebas Realizadas
 - `python -m py_compile`: Validado en todos los módulos afectados.
-- `pytest`: 63 tests de replicador pasados.
+- `pytest tests/test_replicator*.py`: **68 tests pasados**.
 - Verificación de clipping visual con formas `pill` y `rounded`.
 - Verificación de detección inmediata de borde activo al lanzar la suite.
 
@@ -119,7 +132,57 @@
 - `overlay/replication_overlay.py`
 - `overlay/replicator_settings_dialog.py`
 - `overlay/replicator_config.py`
+- `overlay/win32_capture.py`
+- `overlay/replicator_hotkeys.py`
 - `controller/replicator_wizard.py`
 - `overlay/region_selector.py`
 - `utils/i18n.py`
 - `.workflow/antigravity_task.md`
+
+## 11) Diagnostico en vivo de Hotkeys del Replicador
+
+**Problema:** Macros con Sleep 50ms / Sleep 20ms no activan módulos en algunas cuentas. Se necesita diagnóstico certero antes de modificar lógica.
+**Solución:** Instrumentación de diagnóstico sin cambiar la lógica de ciclo. Solo activa overhead cuando el usuario lo habilita.
+
+### Cambios en `overlay/replicator_hotkeys.py`:
+- `from collections import deque`, `import queue` añadidos a imports.
+- Estado global: `_hotkey_diagnostics_enabled`, `_hotkey_diagnostics_callback`, `_hotkey_diagnostics_events` (deque maxlen=1000).
+- API pública: `set_hotkey_diagnostics_enabled(enabled, callback)`, `clear_hotkey_diagnostics()`, `get_hotkey_diagnostics_events()`.
+- `_diag_event(type, **data)`: early return cuando disabled, sin overhead.
+- `_cycle` (global) instrumentado con: `cycle_enter`, `cycle_skipped`, `foreground_snapshot`, `current_index_resolved`, `target_selected`, `focus_result`, `cycle_done`.
+- `_cycle_group` instrumentado con: `cycle_group_enter`, `cycle_group_skipped`, `foreground_snapshot`, `current_index_resolved` (incluye `mismatch` detection), `target_selected`, `focus_result`, `cycle_group_done`.
+- Variables de tracking: `_diag_resolver`, `_diag_fg_hwnd`, `_diag_fg_title`, `_diag_fg_match_idx`. Detecta mismatch cuando el foreground apunta a un cliente diferente al que el resolver usó.
+
+### Cambios en `overlay/replicator_settings_dialog.py`:
+- `QPlainTextEdit`, `Signal` añadidos a imports (PySide6/PyQt6 compat).
+- `_hotkey_diag_signal = Signal(dict)` al nivel de clase.
+- `closeEvent` limpia diagnóstico si estaba activo al cerrar el diálogo.
+- Sección "DIAGNOSTICO EN VIVO" al final de la pestaña Hotkeys con:
+  - `QPlainTextEdit` read-only (120-200px) para log en vivo.
+  - Thread safety: `queue.Queue` + `QTimer` (60ms poll) para marshal de eventos desde el hilo de hotkeys al hilo UI.
+  - Botones: Iniciar/Detener diagnóstico (toggle), Capturar estado, Limpiar, Copiar, Guardar.
+  - "Capturar estado" muestra foreground hwnd/title, last_client, last_group_index, grupos con hwnd_cache y overlays activos.
+  - Guardado en `logs/hotkey_live_diag_YYYYMMDD_HHMMSS.log`.
+
+### Cómo usar:
+1. Abrir Ajustes de cualquier réplica → pestaña Hotkeys.
+2. Pulsar "Iniciar diagnostico".
+3. Pulsar "Capturar estado" para ver snapshot inicial.
+4. Ejecutar macro (F14/F15 con Sleep 50/20ms).
+5. Ver líneas en tiempo real. Buscar `[MISMATCH]` en líneas RESOLVE.
+6. Pulsar "Copiar" para analizar el log completo.
+
+### Formato de líneas:
+- `ENTER grp=1 dir=next last='EVE - Char4' last_idx=3 cooldown=0.0ms`
+- `SKIP reason=cooldown delta=7.2ms min=10ms`
+- `FG hwnd=123456 title='EVE - Char2' match_idx=1`
+- `RESOLVE idx=3 title='EVE - Char4' resolver=last_cycle_client_id [MISMATCH fg_idx=1 fg='EVE - Char2']`
+- `TARGET 3 -> 4 title='EVE - Char5' hwnd=789012 cache=True`
+- `FOCUS ok=True title='EVE - Char5' total=0.8ms`
+- `DONE ok=True 3 -> 4 total=1.2ms resolver=last_cycle_client_id`
+
+### Tests añadidos:
+- `tests/test_replicator_hotkey_diagnostics.py`: 11 tests (disabled noop, callback called, exception safe, clear, ring buffer limit, snapshot independiente).
+
+**Archivos Modificados:** `overlay/replicator_hotkeys.py`, `overlay/replicator_settings_dialog.py`
+**Tests:** 103 passed (replicator + hotkey suite)

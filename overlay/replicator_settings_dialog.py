@@ -12,18 +12,18 @@ try:
         QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
         QLabel, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox,
         QPushButton, QColorDialog, QLineEdit, QSizePolicy,
-        QMessageBox, QTextEdit, QScrollArea,
+        QMessageBox, QTextEdit, QScrollArea, QPlainTextEdit,
     )
-    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtCore import Qt, QTimer, Signal
     from PySide6.QtGui import QColor
 except ImportError:
     from PyQt6.QtWidgets import (
         QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
         QLabel, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox,
         QPushButton, QColorDialog, QLineEdit, QSizePolicy,
-        QMessageBox, QTextEdit, QScrollArea,
+        QMessageBox, QTextEdit, QScrollArea, QPlainTextEdit,
     )
-    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtCore import Qt, QTimer, pyqtSignal as Signal
     from PyQt6.QtGui import QColor
 
 # ... (General, Layout, Etiqueta, Borde, Hotkeys)
@@ -80,6 +80,9 @@ def _color_btn(parent_dlg, color_hex: str, callback) -> QPushButton:
 class ReplicatorSettingsDialog(QDialog):
     """Per-replica settings dialog: General | Layout | Etiqueta | Borde | Avanzado."""
 
+    # Cross-thread signal: hotkey thread → main thread UI update
+    _hotkey_diag_signal = Signal(dict)
+
     def __init__(self, overlay, parent=None):
         super().__init__(parent)
         self._ov = overlay
@@ -94,11 +97,22 @@ class ReplicatorSettingsDialog(QDialog):
         self._drag_pos = None
         self._resize_from_spinbox = False
         self._layout_change_broadcaster = None
+        self._diag_active = False
         self._build_ui()
         self._load_geometry()
 
         # Sync geometry in real-time from overlay
         self._ov.geometryChanged.connect(self._on_overlay_geometry_changed)
+
+    def closeEvent(self, event):
+        if self._diag_active:
+            try:
+                from overlay.replicator_hotkeys import set_hotkey_diagnostics_enabled
+                set_hotkey_diagnostics_enabled(False, None)
+            except Exception:
+                pass
+            self._diag_active = False
+        super().closeEvent(event)
 
     def _on_overlay_geometry_changed(self, x, y, w, h):
         # Update spinboxes if they exist (they are defined in _tab_layout)
@@ -1137,6 +1151,200 @@ class ReplicatorSettingsDialog(QDialog):
         btn_apply_hk.clicked.connect(_save_all_hk)
         lay.addWidget(btn_apply_hk)
         lay.addWidget(lbl_hk_status)
+
+        # ── Diagnostico en vivo ───────────────────────────────────────────
+        _section(lay, "DIAGNOSTICO EN VIVO")
+
+        import queue as _queue
+        _diag_queue = _queue.Queue()
+
+        diag_out = QPlainTextEdit()
+        diag_out.setReadOnly(True)
+        diag_out.setMinimumHeight(120)
+        diag_out.setMaximumHeight(200)
+        diag_out.setStyleSheet(
+            "QPlainTextEdit { background:#060d14; color:#94a3b8; font-family:Consolas,monospace; "
+            "font-size:9px; border:1px solid #1e293b; border-radius:4px; }"
+        )
+        lay.addWidget(diag_out)
+
+        def _fmt_event(ev: dict) -> str:
+            t = ev.get('ts', '')
+            etype = ev.get('type', '')
+            gid = ev.get('group_id', ev.get('scope', ''))
+            if etype in ('cycle_group_enter', 'cycle_enter'):
+                return (f"[{t}] ENTER  grp={gid} dir={ev.get('direction')}  "
+                        f"last={ev.get('last_client')!r}  "
+                        f"last_idx={ev.get('last_group_idx', ev.get('last_global_idx', -1))}  "
+                        f"cooldown={ev.get('cooldown_remaining_ms', 0):.1f}ms")
+            if etype in ('cycle_group_skipped', 'cycle_skipped'):
+                r = ev.get('reason', '')
+                if r == 'cooldown':
+                    return (f"[{t}] SKIP  reason=cooldown  "
+                            f"delta={ev.get('delta_ms', 0):.1f}ms  min={ev.get('min_ms')}ms")
+                return (f"[{t}] SKIP  reason=in_progress  "
+                        f"since={ev.get('since_ms', 0):.1f}ms")
+            if etype == 'foreground_snapshot':
+                return (f"[{t}] FG  hwnd={ev.get('fg_hwnd')}  "
+                        f"title={ev.get('fg_title')!r}  match_idx={ev.get('fg_match_idx')}")
+            if etype == 'current_index_resolved':
+                mm = '  [MISMATCH fg_idx={} fg={}]'.format(ev.get('fg_idx'), repr(ev.get('fg_title'))) if ev.get('mismatch') else ''
+                return (f"[{t}] RESOLVE  idx={ev.get('current_idx')}  "
+                        f"title={ev.get('current_title')!r}  "
+                        f"resolver={ev.get('resolver_used')}{mm}")
+            if etype == 'target_selected':
+                return (f"[{t}] TARGET  {ev.get('source_idx')} -> {ev.get('target_idx')}  "
+                        f"title={ev.get('target_title')!r}  "
+                        f"hwnd={ev.get('target_hwnd')}  cache={ev.get('cache_hit')}")
+            if etype == 'focus_result':
+                return (f"[{t}] FOCUS  ok={ev.get('focus_ok')}  "
+                        f"title={ev.get('target_title')!r}  "
+                        f"total={ev.get('total_ms', 0):.1f}ms")
+            if etype in ('cycle_group_done', 'cycle_done'):
+                return (f"[{t}] DONE  ok={ev.get('focus_ok')}  "
+                        f"{ev.get('source_idx')} -> {ev.get('target_idx')}  "
+                        f"total={ev.get('total_ms', 0):.1f}ms  "
+                        f"resolver={ev.get('resolver_used')}")
+            if etype == 'state_snapshot':
+                lines = [f"[{t}] ── STATE SNAPSHOT ──",
+                         f"  FG: hwnd={ev.get('fg_hwnd')} title={ev.get('fg_title')!r}",
+                         f"  last_client: {ev.get('last_client')!r}",
+                         f"  last_group_index: {ev.get('last_group_index')}"]
+                for g_id, info in (ev.get('groups') or {}).items():
+                    lines.append(f"  group {g_id}: {info}")
+                return '\n'.join(lines)
+            return f"[{t}] {etype}  {ev}"
+
+        def _on_diag_event_from_thread(ev: dict):
+            _diag_queue.put(ev)
+
+        def _poll_diag_queue():
+            count = 0
+            while count < 50:
+                try:
+                    ev = _diag_queue.get_nowait()
+                    line = _fmt_event(ev)
+                    diag_out.appendPlainText(line)
+                    count += 1
+                except _queue.Empty:
+                    break
+            if count:
+                sb = diag_out.verticalScrollBar()
+                sb.setValue(sb.maximum())
+
+        _poll_timer = QTimer(self)
+        _poll_timer.setInterval(60)
+        _poll_timer.timeout.connect(_poll_diag_queue)
+
+        lbl_diag_status = QLabel("Diagnostico: inactivo")
+        lbl_diag_status.setStyleSheet("color:#64748b; font-size:10px;")
+
+        btn_toggle = QPushButton("Iniciar diagnostico")
+
+        def _toggle_diag():
+            from overlay.replicator_hotkeys import (
+                set_hotkey_diagnostics_enabled, clear_hotkey_diagnostics
+            )
+            if not self._diag_active:
+                self._diag_active = True
+                clear_hotkey_diagnostics()
+                set_hotkey_diagnostics_enabled(True, _on_diag_event_from_thread)
+                _poll_timer.start()
+                btn_toggle.setText("Detener diagnostico")
+                lbl_diag_status.setText("Diagnostico: ACTIVO")
+                lbl_diag_status.setStyleSheet("color:#00ff64; font-size:10px;")
+                diag_out.appendPlainText("--- Diagnostico iniciado ---")
+            else:
+                self._diag_active = False
+                set_hotkey_diagnostics_enabled(False, None)
+                _poll_timer.stop()
+                btn_toggle.setText("Iniciar diagnostico")
+                lbl_diag_status.setText("Diagnostico: inactivo")
+                lbl_diag_status.setStyleSheet("color:#64748b; font-size:10px;")
+                diag_out.appendPlainText("--- Diagnostico detenido ---")
+
+        btn_toggle.clicked.connect(_toggle_diag)
+
+        btn_clear = QPushButton("Limpiar")
+        def _clear_diag():
+            from overlay.replicator_hotkeys import clear_hotkey_diagnostics
+            diag_out.clear()
+            clear_hotkey_diagnostics()
+        btn_clear.clicked.connect(_clear_diag)
+
+        btn_copy = QPushButton("Copiar")
+        def _copy_diag():
+            try:
+                from PySide6.QtWidgets import QApplication
+            except ImportError:
+                from PyQt6.QtWidgets import QApplication
+            QApplication.clipboard().setText(diag_out.toPlainText())
+        btn_copy.clicked.connect(_copy_diag)
+
+        btn_save = QPushButton("Guardar")
+        def _save_diag():
+            try:
+                import datetime
+                from utils.paths import ROOT_DIR
+                ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                log_dir = ROOT_DIR / 'logs'
+                log_dir.mkdir(parents=True, exist_ok=True)
+                path = log_dir / f'hotkey_live_diag_{ts}.log'
+                path.write_text(diag_out.toPlainText(), encoding='utf-8')
+                lbl_diag_status.setText(f"Guardado: {path.name}")
+            except Exception as e:
+                lbl_diag_status.setText(f"Error al guardar: {e}")
+        btn_save.clicked.connect(_save_diag)
+
+        btn_snapshot = QPushButton("Capturar estado")
+        def _state_snapshot():
+            from overlay.replicator_hotkeys import (
+                _last_cycle_client_id, _last_group_index, _hwnd_cache
+            )
+            from overlay.win32_capture import get_foreground_hwnd, get_window_title
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            import datetime
+            ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+            fg = get_foreground_hwnd()
+            fg_title = get_window_title(fg) if fg else ''
+            groups = {}
+            hk_cfg = self._ov._cfg.get('hotkeys', {})
+            for g_id, g_data in hk_cfg.get('groups', {}).items():
+                order = g_data.get('clients_order', [])
+                entries = {}
+                for i, t in enumerate(order):
+                    hw = _hwnd_cache.get(t, 0)
+                    entries[i] = f"{t!r}  hwnd={hw}"
+                groups[g_id] = {'name': g_data.get('name', ''), 'order': entries,
+                                'enabled': g_data.get('enabled', False)}
+            ov_list = [f"{ov._title!r} visible={ov.isVisible()}" for ov in list(_OVERLAY_REGISTRY)]
+            ev = {'type': 'state_snapshot', 'ts': ts,
+                  'fg_hwnd': fg, 'fg_title': fg_title,
+                  'last_client': _last_cycle_client_id,
+                  'last_group_index': dict(_last_group_index),
+                  'groups': groups, 'overlays': ov_list}
+            diag_out.appendPlainText(_fmt_event(ev))
+            for ov_line in ov_list:
+                diag_out.appendPlainText(f"  overlay: {ov_line}")
+            sb = diag_out.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+        btn_snapshot.clicked.connect(_state_snapshot)
+
+        btn_row1 = QHBoxLayout()
+        btn_row1.addWidget(btn_toggle)
+        btn_row1.addWidget(btn_snapshot)
+        btn_row1.addStretch()
+        lay.addLayout(btn_row1)
+
+        btn_row2 = QHBoxLayout()
+        btn_row2.addWidget(btn_clear)
+        btn_row2.addWidget(btn_copy)
+        btn_row2.addWidget(btn_save)
+        btn_row2.addStretch()
+        lay.addLayout(btn_row2)
+
+        lay.addWidget(lbl_diag_status)
 
         lay.addStretch()
         return w

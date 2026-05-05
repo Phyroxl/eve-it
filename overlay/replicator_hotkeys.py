@@ -10,6 +10,8 @@ import ctypes
 import ctypes.wintypes as wt
 import threading
 import logging
+import queue
+from collections import deque
 from typing import Dict, Callable, List, Optional
 
 logger = logging.getLogger('eve.hotkeys')
@@ -78,6 +80,11 @@ _last_cycle_client_id_time: float = 0.0           # monotonic() of above
 # CaptureThread skips one frame while < now, reducing competition with Win32 focus.
 _capture_suspended_until: float = 0.0
 
+# ── Live diagnostics (zero-overhead when disabled) ────────────────────────────
+_hotkey_diagnostics_enabled: bool = False
+_hotkey_diagnostics_callback = None
+_hotkey_diagnostics_events: deque = deque(maxlen=1000)
+
 
 # ── Compact perf logger (FileHandler stays open — no open/close per call) ────
 
@@ -131,6 +138,44 @@ def _log_to_file(msg: str):
             f.write(f'[{ts}] {msg}\n')
     except Exception:
         pass
+
+
+# ── Public diagnostics API ────────────────────────────────────────────────────
+
+def set_hotkey_diagnostics_enabled(enabled: bool, callback=None):
+    """Enable/disable live diagnostics. callback(event_dict) is called from hotkey thread."""
+    global _hotkey_diagnostics_enabled, _hotkey_diagnostics_callback
+    _hotkey_diagnostics_enabled = enabled
+    _hotkey_diagnostics_callback = callback if enabled else None
+
+
+def clear_hotkey_diagnostics():
+    """Clear the in-memory event ring buffer."""
+    _hotkey_diagnostics_events.clear()
+
+
+def get_hotkey_diagnostics_events():
+    """Return a snapshot of current diagnostic events."""
+    return list(_hotkey_diagnostics_events)
+
+
+def _diag_event(event_type: str, **data):
+    """Record one diagnostic event. No-op (returns immediately) when disabled."""
+    if not _hotkey_diagnostics_enabled:
+        return
+    import datetime
+    event = {
+        'type': event_type,
+        'ts': datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3],
+        **data,
+    }
+    _hotkey_diagnostics_events.append(event)
+    cb = _hotkey_diagnostics_callback
+    if cb:
+        try:
+            cb(event)
+        except Exception:
+            pass
 
 
 # ── Hotkey parsing ────────────────────────────────────────────────────────────
@@ -288,12 +333,21 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         t0  = _time.perf_counter()
         now = _time.monotonic()
 
+        _diag_event('cycle_enter', direction='next' if direction > 0 else 'prev',
+            scope='global', last_client=_last_cycle_client_id,
+            last_global_idx=_last_group_index.get('__global__', -1),
+            cooldown_remaining_ms=max(0.0, MIN_CYCLE_INTERVAL_MS - (now - _last_cycle_time) * 1000) if _last_cycle_time > 0 else 0.0,
+            in_progress=_cycle_in_progress)
+
         # ── Anti-accumulation guards ──
         if _cycle_in_progress:
             _perf_log(
                 f'[HOTKEY PERF] skipped hotkey=cycle direction={"next" if direction>0 else "prev"} '
                 f'reason=in_progress since_ms={(now - _last_cycle_time)*1000:.1f}'
             )
+            _diag_event('cycle_skipped', scope='global', reason='in_progress',
+                direction='next' if direction > 0 else 'prev',
+                since_ms=round((now - _last_cycle_time) * 1000, 1))
             return
         delta_ms = (now - _last_cycle_time) * 1000
         if _last_cycle_time > 0 and delta_ms < MIN_CYCLE_INTERVAL_MS:
@@ -301,6 +355,9 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'[HOTKEY PERF] skipped hotkey=cycle direction={"next" if direction>0 else "prev"} '
                 f'reason=cooldown delta_ms={delta_ms:.1f}'
             )
+            _diag_event('cycle_skipped', scope='global', reason='cooldown',
+                direction='next' if direction > 0 else 'prev',
+                delta_ms=round(delta_ms, 1), min_ms=MIN_CYCLE_INTERVAL_MS)
             return
 
         _cycle_in_progress = True
@@ -323,34 +380,63 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             t_res = _time.perf_counter()
             current_idx = -1
             used_last   = False
+            _diag_resolver = 'none'
+            _diag_fg_hwnd = 0
+            _diag_fg_title = ''
+            _diag_fg_match_idx = -1
 
             if (_last_cycle_client_id and _last_cycle_client_id in titles
                     and (now - _last_cycle_client_id_time) < 5.0):
                 current_idx = titles.index(_last_cycle_client_id)
                 used_last   = True
+                _diag_resolver = 'last_cycle_client_id'
 
             if current_idx == -1:
                 fg_hwnd = get_foreground_hwnd()
+                _diag_fg_hwnd = fg_hwnd
                 if fg_hwnd:
                     fg_title = get_window_title(fg_hwnd)
+                    _diag_fg_title = fg_title or ''
                     if fg_title:
                         try:
                             current_idx = next(
                                 i for i, t in enumerate(titles)
                                 if t == fg_title or (t and t in fg_title)
                             )
+                            _diag_fg_match_idx = current_idx
+                            if current_idx != -1:
+                                _diag_resolver = 'foreground_title'
                         except StopIteration:
                             pass
                     if current_idx == -1:
                         for ov in list(_OVERLAY_REGISTRY):
                             if ov._hwnd and ov._hwnd == fg_hwnd and ov._title in titles:
                                 current_idx = titles.index(ov._title)
+                                _diag_fg_match_idx = current_idx
+                                _diag_resolver = 'foreground_overlay_hwnd'
                                 break
 
             if current_idx == -1:
                 current_idx = _last_group_index.get('__global__', -1)
+                if current_idx != -1 and _diag_resolver == 'none':
+                    _diag_resolver = 'last_group_index'
 
             resolve_ms = (_time.perf_counter() - t_res) * 1000
+            _diag_mismatch = (
+                _diag_fg_match_idx != -1 and current_idx != -1
+                and _diag_fg_match_idx != current_idx
+                and _diag_resolver in ('last_cycle_client_id', 'last_group_index')
+            )
+            _diag_event('foreground_snapshot', scope='global',
+                fg_hwnd=_diag_fg_hwnd, fg_title=_diag_fg_title, fg_match_idx=_diag_fg_match_idx)
+            _diag_event('current_index_resolved', scope='global',
+                current_idx=current_idx,
+                current_title=titles[current_idx] if 0 <= current_idx < len(titles) else None,
+                resolver_used=_diag_resolver,
+                last_client=_last_cycle_client_id,
+                last_client_age_ms=round((now - _last_cycle_client_id_time) * 1000, 1) if _last_cycle_client_id_time else None,
+                fg_hwnd=_diag_fg_hwnd, fg_title=_diag_fg_title, fg_idx=_diag_fg_match_idx,
+                mismatch=_diag_mismatch)
 
             # ── Find target ───────────────────────────────────────────────
             start    = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
@@ -367,6 +453,11 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                         _hwnd_cache[t] = hwnd
                 if hwnd and is_hwnd_valid(hwnd):
                     target, target_hwnd, next_idx = t, hwnd, idx
+                    _diag_event('target_selected', scope='global',
+                        source_idx=current_idx,
+                        source_title=titles[current_idx] if 0 <= current_idx < len(titles) else None,
+                        target_idx=next_idx, target_title=t, target_hwnd=hwnd,
+                        cache_hit=(_hwnd_cache.get(t) == hwnd))
                     break
 
             if not target_hwnd:
@@ -382,6 +473,9 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             # ── Focus target (non-blocking async Z-order + SetForegroundWindow) ──
             ok, focus_detail = focus_eve_window_perf(target_hwnd)
             _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
+            _diag_event('focus_result', scope='global', target_title=target, target_hwnd=target_hwnd,
+                focus_ok=ok, source_idx=current_idx, target_idx=next_idx,
+                total_ms=round((_time.perf_counter() - t0) * 1000, 1))
 
             if ok:
                 _last_group_index['__global__'] = next_idx
@@ -396,6 +490,11 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'resolve_ms={resolve_ms:.1f} total_ms={total_ms:.1f} '
                 f'focus_ok={ok} used_last_cycle={used_last}'
             )
+            _diag_event('cycle_done', scope='global',
+                direction='next' if direction > 0 else 'prev',
+                source_idx=current_idx, target_idx=next_idx, target_title=target,
+                focus_ok=ok, total_ms=round(total_ms, 1),
+                used_last_cycle=used_last, resolver_used=_diag_resolver)
         finally:
             _cycle_in_progress = False
 
@@ -409,12 +508,22 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         t0  = _time.perf_counter()
         now = _time.monotonic()
 
+        _diag_event('cycle_group_enter', group_id=group_id,
+            direction='next' if direction > 0 else 'prev',
+            last_client=_last_cycle_client_id,
+            last_group_idx=_last_group_index.get(group_id, -1),
+            cooldown_remaining_ms=max(0.0, MIN_CYCLE_INTERVAL_MS - (now - _last_cycle_time) * 1000) if _last_cycle_time > 0 else 0.0,
+            in_progress=_cycle_in_progress)
+
         # ── Anti-accumulation guards ──
         if _cycle_in_progress:
             _perf_log(
                 f'[HOTKEY PERF] skipped group_id={group_id} direction={"next" if direction>0 else "prev"} '
                 f'reason=in_progress since_ms={(now - _last_cycle_time)*1000:.1f}'
             )
+            _diag_event('cycle_group_skipped', group_id=group_id, reason='in_progress',
+                direction='next' if direction > 0 else 'prev',
+                since_ms=round((now - _last_cycle_time) * 1000, 1))
             return
         delta_ms = (now - _last_cycle_time) * 1000
         if _last_cycle_time > 0 and delta_ms < MIN_CYCLE_INTERVAL_MS:
@@ -422,6 +531,9 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'[HOTKEY PERF] skipped group_id={group_id} direction={"next" if direction>0 else "prev"} '
                 f'reason=cooldown delta_ms={delta_ms:.1f}'
             )
+            _diag_event('cycle_group_skipped', group_id=group_id, reason='cooldown',
+                direction='next' if direction > 0 else 'prev',
+                delta_ms=round(delta_ms, 1), min_ms=MIN_CYCLE_INTERVAL_MS)
             return
 
         _cycle_in_progress = True
@@ -451,34 +563,63 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             t_res       = _time.perf_counter()
             current_idx = -1
             used_last   = False
+            _diag_resolver = 'none'
+            _diag_fg_hwnd = 0
+            _diag_fg_title = ''
+            _diag_fg_match_idx = -1
 
             if (_last_cycle_client_id and _last_cycle_client_id in titles
                     and (now - _last_cycle_client_id_time) < 5.0):
                 current_idx = titles.index(_last_cycle_client_id)
                 used_last   = True
+                _diag_resolver = 'last_cycle_client_id'
 
             if current_idx == -1:
                 fg_hwnd = get_foreground_hwnd()
+                _diag_fg_hwnd = fg_hwnd
                 if fg_hwnd:
                     fg_title = get_window_title(fg_hwnd)
+                    _diag_fg_title = fg_title or ''
                     if fg_title:
                         try:
                             current_idx = next(
                                 i for i, t in enumerate(titles)
                                 if t == fg_title or (t and t in fg_title)
                             )
+                            _diag_fg_match_idx = current_idx
+                            if current_idx != -1:
+                                _diag_resolver = 'foreground_title'
                         except StopIteration:
                             pass
                     if current_idx == -1:
                         for ov in list(_OVERLAY_REGISTRY):
                             if ov._hwnd and ov._hwnd == fg_hwnd and ov._title in titles:
                                 current_idx = titles.index(ov._title)
+                                _diag_fg_match_idx = current_idx
+                                _diag_resolver = 'foreground_overlay_hwnd'
                                 break
 
             if current_idx == -1:
                 current_idx = _last_group_index.get(group_id, -1)
+                if current_idx != -1 and _diag_resolver == 'none':
+                    _diag_resolver = 'last_group_index'
 
             resolve_ms = (_time.perf_counter() - t_res) * 1000
+            _diag_mismatch = (
+                _diag_fg_match_idx != -1 and current_idx != -1
+                and _diag_fg_match_idx != current_idx
+                and _diag_resolver in ('last_cycle_client_id', 'last_group_index')
+            )
+            _diag_event('foreground_snapshot', group_id=group_id,
+                fg_hwnd=_diag_fg_hwnd, fg_title=_diag_fg_title, fg_match_idx=_diag_fg_match_idx)
+            _diag_event('current_index_resolved', group_id=group_id,
+                current_idx=current_idx,
+                current_title=titles[current_idx] if 0 <= current_idx < len(titles) else None,
+                resolver_used=_diag_resolver,
+                last_client=_last_cycle_client_id,
+                last_client_age_ms=round((now - _last_cycle_client_id_time) * 1000, 1) if _last_cycle_client_id_time else None,
+                fg_hwnd=_diag_fg_hwnd, fg_title=_diag_fg_title, fg_idx=_diag_fg_match_idx,
+                mismatch=_diag_mismatch)
 
             # ── Find target using clients_order ───────────────────────────
             start    = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
@@ -495,6 +636,11 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                         _hwnd_cache[t] = hwnd
                 if hwnd and is_hwnd_valid(hwnd):
                     target, target_hwnd, next_idx = t, hwnd, idx
+                    _diag_event('target_selected', group_id=group_id,
+                        source_idx=current_idx,
+                        source_title=titles[current_idx] if 0 <= current_idx < len(titles) else None,
+                        target_idx=next_idx, target_title=t, target_hwnd=hwnd,
+                        cache_hit=(_hwnd_cache.get(t) == hwnd))
                     break
 
             if not target_hwnd:
@@ -510,6 +656,9 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             # ── Focus target (non-blocking async Z-order + SetForegroundWindow) ──
             ok, focus_detail = focus_eve_window_perf(target_hwnd)
             _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
+            _diag_event('focus_result', group_id=group_id, target_title=target, target_hwnd=target_hwnd,
+                focus_ok=ok, source_idx=current_idx, target_idx=next_idx,
+                total_ms=round((_time.perf_counter() - t0) * 1000, 1))
 
             if ok:
                 _last_group_index[group_id]    = next_idx
@@ -525,6 +674,11 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'resolve_ms={resolve_ms:.1f} total_ms={total_ms:.1f} '
                 f'focus_ok={ok} used_last_cycle={used_last}'
             )
+            _diag_event('cycle_group_done', group_id=group_id,
+                direction='next' if direction > 0 else 'prev',
+                source_idx=current_idx, target_idx=next_idx, target_title=target,
+                focus_ok=ok, total_ms=round(total_ms, 1),
+                used_last_cycle=used_last, resolver_used=_diag_resolver)
         finally:
             _cycle_in_progress = False
 
