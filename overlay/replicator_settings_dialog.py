@@ -433,8 +433,34 @@ class ReplicatorSettingsDialog(QDialog):
                     peer._schedule_autosave()
                 except Exception as e:
                     logger.error(f"[PROFILE AUTO-APPLY] error for {peer._title!r}: {e}")
-            logger.info(f"[PROFILE AUTO-APPLY] name='{name}' peers={len(peers)}")
+            logger.info(f"[LAYOUT_PROFILE_LOAD] name='{name}' peers={len(peers)}")
             self._ov.update()
+
+            # Auto-apply hotkeys: restore profile's hotkeys (if saved) then register.
+            # This removes the need to manually click "Aplicar Hotkeys" after a profile load.
+            try:
+                from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache
+                prof_hotkeys = prof.get('hotkeys')
+                if prof_hotkeys:
+                    self._ov._cfg['hotkeys'] = prof_hotkeys
+                    logger.info(
+                        f"[HOTKEYS_PROFILE_RESTORED] profile='{name}' "
+                        f"enabled={bool(prof_hotkeys.get('groups') or prof_hotkeys.get('per_client'))} "
+                        f"count={len(prof_hotkeys)}"
+                    )
+                def _get_titles_lp():
+                    return [o._title for o in list(_OVERLAY_REGISTRY)]
+                titles_lp = _get_titles_lp()
+                update_hotkey_cache(titles_lp)
+                register_hotkeys(self._ov._cfg, cycle_titles_getter=_get_titles_lp)
+                logger.info(
+                    f"[HOTKEYS_AUTO_APPLY_AFTER_PROFILE_LOAD] profile='{name}' "
+                    f"ok=True registered={len(titles_lp)}"
+                )
+            except Exception as _he:
+                logger.warning(
+                    f"[HOTKEYS_AUTO_APPLY_AFTER_PROFILE_LOAD] profile='{name}' err={_he}"
+                )
 
         lp_combo.currentTextChanged.connect(_lp_apply_profile)
 
@@ -459,9 +485,12 @@ class ReplicatorSettingsDialog(QDialog):
             if ok and name.strip():
                 self._ov._do_save()
                 profile = {k: self._ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in self._ov._ov_cfg}
+                hk_cfg = self._ov._cfg.get('hotkeys')
+                if hk_cfg:
+                    profile['hotkeys'] = dict(hk_cfg)
                 replicas = _collect_global_replicas()
                 save_layout_profile(self._ov._cfg, name.strip(), profile, replicas=replicas)
-                logger.info(f"[PROFILE SAVE GLOBAL] name='{name.strip()}' replicas={len(replicas)}")
+                logger.info(f"[PROFILE SAVE GLOBAL] name='{name.strip()}' replicas={len(replicas)} hotkeys_saved={bool(hk_cfg)}")
                 _profile_auto_applying[0] = True
                 _reload_lp_combo()
                 lp_combo.setCurrentText(name.strip())
@@ -472,9 +501,12 @@ class ReplicatorSettingsDialog(QDialog):
             if name:
                 self._ov._do_save()
                 profile = {k: self._ov._ov_cfg[k] for k in FULL_PROFILE_KEYS if k in self._ov._ov_cfg}
+                hk_cfg = self._ov._cfg.get('hotkeys')
+                if hk_cfg:
+                    profile['hotkeys'] = dict(hk_cfg)
                 replicas = _collect_global_replicas()
                 save_layout_profile(self._ov._cfg, name, profile, replicas=replicas)
-                logger.info(f"[PROFILE SAVE GLOBAL] name='{name}' replicas={len(replicas)}")
+                logger.info(f"[PROFILE SAVE GLOBAL] name='{name}' replicas={len(replicas)} hotkeys_saved={bool(hk_cfg)}")
 
         def _lp_del():
             name = lp_combo.currentText()

@@ -320,6 +320,11 @@ class ReplicationOverlay(QWidget):
     # Flushed by _monitor_focus() once the burst window expires.
     _pending_border_flush: bool = False
 
+    # Monotonically increasing counter — incremented on every notify call.
+    # Deferred callbacks capture the epoch at creation time and discard themselves
+    # if the epoch has advanced (prevents stale timers from restoring old borders).
+    _active_epoch: int = 0
+
     # Overlay currently under the mouse cursor — used by the WH_MOUSE_LL hook to route wheel events
     _hover_overlay: 'ReplicationOverlay | None' = None
 
@@ -824,11 +829,15 @@ class ReplicationOverlay(QWidget):
 
         During a hotkey burst, state is updated but repaints are deferred to the
         next monitor-timer tick (≤ 75 ms) to reduce DWM/BitBlt competition.
+        Call from any focus path (click, hotkey, cycle, macro) — never duplicate this logic.
         """
         t0 = time.perf_counter()
         # 300ms settle: prevents the monitor timer from undoing programmatic focus changes
         ReplicationOverlay._active_hwnd_override = active_hwnd
         ReplicationOverlay._active_hwnd_override_until = t0 + 0.3
+        # Epoch advance: stale timer callbacks can compare and discard themselves
+        ReplicationOverlay._active_epoch += 1
+        epoch = ReplicationOverlay._active_epoch
 
         burst_active = False
         try:
@@ -837,19 +846,33 @@ class ReplicationOverlay(QWidget):
         except Exception:
             pass
 
-        count = 0
-        for ov in list(_OVERLAY_REGISTRY):
+        ovs = list(_OVERLAY_REGISTRY)
+        changed = 0
+        for ov in ovs:
             was_active = ov._is_active_client
             ov._is_active_client = bool(ov._hwnd and active_hwnd == ov._hwnd)
             if was_active != ov._is_active_client:
-                if burst_active:
-                    # State is correct; skip the repaint — monitor timer will flush within 75 ms
-                    ReplicationOverlay._pending_border_flush = True
-                else:
+                changed += 1
+
+        if changed:
+            if burst_active:
+                # State is correct; skip the repaint — monitor timer will flush within 75 ms
+                ReplicationOverlay._pending_border_flush = True
+            else:
+                # Repaint ALL overlays to atomically clear old and set new border.
+                # Only repainting changed ones risks a frame with two active borders
+                # if a previous repaint was deferred or batched by Qt.
+                for ov in ovs:
                     ov.update()
-                    count += 1
+
         dt = (time.perf_counter() - t0) * 1000
-        logger.debug(f"[REPLICATOR ACTIVE BORDER] target_hwnd={active_hwnd} updated={count} burst={burst_active} ms={dt:.2f}")
+        active_titles = [ov._title for ov in ovs if ov._is_active_client]
+        cleared = len(ovs) - len(active_titles)
+        logger.debug(
+            f"[ACTIVE_BORDER_UPDATE] hwnd={active_hwnd} epoch={epoch} "
+            f"changed={changed} cleared={cleared} applied={len(active_titles)} "
+            f"burst={burst_active} ms={dt:.2f} active={active_titles}"
+        )
 
     # ------------------------------------------------------------------
     # Monitor: active-border + hide_when_inactive (Fix #4)
@@ -1588,17 +1611,27 @@ class ReplicationOverlay(QWidget):
 
         if event.button() == left:
             if not was_resizing and not self._drag_moved:
-                # Fix #1: plain click (no drag, no resize) → focus the EVE client
+                # Plain click (no drag, no resize) → focus the EVE client.
                 hwnd = self._hwnd_getter()
                 if hwnd:
                     self._hwnd = hwnd
-                ok = focus_eve_window(self._hwnd) if self._hwnd else False
-                if ok:
+                if self._hwnd:
+                    # Optimistic border update FIRST → instant visual feedback before Win32 call.
+                    logger.debug(f"[REPLICA_CLICK] title={self._title!r} hwnd={self._hwnd}")
                     ReplicationOverlay.notify_active_client_changed(self._hwnd)
-                logger.debug(
-                    f"[REPLICATOR FOCUS] title={self._title!r} "
-                    f"hwnd={self._hwnd} success={ok}"
-                )
+                    ok = focus_eve_window(self._hwnd)
+                    logger.debug(
+                        f"[FOCUS_AFTER_REPLICA_CLICK] title={self._title!r} "
+                        f"hwnd={self._hwnd} ok={ok}"
+                    )
+                    if not ok:
+                        # Win32 focus failed; monitor timer will correct border within 75 ms
+                        logger.warning(
+                            f"[REPLICA_CLICK_FOCUS_FAILED] title={self._title!r} hwnd={self._hwnd}"
+                        )
+                else:
+                    ok = False
+                    logger.debug(f"[REPLICA_CLICK_NO_HWND] title={self._title!r}")
 
             # Broadcast resize to synced peers after manual resize
             if was_resizing and self._sync_active and not self._applying_sync_resize:
