@@ -58,9 +58,9 @@ _last_group_index: Dict[str, int] = {}
 
 # ── Fast-path performance state ──────────────────────────────────────────────
 
-# Minimum ms between accepted cycles.  120 ms gives the Win32 focus change time
-# to stabilise before the next press is honoured — safe for macros at any speed.
-MIN_CYCLE_INTERVAL_MS: int = 120
+# Minimum ms between accepted cycles.
+# Lowered to 10 ms for experimental high-speed macro testing.
+MIN_CYCLE_INTERVAL_MS: int = 10
 
 # Extra settle guard: capture threads stay suspended for this many ms after focus.
 # Reduces BitBlt competition with the DWM compositing triggered by focus change.
