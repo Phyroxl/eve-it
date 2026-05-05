@@ -1241,6 +1241,10 @@ class ReplicatorSettingsDialog(QDialog):
             if etype == 'fg_replica_ignored':
                 return (f"[{t}] FG_REPLICA_IGNORED  hwnd={ev.get('fg_hwnd')}  "
                         f"title={ev.get('fg_title')!r}")
+            if etype == 'epoch_focus_failed':
+                return (f"[{t}] EPOCH FOCUS FAILED  epoch={ev.get('epoch')}  "
+                        f"target={ev.get('target')!r}  hwnd={ev.get('hwnd')}  "
+                        f"reason={ev.get('reason')}")
             if etype == 'state_snapshot':
                 lines = [f"[{t}] ── STATE SNAPSHOT ──",
                          f"  FG: hwnd={ev.get('fg_hwnd')} title={ev.get('fg_title')!r}",
@@ -1302,20 +1306,42 @@ class ReplicatorSettingsDialog(QDialog):
                     from overlay.replicator_hotkeys import get_macro_summary
                     s = get_macro_summary()
                     min_d = s['min_first_delta_seen_ms']
-                    missing_tgts = s.get('missing_after_focus_targets', [])
                     diag_out.appendPlainText(
                         f"MACRO SUMMARY: sequences={s['total_macro_sequences']} "
                         f"safe={s['complete_safe_count']} "
                         f"risky={s['complete_risky_count']} "
                         f"incomplete={s['incomplete_count']} "
                         f"fg_mismatch={s['foreground_mismatch_count']} "
+                        f"focus_failed={s.get('focus_failed_count', 0)} "
                         f"missing_after_focus={s.get('missing_after_focus_count', 0)} "
+                        f"stale={s.get('stale_or_unrelated_count', 0)} "
+                        f"valid_for_delay={s.get('valid_sequences_for_delay', 0)} "
                         f"min_first={min_d:.1f}ms "
                         f"recommended_min_delay={s['recommended_min_delay_ms']:.0f}ms"
                     )
-                    if missing_tgts:
+                    ff_tgts = s.get('focus_failed_targets', [])
+                    if ff_tgts:
+                        diag_out.appendPlainText(f"FOCUS FAILED TARGETS: {ff_tgts}")
+                    miss_tgts = s.get('missing_after_focus_targets', [])
+                    if miss_tgts:
+                        diag_out.appendPlainText(f"MACRO MISSING TARGETS: {miss_tgts}")
+                    stale_tgts = s.get('stale_or_unrelated_targets', [])
+                    if stale_tgts:
+                        diag_out.appendPlainText(f"STALE TARGETS: {stale_tgts}")
+                    per_tgt = s.get('per_target_summary', {})
+                    for tgt, ts in sorted(per_tgt.items()):
+                        min_vd = ts.get('min_first_delta_valid_ms', 0.0)
+                        min_vd_str = f'{min_vd:.1f}ms' if min_vd > 0 else 'N/A'
                         diag_out.appendPlainText(
-                            f"MACRO MISSING TARGETS: {missing_tgts}"
+                            f"TARGET SUMMARY  {tgt!r}  "
+                            f"focus_ok={ts.get('focus_ok_count', 0)}  "
+                            f"focus_failed={ts.get('focus_failed_count', 0)}  "
+                            f"macro_sequences={ts.get('macro_sequences_count', 0)}  "
+                            f"missing_after_focus={ts.get('missing_after_focus_count', 0)}  "
+                            f"stale={ts.get('stale_or_unrelated_count', 0)}  "
+                            f"invalid_focus={ts.get('invalid_focus_count', 0)}  "
+                            f"min_first_valid={min_vd_str}  "
+                            f"last={ts.get('last_status', '')}"
                         )
                 except Exception:
                     pass

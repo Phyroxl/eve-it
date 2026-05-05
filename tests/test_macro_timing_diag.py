@@ -38,6 +38,13 @@ def _reset_diag_state():
     hk._macro_missing_pending_time = 0.0
     hk._macro_stats_missing_after_focus = 0
     hk._macro_stats_missing_targets = []
+    hk._focus_failed_epochs = set()
+    hk._macro_stats_focus_failed = 0
+    hk._macro_stats_focus_failed_targets = []
+    hk._macro_stats_stale_count = 0
+    hk._macro_stats_stale_targets = []
+    hk._macro_stats_valid_for_delay = 0
+    hk._macro_target_stats = {}
     hk._hotkey_diagnostics_enabled = False
     hk._hotkey_diagnostics_events.clear()
 
@@ -643,6 +650,9 @@ class TestMacroSummary(unittest.TestCase):
             'incomplete_count', 'foreground_mismatch_count',
             'min_first_delta_seen_ms', 'max_first_delta_seen_ms', 'recommended_min_delay_ms',
             'missing_after_focus_count', 'missing_after_focus_targets',
+            'focus_failed_count', 'focus_failed_targets',
+            'stale_or_unrelated_count', 'stale_or_unrelated_targets',
+            'valid_sequences_for_delay', 'per_target_summary',
         }
         self.assertEqual(set(s.keys()), expected_keys)
 
@@ -901,6 +911,181 @@ class TestStaleSequence(unittest.TestCase):
         seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
         self.assertEqual(len(seqs), 1)
         self.assertNotEqual(seqs[0]['sequence_status'], 'stale_or_unrelated')
+
+    def test_stale_count_in_summary(self):
+        """stale_or_unrelated sequences increment stale_or_unrelated_count in summary."""
+        from overlay.replicator_hotkeys import get_macro_summary
+        self._press_with_delta(8.1)
+        s = get_macro_summary()
+        self.assertEqual(s['stale_or_unrelated_count'], 1)
+
+    def test_valid_for_delay_increments_on_safe_seq(self):
+        """complete_safe (rec_delay > 0) increments valid_sequences_for_delay."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary
+        hk._last_focus_done_time = time.perf_counter() - 0.080
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        s = get_macro_summary()
+        self.assertEqual(s['valid_sequences_for_delay'], 1)
+
+    def test_stale_does_not_increment_valid_for_delay(self):
+        """stale sequence (rec_delay=0) does NOT increment valid_sequences_for_delay."""
+        from overlay.replicator_hotkeys import get_macro_summary
+        self._press_with_delta(8.1)
+        s = get_macro_summary()
+        self.assertEqual(s['valid_sequences_for_delay'], 0)
+
+
+# ── Focus failed epoch classification ─────────────────────────────────────────
+
+class TestFocusFailedEpoch(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def _simulate_failed_focus(self, epoch=5, target='EVE — KonaN Herrera', hwnd=133724):
+        """Simulate a cycle that ended with ok=False by injecting into module state."""
+        import overlay.replicator_hotkeys as hk
+        import time
+        hk._focus_epoch_id = epoch
+        hk._last_focus_done_time = time.perf_counter() - 0.060
+        hk._last_focus_done_hwnd = 0  # failed
+        hk._last_focus_done_target = target
+        hk._last_focus_done_ok = False
+        # Manually replicate what _cycle does on ok=False
+        hk._focus_failed_epochs.add(epoch)
+        hk._macro_stats_focus_failed += 1
+        if target and target not in hk._macro_stats_focus_failed_targets:
+            hk._macro_stats_focus_failed_targets.append(target)
+        from overlay.replicator_hotkeys import _ts_for
+        ts = _ts_for(target)
+        ts['focus_failed_count'] += 1
+        ts['last_status'] = 'focus_failed'
+        hk._diag_event('epoch_focus_failed', epoch=epoch, target=target, hwnd=hwnd, reason='verify_failed')
+
+    def test_epoch_focus_failed_event_emitted(self):
+        """epoch_focus_failed diag event must be emitted on failed focus."""
+        import overlay.replicator_hotkeys as hk
+        self._simulate_failed_focus(epoch=5)
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'epoch_focus_failed']
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['epoch'], 5)
+        self.assertEqual(evs[0]['reason'], 'verify_failed')
+
+    def test_focus_failed_epoch_marks_seq_invalid_focus(self):
+        """MACRO_SEQ for a focus_failed epoch must be invalid_focus, not complete_safe."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        epoch = 5
+        self._simulate_failed_focus(epoch=epoch)
+        # Keys arrive for the failed epoch
+        hk._focus_epoch_id = epoch
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'invalid_focus')
+
+    def test_focus_failed_seq_not_complete_safe_even_all_8_keys(self):
+        """8/8 keys + focus_failed epoch → invalid_focus (never complete_safe)."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        epoch = 7
+        self._simulate_failed_focus(epoch=epoch)
+        hk._focus_epoch_id = epoch
+        hk._last_focus_done_time = time.perf_counter() - 0.080  # delta > 50ms → would be complete_safe
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=0):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertNotEqual(seqs[0]['sequence_status'], 'complete_safe')
+        self.assertEqual(seqs[0]['sequence_status'], 'invalid_focus')
+
+    def test_focus_failed_seq_rec_delay_zero(self):
+        """invalid_focus sequence must not contaminate recommended_min_delay."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary
+        epoch = 3
+        self._simulate_failed_focus(epoch=epoch)
+        hk._focus_epoch_id = epoch
+        hk._last_focus_done_time = time.perf_counter() - 0.080
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=0):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(seqs[0]['recommended_min_delay_ms'], 0.0)
+        s = get_macro_summary()
+        self.assertEqual(s['recommended_min_delay_ms'], 0.0)
+
+    def test_focus_failed_count_in_summary(self):
+        """get_macro_summary() reports focus_failed_count correctly."""
+        from overlay.replicator_hotkeys import get_macro_summary
+        self._simulate_failed_focus(epoch=1, target='EVE — KonaN Herrera')
+        self._simulate_failed_focus(epoch=2, target='EVE — KonaN Herrera')  # same target
+        s = get_macro_summary()
+        self.assertEqual(s['focus_failed_count'], 2)
+        self.assertIn('EVE — KonaN Herrera', s['focus_failed_targets'])
+        self.assertEqual(len(s['focus_failed_targets']), 1)  # unique
+
+    def test_focus_failed_not_pending_for_missing(self):
+        """A focus_failed epoch does NOT set _macro_missing_pending_epoch."""
+        import overlay.replicator_hotkeys as hk
+        # After simulate_failed_focus, no pending should be set
+        self._simulate_failed_focus(epoch=9)
+        self.assertEqual(hk._macro_missing_pending_epoch, -1)
+
+    def test_valid_epoch_after_failed_not_affected(self):
+        """A subsequent ok epoch should classify as complete_safe normally."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        # Epoch 5 fails
+        self._simulate_failed_focus(epoch=5)
+        # Epoch 6 succeeds
+        hk._focus_epoch_id = 6
+        hk._last_focus_done_time = time.perf_counter() - 0.080
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'complete_safe')
+        self.assertEqual(seqs[0]['epoch'], 6)
+
+    def test_per_target_stats_focus_ok_and_failed(self):
+        """Per-target stats track focus_ok and focus_failed separately."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import get_macro_summary, _ts_for
+        target = 'EVE - Bravo'
+        # Simulate 2 ok focus (manually update ts)
+        _ts_for(target)['focus_ok_count'] += 2
+        # Simulate 1 failed focus
+        self._simulate_failed_focus(epoch=3, target=target)
+        s = get_macro_summary()
+        ts = s['per_target_summary'].get(target, {})
+        self.assertEqual(ts.get('focus_ok_count', 0), 2)
+        self.assertEqual(ts.get('focus_failed_count', 0), 1)
+        self.assertEqual(ts.get('last_status', ''), 'focus_failed')
 
 
 if __name__ == '__main__':

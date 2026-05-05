@@ -124,6 +124,13 @@ _macro_missing_pending_target: str = ''
 _macro_missing_pending_time: float = 0.0
 _macro_stats_missing_after_focus: int = 0
 _macro_stats_missing_targets: list = []
+_focus_failed_epochs: set = set()
+_macro_stats_focus_failed: int = 0
+_macro_stats_focus_failed_targets: list = []
+_macro_stats_stale_count: int = 0
+_macro_stats_stale_targets: list = []
+_macro_stats_valid_for_delay: int = 0
+_macro_target_stats: dict = {}
 
 # ── Live diagnostics (zero-overhead when disabled) ────────────────────────────
 _hotkey_diagnostics_enabled: bool = False
@@ -210,6 +217,8 @@ def clear_hotkey_diagnostics():
     global _macro_stats_min_first_delta, _macro_stats_max_first_delta, _macro_stats_recommended_min_delay
     global _macro_stats_missing_after_focus, _macro_stats_missing_targets
     global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
+    global _macro_stats_focus_failed, _macro_stats_focus_failed_targets
+    global _macro_stats_stale_count, _macro_stats_stale_targets, _macro_stats_valid_for_delay
     _hotkey_diagnostics_events.clear()
     _macro_stats_total = 0
     _macro_stats_complete_safe = 0
@@ -221,7 +230,14 @@ def clear_hotkey_diagnostics():
     _macro_stats_recommended_min_delay = 0.0
     _macro_stats_missing_after_focus = 0
     _macro_stats_missing_targets = []
+    _macro_stats_focus_failed = 0
+    _macro_stats_focus_failed_targets = []
+    _macro_stats_stale_count = 0
+    _macro_stats_stale_targets = []
+    _macro_stats_valid_for_delay = 0
     _macro_observed_epochs.clear()
+    _focus_failed_epochs.clear()
+    _macro_target_stats.clear()
     _macro_missing_pending_epoch = -1
     _macro_missing_pending_target = ''
     _macro_missing_pending_time = 0.0
@@ -234,6 +250,11 @@ def get_hotkey_diagnostics_events():
 
 def get_macro_summary() -> dict:
     """Return cumulative macro sequence diagnostics summary."""
+    per_tgt = {}
+    for tgt, ts in _macro_target_stats.items():
+        per_tgt[tgt] = dict(ts)
+        min_d = ts['min_first_delta_valid_ms']
+        per_tgt[tgt]['min_first_delta_valid_ms'] = round(min_d, 1) if min_d < float('inf') else 0.0
     return {
         'total_macro_sequences': _macro_stats_total,
         'complete_safe_count': _macro_stats_complete_safe,
@@ -245,6 +266,12 @@ def get_macro_summary() -> dict:
         'recommended_min_delay_ms': round(_macro_stats_recommended_min_delay, 1),
         'missing_after_focus_count': _macro_stats_missing_after_focus,
         'missing_after_focus_targets': list(_macro_stats_missing_targets),
+        'focus_failed_count': _macro_stats_focus_failed,
+        'focus_failed_targets': list(_macro_stats_focus_failed_targets),
+        'stale_or_unrelated_count': _macro_stats_stale_count,
+        'stale_or_unrelated_targets': list(_macro_stats_stale_targets),
+        'valid_sequences_for_delay': _macro_stats_valid_for_delay,
+        'per_target_summary': per_tgt,
     }
 
 
@@ -303,6 +330,26 @@ def _check_and_emit_missing_macro(reason: str) -> None:
     _macro_missing_pending_epoch = -1
     _macro_missing_pending_target = ''
     _macro_missing_pending_time = 0.0
+    if target:
+        _ts_for(target)['missing_after_focus_count'] += 1
+        _ts_for(target)['last_status'] = 'missing_after_focus'
+
+
+def _ts_for(target: str) -> dict:
+    """Get or create the per-target stats dict for a given target title."""
+    if target not in _macro_target_stats:
+        _macro_target_stats[target] = {
+            'focus_ok_count': 0,
+            'focus_failed_count': 0,
+            'macro_sequences_count': 0,
+            'missing_after_focus_count': 0,
+            'stale_or_unrelated_count': 0,
+            'invalid_focus_count': 0,
+            'min_first_delta_valid_ms': float('inf'),
+            'max_first_delta_valid_ms': 0.0,
+            'last_status': '',
+        }
+    return _macro_target_stats[target]
 
 
 # ── Passive macro timing helpers ──────────────────────────────────────────────
@@ -392,6 +439,7 @@ def _flush_macro_seq() -> None:
     global _macro_stats_total, _macro_stats_complete_safe, _macro_stats_complete_risky
     global _macro_stats_incomplete, _macro_stats_fg_mismatch
     global _macro_stats_min_first_delta, _macro_stats_max_first_delta, _macro_stats_recommended_min_delay
+    global _macro_stats_stale_count, _macro_stats_stale_targets, _macro_stats_valid_for_delay
     if not _macro_seq_keys:
         return
 
@@ -420,7 +468,13 @@ def _flush_macro_seq() -> None:
 
     has_fg_mismatch = bool(fg_mismatch_keys)
     has_missing = bool(missing_names)
-    if first_delta > 1000.0:
+    epoch_id = _macro_seq_epoch_id
+    target = _macro_seq_target
+    focus_failed_epoch = (epoch_id >= 0 and epoch_id in _focus_failed_epochs)
+
+    if focus_failed_epoch:
+        status = 'invalid_focus'
+    elif first_delta > 1000.0:
         status = 'stale_or_unrelated'
     elif has_fg_mismatch:
         status = 'foreground_mismatch'
@@ -432,7 +486,7 @@ def _flush_macro_seq() -> None:
         status = 'complete_safe'
 
     import math
-    if status == 'stale_or_unrelated':
+    if status in ('stale_or_unrelated', 'invalid_focus'):
         rec_delay = 0.0
     elif status in ('foreground_mismatch', 'incomplete'):
         rec_delay = max(80.0, first_delta + 20.0)
@@ -443,14 +497,12 @@ def _flush_macro_seq() -> None:
     else:
         rec_delay = math.ceil(first_delta / 10.0) * 10.0
 
-    epoch_id = _macro_seq_epoch_id
-    target = _macro_seq_target
-
     _diag_event('macro_seq_complete',
         epoch=epoch_id,
         target=target,
         focus_hwnd=focus_hwnd,
         focus_ok=_macro_seq_focus_ok,
+        focus_failed_epoch=focus_failed_epoch,
         keys_seen=seen_names,
         keys_missing=missing_names,
         key_count=len(_macro_seq_keys),
@@ -482,11 +534,31 @@ def _flush_macro_seq() -> None:
         _macro_stats_incomplete += 1
     elif status == 'foreground_mismatch':
         _macro_stats_fg_mismatch += 1
-    if status != 'stale_or_unrelated' and first_delta > 0:
+    elif status == 'stale_or_unrelated':
+        _macro_stats_stale_count += 1
+        if target and target not in _macro_stats_stale_targets:
+            _macro_stats_stale_targets.append(target)
+    valid_for_delay = rec_delay > 0
+    if valid_for_delay:
+        _macro_stats_valid_for_delay += 1
+    if status not in ('stale_or_unrelated', 'invalid_focus') and first_delta > 0:
         _macro_stats_min_first_delta = min(_macro_stats_min_first_delta, first_delta)
         _macro_stats_max_first_delta = max(_macro_stats_max_first_delta, first_delta)
     if rec_delay > 0:
         _macro_stats_recommended_min_delay = max(_macro_stats_recommended_min_delay, rec_delay)
+
+    # ── Per-target stats ──────────────────────────────────────────────────────
+    if target:
+        _ts = _ts_for(target)
+        _ts['macro_sequences_count'] += 1
+        _ts['last_status'] = status
+        if status == 'stale_or_unrelated':
+            _ts['stale_or_unrelated_count'] += 1
+        elif status == 'invalid_focus':
+            _ts['invalid_focus_count'] += 1
+        elif valid_for_delay and first_delta > 0:
+            _ts['min_first_delta_valid_ms'] = min(_ts['min_first_delta_valid_ms'], first_delta)
+            _ts['max_first_delta_valid_ms'] = max(_ts['max_first_delta_valid_ms'], first_delta)
 
     _macro_seq_keys = []
     _macro_seq_key_times = []
@@ -731,6 +803,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
         global _focus_epoch_id
         global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
+        global _macro_stats_focus_failed, _macro_stats_focus_failed_targets
         import time as _time
 
         t0  = _time.perf_counter()
@@ -938,6 +1011,24 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 _macro_missing_pending_epoch = _focus_epoch_id
                 _macro_missing_pending_target = target or ''
                 _macro_missing_pending_time = _last_focus_done_time
+                if target:
+                    _ts_for(target)['focus_ok_count'] += 1
+            else:
+                _focus_failed_epochs.add(_focus_epoch_id)
+                _macro_stats_focus_failed += 1
+                if target and target not in _macro_stats_focus_failed_targets:
+                    _macro_stats_focus_failed_targets.append(target)
+                if target:
+                    _ts = _ts_for(target)
+                    _ts['focus_failed_count'] += 1
+                    _ts['last_status'] = 'focus_failed'
+                _diag_event('epoch_focus_failed',
+                    epoch=_focus_epoch_id, target=target, hwnd=target_hwnd,
+                    reason='verify_failed')
+                _perf_log(
+                    f'[EPOCH FOCUS FAILED] epoch={_focus_epoch_id} target={target!r} '
+                    f'hwnd={target_hwnd} reason=verify_failed'
+                )
             _diag_event('cycle_done', scope='global',
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,
@@ -955,6 +1046,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
         global _focus_epoch_id
         global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
+        global _macro_stats_focus_failed, _macro_stats_focus_failed_targets
         import time as _time
 
         t0  = _time.perf_counter()
@@ -1177,6 +1269,24 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 _macro_missing_pending_epoch = _focus_epoch_id
                 _macro_missing_pending_target = target or ''
                 _macro_missing_pending_time = _last_focus_done_time
+                if target:
+                    _ts_for(target)['focus_ok_count'] += 1
+            else:
+                _focus_failed_epochs.add(_focus_epoch_id)
+                _macro_stats_focus_failed += 1
+                if target and target not in _macro_stats_focus_failed_targets:
+                    _macro_stats_focus_failed_targets.append(target)
+                if target:
+                    _ts = _ts_for(target)
+                    _ts['focus_failed_count'] += 1
+                    _ts['last_status'] = 'focus_failed'
+                _diag_event('epoch_focus_failed',
+                    epoch=_focus_epoch_id, target=target, hwnd=target_hwnd,
+                    reason='verify_failed')
+                _perf_log(
+                    f'[EPOCH FOCUS FAILED] epoch={_focus_epoch_id} target={target!r} '
+                    f'hwnd={target_hwnd} reason=verify_failed'
+                )
             _diag_event('cycle_group_done', group_id=group_id,
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,

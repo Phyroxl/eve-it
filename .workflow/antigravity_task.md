@@ -444,3 +444,89 @@ MACRO MISSING TARGETS: ['EVE — Lana Drake']
 4. Si aparece `MACRO MISSING` → el foco se completó pero EVE no recibió F1–F8 para esa cuenta.
 5. Si `MACRO SEQ status=stale_or_unrelated` → las teclas F1–F8 llegaron > 1s después del foco (no relacionadas causalmente; ignorar su rec_delay).
 6. Al detener, la línea `MACRO SUMMARY` muestra `missing_after_focus=N` con los targets afectados.
+
+## 18) DIAG — Clasificar foco fallido, macro missing y macro stale correctamente (commit actual)
+
+**Problema detectado en logs reales con KonaN Herrera, Lana Drake y Marek Volkov:**
+
+### Caso KonaN Herrera — foco no verificado
+```
+[16:15:47.940] FOCUS  ok=False  title='EVE — KonaN Herrera'  total=59.7ms
+[16:15:47.941] DONE  ok=False  verified=False
+```
+Epochs con focus_failed podían ser clasificados como `complete_safe` si llegaban F1–F8 para ellos.
+
+### Caso Lana Drake — macro no observada tras foco correcto
+```
+[16:16:54.070] DONE  ok=True  verified=True  7 -> 8  total=17.4ms
+```
+No aparecía ningún MACRO KEY ni MACRO SEQ para ese epoch. Fallo silencioso.
+
+### Caso Marek Volkov — macro stale clasificada como complete_safe
+```
+[16:17:13.438] MACRO KEY epoch=341 F1 delta=1626.8ms
+MACRO SEQ epoch=341 status=complete_safe ... rec_delay=1630ms
+```
+1626ms de delta → `complete_safe` era incorrecto y `rec_delay=1630ms` era absurdo.
+
+---
+
+### Nuevos globals añadidos:
+- `_focus_failed_epochs: set` — epochs con DONE ok=False
+- `_macro_stats_focus_failed: int`
+- `_macro_stats_focus_failed_targets: list`
+- `_macro_stats_stale_count: int`
+- `_macro_stats_stale_targets: list`
+- `_macro_stats_valid_for_delay: int` — secuencias con rec_delay > 0
+- `_macro_target_stats: dict` — estadísticas por cuenta (focus_ok, focus_failed, seqs, missing, stale, invalid_focus, min/max first_delta_valid, last_status)
+
+### Nueva función `_ts_for(target) -> dict`:
+- Crea o recupera la entrada por-target en `_macro_target_stats`.
+
+### Cambios en `_flush_macro_seq()`:
+- Si `_macro_seq_epoch_id in _focus_failed_epochs` → `status = 'invalid_focus'`, `rec_delay = 0`
+- `invalid_focus` no actualiza min/max/recommended_min_delay
+- `stale_or_unrelated`: incrementa `_macro_stats_stale_count`, actualiza `_macro_stats_stale_targets`
+- `valid_for_delay` (rec_delay > 0): incrementa `_macro_stats_valid_for_delay`
+- Actualiza `_macro_target_stats` para macro_sequences_count, last_status, stale, invalid_focus, min/max_first_delta_valid
+
+### Cambios en `_cycle` y `_cycle_group`:
+- ok=True: actualiza `_ts_for(target)['focus_ok_count']`
+- ok=False: añade epoch a `_focus_failed_epochs`, emite `epoch_focus_failed` diag event + `[EPOCH FOCUS FAILED]` perf log, actualiza `_macro_stats_focus_failed*` y `_ts_for(target)['focus_failed_count']`
+
+### Cambios en `_check_and_emit_missing_macro()`:
+- Actualiza `_ts_for(target)['missing_after_focus_count']` y `last_status = 'missing_after_focus'`
+
+### Cambios en `get_macro_summary()`:
+- Añadidos: `focus_failed_count`, `focus_failed_targets`, `stale_or_unrelated_count`, `stale_or_unrelated_targets`, `valid_sequences_for_delay`, `per_target_summary`
+
+### Cambios en `_fmt_event` (settings dialog):
+- `epoch_focus_failed` → `EPOCH FOCUS FAILED  epoch=N  target='...'  hwnd=N  reason=verify_failed`
+
+### MACRO SUMMARY al detener (settings dialog):
+```
+MACRO SUMMARY: sequences=20 safe=4 risky=12 focus_failed=1 missing_after_focus=1 stale=1 valid_for_delay=16 min_first=27.5ms recommended_min_delay=70ms
+FOCUS FAILED TARGETS: ['EVE — KonaN Herrera']
+MACRO MISSING TARGETS: ['EVE — Lana Drake']
+STALE TARGETS: ['EVE — Marek Volkov']
+TARGET SUMMARY  'EVE — KonaN Herrera'  focus_ok=3  focus_failed=1  macro_sequences=0  missing_after_focus=1  stale=0  invalid_focus=0  min_first_valid=N/A  last=focus_failed
+TARGET SUMMARY  'EVE — Lana Drake'  focus_ok=4  focus_failed=0  macro_sequences=0  missing_after_focus=2  stale=0  invalid_focus=0  min_first_valid=N/A  last=missing_after_focus
+TARGET SUMMARY  'EVE — Marek Volkov'  focus_ok=4  focus_failed=0  macro_sequences=1  missing_after_focus=0  stale=1  invalid_focus=0  min_first_valid=N/A  last=stale_or_unrelated
+```
+
+### Archivos Modificados:
+- `overlay/replicator_hotkeys.py` — nuevos globals, `_ts_for`, `_flush_macro_seq`, `_check_and_emit_missing_macro`, `_cycle` + `_cycle_group` (focus_failed tracking), `clear_hotkey_diagnostics`, `get_macro_summary`
+- `overlay/replicator_settings_dialog.py` — `_fmt_event` para `epoch_focus_failed`, MACRO SUMMARY completo, TARGET SUMMARY lines
+- `tests/test_macro_timing_diag.py` — `_reset_diag_state` ampliado, `test_get_macro_summary_returns_correct_structure` actualizado, nueva clase `TestFocusFailedEpoch` (9 tests), clase `TestStaleSequence` ampliada (4 tests extra)
+
+### Pruebas:
+- `python -m py_compile overlay/replicator_hotkeys.py overlay/replicator_settings_dialog.py` → OK
+- `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py -q` → **86 passed**
+
+### Validación manual esperada:
+1. Ejecutar macro completa.
+2. Si una cuenta no verifica foco → `EPOCH FOCUS FAILED target='EVE — KonaN Herrera'` en el log.
+3. Si llegan F1–F8 para ese epoch fallido → `MACRO SEQ status=invalid_focus` (nunca `complete_safe`).
+4. Si una cuenta recibe foco pero no F1–F8 → `MACRO MISSING target='EVE — Lana Drake'`.
+5. Si F1–F8 llegan > 1s tarde → `MACRO SEQ status=stale_or_unrelated` sin rec_delay absurdo.
+6. Al detener: ver `TARGET SUMMARY` por cuenta con desglose completo.
