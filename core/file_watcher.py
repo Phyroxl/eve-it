@@ -38,7 +38,7 @@ class FileWatcher:
     def stop(self):
         self._running = False
         if self._thread:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=0.3)
 
     def _run(self):
         while self._running:
@@ -95,7 +95,7 @@ class EVELogWatcher:
     def stop(self):
         self._running = False
         if self._thread:
-            self._thread.join(timeout=3)
+            self._thread.join(timeout=0.5)
         logger.info("EVELogWatcher detenido")
 
     def _run(self):
