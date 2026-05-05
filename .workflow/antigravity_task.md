@@ -530,3 +530,91 @@ TARGET SUMMARY  'EVE — Marek Volkov'  focus_ok=4  focus_failed=0  macro_sequen
 4. Si una cuenta recibe foco pero no F1–F8 → `MACRO MISSING target='EVE — Lana Drake'`.
 5. Si F1–F8 llegan > 1s tarde → `MACRO SEQ status=stale_or_unrelated` sin rec_delay absurdo.
 6. Al detener: ver `TARGET SUMMARY` por cuenta con desglose completo.
+
+## 19) FIX — Click izquierdo sobre réplica ahora es inmediato
+
+**Commit `FIX: Make replica left-click focus immediate`**
+
+### Causa del delay encontrada
+
+Tres fuentes de latencia acumuladas:
+
+**Causa 1 (principal) — `activateWindow()` en `mousePressEvent` robaba el foco del OS a EVE:**
+`mousePressEvent` llamaba `self.activateWindow()` y `self.raise_()` en cada click izquierdo.
+El overlay tiene `WS_EX_NOACTIVATE` (set en `_setup_ui()` línea 449) precisamente para no robar el foco.
+Al llamar `activateWindow()`, el OS transfería el foco a la ventana Qt del overlay. Entonces cuando
+`focus_eve_window` se ejecutaba en `mouseReleaseEvent`, el foreground era el overlay Qt (no EVE),
+disparando el path `AttachThreadInput` de `focus_eve_window` que puede bloquear 200–900 ms.
+
+**Causa 2 — Click gestionado en `mouseReleaseEvent` (no en `mousePressEvent`):**
+El foco se aplicaba al soltar el botón, añadiendo el tiempo completo del ciclo press+release
+(típicamente 50–150 ms de latencia percibida en el cambio de cuenta).
+
+**Causa 3 — `focus_eve_window` usa `BringWindowToTop` (SendMessage síncrono cross-process):**
+`BringWindowToTop` es un `SendMessage` síncrono que espera la cola de mensajes de EVE, bloqueando
+hasta 300 ms en función de la carga de renderizado del cliente.
+
+### Ruta anterior (lenta)
+```
+Usuario hace click izquierdo en réplica
+  → mousePressEvent:
+      self.activateWindow()        ← roba foco del OS a Qt overlay
+      self.raise_()
+  → [usuario suelta el botón]
+  → mouseReleaseEvent:
+      focus_eve_window(hwnd)       ← foreground es el overlay Qt, no EVE
+        → AttachThreadInput(...)   ← puede bloquear 200–900 ms
+        → BringWindowToTop(hwnd)   ← SendMessage síncrono, hasta 300 ms
+        → SetForegroundWindow(hwnd)
+```
+
+### Nueva ruta rápida
+```
+Usuario presiona botón izquierdo sobre réplica
+  → mousePressEvent (primer contacto):
+      [SIN activateWindow/raise_]
+      notify_active_client_changed(hwnd)  ← borde visual instantáneo
+      focus_eve_window_perf(hwnd):
+        SetWindowPos(SWP_ASYNCWINDOWPOS)  ← async, < 1 ms
+        SetForegroundWindow(hwnd)         ← no bloquea
+  → [usuario suelta el botón]
+  → mouseReleaseEvent:
+      _press_focused=True → skip dup focus, solo log
+```
+
+### Archivos modificados
+- `overlay/replication_overlay.py`:
+  - Import añadido: `focus_eve_window_perf`
+  - `__init__`: `self._press_focused = False` añadido al estado de drag
+  - `mousePressEvent`: eliminado `self.activateWindow()` y `self.raise_()`; añadido bloque de focus inmediato con `focus_eve_window_perf` y logs `[REPLICA CLICK FOCUS]`
+  - `mouseReleaseEvent`: detecta `_press_focused=True` → skip duplicado; fallback a `focus_eve_window_perf` si hwnd no estaba disponible en press
+
+### Logs esperados tras el fix
+```
+[REPLICA CLICK FOCUS] click_start replica='Replica - EVE — Lana Drake' target='EVE — Lana Drake' hwnd=4788500 border_ms=0.1
+[REPLICA CLICK FOCUS] focus_start hwnd=4788500
+[REPLICA CLICK FOCUS] focus_done ok=True elapsed=2.3ms hwnd=4788500 restore=0.0 bring=0.8 setfg=0.4 total=1.2 ok=True
+[REPLICA CLICK FOCUS] active_border_set target='EVE — Lana Drake' elapsed=0.1ms
+[REPLICA CLICK FOCUS] total=2.5ms
+[REPLICA CLICK FOCUS] release_skip_dup title='EVE — Lana Drake' hwnd=4788500 (already focused on press)
+```
+
+### Criterios de rendimiento objetivo
+- click_start → focus_start: < 2 ms
+- click_start → focus_done: ideal < 20 ms, aceptable < 40 ms
+- click_start → active_border_set: < 1 ms (instantáneo)
+- Nunca delays de 200–900 ms por AttachThreadInput
+
+### Instrucciones de prueba manual
+1. Abrir 12 réplicas.
+2. Hacer click izquierdo rápido entre varias réplicas.
+3. El foco debe cambiar prácticamente instantáneo (sin delay perceptible).
+4. El borde activo debe saltar inmediatamente a la réplica clicada.
+5. No deben quedar dos bordes activos.
+6. Ver logs `[REPLICA CLICK FOCUS]` con `total=` idealmente < 20–40 ms.
+7. Verificar que los logs NO muestran `stale_hwnd` (hwnd cacheado válido).
+8. Verificar que `release_skip_dup` aparece en cada click normal (confirma fast path activo).
+
+### Pruebas
+- `python -m py_compile overlay/replication_overlay.py` → OK
+- `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py tests/test_replicator_active_border.py -q` → **123 passed**

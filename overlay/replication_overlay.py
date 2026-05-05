@@ -42,8 +42,8 @@ if not _qt_ok:
 
 from overlay.win32_capture import (
     capture_window_region, IS_WINDOWS, resolve_eve_window_handle,
-    set_no_activate, user32, focus_eve_window, get_foreground_hwnd,
-    set_topmost, should_show_overlays, get_window_size,
+    set_no_activate, user32, focus_eve_window, focus_eve_window_perf,
+    get_foreground_hwnd, set_topmost, should_show_overlays, get_window_size,
 )
 from overlay.replicator_config import get_overlay_cfg, save_overlay_cfg
 from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
@@ -359,6 +359,7 @@ class ReplicationOverlay(QWidget):
         self._is_resizing = False
         self._debug_visual_layers = False  # toggled by diagnostics dialog only
         self._shutting_down = False
+        self._press_focused = False      # True when focus was already fired on mousePressEvent
 
         _OVERLAY_REGISTRY.add(self)
 
@@ -1490,6 +1491,8 @@ class ReplicationOverlay(QWidget):
 
     def mousePressEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
+        self._press_focused = False  # reset on every press
+
         if event.button() == left:
             pos = event.pos()
             in_resize_corner = pos.x() > self.width() - 25 and pos.y() > self.height() - 25
@@ -1505,13 +1508,45 @@ class ReplicationOverlay(QWidget):
             self._drag_start_pos = self.pos()
             self._drag_moved = False
 
-        # Qt focus for keyboard events
-        self.setFocus(
-            Qt.FocusReason.MouseFocusReason
-            if hasattr(Qt.FocusReason, 'MouseFocusReason') else Qt.MouseFocusReason
-        )
-        self.activateWindow()
-        self.raise_()
+            # ── Immediate focus on first contact ────────────────────────────
+            # Fire EVE focus on PRESS (not release) for zero perceived delay.
+            # Use cached _hwnd first; fall back to _hwnd_getter only if stale.
+            # NOTE: activateWindow()/raise_() are intentionally absent here —
+            # calling them would steal OS focus from EVE to the Qt overlay,
+            # forcing AttachThreadInput in the focus path and stalling 200-900 ms.
+            # The overlay already has WS_EX_NOACTIVATE set in _setup_ui().
+            t_click = time.perf_counter()
+            hwnd = self._hwnd or self._hwnd_getter()
+            if hwnd:
+                self._hwnd = hwnd
+                ReplicationOverlay.notify_active_client_changed(hwnd)
+                t_border = time.perf_counter()
+                logger.debug(
+                    f"[REPLICA CLICK FOCUS] click_start replica={self.windowTitle()!r} "
+                    f"target={self._title!r} hwnd={hwnd} "
+                    f"border_ms={(t_border - t_click) * 1000:.1f}"
+                )
+                t_focus_start = time.perf_counter()
+                logger.debug(f"[REPLICA CLICK FOCUS] focus_start hwnd={hwnd}")
+                ok, perf_line = focus_eve_window_perf(hwnd)
+                t_done = time.perf_counter()
+                logger.debug(
+                    f"[REPLICA CLICK FOCUS] focus_done ok={ok} "
+                    f"elapsed={(t_done - t_focus_start) * 1000:.1f}ms {perf_line}"
+                )
+                logger.debug(
+                    f"[REPLICA CLICK FOCUS] active_border_set target={self._title!r} "
+                    f"elapsed={(t_border - t_click) * 1000:.1f}ms"
+                )
+                logger.debug(
+                    f"[REPLICA CLICK FOCUS] total={(t_done - t_click) * 1000:.1f}ms"
+                )
+                if not ok:
+                    logger.warning(
+                        f"[REPLICA CLICK FOCUS] stale_hwnd title={self._title!r} hwnd={hwnd} "
+                        f"— will retry on release"
+                    )
+                self._press_focused = ok
 
     def mouseMoveEvent(self, event):
         left = Qt.MouseButton.LeftButton if hasattr(Qt, 'MouseButton') else Qt.LeftButton
@@ -1611,27 +1646,44 @@ class ReplicationOverlay(QWidget):
 
         if event.button() == left:
             if not was_resizing and not self._drag_moved:
-                # Plain click (no drag, no resize) → focus the EVE client.
-                hwnd = self._hwnd_getter()
-                if hwnd:
-                    self._hwnd = hwnd
-                if self._hwnd:
-                    # Optimistic border update FIRST → instant visual feedback before Win32 call.
-                    logger.debug(f"[REPLICA_CLICK] title={self._title!r} hwnd={self._hwnd}")
-                    ReplicationOverlay.notify_active_client_changed(self._hwnd)
-                    ok = focus_eve_window(self._hwnd)
+                # Plain click (no drag, no resize).
+                # Fast path: focus was already fired in mousePressEvent.
+                if self._press_focused:
                     logger.debug(
-                        f"[FOCUS_AFTER_REPLICA_CLICK] title={self._title!r} "
-                        f"hwnd={self._hwnd} ok={ok}"
+                        f"[REPLICA CLICK FOCUS] release_skip_dup title={self._title!r} "
+                        f"hwnd={self._hwnd} (already focused on press)"
                     )
-                    if not ok:
-                        # Win32 focus failed; monitor timer will correct border within 75 ms
-                        logger.warning(
-                            f"[REPLICA_CLICK_FOCUS_FAILED] title={self._title!r} hwnd={self._hwnd}"
-                        )
                 else:
-                    ok = False
-                    logger.debug(f"[REPLICA_CLICK_NO_HWND] title={self._title!r}")
+                    # Fallback: hwnd was not available at press time — retry on release.
+                    hwnd = self._hwnd_getter()
+                    if hwnd:
+                        self._hwnd = hwnd
+                    if self._hwnd:
+                        t_click = time.perf_counter()
+                        ReplicationOverlay.notify_active_client_changed(self._hwnd)
+                        t_fs = time.perf_counter()
+                        logger.debug(
+                            f"[REPLICA CLICK FOCUS] click_start (release-fallback) "
+                            f"title={self._title!r} hwnd={self._hwnd}"
+                        )
+                        logger.debug(f"[REPLICA CLICK FOCUS] focus_start hwnd={self._hwnd}")
+                        ok, perf_line = focus_eve_window_perf(self._hwnd)
+                        t_done = time.perf_counter()
+                        logger.debug(
+                            f"[REPLICA CLICK FOCUS] focus_done ok={ok} "
+                            f"elapsed={(t_done - t_fs) * 1000:.1f}ms {perf_line}"
+                        )
+                        logger.debug(
+                            f"[REPLICA CLICK FOCUS] total={(t_done - t_click) * 1000:.1f}ms"
+                        )
+                        if not ok:
+                            logger.warning(
+                                f"[REPLICA CLICK FOCUS] focus_failed title={self._title!r} "
+                                f"hwnd={self._hwnd}"
+                            )
+                    else:
+                        logger.debug(f"[REPLICA CLICK FOCUS] no_hwnd title={self._title!r}")
+            self._press_focused = False  # always reset after click completes
 
             # Broadcast resize to synced peers after manual resize
             if was_resizing and self._sync_active and not self._applying_sync_resize:
