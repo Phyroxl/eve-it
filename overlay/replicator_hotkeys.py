@@ -80,6 +80,29 @@ _last_cycle_client_id_time: float = 0.0           # monotonic() of above
 # CaptureThread skips one frame while < now, reducing competition with Win32 focus.
 _capture_suspended_until: float = 0.0
 
+# ── Last focus-done snapshot (passive macro timing diagnostics) ───────────────
+_last_focus_done_time: float = 0.0
+_last_focus_done_hwnd: int = 0
+_last_focus_done_target: str = ''
+_last_focus_done_ok: bool = False
+
+# ── Passive macro key hook (WH_KEYBOARD_LL, F1–F8 observation only) ──────────
+_WH_KEYBOARD_LL: int = 13
+_WM_KEYDOWN: int = 0x0100
+_WM_SYSKEYDOWN: int = 0x0104
+_WM_QUIT_MSG: int = 0x0012
+_MACRO_VK_TO_NAME: dict = {
+    0x70: 'F1', 0x71: 'F2', 0x72: 'F3', 0x73: 'F4',
+    0x74: 'F5', 0x75: 'F6', 0x76: 'F7', 0x77: 'F8',
+}
+_MACRO_SEQ_WINDOW_MS: float = 300.0
+_macro_hook_handle = None
+_macro_hook_thread: Optional[threading.Thread] = None
+_macro_hook_running: bool = False
+_macro_seq_keys: list = []
+_macro_seq_key_times: list = []
+_macro_seq_last_key_perf: float = 0.0
+
 # ── Live diagnostics (zero-overhead when disabled) ────────────────────────────
 _hotkey_diagnostics_enabled: bool = False
 _hotkey_diagnostics_callback = None
@@ -147,6 +170,10 @@ def set_hotkey_diagnostics_enabled(enabled: bool, callback=None):
     global _hotkey_diagnostics_enabled, _hotkey_diagnostics_callback
     _hotkey_diagnostics_enabled = enabled
     _hotkey_diagnostics_callback = callback if enabled else None
+    if enabled:
+        _install_macro_key_hook()
+    else:
+        _uninstall_macro_key_hook()
 
 
 def clear_hotkey_diagnostics():
@@ -176,6 +203,171 @@ def _diag_event(event_type: str, **data):
             cb(event)
         except Exception:
             pass
+
+
+# ── Passive macro timing helpers ──────────────────────────────────────────────
+
+def _get_last_focus_done_snapshot() -> dict:
+    return {
+        'time': _last_focus_done_time,
+        'hwnd': _last_focus_done_hwnd,
+        'target': _last_focus_done_target,
+        'ok': _last_focus_done_ok,
+    }
+
+
+def _on_macro_key(vk: int) -> None:
+    """Called from hook thread on each F1–F8 keydown. Purely observational — no blocking."""
+    global _macro_seq_keys, _macro_seq_key_times, _macro_seq_last_key_perf
+    if not _hotkey_diagnostics_enabled:
+        return
+    import time as _t
+    now_perf = _t.perf_counter()
+
+    if _last_focus_done_time > 0:
+        delta_ms = (now_perf - _last_focus_done_time) * 1000.0
+        if delta_ms < 5000.0:
+            if delta_ms < 10.0:
+                timing_class = 'too_early'
+            elif delta_ms < 30.0:
+                timing_class = 'risky'
+            else:
+                timing_class = 'safe-ish'
+            key_name = _MACRO_VK_TO_NAME.get(vk, f'VK_{vk:#x}')
+            try:
+                from overlay.win32_capture import get_foreground_hwnd
+                fg_hwnd = get_foreground_hwnd()
+            except Exception:
+                fg_hwnd = 0
+            _diag_event('macro_key_observed',
+                key=key_name, vk=vk,
+                delta_after_focus_done_ms=round(delta_ms, 1),
+                timing_class=timing_class,
+                fg_hwnd=fg_hwnd,
+                focus_target=_last_focus_done_target,
+                focus_ok=_last_focus_done_ok,
+            )
+            _perf_log(
+                f'[MACRO INPUT] key={key_name} delta={delta_ms:.1f}ms '
+                f'class={timing_class} fg_hwnd={fg_hwnd} '
+                f'focus_target={_last_focus_done_target!r}'
+            )
+
+    elapsed_since_last = (
+        (now_perf - _macro_seq_last_key_perf) * 1000.0
+        if _macro_seq_last_key_perf > 0 else _MACRO_SEQ_WINDOW_MS + 1
+    )
+    if elapsed_since_last > _MACRO_SEQ_WINDOW_MS and _macro_seq_keys:
+        _flush_macro_seq()
+
+    _macro_seq_keys.append(vk)
+    _macro_seq_key_times.append(now_perf)
+    _macro_seq_last_key_perf = now_perf
+
+
+def _flush_macro_seq() -> None:
+    """Finalize and emit the current MACRO_SEQ. Clears seq state."""
+    global _macro_seq_keys, _macro_seq_key_times, _macro_seq_last_key_perf
+    if not _macro_seq_keys:
+        return
+    seen_names = [_MACRO_VK_TO_NAME.get(vk, f'VK_{vk:#x}') for vk in _macro_seq_keys]
+    seen_vk_set = set(_macro_seq_keys)
+    missing_names = [name for vk, name in _MACRO_VK_TO_NAME.items() if vk not in seen_vk_set]
+    seq_duration_ms = (
+        (_macro_seq_key_times[-1] - _macro_seq_key_times[0]) * 1000.0
+        if len(_macro_seq_key_times) > 1 else 0.0
+    )
+    _diag_event('macro_seq_complete',
+        keys_seen=seen_names,
+        keys_missing=missing_names,
+        key_count=len(_macro_seq_keys),
+        seq_duration_ms=round(seq_duration_ms, 1),
+    )
+    _perf_log(
+        f'[MACRO SEQ] keys={seen_names} missing={missing_names} '
+        f'count={len(_macro_seq_keys)} duration_ms={seq_duration_ms:.1f}'
+    )
+    _macro_seq_keys = []
+    _macro_seq_key_times = []
+    _macro_seq_last_key_perf = 0.0
+
+
+class _KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ('vkCode',      ctypes.c_ulong),
+        ('scanCode',    ctypes.c_ulong),
+        ('flags',       ctypes.c_ulong),
+        ('time',        ctypes.c_ulong),
+        ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+_HOOKPROC_TYPE = ctypes.WINFUNCTYPE(
+    ctypes.c_long, ctypes.c_int, wt.WPARAM, wt.LPARAM
+)
+_macro_hook_proc_ref = None
+
+
+def _macro_hook_loop() -> None:
+    """Dedicated thread: installs WH_KEYBOARD_LL, pumps messages, uninstalls on exit."""
+    global _macro_hook_handle, _macro_hook_proc_ref
+
+    def _proc(nCode, wParam, lParam):
+        try:
+            if nCode >= 0 and wParam in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
+                kb = ctypes.cast(lParam, ctypes.POINTER(_KBDLLHOOKSTRUCT)).contents
+                if kb.vkCode in _MACRO_VK_TO_NAME:
+                    _on_macro_key(kb.vkCode)
+        except Exception:
+            pass
+        return _user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+    _macro_hook_proc_ref = _HOOKPROC_TYPE(_proc)
+    _macro_hook_handle = _user32.SetWindowsHookExW(
+        _WH_KEYBOARD_LL, _macro_hook_proc_ref, None, 0
+    )
+    if not _macro_hook_handle:
+        logger.warning(f'[MACRO HOOK] SetWindowsHookExW failed err={_kernel32.GetLastError()}')
+        _macro_hook_proc_ref = None
+        return
+
+    logger.debug('[MACRO HOOK] WH_KEYBOARD_LL installed')
+    msg = wt.MSG()
+    while _macro_hook_running:
+        ret = _user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+        if ret <= 0:
+            break
+        _user32.TranslateMessage(ctypes.byref(msg))
+        _user32.DispatchMessageW(ctypes.byref(msg))
+
+    _user32.UnhookWindowsHookEx(_macro_hook_handle)
+    _macro_hook_handle = None
+    _macro_hook_proc_ref = None
+    logger.debug('[MACRO HOOK] WH_KEYBOARD_LL uninstalled')
+
+
+def _install_macro_key_hook() -> None:
+    global _macro_hook_thread, _macro_hook_running
+    if _macro_hook_thread and _macro_hook_thread.is_alive():
+        return
+    _macro_hook_running = True
+    _macro_hook_thread = threading.Thread(
+        target=_macro_hook_loop, daemon=True, name='macro-key-hook'
+    )
+    _macro_hook_thread.start()
+
+
+def _uninstall_macro_key_hook() -> None:
+    global _macro_hook_running, _macro_hook_thread
+    _macro_hook_running = False
+    t = _macro_hook_thread
+    if t and t.is_alive():
+        tid = t.ident
+        if tid:
+            _user32.PostThreadMessageW(tid, _WM_QUIT_MSG, 0, 0)
+        t.join(timeout=1.0)
+    _macro_hook_thread = None
+    _flush_macro_seq()
 
 
 # ── Hotkey parsing ────────────────────────────────────────────────────────────
@@ -328,6 +520,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _cycle_in_progress, _last_cycle_time
         global _last_cycle_client_id, _last_cycle_client_id_time
         global _capture_suspended_until
+        global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
         import time as _time
 
         t0  = _time.perf_counter()
@@ -519,6 +712,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'focus_ok={ok} focus_verified={verified} strategy={_strategy} '
                 f'verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
             )
+            _last_focus_done_time   = _time.perf_counter()
+            _last_focus_done_hwnd   = target_hwnd if ok else 0
+            _last_focus_done_target = target or ''
+            _last_focus_done_ok     = ok
             _diag_event('cycle_done', scope='global',
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,
@@ -533,6 +730,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _cycle_in_progress, _last_cycle_time
         global _last_cycle_client_id, _last_cycle_client_id_time
         global _capture_suspended_until
+        global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
         import time as _time
 
         t0  = _time.perf_counter()
@@ -739,6 +937,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'focus_ok={ok} focus_verified={verified} strategy={_strategy} '
                 f'verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
             )
+            _last_focus_done_time   = _time.perf_counter()
+            _last_focus_done_hwnd   = target_hwnd if ok else 0
+            _last_focus_done_target = target or ''
+            _last_focus_done_ok     = ok
             _diag_event('cycle_group_done', group_id=group_id,
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,

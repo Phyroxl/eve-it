@@ -1213,6 +1213,19 @@ class ReplicatorSettingsDialog(QDialog):
                         f"{ev.get('source_idx')} -> {ev.get('target_idx')}  "
                         f"total={ev.get('total_ms', 0):.1f}ms  "
                         f"resolver={ev.get('resolver_used')}")
+            if etype == 'macro_key_observed':
+                cls = ev.get('timing_class', '')
+                cls_tag = {'too_early': '!!! TOO EARLY', 'risky': '~ risky ~', 'safe-ish': 'ok'}.get(cls, cls)
+                return (f"[{t}] MACRO KEY  {ev.get('key')}  "
+                        f"delta={ev.get('delta_after_focus_done_ms', 0):.1f}ms  [{cls_tag}]  "
+                        f"target={ev.get('focus_target')!r}")
+            if etype == 'macro_seq_complete':
+                seen = ev.get('keys_seen', [])
+                missing = ev.get('keys_missing', [])
+                return (f"[{t}] MACRO SEQ  keys={seen}  "
+                        f"missing={missing}  "
+                        f"count={ev.get('key_count', 0)}  "
+                        f"duration={ev.get('seq_duration_ms', 0):.1f}ms")
             if etype == 'state_snapshot':
                 lines = [f"[{t}] ── STATE SNAPSHOT ──",
                          f"  FG: hwnd={ev.get('fg_hwnd')} title={ev.get('fg_title')!r}",
