@@ -618,3 +618,79 @@ Usuario presiona botón izquierdo sobre réplica
 ### Pruebas
 - `python -m py_compile overlay/replication_overlay.py` → OK
 - `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py tests/test_replicator_active_border.py -q` → **123 passed**
+
+## 20) FIX — Sync hotkey cycle index after direct replica selection
+
+**Commit `FIX: Sync hotkey cycle index after direct replica selection`**
+
+### Causa del bug encontrada
+
+Cuando el usuario hacía click directo en una réplica (o cualquier cambio de foco no iniciado por la hotkey), se actualizaba el foco visual del borde activo (`notify_active_client_changed`) pero **NO** se actualizaban las variables de estado del ciclo de hotkeys:
+- `_last_cycle_client_id` — seguía apuntando a la cuenta anterior
+- `_last_group_index[group_id]` — seguía en el índice anterior
+
+El resolver de `_cycle_group` tiene la siguiente prioridad:
+1. `_last_cycle_client_id` si es de hace < 5 segundos (**tiene prioridad sobre el foreground real**)
+2. Foreground window
+3. `_last_group_index[group_id]`
+
+Como resultado: si el usuario cicló hasta cuenta C (idx 2), después hizo click en cuenta A, y antes de 5 segundos pulsó la hotkey:
+- Resolver encontraba `_last_cycle_client_id = 'EVE — C'` (aún fresco) → resolvía a idx 2
+- Ciclo: idx 2 + 1 = idx 3 → cuenta D
+- El usuario esperaba idx 0 → cuenta B
+
+### Función central: `note_active_client_changed`
+
+Nueva función pública en `overlay/replicator_hotkeys.py`:
+```python
+def note_active_client_changed(title: str, source: str = 'external') -> None:
+```
+
+Qué hace:
+1. Actualiza `_last_cycle_client_id = title` y `_last_cycle_client_id_time = now`
+2. Para cada grupo habilitado en `_last_hk_cfg` donde esté el title, actualiza `_last_group_index[group_id]`
+3. Actualiza `_last_group_index['__global__']` si el title está en `_cached_titles`
+4. Emite log `[CYCLE SYNC] active_changed source=... client=... groups_updated=...`
+
+### Rutas que llaman a `note_active_client_changed`
+
+`notify_active_client_changed` (en `replication_overlay.py`) ahora llama automáticamente
+`note_active_client_changed` tras actualizar los bordes. Como TODAS las rutas de foco
+(click, hotkey, ciclo, macro) pasan por `notify_active_client_changed`, la sincronización
+es completa y no requiere modificar cada ruta individualmente.
+
+### Almacenamiento de `hk_cfg`
+
+`register_hotkeys` ahora guarda `_last_hk_cfg = hk_cfg` al nivel de módulo, para que
+`note_active_client_changed` pueda iterar los grupos sin necesidad de que le pasen el cfg.
+
+### Archivos modificados
+- `overlay/replicator_hotkeys.py`:
+  - `_last_hk_cfg: dict = {}` añadido a nivel de módulo
+  - `register_hotkeys`: `global _last_hk_cfg; _last_hk_cfg = hk_cfg`
+  - Nueva función pública `note_active_client_changed(title, source)`
+  - `_cycle`: log `[CYCLE SYNC] hotkey_enter` al entrar (muestra last_client y last_global_idx)
+  - `_cycle_group`: log `[CYCLE SYNC] hotkey_enter` y `[CYCLE SYNC] hotkey_target` al resolver
+- `overlay/replication_overlay.py`:
+  - `notify_active_client_changed`: llama `note_active_client_changed` tras actualizar bordes
+- `tests/test_cycle_sync.py`: 19 tests nuevos
+
+### Logs esperados tras el fix
+```
+[CYCLE SYNC] active_changed source=notify_active_client_changed client='EVE — Alina Isuri' old_client='EVE — KonaN Herrera' global_idx: 2 -> 0 groups_updated={'g1': {'name': 'Main', 'old_idx': 2, 'new_idx': 0}} not_in_groups=[]
+[CYCLE SYNC] hotkey_enter group=g1 dir=next last_client='EVE — Alina Isuri' last_group_idx=0 last_client_age_ms=234.5
+[CYCLE SYNC] hotkey_target group=g1 resolver=last_cycle_client_id resolved_idx=0 resolved_title='EVE — Alina Isuri' target_idx=1 target='EVE — Arien Inkura'
+```
+
+### Instrucciones de prueba manual
+1. Abrir 4+ cuentas en un grupo.
+2. Usar hotkey para ir 1 → 2 → 3 (idx 0 → 1 → 2).
+3. Hacer click directo en réplica de cuenta 1.
+4. Ver log `[CYCLE SYNC] active_changed ... new_idx=0`.
+5. Pulsar hotkey siguiente.
+6. Ver log `[CYCLE SYNC] hotkey_target ... resolved_idx=0 target_idx=1`.
+7. Confirmar que el foco va a cuenta 2, NO a cuenta 4.
+
+### Pruebas
+- `python -m py_compile overlay/replicator_hotkeys.py overlay/replication_overlay.py` → OK
+- `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py tests/test_replicator_active_border.py tests/test_cycle_sync.py -q` → **142 passed**

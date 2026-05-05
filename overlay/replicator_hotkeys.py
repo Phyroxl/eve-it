@@ -58,6 +58,10 @@ _cached_titles: List[str] = []
 # Per-group last-activated index for deterministic cycles
 _last_group_index: Dict[str, int] = {}
 
+# Snapshot of the last registered hk_cfg — used by note_active_client_changed
+# to update all group indices when a client is activated by a non-hotkey path.
+_last_hk_cfg: dict = {}
+
 # ── Fast-path performance state ──────────────────────────────────────────────
 
 # Minimum ms between accepted cycles.
@@ -763,17 +767,77 @@ def update_hotkey_cache(titles: List[str]):
     logger.debug(f'[REPLICATOR HOTKEY] Cache updated: {len(_hwnd_cache)} clients')
 
 
+def note_active_client_changed(title: str, source: str = 'external') -> None:
+    """Sync hotkey cycle state when a client becomes active via a non-hotkey path.
+
+    Must be called whenever focus changes outside the hotkey cycle — e.g. a
+    direct replica click — so the next hotkey press resumes from the correct
+    position instead of from a stale last_group_index or last_cycle_client_id.
+
+    Thread-safe: only writes module-level globals and reads _last_hk_cfg
+    (immutable after register_hotkeys) and _cached_titles (list, safe to read).
+    """
+    import time as _time
+    global _last_cycle_client_id, _last_cycle_client_id_time
+
+    if not title:
+        return
+
+    now = _time.monotonic()
+    old_client = _last_cycle_client_id
+
+    _last_cycle_client_id = title
+    _last_cycle_client_id_time = now
+
+    groups = _last_hk_cfg.get('groups', {})
+    updated_groups: dict = {}
+    not_in_groups: list = []
+
+    for group_id, group in groups.items():
+        if not group.get('enabled'):
+            continue
+        titles = group.get('clients_order', [])
+        if title in titles:
+            old_idx = _last_group_index.get(group_id, -1)
+            new_idx = titles.index(title)
+            _last_group_index[group_id] = new_idx
+            updated_groups[group_id] = {
+                'name': group.get('name', group_id),
+                'old_idx': old_idx,
+                'new_idx': new_idx,
+            }
+        else:
+            not_in_groups.append(group_id)
+
+    # Update global cycle index as well
+    old_global = _last_group_index.get('__global__', -1)
+    if title in _cached_titles:
+        new_global = _cached_titles.index(title)
+        _last_group_index['__global__'] = new_global
+    else:
+        new_global = old_global
+
+    logger.debug(
+        f"[CYCLE SYNC] active_changed source={source} client={title!r} "
+        f"old_client={old_client!r} "
+        f"global_idx: {old_global} -> {new_global} "
+        f"groups_updated={updated_groups} "
+        f"not_in_groups={not_in_groups}"
+    )
+
+
 # ── Main registration ─────────────────────────────────────────────────────────
 
 def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = None):
     """Register all enabled hotkeys from cfg.
     EULA-safe: only calls focus_eve_window(), no game input injection.
     """
-    global _thread, _running
+    global _thread, _running, _last_hk_cfg
 
     unregister_hotkeys()
 
     hk_cfg = cfg.get('hotkeys', {})
+    _last_hk_cfg = hk_cfg  # snapshot for note_active_client_changed lookups
     registrations = []
 
     # ── Per-client hotkeys ────────────────────────────────────────────────────
@@ -881,6 +945,14 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             titles = _cached_titles or (cycle_titles_getter() if cycle_titles_getter else [])
             if not titles:
                 return
+
+            logger.debug(
+                f"[CYCLE SYNC] hotkey_enter group=__global__ "
+                f"dir={'next' if direction > 0 else 'prev'} "
+                f"last_client={_last_cycle_client_id!r} "
+                f"last_global_idx={_last_group_index.get('__global__', -1)} "
+                f"last_client_age_ms={round((now - _last_cycle_client_id_time) * 1000, 1) if _last_cycle_client_id_time else None}"
+            )
 
             # ── Resolve current index ─────────────────────────────────────
             # Priority: last_cycle_client_id (deterministic, avoids stale fg)
@@ -1148,6 +1220,14 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
             hk_label = group.get('next' if direction > 0 else 'prev', f'dir{direction}')
 
+            logger.debug(
+                f"[CYCLE SYNC] hotkey_enter group={group_id} "
+                f"dir={'next' if direction > 0 else 'prev'} "
+                f"last_client={_last_cycle_client_id!r} "
+                f"last_group_idx={_last_group_index.get(group_id, -1)} "
+                f"last_client_age_ms={round((now - _last_cycle_client_id_time) * 1000, 1) if _last_cycle_client_id_time else None}"
+            )
+
             # ── Resolve current index ─────────────────────────────────────
             # Priority: last_cycle_client_id → foreground → saved index
             t_res       = _time.perf_counter()
@@ -1236,6 +1316,13 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                         source_title=titles[current_idx] if 0 <= current_idx < len(titles) else None,
                         target_idx=next_idx, target_title=t, target_hwnd=hwnd,
                         cache_hit=(_hwnd_cache.get(t) == hwnd))
+                    logger.debug(
+                        f"[CYCLE SYNC] hotkey_target group={group_id} "
+                        f"resolver={_diag_resolver} "
+                        f"resolved_idx={current_idx} "
+                        f"resolved_title={titles[current_idx] if 0 <= current_idx < len(titles) else None!r} "
+                        f"target_idx={next_idx} target={t!r}"
+                    )
                     break
 
             if not target_hwnd:
@@ -1243,6 +1330,11 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     f'[HOTKEY PERF] failed hotkey={hk_label} entry=_cycle_group '
                     f'group_id={group_id} reason=no_valid_window'
                 )
+                if _last_cycle_client_id and _last_cycle_client_id not in titles:
+                    logger.debug(
+                        f"[CYCLE SYNC] active_client_not_in_group group={group_id} "
+                        f"client={_last_cycle_client_id!r}"
+                    )
                 return
 
             # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──

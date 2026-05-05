@@ -875,6 +875,18 @@ class ReplicationOverlay(QWidget):
             f"burst={burst_active} ms={dt:.2f} active={active_titles}"
         )
 
+        # Sync hotkey cycle state — keeps last_cycle_client_id and per-group
+        # last_group_index coherent so the next hotkey resumes from the correct
+        # position, whether focus changed via click, hotkey, or any other path.
+        if active_titles:
+            try:
+                import overlay.replicator_hotkeys as _hk_mod
+                _hk_mod.note_active_client_changed(
+                    active_titles[0], source='notify_active_client_changed'
+                )
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # Monitor: active-border + hide_when_inactive (Fix #4)
     # ------------------------------------------------------------------
