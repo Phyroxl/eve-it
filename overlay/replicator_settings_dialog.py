@@ -1241,6 +1241,13 @@ class ReplicatorSettingsDialog(QDialog):
             if etype == 'fg_replica_ignored':
                 return (f"[{t}] FG_REPLICA_IGNORED  hwnd={ev.get('fg_hwnd')}  "
                         f"title={ev.get('fg_title')!r}")
+            if etype == 'foreground_rejected_as_non_client':
+                return (f"[{t}] FG_REJECTED_NON_CLIENT  hwnd={ev.get('fg_hwnd')}  "
+                        f"title={ev.get('fg_title')!r}")
+            if etype == 'macro_delay_guard':
+                return (f"[{t}] MACRO DELAY GUARD  scope={ev.get('scope')}  "
+                        f"elapsed_ms={ev.get('elapsed_ms', 0):.1f}  "
+                        f"min_ms={ev.get('min_ms', 0)}")
             if etype == 'epoch_focus_failed':
                 return (f"[{t}] EPOCH FOCUS FAILED  epoch={ev.get('epoch')}  "
                         f"target={ev.get('target')!r}  hwnd={ev.get('hwnd')}  "
@@ -1328,7 +1335,22 @@ class ReplicatorSettingsDialog(QDialog):
                     stale_tgts = s.get('stale_or_unrelated_targets', [])
                     if stale_tgts:
                         diag_out.appendPlainText(f"STALE TARGETS: {stale_tgts}")
+                    nc_rejections = s.get('non_client_foreground_rejections', {})
+                    if nc_rejections:
+                        diag_out.appendPlainText(
+                            f"NON_CLIENT_FOREGROUND_REJECTIONS ({s.get('non_client_foreground_rejection_count', 0)} total):"
+                        )
+                        for title, cnt in sorted(nc_rejections.items(), key=lambda x: -x[1]):
+                            diag_out.appendPlainText(f"  x{cnt}  {title!r}")
                     per_tgt = s.get('per_target_summary', {})
+                    unsafe = [
+                        tgt for tgt, ts in per_tgt.items()
+                        if ts.get('missing_after_focus_count', 0) > 0
+                        or ts.get('focus_failed_count', 0) > 0
+                        or ts.get('stale_or_unrelated_count', 0) > 0
+                    ]
+                    if unsafe:
+                        diag_out.appendPlainText(f"UNSAFE TARGETS: {unsafe}")
                     for tgt, ts in sorted(per_tgt.items()):
                         min_vd = ts.get('min_first_delta_valid_ms', 0.0)
                         min_vd_str = f'{min_vd:.1f}ms' if min_vd > 0 else 'N/A'

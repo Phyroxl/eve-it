@@ -45,6 +45,8 @@ def _reset_diag_state():
     hk._macro_stats_stale_targets = []
     hk._macro_stats_valid_for_delay = 0
     hk._macro_target_stats = {}
+    hk._last_verified_focus_perf = 0.0
+    hk._non_client_rejection_titles = {}
     hk._hotkey_diagnostics_enabled = False
     hk._hotkey_diagnostics_events.clear()
 
@@ -652,7 +654,9 @@ class TestMacroSummary(unittest.TestCase):
             'missing_after_focus_count', 'missing_after_focus_targets',
             'focus_failed_count', 'focus_failed_targets',
             'stale_or_unrelated_count', 'stale_or_unrelated_targets',
-            'valid_sequences_for_delay', 'per_target_summary',
+            'valid_sequences_for_delay',
+            'non_client_foreground_rejection_count', 'non_client_foreground_rejections',
+            'per_target_summary',
         }
         self.assertEqual(set(s.keys()), expected_keys)
 
@@ -1086,6 +1090,164 @@ class TestFocusFailedEpoch(unittest.TestCase):
         self.assertEqual(ts.get('focus_ok_count', 0), 2)
         self.assertEqual(ts.get('focus_failed_count', 0), 1)
         self.assertEqual(ts.get('last_status', ''), 'focus_failed')
+
+
+# ── EVE client title filter (non-client rejection) ────────────────────────────
+
+class TestEveClientWindowFilter(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def test_eve_client_titles_accepted(self):
+        from overlay.replicator_hotkeys import _is_eve_client_title
+        self.assertTrue(_is_eve_client_title('EVE — Lana Drake'))
+        self.assertTrue(_is_eve_client_title('EVE — Phyrox Perez'))
+        self.assertTrue(_is_eve_client_title('EVE — KonaN Herrera'))
+
+    def test_settings_dialog_rejected(self):
+        from overlay.replicator_hotkeys import _is_eve_client_title
+        self.assertFalse(_is_eve_client_title('Ajustes — EVE — Phyrox Perez'))
+
+    def test_replica_overlay_rejected(self):
+        from overlay.replicator_hotkeys import _is_eve_client_title
+        self.assertFalse(_is_eve_client_title('Replica - EVE — Lana Drake'))
+        self.assertFalse(_is_eve_client_title('Réplica - EVE — Lana Drake'))
+        self.assertFalse(_is_eve_client_title('Replica — EVE — Lana Drake'))
+
+    def test_empty_and_none_rejected(self):
+        from overlay.replicator_hotkeys import _is_eve_client_title
+        self.assertFalse(_is_eve_client_title(''))
+        self.assertFalse(_is_eve_client_title(None))
+
+    def test_foreground_rejected_event_emitted(self):
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+        hk._diag_event('foreground_rejected_as_non_client',
+            fg_hwnd=9999, fg_title='Ajustes — EVE — Phyrox Perez')
+        evs = [e for e in hk._hotkey_diagnostics_events
+               if e['type'] == 'foreground_rejected_as_non_client']
+        self.assertEqual(len(evs), 1)
+        self.assertIn('Ajustes', evs[0]['fg_title'])
+
+    def test_non_client_rejection_count_in_summary(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import get_macro_summary
+        hk._non_client_rejection_titles['Ajustes — EVE — Phyrox Perez'] = 3
+        hk._non_client_rejection_titles['Replica - EVE — Lana Drake'] = 1
+        s = get_macro_summary()
+        self.assertEqual(s['non_client_foreground_rejection_count'], 4)
+        self.assertIn('Ajustes — EVE — Phyrox Perez', s['non_client_foreground_rejections'])
+        self.assertIn('Replica - EVE — Lana Drake', s['non_client_foreground_rejections'])
+
+    def test_clear_resets_rejection_titles(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import clear_hotkey_diagnostics, get_macro_summary
+        hk._non_client_rejection_titles['Ajustes — EVE — Phyrox Perez'] = 2
+        clear_hotkey_diagnostics()
+        s = get_macro_summary()
+        self.assertEqual(s['non_client_foreground_rejection_count'], 0)
+
+
+# ── Missing after focus: stop ordering fix (Lana Drake bug) ──────────────────
+
+class TestMissingAfterFocusStopFix(unittest.TestCase):
+    """set_hotkey_diagnostics_enabled(False) must flush pending missing BEFORE disabling."""
+
+    def setUp(self):
+        _reset_diag_state()
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def test_stop_with_pending_missing_fires_event(self):
+        """After the ordering fix, stopping diag while missing is pending fires the event."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import set_hotkey_diagnostics_enabled
+
+        hk._hotkey_diagnostics_enabled = True
+        hk._macro_missing_pending_epoch = 7
+        hk._macro_missing_pending_target = 'EVE — Lana Drake'
+        hk._macro_missing_pending_time = time.perf_counter() - 0.500
+
+        # Call disable — with fix: uninstall (and _check_and_emit_missing_macro) runs
+        # while _hotkey_diagnostics_enabled is still True, so the event fires.
+        set_hotkey_diagnostics_enabled(False)
+
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['epoch'], 7)
+        self.assertEqual(evs[0]['reason'], 'diagnostic_stopped_without_macro')
+        self.assertFalse(hk._hotkey_diagnostics_enabled)
+
+    def test_stop_without_pending_does_not_emit(self):
+        """Stopping when no pending missing must not emit any missing event."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import set_hotkey_diagnostics_enabled
+
+        hk._hotkey_diagnostics_enabled = True
+        hk._macro_missing_pending_epoch = -1
+
+        set_hotkey_diagnostics_enabled(False)
+
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 0)
+
+    def test_stop_with_observed_epoch_does_not_emit(self):
+        """Stopping when epoch was already observed (macro ran) must not emit."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import set_hotkey_diagnostics_enabled
+
+        hk._hotkey_diagnostics_enabled = True
+        hk._macro_missing_pending_epoch = 5
+        hk._macro_missing_pending_target = 'EVE — Lana Drake'
+        hk._macro_missing_pending_time = time.perf_counter() - 0.200
+        hk._macro_observed_epochs.add(5)
+
+        set_hotkey_diagnostics_enabled(False)
+
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 0)
+
+
+# ── Macro completion guard ─────────────────────────────────────────────────────
+
+class TestMacroCompletionGuard(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def test_constant_exists_and_positive(self):
+        from overlay.replicator_hotkeys import MACRO_COMPLETION_GUARD_MS
+        self.assertIsInstance(MACRO_COMPLETION_GUARD_MS, int)
+        self.assertGreater(MACRO_COMPLETION_GUARD_MS, 0)
+
+    def test_last_verified_focus_perf_initial_zero(self):
+        import overlay.replicator_hotkeys as hk
+        self.assertEqual(hk._last_verified_focus_perf, 0.0)
+
+    def test_clear_resets_last_verified_focus_perf(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import clear_hotkey_diagnostics
+        hk._last_verified_focus_perf = time.perf_counter()
+        clear_hotkey_diagnostics()
+        self.assertEqual(hk._last_verified_focus_perf, 0.0)
+
+    def test_macro_delay_guard_event_structure(self):
+        import overlay.replicator_hotkeys as hk
+        hk._diag_event('macro_delay_guard', scope='global', elapsed_ms=15.3, min_ms=70)
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_delay_guard']
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['min_ms'], 70)
+        self.assertAlmostEqual(evs[0]['elapsed_ms'], 15.3)
 
 
 if __name__ == '__main__':

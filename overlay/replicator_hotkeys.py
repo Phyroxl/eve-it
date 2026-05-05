@@ -96,6 +96,8 @@ _MACRO_VK_TO_NAME: dict = {
     0x74: 'F5', 0x75: 'F6', 0x76: 'F7', 0x77: 'F8',
 }
 _REPLICA_PREFIXES: tuple = ('Replica - ', 'Réplica - ', 'Replica — ', 'Réplica — ')
+_EVE_CLIENT_PREFIX: str = 'EVE — '   # 'EVE — ' (em-dash) — strict client title prefix
+MACRO_COMPLETION_GUARD_MS: int = 70        # min ms between verified focus and next accepted cycle
 _MACRO_SEQ_WINDOW_MS: float = 300.0
 _focus_epoch_id: int = 0
 _macro_hook_handle = None
@@ -131,6 +133,8 @@ _macro_stats_stale_count: int = 0
 _macro_stats_stale_targets: list = []
 _macro_stats_valid_for_delay: int = 0
 _macro_target_stats: dict = {}
+_last_verified_focus_perf: float = 0.0      # perf_counter() of last ok=True focus
+_non_client_rejection_titles: dict = {}     # fg_title → rejection count
 
 # ── Live diagnostics (zero-overhead when disabled) ────────────────────────────
 _hotkey_diagnostics_enabled: bool = False
@@ -197,17 +201,25 @@ def _is_replica_window_title(title: str) -> bool:
     return bool(title and any(title.startswith(p) for p in _REPLICA_PREFIXES))
 
 
+def _is_eve_client_title(title: str) -> bool:
+    """Return True only if title is a genuine EVE game client (starts with 'EVE — ')."""
+    return bool(title and title.startswith(_EVE_CLIENT_PREFIX))
+
+
 # ── Public diagnostics API ────────────────────────────────────────────────────
 
 def set_hotkey_diagnostics_enabled(enabled: bool, callback=None):
     """Enable/disable live diagnostics. callback(event_dict) is called from hotkey thread."""
     global _hotkey_diagnostics_enabled, _hotkey_diagnostics_callback
-    _hotkey_diagnostics_enabled = enabled
-    _hotkey_diagnostics_callback = callback if enabled else None
     if enabled:
+        _hotkey_diagnostics_enabled = True
+        _hotkey_diagnostics_callback = callback
         _install_macro_key_hook()
     else:
+        # Uninstall FIRST while still enabled so _check_and_emit_missing_macro can fire.
         _uninstall_macro_key_hook()
+        _hotkey_diagnostics_enabled = False
+        _hotkey_diagnostics_callback = None
 
 
 def clear_hotkey_diagnostics():
@@ -219,6 +231,7 @@ def clear_hotkey_diagnostics():
     global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
     global _macro_stats_focus_failed, _macro_stats_focus_failed_targets
     global _macro_stats_stale_count, _macro_stats_stale_targets, _macro_stats_valid_for_delay
+    global _last_verified_focus_perf
     _hotkey_diagnostics_events.clear()
     _macro_stats_total = 0
     _macro_stats_complete_safe = 0
@@ -241,6 +254,8 @@ def clear_hotkey_diagnostics():
     _macro_missing_pending_epoch = -1
     _macro_missing_pending_target = ''
     _macro_missing_pending_time = 0.0
+    _last_verified_focus_perf = 0.0
+    _non_client_rejection_titles.clear()
 
 
 def get_hotkey_diagnostics_events():
@@ -271,6 +286,8 @@ def get_macro_summary() -> dict:
         'stale_or_unrelated_count': _macro_stats_stale_count,
         'stale_or_unrelated_targets': list(_macro_stats_stale_targets),
         'valid_sequences_for_delay': _macro_stats_valid_for_delay,
+        'non_client_foreground_rejection_count': sum(_non_client_rejection_titles.values()),
+        'non_client_foreground_rejections': dict(_non_client_rejection_titles),
         'per_target_summary': per_tgt,
     }
 
@@ -804,6 +821,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _focus_epoch_id
         global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
         global _macro_stats_focus_failed, _macro_stats_focus_failed_targets
+        global _last_verified_focus_perf
         import time as _time
 
         t0  = _time.perf_counter()
@@ -835,6 +853,17 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 direction='next' if direction > 0 else 'prev',
                 delta_ms=round(delta_ms, 1), min_ms=MIN_CYCLE_INTERVAL_MS)
             return
+
+        if _last_verified_focus_perf > 0:
+            _guard_elapsed_ms = (t0 - _last_verified_focus_perf) * 1000.0
+            if _guard_elapsed_ms < MACRO_COMPLETION_GUARD_MS:
+                _perf_log(
+                    f'[MACRO DELAY GUARD] scope=global elapsed_ms={_guard_elapsed_ms:.1f} '
+                    f'min={MACRO_COMPLETION_GUARD_MS}ms'
+                )
+                _diag_event('macro_delay_guard', scope='global',
+                    elapsed_ms=round(_guard_elapsed_ms, 1), min_ms=MACRO_COMPLETION_GUARD_MS)
+                return
 
         _cycle_in_progress = True
         _last_cycle_time   = now
@@ -877,9 +906,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     fg_title = get_window_title(fg_hwnd)
                     _diag_fg_title = fg_title or ''
                     if fg_title:
-                        if _is_replica_window_title(fg_title):
-                            _perf_log(f'[FG_REPLICA_IGNORED] hwnd={fg_hwnd} title={fg_title!r}')
-                            _diag_event('fg_replica_ignored', fg_hwnd=fg_hwnd, fg_title=fg_title)
+                        if not _is_eve_client_title(fg_title):
+                            _perf_log(f'[FOREGROUND_REJECTED_AS_NON_CLIENT] hwnd={fg_hwnd} title={fg_title!r}')
+                            _diag_event('foreground_rejected_as_non_client', fg_hwnd=fg_hwnd, fg_title=fg_title)
+                            _non_client_rejection_titles[fg_title] = _non_client_rejection_titles.get(fg_title, 0) + 1
                         else:
                             try:
                                 current_idx = next(
@@ -992,6 +1022,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 _last_group_index['__global__'] = next_idx
                 _last_cycle_client_id           = target
                 _last_cycle_client_id_time      = now
+                _last_verified_focus_perf       = _time.perf_counter()
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
             total_ms = (_time.perf_counter() - t0) * 1000
@@ -1047,6 +1078,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _focus_epoch_id
         global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
         global _macro_stats_focus_failed, _macro_stats_focus_failed_targets
+        global _last_verified_focus_perf
         import time as _time
 
         t0  = _time.perf_counter()
@@ -1079,6 +1111,17 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 direction='next' if direction > 0 else 'prev',
                 delta_ms=round(delta_ms, 1), min_ms=MIN_CYCLE_INTERVAL_MS)
             return
+
+        if _last_verified_focus_perf > 0:
+            _guard_elapsed_ms = (t0 - _last_verified_focus_perf) * 1000.0
+            if _guard_elapsed_ms < MACRO_COMPLETION_GUARD_MS:
+                _perf_log(
+                    f'[MACRO DELAY GUARD] scope=group group_id={group_id} '
+                    f'elapsed_ms={_guard_elapsed_ms:.1f} min={MACRO_COMPLETION_GUARD_MS}ms'
+                )
+                _diag_event('macro_delay_guard', scope='group', group_id=group_id,
+                    elapsed_ms=round(_guard_elapsed_ms, 1), min_ms=MACRO_COMPLETION_GUARD_MS)
+                return
 
         _cycle_in_progress = True
         _last_cycle_time   = now
@@ -1128,9 +1171,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     fg_title = get_window_title(fg_hwnd)
                     _diag_fg_title = fg_title or ''
                     if fg_title:
-                        if _is_replica_window_title(fg_title):
-                            _perf_log(f'[FG_REPLICA_IGNORED] hwnd={fg_hwnd} title={fg_title!r}')
-                            _diag_event('fg_replica_ignored', fg_hwnd=fg_hwnd, fg_title=fg_title)
+                        if not _is_eve_client_title(fg_title):
+                            _perf_log(f'[FOREGROUND_REJECTED_AS_NON_CLIENT] hwnd={fg_hwnd} title={fg_title!r}')
+                            _diag_event('foreground_rejected_as_non_client', fg_hwnd=fg_hwnd, fg_title=fg_title)
+                            _non_client_rejection_titles[fg_title] = _non_client_rejection_titles.get(fg_title, 0) + 1
                         else:
                             try:
                                 current_idx = next(
@@ -1249,6 +1293,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 _last_group_index[group_id]    = next_idx
                 _last_cycle_client_id          = target
                 _last_cycle_client_id_time     = now
+                _last_verified_focus_perf      = _time.perf_counter()
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
             total_ms = (_time.perf_counter() - t0) * 1000
