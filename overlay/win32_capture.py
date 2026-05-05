@@ -28,8 +28,9 @@ class BITMAPINFOHEADER(ctypes.Structure):
 class BITMAPINFO(ctypes.Structure):
     _fields_ = [('bmiHeader', BITMAPINFOHEADER), ('bmiColors', wt.DWORD * 3)]
 
-user32 = ctypes.windll.user32
-gdi32 = ctypes.windll.gdi32
+user32   = ctypes.windll.user32
+gdi32    = ctypes.windll.gdi32
+kernel32 = ctypes.windll.kernel32
 
 IS_WINDOWS = True
 
@@ -246,13 +247,16 @@ def focus_eve_window_fast(hwnd: int) -> bool:
         return False
 
 
-# SetWindowPos flags for non-blocking Z-order raise
-# SWP_NOSIZE(0x0001) | SWP_NOMOVE(0x0002) | SWP_ASYNCWINDOWPOS(0x4000)
+# SetWindowPos flags
+_SWP_NOSIZE       = 0x0001
+_SWP_NOMOVE       = 0x0002
+_SWP_SHOWWINDOW   = 0x0040
+_SWP_ASYNCWINDOWPOS = 0x4000
 # SWP_ASYNCWINDOWPOS: posts the request to the target thread instead of
 # blocking via SendMessage — eliminates 200-300 ms cross-process stall.
-_SWP_ASYNC_RAISE = 0x4003
-# HWND_TOP = 0  (raise above all non-topmost siblings, no topmost flag)
-_HWND_TOP = 0
+_SWP_ASYNC_RAISE  = _SWP_NOSIZE | _SWP_NOMOVE | _SWP_ASYNCWINDOWPOS
+_HWND_TOP = 0  # raise above all non-topmost siblings, no topmost flag
+_SW_RESTORE = 9
 
 
 def focus_eve_window_perf(hwnd: int) -> tuple:
@@ -304,6 +308,112 @@ def focus_eve_window_perf(hwnd: int) -> tuple:
         f'setfg={setfg_ms:.1f} total={total_ms:.1f} ok={ok}'
     )
     return ok, perf_line
+
+def focus_eve_window_reliable(hwnd: int) -> tuple:
+    """Multi-strategy focus with internal foreground verification.
+
+    Returns (ok: bool, detail: str).
+    ok=True only when GetForegroundWindow confirms the target is active.
+    Tries three strategies in order: fast → raise_sync → attach_thread.
+    Total budget: ~90 ms worst case.
+    """
+    t0 = time.perf_counter()
+
+    if not hwnd or not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
+        return False, f'reliable_focus invalid_hwnd hwnd={hwnd}'
+
+    try:
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, _SW_RESTORE)
+    except Exception:
+        pass
+
+    _flags_async = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_ASYNCWINDOWPOS | _SWP_SHOWWINDOW
+    _flags_sync  = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW
+
+    # Strategy 1: fast — async Z-order raise + SetForegroundWindow
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _flags_async)
+    except Exception:
+        pass
+
+    verified, actual, verify_ms = verify_foreground_window(hwnd, timeout_ms=20, poll_ms=1)
+    total_ms = (time.perf_counter() - t0) * 1000
+    if verified:
+        return True, (
+            f'reliable_focus strategy=fast verified=True '
+            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={total_ms:.1f}'
+        )
+
+    # Strategy 2: raise_sync — synchronous Z-order raise
+    try:
+        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _flags_sync)
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+    verified, actual, verify_ms = verify_foreground_window(hwnd, timeout_ms=25, poll_ms=1)
+    total_ms = (time.perf_counter() - t0) * 1000
+    if verified:
+        return True, (
+            f'reliable_focus strategy=raise_sync verified=True '
+            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={total_ms:.1f}'
+        )
+
+    # Strategy 3: attach_thread — temporarily share input queues
+    try:
+        fg_hwnd = user32.GetForegroundWindow()
+        current_thread = kernel32.GetCurrentThreadId()
+        pid_buf = wt.DWORD()
+        target_thread = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_buf))
+        fg_thread = 0
+        if fg_hwnd and fg_hwnd != hwnd:
+            fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
+
+        attached_target = False
+        attached_fg = False
+        try:
+            if target_thread and target_thread != current_thread:
+                user32.AttachThreadInput(current_thread, target_thread, True)
+                attached_target = True
+            if fg_thread and fg_thread != current_thread and fg_thread != target_thread:
+                user32.AttachThreadInput(current_thread, fg_thread, True)
+                attached_fg = True
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetActiveWindow(hwnd)
+            user32.SetFocus(hwnd)
+            verified, actual, verify_ms = verify_foreground_window(hwnd, timeout_ms=35, poll_ms=1)
+        finally:
+            if attached_target:
+                try:
+                    user32.AttachThreadInput(current_thread, target_thread, False)
+                except Exception:
+                    pass
+            if attached_fg:
+                try:
+                    user32.AttachThreadInput(current_thread, fg_thread, False)
+                except Exception:
+                    pass
+    except Exception:
+        verified, actual, verify_ms = False, 0, 0.0
+
+    total_ms = (time.perf_counter() - t0) * 1000
+    if verified:
+        return True, (
+            f'reliable_focus strategy=attach_thread verified=True '
+            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={total_ms:.1f}'
+        )
+
+    return False, (
+        f'reliable_focus strategy=failed verified=False '
+        f'actual={actual} total_ms={total_ms:.1f} '
+        f'attempts=fast:false,raise_sync:false,attach_thread:false'
+    )
+
 
 def get_window_title(hwnd: int) -> str:
     """Devuelve el título de una ventana dado su HWND."""

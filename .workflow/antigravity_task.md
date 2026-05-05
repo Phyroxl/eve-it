@@ -186,3 +186,46 @@
 
 **Archivos Modificados:** `overlay/replicator_hotkeys.py`, `overlay/replicator_settings_dialog.py`
 **Tests:** 103 passed (replicator + hotkey suite)
+
+## 12) FIX — Replicator window focus reliability (focus_eve_window_reliable)
+
+**Fase:** Fase 1 — Mejorar fiabilidad del cambio de foco de ventana.
+
+**Problema:** En macros rápidas (Sleep 50-70ms), `verify_foreground_window` devolvía `[NOT VERIFIED]` frecuentemente porque `focus_eve_window_perf` solo hacía una pasada rápida (async Z-order + SetForegroundWindow) sin garantías de foreground. Ejemplos reales:
+```
+VERIFY ok=True verified=False actual=0 verify=42.0ms [NOT VERIFIED]
+VERIFY ok=True verified=False actual=0 verify=41.6ms [NOT VERIFIED]
+```
+
+**Solución:** Nueva función `focus_eve_window_reliable(hwnd) -> (ok, detail)` con tres estrategias en cascada:
+1. **fast** — BringWindowToTop + SetForegroundWindow + SetWindowPos async. Verifica en 20ms.
+2. **raise_sync** — SetWindowPos síncrono + BringWindowToTop + SetForegroundWindow. Verifica en 25ms adicionales.
+3. **attach_thread** — AttachThreadInput (target + fg thread), SetForegroundWindow + SetActiveWindow + SetFocus. Verifica en 35ms adicionales. try/finally garantiza detach.
+
+`ok=True` solo cuando `GetForegroundWindow` confirma el target. Budget total ~90ms worst case.
+
+**Cambio en `_cycle_group` y `_cycle`:** Sustituyen `focus_eve_window_perf` + llamada externa `verify_foreground_window(40ms)` por `focus_eve_window_reliable`. Opción A: `verified = ok` (ya verificado internamente). El índice solo avanza si `ok=True`. Eliminado el `elif ok:` que avanzaba `notify_active_client_changed` sin verificación.
+
+**Diagnóstico:** El log ahora incluye `strategy=fast/raise_sync/attach_thread/failed` en `[FOCUS PERF]` y `[HOTKEY PERF]`. El evento `focus_result` incluye `focus_detail`. El evento `cycle_group_done`/`cycle_done` incluye `strategy`.
+
+**Ejemplo de salida esperada:**
+```
+[FOCUS PERF] target='EVE — X' reliable_focus strategy=attach_thread verified=True verify_ms=18.7 actual=123456 total_ms=23.4
+[HOTKEY PERF] accepted ... focus_ok=True focus_verified=True strategy=attach_thread verify_ms=18.7
+```
+
+**Archivos Modificados:**
+- `overlay/win32_capture.py` — kernel32 module-level, nuevas constantes SWP, `focus_eve_window_reliable()`
+- `overlay/replicator_hotkeys.py` — `_cycle_group` y `_cycle` usan `focus_eve_window_reliable`, lógica simplificada
+- `tests/test_hotkey_focus_verify.py` — `_run_cb` actualizado para parchear `focus_eve_window_reliable`
+
+**Pruebas:**
+- `python -m py_compile overlay/win32_capture.py overlay/replicator_hotkeys.py` → OK
+- `python -m pytest tests -k "replicator or hotkey or focus or win32"` → **117 passed**
+
+**Cómo validar en diagnóstico:**
+1. Abrir diagnóstico en vivo → pestaña Hotkeys → Iniciar diagnóstico.
+2. Ejecutar macro con Sleep 70ms. Verificar que desaparecen o bajan los `[NOT VERIFIED]`.
+3. Comprobar línea FOCUS: `strategy=fast` (caso ideal), `strategy=raise_sync` (medio), `strategy=attach_thread` (lento).
+4. Si persisten NOT VERIFIED con `strategy=failed`, el problema es más profundo (DWM, otro proceso bloqueando foco).
+5. Probar Sleep 60ms y 50ms si Sleep 70 funciona.

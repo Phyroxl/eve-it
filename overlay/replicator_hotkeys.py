@@ -366,7 +366,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         try:
             from overlay.win32_capture import (
                 get_foreground_hwnd, get_window_title,
-                focus_eve_window_perf, resolve_eve_window_handle, is_hwnd_valid,
+                focus_eve_window_reliable, resolve_eve_window_handle, is_hwnd_valid,
             )
             from overlay.replication_overlay import ReplicationOverlay, _OVERLAY_REGISTRY
 
@@ -470,29 +470,32 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──
             _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
 
-            # ── Focus target (non-blocking async Z-order + SetForegroundWindow) ──
-            ok, focus_detail = focus_eve_window_perf(target_hwnd)
+            # ── Focus target — reliable multi-strategy (verified internally) ──
+            ok, focus_detail = focus_eve_window_reliable(target_hwnd)
             _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
             _diag_event('focus_result', scope='global', target_title=target, target_hwnd=target_hwnd,
-                focus_ok=ok, source_idx=current_idx, target_idx=next_idx,
+                focus_ok=ok, focus_detail=focus_detail, source_idx=current_idx, target_idx=next_idx,
                 total_ms=round((_time.perf_counter() - t0) * 1000, 1))
 
-            # ── Verify foreground ──
-            from overlay.win32_capture import verify_foreground_window
-            verified, actual_hwnd, verify_ms = verify_foreground_window(
-                target_hwnd, timeout_ms=40, poll_ms=2
-            )
+            # ok=True means foreground already verified inside focus_eve_window_reliable
+            verified = ok
+            _dp = {}
+            for _p in focus_detail.split():
+                if '=' in _p:
+                    _k, _, _v = _p.partition('=')
+                    _dp[_k] = _v
+            verify_ms = float(_dp.get('verify_ms', 0) or 0)
+            actual_hwnd = int(_dp.get('actual', 0) or 0)
+            _strategy = _dp.get('strategy', 'unknown')
             _diag_event('focus_verify_result', scope='global',
                 target_title=target, target_hwnd=target_hwnd,
                 requested_ok=ok, verified=verified, actual_hwnd=actual_hwnd,
                 verify_ms=round(verify_ms, 1), source_idx=current_idx, target_idx=next_idx)
 
-            if ok and verified:
+            if ok:
                 _last_group_index['__global__'] = next_idx
                 _last_cycle_client_id           = target
                 _last_cycle_client_id_time      = now
-                ReplicationOverlay.notify_active_client_changed(target_hwnd)
-            elif ok:
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
             total_ms = (_time.perf_counter() - t0) * 1000
@@ -500,13 +503,14 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'[HOTKEY PERF] accepted hotkey=cycle direction={"next" if direction>0 else "prev"} '
                 f'entry=_cycle source_idx={current_idx} target_idx={next_idx} target={target!r} '
                 f'resolve_ms={resolve_ms:.1f} total_ms={total_ms:.1f} '
-                f'focus_ok={ok} focus_verified={verified} verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
+                f'focus_ok={ok} focus_verified={verified} strategy={_strategy} '
+                f'verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
             )
             _diag_event('cycle_done', scope='global',
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,
-                focus_ok=ok, focus_verified=verified, verify_ms=round(verify_ms, 1),
-                total_ms=round(total_ms, 1),
+                focus_ok=ok, focus_verified=verified, strategy=_strategy,
+                verify_ms=round(verify_ms, 1), total_ms=round(total_ms, 1),
                 used_last_cycle=used_last, resolver_used=_diag_resolver)
         finally:
             _cycle_in_progress = False
@@ -555,7 +559,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         try:
             from overlay.win32_capture import (
                 get_foreground_hwnd, get_window_title,
-                focus_eve_window_perf, resolve_eve_window_handle, is_hwnd_valid,
+                focus_eve_window_reliable, resolve_eve_window_handle, is_hwnd_valid,
             )
             from overlay.replication_overlay import ReplicationOverlay, _OVERLAY_REGISTRY
 
@@ -666,35 +670,38 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──
             _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
 
-            # ── Focus target (non-blocking async Z-order + SetForegroundWindow) ──
-            ok, focus_detail = focus_eve_window_perf(target_hwnd)
+            # ── Focus target — reliable multi-strategy (verified internally) ──
+            ok, focus_detail = focus_eve_window_reliable(target_hwnd)
             _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
             _diag_event('focus_result', group_id=group_id, target_title=target, target_hwnd=target_hwnd,
-                focus_ok=ok, source_idx=current_idx, target_idx=next_idx,
+                focus_ok=ok, focus_detail=focus_detail, source_idx=current_idx, target_idx=next_idx,
                 total_ms=round((_time.perf_counter() - t0) * 1000, 1))
 
-            # ── Verify foreground: poll until Windows confirms the focus change ──
-            from overlay.win32_capture import verify_foreground_window
-            verified, actual_hwnd, verify_ms = verify_foreground_window(
-                target_hwnd, timeout_ms=40, poll_ms=2
-            )
+            # ok=True means foreground already verified inside focus_eve_window_reliable
+            verified = ok
+            _dp = {}
+            for _p in focus_detail.split():
+                if '=' in _p:
+                    _k, _, _v = _p.partition('=')
+                    _dp[_k] = _v
+            verify_ms = float(_dp.get('verify_ms', 0) or 0)
+            actual_hwnd = int(_dp.get('actual', 0) or 0)
+            _strategy = _dp.get('strategy', 'unknown')
             _diag_event('focus_verify_result', group_id=group_id,
                 target_title=target, target_hwnd=target_hwnd,
                 requested_ok=ok, verified=verified, actual_hwnd=actual_hwnd,
                 verify_ms=round(verify_ms, 1), source_idx=current_idx, target_idx=next_idx)
-            if ok and not verified:
+            if not ok:
                 _perf_log(
                     f'[HOTKEY PERF] focus_not_verified group_id={group_id} target={target!r} '
                     f'target_hwnd={target_hwnd} actual_hwnd={actual_hwnd} verify_ms={verify_ms:.1f}'
                 )
 
             # Advance index only when foreground is confirmed — avoids desync on rapid macros.
-            if ok and verified:
+            if ok:
                 _last_group_index[group_id]    = next_idx
                 _last_cycle_client_id          = target
                 _last_cycle_client_id_time     = now
-                ReplicationOverlay.notify_active_client_changed(target_hwnd)
-            elif ok:
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
             total_ms = (_time.perf_counter() - t0) * 1000
@@ -703,13 +710,14 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'entry=_cycle_group group_id={group_id} group_name={group.get("name","")} '
                 f'source_idx={current_idx} target_idx={next_idx} target={target!r} '
                 f'resolve_ms={resolve_ms:.1f} total_ms={total_ms:.1f} '
-                f'focus_ok={ok} focus_verified={verified} verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
+                f'focus_ok={ok} focus_verified={verified} strategy={_strategy} '
+                f'verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
             )
             _diag_event('cycle_group_done', group_id=group_id,
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,
-                focus_ok=ok, focus_verified=verified, verify_ms=round(verify_ms, 1),
-                total_ms=round(total_ms, 1),
+                focus_ok=ok, focus_verified=verified, strategy=_strategy,
+                verify_ms=round(verify_ms, 1), total_ms=round(total_ms, 1),
                 used_last_cycle=used_last, resolver_used=_diag_resolver)
         finally:
             _cycle_in_progress = False

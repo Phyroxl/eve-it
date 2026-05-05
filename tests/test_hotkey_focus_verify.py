@@ -126,10 +126,12 @@ class TestCycleGroupIndexGuard(unittest.TestCase):
 
     def _run_cb(self, cb, verified, fg_hwnd=1001, fg_title='EVE - Alpha'):
         """Helper: run cb() with standard patches. Patches ReplicationOverlay class directly."""
+        if verified:
+            reliable_ret = (True, 'reliable_focus strategy=fast verified=True verify_ms=2.0 actual=1002 total_ms=5.0')
+        else:
+            reliable_ret = (False, 'reliable_focus strategy=failed verified=False actual=0 total_ms=40.0 attempts=fast:false,raise_sync:false,attach_thread:false')
         with patch('overlay.win32_capture.is_hwnd_valid', return_value=True), \
-             patch('overlay.win32_capture.focus_eve_window_perf', return_value=(True, 'ok')), \
-             patch('overlay.win32_capture.verify_foreground_window',
-                   return_value=(verified, 1002 if verified else 0, 2.0 if verified else 40.0)), \
+             patch('overlay.win32_capture.focus_eve_window_reliable', return_value=reliable_ret), \
              patch('overlay.win32_capture.get_foreground_hwnd', return_value=fg_hwnd), \
              patch('overlay.win32_capture.get_window_title', return_value=fg_title), \
              patch('overlay.replication_overlay.ReplicationOverlay') as mock_cls, \
