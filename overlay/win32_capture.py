@@ -201,6 +201,33 @@ def get_foreground_hwnd() -> int:
     except Exception:
         return 0
 
+
+def verify_foreground_window(hwnd: int, timeout_ms: int = 40, poll_ms: int = 2) -> tuple:
+    """Poll GetForegroundWindow until it matches hwnd or timeout expires.
+
+    Returns (verified, actual_hwnd, elapsed_ms).
+    Zero overhead on success (typically 1-5 ms). Max wait = timeout_ms.
+    """
+    import time as _t
+    if not hwnd:
+        return False, 0, 0.0
+    t0 = _t.perf_counter()
+    deadline = t0 + timeout_ms / 1000.0
+    sleep_s = max(0.0005, poll_ms / 1000.0)
+    actual = 0
+    try:
+        while _t.perf_counter() < deadline:
+            try:
+                actual = user32.GetForegroundWindow()
+            except Exception:
+                break
+            if actual == hwnd:
+                return True, actual, (_t.perf_counter() - t0) * 1000
+            _t.sleep(sleep_s)
+    except Exception:
+        pass
+    return False, actual, (_t.perf_counter() - t0) * 1000
+
 def is_hwnd_valid(hwnd: int) -> bool:
     """Check if window handle is still valid and visible."""
     if not hwnd: return False

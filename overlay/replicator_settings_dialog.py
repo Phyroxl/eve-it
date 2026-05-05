@@ -1200,8 +1200,16 @@ class ReplicatorSettingsDialog(QDialog):
                 return (f"[{t}] FOCUS  ok={ev.get('focus_ok')}  "
                         f"title={ev.get('target_title')!r}  "
                         f"total={ev.get('total_ms', 0):.1f}ms")
+            if etype == 'focus_verify_result':
+                not_ver = '  [NOT VERIFIED]' if not ev.get('verified') else ''
+                return (f"[{t}] VERIFY  ok={ev.get('requested_ok')}  "
+                        f"verified={ev.get('verified')}  "
+                        f"actual={ev.get('actual_hwnd')}  "
+                        f"verify={ev.get('verify_ms', 0):.1f}ms{not_ver}")
             if etype in ('cycle_group_done', 'cycle_done'):
-                return (f"[{t}] DONE  ok={ev.get('focus_ok')}  "
+                ver = ev.get('focus_verified')
+                ver_str = f"  verified={ver}  verify={ev.get('verify_ms', 0):.1f}ms" if ver is not None else ''
+                return (f"[{t}] DONE  ok={ev.get('focus_ok')}{ver_str}  "
                         f"{ev.get('source_idx')} -> {ev.get('target_idx')}  "
                         f"total={ev.get('total_ms', 0):.1f}ms  "
                         f"resolver={ev.get('resolver_used')}")
