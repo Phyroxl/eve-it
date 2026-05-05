@@ -35,10 +35,74 @@ class MessageBubble(W.QFrame):
         self._lang = lang
         self._setup_ui(msg, translation, profile)
 
+    def _start_portrait_load(self, sender: str):
+        """Resolves character_id async and loads portrait via EveIconService."""
+        import threading, weakref as _wr
+        ref = _wr.ref(self)
+
+        def _resolve():
+            try:
+                from utils.eve_api import resolve_character_id
+                char_id = resolve_character_id(sender)
+                if not char_id:
+                    return
+
+                def _on_main():
+                    s = ref()
+                    if s is None:
+                        return
+                    try:
+                        from core.eve_icon_service import EveIconService
+
+                        def _on_portrait(pixmap):
+                            sl = ref()
+                            if sl is None or getattr(sl, '_portrait_lbl', None) is None:
+                                return
+                            try:
+                                scaled = pixmap.scaled(32, 32, C.Qt.KeepAspectRatio, C.Qt.SmoothTransformation)
+                                sl._portrait_lbl.setPixmap(scaled)
+                                sl._portrait_lbl.setText("")
+                                sl._portrait_lbl.setStyleSheet(
+                                    "QLabel{border:1px solid #334155;border-radius:3px;background:transparent;}"
+                                )
+                            except Exception:
+                                pass
+
+                        EveIconService.instance().get_portrait(char_id, 32, _on_portrait)
+                    except Exception:
+                        pass
+
+                C.QTimer.singleShot(0, _on_main)
+            except Exception:
+                pass
+
+        threading.Thread(target=_resolve, daemon=True).start()
+
     def _setup_ui(self, msg, translation, profile):
-        lay = W.QVBoxLayout(self)
-        lay.setContentsMargins(5, 2, 5, 2)
+        outer = W.QHBoxLayout(self)
+        outer.setContentsMargins(5, 2, 5, 2)
+        outer.setSpacing(6)
+
+        self._portrait_lbl = None
+        if getattr(profile, 'show_portraits', True):
+            self._portrait_lbl = W.QLabel()
+            self._portrait_lbl.setFixedSize(32, 32)
+            self._portrait_lbl.setText(msg.sender[:1].upper())
+            self._portrait_lbl.setAlignment(C.Qt.AlignCenter)
+            self._portrait_lbl.setStyleSheet(
+                "QLabel{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                "stop:0 #1e293b,stop:1 #0f172a);"
+                "border:1px solid #334155;border-radius:3px;"
+                "color:#64748b;font-size:11px;font-weight:bold;}"
+            )
+            outer.addWidget(self._portrait_lbl, 0, C.Qt.AlignTop)
+            self._start_portrait_load(msg.sender)
+
+        content_w = W.QWidget()
+        lay = W.QVBoxLayout(content_w)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(1)
+        self._content_lay = lay
         
         ch_name = t(msg.channel, self._lang) if msg.channel.startswith('ch_') else msg.channel
         hdr_html = f"[{ch_name}] <a href='https://zkillboard.com/search/{msg.sender}/' style='color:#FFA500; text-decoration:none;'>{msg.sender}</a> {msg.timestamp[-8:]}"
@@ -76,6 +140,8 @@ class MessageBubble(W.QFrame):
             tl_h.addWidget(self.btn_copy)
             
             lay.addLayout(tl_h)
+
+        outer.addWidget(content_w, 1)
         self.update_style(profile)
 
     def update_translation(self, translation, profile):
@@ -98,7 +164,7 @@ class MessageBubble(W.QFrame):
                 self.btn_copy.clicked.connect(lambda: G.QGuiApplication.clipboard().setText(self.lbl_tl.text().replace("➤ ", "")))
                 tl_h.addWidget(self.btn_copy)
                 
-                self.layout().addLayout(tl_h)
+                getattr(self, '_content_lay', self.layout()).addLayout(tl_h)
             
             self.lbl_tl.setText(f"\u27a4 {translation}")
             self.lbl_tl.show()
@@ -167,7 +233,7 @@ class ChatOverlay(W.QWidget):
         
         self.setWindowOpacity(1.0)
         self.setGeometry(config.overlay_x, config.overlay_y, config.overlay_w, config.overlay_h)
-        self.setMinimumSize(280, 120)
+        self.setMinimumSize(235, 150)
         self._setup_ui()
         self._migrate_channels()
 
@@ -175,6 +241,12 @@ class ChatOverlay(W.QWidget):
             self._ctrl.state.subscribe(self._on_state_change)
         self._new_message.connect(self._on_new_message_ui)
         self._translation_ready.connect(self._on_translation_ready_ui)
+        self._user_hidden = False
+        self._auto_hidden = False
+        self._fg_hide_count = 0
+        self._eve_fg_timer = C.QTimer(self)
+        self._eve_fg_timer.timeout.connect(self._check_eve_foreground)
+        self._eve_fg_timer.start(500)
         self._fade_timer = C.QTimer(self)
         self._fade_timer.timeout.connect(self._update_fade)
         self._fade_timer.start(500)
@@ -292,7 +364,7 @@ class ChatOverlay(W.QWidget):
         btn_cls = W.QPushButton("\u00d7")
         btn_cls.setFixedSize(20, 20)
         btn_cls.setStyleSheet(BTN_CLS_STYLE)
-        btn_cls.clicked.connect(self.hide)
+        btn_cls.clicked.connect(lambda: (setattr(self, '_user_hidden', True), self.hide()))
         
         # Añadir al layout de la barra (Título IZQUIERDA, Botones DERECHA)
         tbl.addWidget(ico)
@@ -355,14 +427,6 @@ class ChatOverlay(W.QWidget):
         self._btn_send_lang.clicked.connect(self._on_send_lang_select)
         self._composer_lay.addWidget(self._btn_send_lang)
 
-        # Historial (derecha)
-        self._btn_hist = W.QPushButton("\u231a")
-        self._btn_hist.setFixedSize(24, 24)
-        self._btn_hist.setStyleSheet(BTN_MIN_STYLE)
-        self._btn_hist.setToolTip("Historial reciente")
-        self._btn_hist.clicked.connect(self._show_history_menu)
-        self._composer_lay.addWidget(self._btn_hist)
-
         main.addLayout(self._composer_lay)
         
         self._grip = W.QSizeGrip(self)
@@ -400,12 +464,22 @@ class ChatOverlay(W.QWidget):
 
     def _on_style_menu(self):
         m = W.QMenu(self)
-        m.setStyleSheet("QMenu{background:#0d1117;border:1px solid rgba(0,180,255,0.4);color:#00c8ff;font-size:10px;padding:4px;}QMenu::item{padding:5px 16px;}QMenu::item:selected{background:rgba(0,180,255,0.2);}")
-        m.addAction("🎨 " + t('style_bg_overlay', self._lang)).triggered.connect(lambda: self._pick_color('bg_color'))
-        m.addAction("👤 " + t('style_msg_bg', self._lang)).triggered.connect(lambda: self._pick_color('system_color'))
-        m.addAction("💬 " + t('style_msg_text', self._lang)).triggered.connect(lambda: self._pick_color('original_color'))
-        m.addAction("🌐 " + t('style_msg_text', self._lang)).triggered.connect(lambda: self._pick_color('normal_color'))
+        m.setStyleSheet("QMenu{background:#0d1117;border:1px solid rgba(0,180,255,0.4);color:#00c8ff;font-size:10px;padding:4px;}QMenu::item{padding:5px 16px;}QMenu::item:selected{background:rgba(0,180,255,0.2);}QMenu::indicator:checked{background:#00c8ff;border:1px solid #00c8ff;border-radius:2px;}QMenu::indicator:unchecked{background:transparent;border:1px solid #334155;border-radius:2px;}")
+        m.addAction("\U0001f3a8 " + t('style_bg_overlay', self._lang)).triggered.connect(lambda: self._pick_color('bg_color'))
+        m.addAction("\U0001f464 " + t('style_msg_bg', self._lang)).triggered.connect(lambda: self._pick_color('system_color'))
+        m.addAction("\U0001f4ac " + t('style_msg_text', self._lang)).triggered.connect(lambda: self._pick_color('original_color'))
+        m.addAction("\U0001f310 " + t('style_msg_text', self._lang)).triggered.connect(lambda: self._pick_color('normal_color'))
+        m.addSeparator()
+        act_portraits = m.addAction("\U0001f5bc Mostrar retratos de personajes")
+        act_portraits.setCheckable(True)
+        act_portraits.setChecked(getattr(self._profile, 'show_portraits', True))
+        act_portraits.triggered.connect(self._toggle_portraits)
         m.exec(G.QCursor.pos())
+
+    def _toggle_portraits(self, checked: bool):
+        self._profile.show_portraits = checked
+        self._config.save_profile(self._profile)
+        self._config.save()
 
     def _pick_color(self, attr_name):
         initial = G.QColor(getattr(self._profile, attr_name))
@@ -772,6 +846,33 @@ class ChatOverlay(W.QWidget):
 
             group.start()
             self._anim_group = group
+        except Exception:
+            pass
+
+    def _check_eve_foreground(self):
+        try:
+            import ctypes as _ct, sys as _sys
+            if _sys.platform != 'win32':
+                return
+            hwnd = _ct.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return
+            buf = _ct.create_unicode_buffer(512)
+            _ct.windll.user32.GetWindowTextW(hwnd, buf, 512)
+            title = buf.value
+            is_eve = title.startswith("EVE —") or title.startswith("EVE - ")
+            is_own = any(x in title for x in ["EVE iT", "Salva Suite", "Chat Translator"])
+            is_frameless = (title == "")
+            if is_eve or is_own or is_frameless:
+                self._fg_hide_count = 0
+                if self._auto_hidden and not self._user_hidden:
+                    self._auto_hidden = False
+                    self.show()
+            else:
+                self._fg_hide_count += 1
+                if self._fg_hide_count >= 4 and self.isVisible() and not self._user_hidden:
+                    self._auto_hidden = True
+                    self.hide()
         except Exception:
             pass
 

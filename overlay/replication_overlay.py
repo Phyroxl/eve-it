@@ -51,6 +51,13 @@ from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
 # Global weak registry so the settings dialog can reach all active overlays
 _OVERLAY_REGISTRY: 'weakref.WeakSet' = weakref.WeakSet()
 
+# Persisted state for overlays that were auto-closed due to client disappearing.
+# Key: window title.  Value: state dict (x, y, w, h, fps, region, cfg).
+_REPLICA_STATE_CACHE: dict = {}
+
+# Client watcher QTimer (installed on first overlay creation, runs on main thread)
+_client_watch_timer = None
+
 # Minimum pixel movement before a press is considered a drag (not a click)
 _DRAG_THRESHOLD = 5
 
@@ -201,6 +208,89 @@ def _log_hide_show_event(action: str, title: str, detail: str = ""):
             f.write(f"[{ts}] [{action}] title='{title}' {detail}\n")
     except Exception:
         pass
+
+
+def _save_replica_state(ov: 'ReplicationOverlay') -> None:
+    """Persists an overlay's state so it can be auto-relaunched when the client reopens."""
+    try:
+        _REPLICA_STATE_CACHE[ov._title] = {
+            'x': ov.x(), 'y': ov.y(),
+            'w': ov.width(), 'h': ov.height(),
+            'fps': ov._ov_cfg.get('fps', 30),
+            'region': dict(ov._region) if isinstance(ov._region, dict) else ov._region,
+            'cfg': ov._cfg,
+        }
+        logger.info(f"[REPLICA WATCHER] State saved for relaunch: {ov._title!r}")
+    except Exception as e:
+        logger.debug(f"[REPLICA WATCHER] Error saving state: {e}")
+
+
+def _relaunch_replica(title: str, hwnd: int, state: dict) -> None:
+    """Creates a new ReplicationOverlay using a persisted state dict."""
+    try:
+        from overlay import replicator_config as cfg_lib
+        cfg = state['cfg']
+        region = state['region']
+        ov = ReplicationOverlay(
+            title=title, hwnd=hwnd, region_rel=region, cfg=cfg,
+            save_callback=lambda *a: cfg_lib.save_overlay_state(cfg, *a),
+        )
+        ov.setGeometry(state['x'], state['y'], state['w'], state['h'])
+        ov.show()
+        _REPLICA_STATE_CACHE.pop(title, None)
+        logger.info(f"[REPLICA WATCHER] Auto-relaunched: {title!r} at ({state['x']}, {state['y']})")
+    except Exception as e:
+        logger.error(f"[REPLICA WATCHER] Relaunch failed for {title!r}: {e}")
+
+
+def _client_watcher_tick() -> None:
+    """Periodic check: auto-close dead replicas and relaunch cached ones."""
+    try:
+        # 1. Check active overlays for dead source clients
+        for ov in list(_OVERLAY_REGISTRY):
+            if getattr(ov, '_user_closed', False) or getattr(ov, '_auto_closed', False):
+                continue
+            if getattr(ov, '_shutting_down', False):
+                continue
+            hwnd = getattr(ov, '_hwnd', None)
+            if hwnd and not user32.IsWindow(hwnd):
+                # Secondary check: maybe the window just moved hwnd
+                new_hwnd = resolve_eve_window_handle(ov._title)
+                if not new_hwnd:
+                    logger.info(
+                        f"[REPLICA WATCHER] Source client disappeared: {ov._title!r} — auto-closing replica"
+                    )
+                    _save_replica_state(ov)
+                    ov._auto_closed = True
+                    QTimer.singleShot(0, ov.close)
+
+        # 2. Check cached states for windows that have reopened
+        for title in list(_REPLICA_STATE_CACHE.keys()):
+            # Skip if already active
+            if any(getattr(ov, '_title', '') == title for ov in list(_OVERLAY_REGISTRY)):
+                _REPLICA_STATE_CACHE.pop(title, None)
+                continue
+            new_hwnd = resolve_eve_window_handle(title)
+            if new_hwnd:
+                state = _REPLICA_STATE_CACHE.get(title)
+                if state:
+                    _relaunch_replica(title, new_hwnd, state)
+    except Exception as e:
+        logger.debug(f"[REPLICA WATCHER] Tick error: {e}")
+
+
+def _install_client_watcher() -> None:
+    """Install the module-level QTimer that drives replica lifecycle (idempotent)."""
+    global _client_watch_timer
+    if _client_watch_timer is not None:
+        return
+    try:
+        _client_watch_timer = QTimer()
+        _client_watch_timer.timeout.connect(_client_watcher_tick)
+        _client_watch_timer.start(1000)
+        logger.debug("[REPLICA WATCHER] Client watcher installed (1 s interval)")
+    except Exception as e:
+        logger.debug(f"[REPLICA WATCHER] Could not install watcher: {e}")
 
 
 class CaptureThread(QThread):
@@ -361,7 +451,11 @@ class ReplicationOverlay(QWidget):
         self._shutting_down = False
         self._press_focused = False      # True when focus was already fired on mousePressEvent
 
+        self._auto_closed = False   # True if closed because source EVE client disappeared
+        self._user_closed = False   # True if user explicitly closed this replica
+
         _OVERLAY_REGISTRY.add(self)
+        _install_client_watcher()
 
         # Install the global mouse hook on first overlay creation so scroll
         # events are delivered even when EVE has OS focus.
@@ -1055,10 +1149,11 @@ class ReplicationOverlay(QWidget):
         menu.exec(event.globalPos())
 
     def _close_all_replicas(self):
-        """Cierra todas las réplicas activas registradas."""
+        """Cierra todas las réplicas activas registradas (sin relanzar)."""
         from overlay.replication_overlay import _OVERLAY_REGISTRY
         for ov in list(_OVERLAY_REGISTRY):
             try:
+                ov._user_closed = True  # prevent auto-relaunch
                 ov.close()
             except Exception:
                 pass
@@ -1753,6 +1848,11 @@ class ReplicationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
+        # Mark as user-closed if it was not an auto-close due to client disappearing
+        if not self._auto_closed:
+            self._user_closed = True
+            _REPLICA_STATE_CACHE.pop(self._title, None)  # don't relaunch user-closed replicas
+
         if ReplicationOverlay._global_shutdown:
             # Timers already stopped and thread already signaled by close_replicator_overlays
             super().closeEvent(event)

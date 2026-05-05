@@ -25,6 +25,7 @@ class TranslatorProfile:
     compact_mode: bool = False
     hotkey_toggle: str = 'F9'
     translation_mode: str = 'gamer'
+    show_portraits: bool = True
 
 @dataclass
 class TranslatorConfig:

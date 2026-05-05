@@ -1048,7 +1048,7 @@ class MainSuiteWindow(QMainWindow):
                 self._visual_clon_window = QWidget()
                 self._visual_clon_window.setWindowTitle("Salva Suite — Visual Clon")
                 self._visual_clon_window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-                self._visual_clon_window.resize(900, 620)
+                self._visual_clon_window.setFixedSize(450, 800)
 
                 outer = _QVBox(self._visual_clon_window)
                 outer.setContentsMargins(0, 0, 0, 0)

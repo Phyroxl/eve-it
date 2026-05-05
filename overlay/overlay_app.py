@@ -68,15 +68,15 @@ SETTINGS_ORG   = "EVEISKTracker"
 SETTINGS_APP   = "Overlay"
 
 C = {
-    'bg':       '#000000'          ,
-    'bg_panel': '#0a0a0a'          ,
-    'border':   'rgba(0, 180, 255, 60)',
+    'bg':       '#0a0f14',
+    'bg_panel': '#0d1626',
+    'border':   'rgba(0, 200, 255, 90)',
     'accent':   '#00c8ff',
     'green':    '#00ff9d',
     'gold':     '#ffd700',
     'red':      '#ff4444',
-    'dim':      'rgba(200, 230, 255, 0.45)',
-    'white':    'rgba(220, 240, 255, 0.92)',
+    'dim':      'rgba(200, 230, 255, 0.60)',
+    'white':    'rgba(220, 240, 255, 0.95)',
 }
 
 SCALE = 1.0
@@ -289,6 +289,39 @@ class OverlayWindow(QWidget):
         self.setWindowFlags(flags)
         self.setMinimumSize(250, 150); self.resize(280, 180); self.setWindowOpacity(1.0)
         self.setStyleSheet(f"QWidget {{ background: {C['bg']}; color: {C['white']}; font-family: {FONT_MONO}; }}")
+        self._user_hidden = False
+        self._auto_hidden = False
+        self._fg_hide_count = 0
+        self._eve_fg_timer = QTimer(self)
+        self._eve_fg_timer.timeout.connect(self._check_eve_foreground)
+        self._eve_fg_timer.start(500)
+
+    def _check_eve_foreground(self):
+        try:
+            import ctypes as _ct, sys as _sys
+            if _sys.platform != 'win32':
+                return
+            hwnd = _ct.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return
+            buf = _ct.create_unicode_buffer(512)
+            _ct.windll.user32.GetWindowTextW(hwnd, buf, 512)
+            title = buf.value
+            is_eve = title.startswith("EVE —") or title.startswith("EVE - ")
+            is_own = any(x in title for x in ["EVE iT", "Salva Suite", "ISK Tracker"])
+            is_frameless = (title == "")
+            if is_eve or is_own or is_frameless:
+                self._fg_hide_count = 0
+                if self._auto_hidden and not self._user_hidden:
+                    self._auto_hidden = False
+                    self.show()
+            else:
+                self._fg_hide_count += 1
+                if self._fg_hide_count >= 4 and self.isVisible() and not self._user_hidden:
+                    self._auto_hidden = True
+                    self.hide()
+        except Exception:
+            pass
 
     def _build_ui(self):
         # Limpiar contenedor previo si existe para evitar duplicados al cambiar de preset
@@ -384,7 +417,7 @@ class OverlayWindow(QWidget):
         
         btn_close = QPushButton("\u00d7") # ×
         btn_close.setFixedSize(24, 24); btn_close.setStyleSheet(BTN_RED_STYLE)
-        btn_close.clicked.connect(self.hide)
+        btn_close.clicked.connect(lambda: (setattr(self, '_user_hidden', True), self.hide()))
         title_row.addWidget(btn_close)
         
         main_lay.addLayout(title_row)
@@ -401,27 +434,27 @@ class OverlayWindow(QWidget):
 
         self._full_panel = QWidget(); full_lay = QVBoxLayout(self._full_panel); full_lay.setContentsMargins(0, 0, 0, 0); full_lay.setSpacing(6)
         
-        # Métrica Principal: ISK/h
-        self._m_isks = MetricBlock('hud_isk_h_session', accent=C['green'], large=cfg['main_large'])
+        # Métrica Principal: ISK Total (posición intercambiada con ISK/h)
+        self._m_isks = MetricBlock('hud_isk_total', accent=C['green'], large=cfg['main_large'])
         full_lay.addWidget(self._m_isks)
-        
+
         # Métricas Secundarias
         self._sec_container = QWidget()
         sec_lay = QHBoxLayout(self._sec_container) if not cfg['sec_compact'] else QVBoxLayout(self._sec_container)
         sec_lay.setContentsMargins(0, 0, 0, 0); sec_lay.setSpacing(4)
-        
+
         if cfg['sec_compact']: # Si es compacto, van en una fila horizontal dentro del main_lay
             full_lay.removeWidget(self._m_isks)
             h_row = QHBoxLayout(); h_row.setSpacing(4)
             h_row.addWidget(self._m_isks)
-            self._m_total = MetricBlock('hud_isk_total')
+            self._m_total = MetricBlock('hud_isk_h_session', accent=C['accent'])
             self._m_cd = CountdownBlock()
             self._m_sess = MetricBlock('hud_session')
             h_row.addWidget(self._m_total); h_row.addWidget(self._m_cd); h_row.addWidget(self._m_sess)
             full_lay.addLayout(h_row)
             self._sec_container.hide()
         else:
-            self._m_total = MetricBlock('hud_isk_total')
+            self._m_total = MetricBlock('hud_isk_h_session', accent=C['accent'])
             self._m_cd = CountdownBlock()
             self._m_sess = MetricBlock('hud_session')
             r2 = QHBoxLayout(); r2.setSpacing(4)
@@ -575,12 +608,12 @@ class OverlayWindow(QWidget):
         if hasattr(self, '_m_sess'): self._m_sess.setVisible(data.get('show_dur', True))
 
         self._m_iskh.set_value(self._fmt(data.get('isk_h_rolling', 0)))
-        self._m_isks.set_value(self._fmt(data.get('isk_h_session', 0)))
+        self._m_isks.set_value(self._fmt(data.get('total_isk', 0)))
         # Sincronizar el contador local con el servidor
         server_secs = data.get('session_secs', 0)
         self._local_secs = server_secs
         self._m_sess.set_value(self._fmt_dur(server_secs))
-        self._m_total.set_value(self._fmt(data.get('total_isk', 0)))
+        self._m_total.set_value(self._fmt(data.get('isk_h_session', 0)))
         self._m_chars.set_value(str(data.get('char_count', 0)))
         self._c_iskh.setText(self._fmt(data.get('isk_h_rolling', 0)) + " ISK/h")
         self._m_cd.update_countdown(
