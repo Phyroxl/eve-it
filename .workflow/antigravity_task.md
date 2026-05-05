@@ -750,3 +750,71 @@ Hotkey pulsada:
 ### Pruebas
 - `python -m py_compile overlay/replication_overlay.py overlay/replicator_hotkeys.py` → OK
 - `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py tests/test_replicator_active_border.py tests/test_cycle_sync.py -q` → **142 passed**
+
+## 22) FIX — Auto-apply hotkeys when loading replicator profiles
+
+**Commit `FIX: Auto-apply hotkeys when loading replicator profiles`**
+
+### Causa raíz
+
+El replicador nunca llamaba a `register_hotkeys` en la ruta de lanzamiento principal
+(wizard → callback → `_restore_replicator_overlays` en `tray_manager.py`). El usuario
+tenía que ir manualmente a la sección de hotkeys y pulsar "Aplicar hotkeys" tras cada
+lanzamiento del replicador.
+
+Adicionalmente, el wizard no actualizaba `cfg['active_layout_profile']` cuando el usuario
+cambiaba de perfil, por lo que `_restore_replicator_overlays` no podía saber qué perfil
+aplicar al registrar los hotkeys.
+
+La ruta `_lp_apply_profile` (pestaña Layout) ya llamaba a `register_hotkeys` desde el
+commit 93ae7de, por lo que esa ruta era correcta.
+
+### Flujo anterior (roto)
+
+```
+Wizard acepta → _restore_replicator_overlays
+  → crea overlays
+  → inicializa borde activo
+  → FIN ← register_hotkeys NUNCA llamado
+```
+
+El usuario tenía que: abrir settings → pestaña Hotkeys → pulsar "Aplicar Hotkeys".
+
+### Flujo corregido
+
+```
+Wizard acepta → _restore_replicator_overlays
+  → crea overlays
+  → get_active_layout_profile → si tiene 'hotkeys', restore a cfg['hotkeys']
+  → update_hotkey_cache(titles)
+  → register_hotkeys(cfg, cycle_titles_getter=lambda: list(titles))
+  → [HOTKEYS_AUTO_APPLY] log
+  → inicializa borde activo
+```
+
+### Archivos modificados
+
+**`controller/tray_manager.py`** — `_restore_replicator_overlays`:
+- Añadido bloque de auto-apply de hotkeys dentro del `if created > 0:`.
+- Restaura hotkeys del perfil activo si el perfil tiene clave `'hotkeys'`.
+- Llama `update_hotkey_cache(titles)` + `register_hotkeys(cfg, ...)`.
+- Logs: `[HOTKEYS_PROFILE_RESTORED]`, `[HOTKEYS_AUTO_APPLY]`.
+
+**`controller/replicator_wizard.py`** — `_on_profile_change`:
+- Añade `self._cfg['active_layout_profile'] = name` al cambiar el perfil.
+- Garantiza que `_restore_replicator_overlays` use el perfil correcto al registrar hotkeys.
+
+**`controller/replicator_wizard.py`** — `_launch_direct`:
+- Restaura hotkeys del perfil activo antes de llamar `register_hotkeys`.
+- Log `[HOTKEYS_AUTO_APPLY] source=launch_direct`.
+
+### Logs esperados
+
+```
+[HOTKEYS_AUTO_APPLY] source=restore_overlays profile='Default' titles=3
+[HOTKEYS_PROFILE_RESTORED] profile='ADS' source=restore_overlays   ← solo si el perfil tiene hotkeys guardados
+```
+
+### Pruebas
+- `python -m py_compile controller/tray_manager.py controller/replicator_wizard.py` → OK
+- `python -m pytest tests/ -q` → **142 passed**

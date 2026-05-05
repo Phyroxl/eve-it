@@ -369,6 +369,8 @@ class ReplicatorWizard:
         profiles = get_layout_profiles(self._cfg)
         reg = profiles.get(name, {})
         if reg:
+            # Track active profile so _restore_replicator_overlays applies the right hotkeys
+            self._cfg['active_layout_profile'] = name
             # Los perfiles de layout guardan region_x, region_y, etc. (normalizado 0-1)
             # El asistente usa sp_x (pixels 0-1920)
             self.sp_x.setValue(int(reg.get('region_x', 0) * 1920))
@@ -474,8 +476,19 @@ class ReplicatorWizard:
                         ov.resize(280, 200); ov.move(400+i*20, 300+i*20)
                 
                 ov.show(); self._overlays_refs.append(ov)
+            # Restore profile hotkeys before registering (if profile has saved hotkeys)
+            try:
+                _ap_name2, _ap_prof2 = active_prof_name, (self._cfg.get('layout_profiles', {})
+                                                           .get(active_prof_name, {}))
+                _ph2 = _ap_prof2.get('hotkeys')
+                if _ph2:
+                    self._cfg['hotkeys'] = _ph2
+                    logger.info(f"[HOTKEYS_PROFILE_RESTORED] profile='{_ap_name2}' source=launch_direct")
+            except Exception:
+                pass
             update_hotkey_cache(titles)
             register_hotkeys(self._cfg, cycle_titles_getter=lambda: self._cfg.get('selected_windows', []))
+            logger.info(f"[HOTKEYS_AUTO_APPLY] source=launch_direct titles={len(titles)}")
             # Initialize active border after overlays settle
             try:
                 from overlay.win32_capture import get_foreground_hwnd

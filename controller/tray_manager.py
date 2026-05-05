@@ -540,6 +540,27 @@ class TrayManager:
                 self._act_replic.setChecked(True)
                 logger.info(f"Replicador: {created} overlay(s) activos")
 
+                # Auto-apply hotkeys — eliminates need to manually click "Aplicar Hotkeys"
+                try:
+                    from overlay.replicator_hotkeys import register_hotkeys, update_hotkey_cache
+                    from overlay.replicator_config import get_active_layout_profile as _get_alp
+                    _ap_name, _ap_prof = _get_alp(cfg)
+                    _prof_hotkeys = _ap_prof.get('hotkeys')
+                    if _prof_hotkeys:
+                        cfg['hotkeys'] = _prof_hotkeys
+                        logger.info(
+                            f"[HOTKEYS_PROFILE_RESTORED] profile='{_ap_name}' "
+                            f"source=restore_overlays"
+                        )
+                    update_hotkey_cache(titles)
+                    register_hotkeys(cfg, cycle_titles_getter=lambda: list(titles))
+                    logger.info(
+                        f"[HOTKEYS_AUTO_APPLY] source=restore_overlays "
+                        f"profile='{_ap_name}' titles={len(titles)}"
+                    )
+                except Exception as _he:
+                    logger.warning(f"[HOTKEYS_AUTO_APPLY] source=restore_overlays err={_he}")
+
                 # Inicializar borde activo tras breve settle (overlays recién creados)
                 try:
                     from overlay.win32_capture import get_foreground_hwnd as _get_fg
