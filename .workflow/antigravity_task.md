@@ -355,3 +355,92 @@ MACRO SUMMARY: sequences=12 safe=7 risky=5 incomplete=0 fg_mismatch=0 min_first=
 5. Tomar nota de `recommended_min_delay_ms` y ajustar el Sleep de la macro.
 6. Detener diagnóstico → leer línea `MACRO SUMMARY` para resumen global.
 7. Si `fg_mismatch > 0`, el foreground cambió antes de que llegara alguna tecla (raro).
+
+## 17) DIAG — Detectar macro missing + ignorar ventanas Replica como foreground (commit actual)
+
+**Problemas detectados en logs reales con 'EVE — Lana Drake':**
+
+### Bug 1 — Replica window match_idx corrupto
+```
+[16:04:22.041] FG  hwnd=658034  title='Replica - EVE — Lana Drake'  match_idx=8
+```
+El resolver usaba `t and t in fg_title` que hace substring match: `'EVE — Lana Drake'` ⊂ `'Replica - EVE — Lana Drake'`. Resultado: índice corrompido, próximo ciclo va al cliente incorrecto.
+
+### Bug 2 — F1–F8 nunca observados tras foco de Lana
+```
+[16:03:39.861] DONE  ok=True  verified=True  7 -> 8  total=14.4ms
+```
+Tras este DONE, no apareció ningún `MACRO KEY` ni `MACRO SEQ` para el epoch de Lana — fallo silencioso sin diagnóstico.
+
+### Bug 3 — rec_delay absurdo por secuencia stale
+`first_delta=8083.9ms` → `rec_delay=8104ms` (AHK Sleep 8104 es absurdo — las teclas eran de una sesión anterior sin relación causal).
+
+---
+
+### Soluciones implementadas:
+
+**`_REPLICA_PREFIXES` + `_is_replica_window_title(title) -> bool`**
+- Prefijos detectados: `'Replica - '`, `'Réplica - '`, `'Replica — '`, `'Réplica — '`
+- El resolver en `_cycle` y `_cycle_group`: si `_is_replica_window_title(fg_title)` → skip substring match, emite `fg_replica_ignored` diag event + perf log `[FG_REPLICA_IGNORED]`.
+
+**Nuevos globals de tracking de missing macro:**
+- `_macro_observed_epochs: set` — epochs con al menos una MACRO KEY observada
+- `_macro_missing_pending_epoch: int = -1` — epoch a observar
+- `_macro_missing_pending_target: str`
+- `_macro_missing_pending_time: float`
+- `_macro_stats_missing_after_focus: int` — contador acumulado
+- `_macro_stats_missing_targets: list` — cuentas afectadas
+
+**`_check_and_emit_missing_macro(reason: str)`**
+- Si `_macro_missing_pending_epoch >= 0` y epoch no está en `_macro_observed_epochs` y diag activo → emite `macro_missing_after_focus` con epoch, target, reason, elapsed_ms.
+- Limpia el pending tras emitir o si el epoch ya fue observado.
+
+**Flujo de detección:**
+1. Al inicio de `_cycle`/`_cycle_group` (antes del flush) → `_check_and_emit_missing_macro('next_cycle_without_macro')`
+2. Tras `_focus_epoch_id += 1` con `ok=True` → registra `_macro_missing_pending_epoch/target/time`
+3. En `_on_macro_key` → `_macro_observed_epochs.add(_focus_epoch_id)` inmediatamente al observar una tecla
+4. En `_uninstall_macro_key_hook()` → `_check_and_emit_missing_macro('diagnostic_stopped_without_macro')`
+
+**Fix stale sequence en `_flush_macro_seq()`:**
+- `first_delta > 1000.0` → `status = 'stale_or_unrelated'`, `rec_delay = 0.0`
+- Las stats `min/max_first_delta` y `recommended_min_delay` NO se actualizan con secuencias stale
+- El total `_macro_stats_total` sí se incrementa (sirve como conteo de actividad)
+
+**Updates a `get_macro_summary()`:**
+- Añadidos: `missing_after_focus_count`, `missing_after_focus_targets`
+
+**Updates a `clear_hotkey_diagnostics()`:**
+- Reset de todos los nuevos globals
+
+**Updates en `_toggle_diag` (settings dialog):**
+- MACRO SUMMARY incluye `missing_after_focus=N`
+- Si hay targets con missing, se añade línea `MACRO MISSING TARGETS: [...]`
+
+**Nuevos formatos en `_fmt_event`:**
+- `macro_missing_after_focus` → `MACRO MISSING  epoch=N  target='...'  reason=...  elapsed=X.Xms`
+- `fg_replica_ignored` → `FG_REPLICA_IGNORED  hwnd=N  title='...'`
+
+### Archivos Modificados:
+- `overlay/replicator_hotkeys.py` — `_REPLICA_PREFIXES`, `_is_replica_window_title`, nuevos globals, `_check_and_emit_missing_macro`, `_on_macro_key`, `_flush_macro_seq` (stale fix), `clear_hotkey_diagnostics`, `get_macro_summary`, `_cycle` global decl + check + resolver fix + pending tracking, `_cycle_group` idem, `_uninstall_macro_key_hook`
+- `overlay/replicator_settings_dialog.py` — `_fmt_event` para 2 nuevos tipos, MACRO SUMMARY con missing fields
+- `tests/test_macro_timing_diag.py` — `_reset_diag_state` ampliado, `test_get_macro_summary_returns_correct_structure` actualizado, 3 nuevas clases de test: `TestReplicaWindowFilter` (4 tests), `TestMissingMacroAfterFocus` (9 tests), `TestStaleSequence` (6 tests)
+
+### Pruebas:
+- `python -m py_compile overlay/replicator_hotkeys.py overlay/replicator_settings_dialog.py` → OK
+- `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py -q` → **75 passed**
+
+### Formato de líneas nuevas en el diagnóstico:
+```
+[HH:MM:SS.mmm] FG_REPLICA_IGNORED  hwnd=658034  title='Replica - EVE — Lana Drake'
+[HH:MM:SS.mmm] MACRO MISSING  epoch=8  target='EVE — Lana Drake'  reason=next_cycle_without_macro  elapsed=1823.4ms
+MACRO SUMMARY: ... missing_after_focus=1 ...
+MACRO MISSING TARGETS: ['EVE — Lana Drake']
+```
+
+### Cómo usar:
+1. Iniciar diagnóstico.
+2. Ejecutar macro completa.
+3. Si aparece `FG_REPLICA_IGNORED` → era el bug del resolver; sin esta fix el ciclo habría ido al cliente equivocado.
+4. Si aparece `MACRO MISSING` → el foco se completó pero EVE no recibió F1–F8 para esa cuenta.
+5. Si `MACRO SEQ status=stale_or_unrelated` → las teclas F1–F8 llegaron > 1s después del foco (no relacionadas causalmente; ignorar su rec_delay).
+6. Al detener, la línea `MACRO SUMMARY` muestra `missing_after_focus=N` con los targets afectados.

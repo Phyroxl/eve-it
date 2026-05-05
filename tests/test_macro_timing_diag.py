@@ -32,6 +32,12 @@ def _reset_diag_state():
     hk._macro_stats_min_first_delta = float('inf')
     hk._macro_stats_max_first_delta = 0.0
     hk._macro_stats_recommended_min_delay = 0.0
+    hk._macro_observed_epochs = set()
+    hk._macro_missing_pending_epoch = -1
+    hk._macro_missing_pending_target = ''
+    hk._macro_missing_pending_time = 0.0
+    hk._macro_stats_missing_after_focus = 0
+    hk._macro_stats_missing_targets = []
     hk._hotkey_diagnostics_enabled = False
     hk._hotkey_diagnostics_events.clear()
 
@@ -636,6 +642,7 @@ class TestMacroSummary(unittest.TestCase):
             'total_macro_sequences', 'complete_safe_count', 'complete_risky_count',
             'incomplete_count', 'foreground_mismatch_count',
             'min_first_delta_seen_ms', 'max_first_delta_seen_ms', 'recommended_min_delay_ms',
+            'missing_after_focus_count', 'missing_after_focus_targets',
         }
         self.assertEqual(set(s.keys()), expected_keys)
 
@@ -664,6 +671,236 @@ class TestHookLifecycle(unittest.TestCase):
             hk.set_hotkey_diagnostics_enabled(True, None)
             hk.set_hotkey_diagnostics_enabled(False, None)
             mock_uninstall.assert_called_once()
+
+
+# ── Replica window title filter ───────────────────────────────────────────────
+
+class TestReplicaWindowFilter(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def test_replica_prefix_detected(self):
+        from overlay.replicator_hotkeys import _is_replica_window_title
+        self.assertTrue(_is_replica_window_title('Replica - EVE — Lana Drake'))
+        self.assertTrue(_is_replica_window_title('Réplica - EVE — Lana Drake'))
+        self.assertTrue(_is_replica_window_title('Replica — EVE — Lana Drake'))
+        self.assertTrue(_is_replica_window_title('Réplica — EVE — Lana Drake'))
+
+    def test_real_client_not_detected(self):
+        from overlay.replicator_hotkeys import _is_replica_window_title
+        self.assertFalse(_is_replica_window_title('EVE — Lana Drake'))
+        self.assertFalse(_is_replica_window_title('EVE - Alpha'))
+        self.assertFalse(_is_replica_window_title(''))
+        self.assertFalse(_is_replica_window_title(None))
+
+    def test_fg_replica_ignored_event_emitted(self):
+        """When fg title starts with replica prefix, fg_replica_ignored event is emitted."""
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+        hk._diag_event('fg_replica_ignored', fg_hwnd=9999, fg_title='Replica - EVE — Lana Drake')
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'fg_replica_ignored']
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['fg_hwnd'], 9999)
+        self.assertIn('Replica', evs[0]['fg_title'])
+
+    def test_fg_replica_does_not_match_client(self):
+        """_is_replica_window_title returns False for plain EVE client with same suffix."""
+        from overlay.replicator_hotkeys import _is_replica_window_title
+        # Even though 'EVE — Lana Drake' ⊂ 'Replica - EVE — Lana Drake',
+        # the plain client title must NOT be classified as replica.
+        self.assertFalse(_is_replica_window_title('EVE — Lana Drake'))
+
+
+# ── Missing macro after focus detection ───────────────────────────────────────
+
+class TestMissingMacroAfterFocus(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def _set_pending(self, epoch=5, target='EVE - Alpha'):
+        import overlay.replicator_hotkeys as hk
+        import time
+        hk._macro_missing_pending_epoch = epoch
+        hk._macro_missing_pending_target = target
+        hk._macro_missing_pending_time = time.perf_counter() - 0.200
+
+    def test_missing_detected_when_no_macro_observed(self):
+        """check_and_emit emits macro_missing_after_focus when epoch has no observed keys."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        self._set_pending(epoch=5, target='EVE - Alpha')
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['epoch'], 5)
+        self.assertEqual(evs[0]['target'], 'EVE - Alpha')
+        self.assertEqual(evs[0]['reason'], 'next_cycle_without_macro')
+
+    def test_missing_not_emitted_when_macro_observed(self):
+        """If epoch was observed in _macro_observed_epochs, no missing event."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        self._set_pending(epoch=5)
+        hk._macro_observed_epochs.add(5)
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 0)
+
+    def test_missing_not_emitted_when_no_pending(self):
+        """With _macro_missing_pending_epoch = -1, no event emitted."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        hk._macro_missing_pending_epoch = -1
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 0)
+
+    def test_pending_cleared_after_emission(self):
+        """After emitting missing, pending state is cleared."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        self._set_pending(epoch=7)
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        self.assertEqual(hk._macro_missing_pending_epoch, -1)
+        self.assertEqual(hk._macro_missing_pending_target, '')
+
+    def test_pending_cleared_when_macro_was_observed(self):
+        """When epoch was observed, pending is cleared without emitting."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        self._set_pending(epoch=3)
+        hk._macro_observed_epochs.add(3)
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        self.assertEqual(hk._macro_missing_pending_epoch, -1)
+
+    def test_stopping_flushes_missing(self):
+        """diagnostic_stopped_without_macro reason is emitted by uninstall."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        self._set_pending(epoch=9, target='EVE - Bravo')
+        _check_and_emit_missing_macro('diagnostic_stopped_without_macro')
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['reason'], 'diagnostic_stopped_without_macro')
+        self.assertEqual(evs[0]['target'], 'EVE - Bravo')
+
+    def test_macro_key_marks_epoch_observed(self):
+        """_on_macro_key adds epoch to _macro_observed_epochs."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key
+        hk._last_focus_done_time = time.perf_counter() - 0.060
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 4
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)  # F1
+        self.assertIn(4, hk._macro_observed_epochs)
+
+    def test_summary_includes_missing_count(self):
+        """get_macro_summary() exposes missing_after_focus_count and targets."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import get_macro_summary, _check_and_emit_missing_macro
+        self._set_pending(epoch=2, target='EVE - Charlie')
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        s = get_macro_summary()
+        self.assertEqual(s['missing_after_focus_count'], 1)
+        self.assertIn('EVE - Charlie', s['missing_after_focus_targets'])
+
+    def test_missing_not_emitted_when_diag_disabled(self):
+        """No emission if diagnostics are disabled."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _check_and_emit_missing_macro
+        hk._hotkey_diagnostics_enabled = False
+        self._set_pending(epoch=6)
+        _check_and_emit_missing_macro('next_cycle_without_macro')
+        evs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_missing_after_focus']
+        self.assertEqual(len(evs), 0)
+
+
+# ── Stale sequence classification ────────────────────────────────────────────
+
+class TestStaleSequence(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def _press_with_delta(self, delta_s, vk=0x70, hwnd=1001):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        hk._last_focus_done_time = time.perf_counter() - delta_s
+        hk._last_focus_done_hwnd = hwnd
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=hwnd):
+            _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        return seqs[0] if seqs else None
+
+    def test_stale_over_1000ms_classified(self):
+        """first_delta > 1000ms → status = stale_or_unrelated."""
+        seq = self._press_with_delta(8.1)  # 8100ms
+        self.assertIsNotNone(seq)
+        self.assertEqual(seq['sequence_status'], 'stale_or_unrelated')
+
+    def test_stale_rec_delay_is_zero(self):
+        """stale_or_unrelated → rec_delay = 0 (no absurd recommendation)."""
+        seq = self._press_with_delta(8.1)
+        self.assertIsNotNone(seq)
+        self.assertEqual(seq['recommended_min_delay_ms'], 0.0)
+
+    def test_stale_does_not_update_min_first_delta(self):
+        """stale sequence must not pollute _macro_stats_min_first_delta."""
+        from overlay.replicator_hotkeys import get_macro_summary
+        self._press_with_delta(8.1)
+        s = get_macro_summary()
+        self.assertEqual(s['min_first_delta_seen_ms'], 0.0)  # still at initial
+
+    def test_stale_does_not_update_recommended_min_delay(self):
+        """stale rec_delay=0 must not set recommended_min_delay to 8104ms."""
+        from overlay.replicator_hotkeys import get_macro_summary
+        self._press_with_delta(8.1)
+        s = get_macro_summary()
+        self.assertEqual(s['recommended_min_delay_ms'], 0.0)
+
+    def test_normal_sequence_not_classified_stale(self):
+        """first_delta <= 1000ms → not stale_or_unrelated."""
+        seq = self._press_with_delta(0.080)  # 80ms
+        self.assertIsNotNone(seq)
+        self.assertNotEqual(seq['sequence_status'], 'stale_or_unrelated')
+
+    def test_under_1000ms_not_stale(self):
+        """first_delta < 1000ms → NOT stale_or_unrelated (use 999ms to avoid timing jitter)."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        hk._last_focus_done_time = time.perf_counter() - 0.999
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertNotEqual(seqs[0]['sequence_status'], 'stale_or_unrelated')
 
 
 if __name__ == '__main__':

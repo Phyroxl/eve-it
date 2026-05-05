@@ -95,6 +95,7 @@ _MACRO_VK_TO_NAME: dict = {
     0x70: 'F1', 0x71: 'F2', 0x72: 'F3', 0x73: 'F4',
     0x74: 'F5', 0x75: 'F6', 0x76: 'F7', 0x77: 'F8',
 }
+_REPLICA_PREFIXES: tuple = ('Replica - ', 'Réplica - ', 'Replica — ', 'Réplica — ')
 _MACRO_SEQ_WINDOW_MS: float = 300.0
 _focus_epoch_id: int = 0
 _macro_hook_handle = None
@@ -117,6 +118,12 @@ _macro_stats_fg_mismatch: int = 0
 _macro_stats_min_first_delta: float = float('inf')
 _macro_stats_max_first_delta: float = 0.0
 _macro_stats_recommended_min_delay: float = 0.0
+_macro_observed_epochs: set = set()
+_macro_missing_pending_epoch: int = -1
+_macro_missing_pending_target: str = ''
+_macro_missing_pending_time: float = 0.0
+_macro_stats_missing_after_focus: int = 0
+_macro_stats_missing_targets: list = []
 
 # ── Live diagnostics (zero-overhead when disabled) ────────────────────────────
 _hotkey_diagnostics_enabled: bool = False
@@ -178,6 +185,11 @@ def _log_to_file(msg: str):
         pass
 
 
+def _is_replica_window_title(title: str) -> bool:
+    """Return True if title belongs to an EVE iT overlay window, not an actual EVE client."""
+    return bool(title and any(title.startswith(p) for p in _REPLICA_PREFIXES))
+
+
 # ── Public diagnostics API ────────────────────────────────────────────────────
 
 def set_hotkey_diagnostics_enabled(enabled: bool, callback=None):
@@ -196,6 +208,8 @@ def clear_hotkey_diagnostics():
     global _macro_stats_total, _macro_stats_complete_safe, _macro_stats_complete_risky
     global _macro_stats_incomplete, _macro_stats_fg_mismatch
     global _macro_stats_min_first_delta, _macro_stats_max_first_delta, _macro_stats_recommended_min_delay
+    global _macro_stats_missing_after_focus, _macro_stats_missing_targets
+    global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
     _hotkey_diagnostics_events.clear()
     _macro_stats_total = 0
     _macro_stats_complete_safe = 0
@@ -205,6 +219,12 @@ def clear_hotkey_diagnostics():
     _macro_stats_min_first_delta = float('inf')
     _macro_stats_max_first_delta = 0.0
     _macro_stats_recommended_min_delay = 0.0
+    _macro_stats_missing_after_focus = 0
+    _macro_stats_missing_targets = []
+    _macro_observed_epochs.clear()
+    _macro_missing_pending_epoch = -1
+    _macro_missing_pending_target = ''
+    _macro_missing_pending_time = 0.0
 
 
 def get_hotkey_diagnostics_events():
@@ -223,6 +243,8 @@ def get_macro_summary() -> dict:
         'min_first_delta_seen_ms': round(_macro_stats_min_first_delta, 1) if _macro_stats_min_first_delta < float('inf') else 0.0,
         'max_first_delta_seen_ms': round(_macro_stats_max_first_delta, 1),
         'recommended_min_delay_ms': round(_macro_stats_recommended_min_delay, 1),
+        'missing_after_focus_count': _macro_stats_missing_after_focus,
+        'missing_after_focus_targets': list(_macro_stats_missing_targets),
     }
 
 
@@ -243,6 +265,44 @@ def _diag_event(event_type: str, **data):
             cb(event)
         except Exception:
             pass
+
+
+def _check_and_emit_missing_macro(reason: str) -> None:
+    """If a previous ok-focus has no observed macro keys yet, emit macro_missing_after_focus."""
+    global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
+    global _macro_stats_missing_after_focus
+    if _macro_missing_pending_epoch < 0:
+        return
+    if not _hotkey_diagnostics_enabled:
+        _macro_missing_pending_epoch = -1
+        _macro_missing_pending_target = ''
+        _macro_missing_pending_time = 0.0
+        return
+    if _macro_missing_pending_epoch in _macro_observed_epochs:
+        _macro_missing_pending_epoch = -1
+        _macro_missing_pending_target = ''
+        _macro_missing_pending_time = 0.0
+        return
+    import time as _t
+    epoch = _macro_missing_pending_epoch
+    target = _macro_missing_pending_target
+    elapsed_ms = (_t.perf_counter() - _macro_missing_pending_time) * 1000.0 if _macro_missing_pending_time > 0 else 0.0
+    _macro_stats_missing_after_focus += 1
+    if target and target not in _macro_stats_missing_targets:
+        _macro_stats_missing_targets.append(target)
+    _diag_event('macro_missing_after_focus',
+        epoch=epoch,
+        target=target,
+        reason=reason,
+        elapsed_since_focus_ms=round(elapsed_ms, 1),
+    )
+    _perf_log(
+        f'[MACRO MISSING] epoch={epoch} target={target!r} reason={reason} '
+        f'elapsed_ms={elapsed_ms:.1f}'
+    )
+    _macro_missing_pending_epoch = -1
+    _macro_missing_pending_target = ''
+    _macro_missing_pending_time = 0.0
 
 
 # ── Passive macro timing helpers ──────────────────────────────────────────────
@@ -293,6 +353,7 @@ def _on_macro_key(vk: int) -> None:
             focus_hwnd=_last_focus_done_hwnd,
             focus_ok=_last_focus_done_ok,
         )
+        _macro_observed_epochs.add(_focus_epoch_id)
         _perf_log(
             f'[MACRO INPUT] epoch={_focus_epoch_id} key={key_name} delta={delta_ms:.1f}ms '
             f'class={timing_class} fg_hwnd={fg_hwnd} fg_match={fg_matches} '
@@ -359,7 +420,9 @@ def _flush_macro_seq() -> None:
 
     has_fg_mismatch = bool(fg_mismatch_keys)
     has_missing = bool(missing_names)
-    if has_fg_mismatch:
+    if first_delta > 1000.0:
+        status = 'stale_or_unrelated'
+    elif has_fg_mismatch:
         status = 'foreground_mismatch'
     elif has_missing:
         status = 'incomplete'
@@ -369,7 +432,9 @@ def _flush_macro_seq() -> None:
         status = 'complete_safe'
 
     import math
-    if status in ('foreground_mismatch', 'incomplete'):
+    if status == 'stale_or_unrelated':
+        rec_delay = 0.0
+    elif status in ('foreground_mismatch', 'incomplete'):
         rec_delay = max(80.0, first_delta + 20.0)
     elif first_delta < 50.0:
         rec_delay = 50.0
@@ -417,10 +482,11 @@ def _flush_macro_seq() -> None:
         _macro_stats_incomplete += 1
     elif status == 'foreground_mismatch':
         _macro_stats_fg_mismatch += 1
-    if first_delta > 0:
+    if status != 'stale_or_unrelated' and first_delta > 0:
         _macro_stats_min_first_delta = min(_macro_stats_min_first_delta, first_delta)
         _macro_stats_max_first_delta = max(_macro_stats_max_first_delta, first_delta)
-    _macro_stats_recommended_min_delay = max(_macro_stats_recommended_min_delay, rec_delay)
+    if rec_delay > 0:
+        _macro_stats_recommended_min_delay = max(_macro_stats_recommended_min_delay, rec_delay)
 
     _macro_seq_keys = []
     _macro_seq_key_times = []
@@ -508,6 +574,7 @@ def _uninstall_macro_key_hook() -> None:
             _user32.PostThreadMessageW(tid, _WM_QUIT_MSG, 0, 0)
         t.join(timeout=1.0)
     _macro_hook_thread = None
+    _check_and_emit_missing_macro('diagnostic_stopped_without_macro')
     _flush_macro_seq()
 
 
@@ -663,6 +730,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _capture_suspended_until
         global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
         global _focus_epoch_id
+        global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
         import time as _time
 
         t0  = _time.perf_counter()
@@ -697,6 +765,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         _cycle_in_progress = True
         _last_cycle_time   = now
+        _check_and_emit_missing_macro('next_cycle_without_macro')
         if _macro_seq_keys:
             _flush_macro_seq()
 
@@ -735,16 +804,20 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     fg_title = get_window_title(fg_hwnd)
                     _diag_fg_title = fg_title or ''
                     if fg_title:
-                        try:
-                            current_idx = next(
-                                i for i, t in enumerate(titles)
-                                if t == fg_title or (t and t in fg_title)
-                            )
-                            _diag_fg_match_idx = current_idx
-                            if current_idx != -1:
-                                _diag_resolver = 'foreground_title'
-                        except StopIteration:
-                            pass
+                        if _is_replica_window_title(fg_title):
+                            _perf_log(f'[FG_REPLICA_IGNORED] hwnd={fg_hwnd} title={fg_title!r}')
+                            _diag_event('fg_replica_ignored', fg_hwnd=fg_hwnd, fg_title=fg_title)
+                        else:
+                            try:
+                                current_idx = next(
+                                    i for i, t in enumerate(titles)
+                                    if t == fg_title or (t and t in fg_title)
+                                )
+                                _diag_fg_match_idx = current_idx
+                                if current_idx != -1:
+                                    _diag_resolver = 'foreground_title'
+                            except StopIteration:
+                                pass
                     if current_idx == -1:
                         for ov in list(_OVERLAY_REGISTRY):
                             if ov._hwnd and ov._hwnd == fg_hwnd and ov._title in titles:
@@ -861,6 +934,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             _last_focus_done_hwnd   = target_hwnd if ok else 0
             _last_focus_done_target = target or ''
             _last_focus_done_ok     = ok
+            if ok:
+                _macro_missing_pending_epoch = _focus_epoch_id
+                _macro_missing_pending_target = target or ''
+                _macro_missing_pending_time = _last_focus_done_time
             _diag_event('cycle_done', scope='global',
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,
@@ -877,6 +954,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _capture_suspended_until
         global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
         global _focus_epoch_id
+        global _macro_missing_pending_epoch, _macro_missing_pending_target, _macro_missing_pending_time
         import time as _time
 
         t0  = _time.perf_counter()
@@ -912,6 +990,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         _cycle_in_progress = True
         _last_cycle_time   = now
+        _check_and_emit_missing_macro('next_cycle_without_macro')
         if _macro_seq_keys:
             _flush_macro_seq()
 
@@ -957,16 +1036,20 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     fg_title = get_window_title(fg_hwnd)
                     _diag_fg_title = fg_title or ''
                     if fg_title:
-                        try:
-                            current_idx = next(
-                                i for i, t in enumerate(titles)
-                                if t == fg_title or (t and t in fg_title)
-                            )
-                            _diag_fg_match_idx = current_idx
-                            if current_idx != -1:
-                                _diag_resolver = 'foreground_title'
-                        except StopIteration:
-                            pass
+                        if _is_replica_window_title(fg_title):
+                            _perf_log(f'[FG_REPLICA_IGNORED] hwnd={fg_hwnd} title={fg_title!r}')
+                            _diag_event('fg_replica_ignored', fg_hwnd=fg_hwnd, fg_title=fg_title)
+                        else:
+                            try:
+                                current_idx = next(
+                                    i for i, t in enumerate(titles)
+                                    if t == fg_title or (t and t in fg_title)
+                                )
+                                _diag_fg_match_idx = current_idx
+                                if current_idx != -1:
+                                    _diag_resolver = 'foreground_title'
+                            except StopIteration:
+                                pass
                     if current_idx == -1:
                         for ov in list(_OVERLAY_REGISTRY):
                             if ov._hwnd and ov._hwnd == fg_hwnd and ov._title in titles:
@@ -1090,6 +1173,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             _last_focus_done_hwnd   = target_hwnd if ok else 0
             _last_focus_done_target = target or ''
             _last_focus_done_ok     = ok
+            if ok:
+                _macro_missing_pending_epoch = _focus_epoch_id
+                _macro_missing_pending_target = target or ''
+                _macro_missing_pending_time = _last_focus_done_time
             _diag_event('cycle_group_done', group_id=group_id,
                 direction='next' if direction > 0 else 'prev',
                 source_idx=current_idx, target_idx=next_idx, target_title=target,

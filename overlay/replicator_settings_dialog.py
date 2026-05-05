@@ -1234,6 +1234,13 @@ class ReplicatorSettingsDialog(QDialog):
                         f"last={ev.get('last_key_delta_ms', 0):.1f}ms  "
                         f"risky={risky}  fg_mismatch={fm_keys}  "
                         f"rec_delay={ev.get('recommended_min_delay_ms', 0):.0f}ms")
+            if etype == 'macro_missing_after_focus':
+                return (f"[{t}] MACRO MISSING  epoch={ev.get('epoch')}  "
+                        f"target={ev.get('target')!r}  reason={ev.get('reason')}  "
+                        f"elapsed={ev.get('elapsed_since_focus_ms', 0):.1f}ms")
+            if etype == 'fg_replica_ignored':
+                return (f"[{t}] FG_REPLICA_IGNORED  hwnd={ev.get('fg_hwnd')}  "
+                        f"title={ev.get('fg_title')!r}")
             if etype == 'state_snapshot':
                 lines = [f"[{t}] ── STATE SNAPSHOT ──",
                          f"  FG: hwnd={ev.get('fg_hwnd')} title={ev.get('fg_title')!r}",
@@ -1295,15 +1302,21 @@ class ReplicatorSettingsDialog(QDialog):
                     from overlay.replicator_hotkeys import get_macro_summary
                     s = get_macro_summary()
                     min_d = s['min_first_delta_seen_ms']
+                    missing_tgts = s.get('missing_after_focus_targets', [])
                     diag_out.appendPlainText(
                         f"MACRO SUMMARY: sequences={s['total_macro_sequences']} "
                         f"safe={s['complete_safe_count']} "
                         f"risky={s['complete_risky_count']} "
                         f"incomplete={s['incomplete_count']} "
                         f"fg_mismatch={s['foreground_mismatch_count']} "
+                        f"missing_after_focus={s.get('missing_after_focus_count', 0)} "
                         f"min_first={min_d:.1f}ms "
                         f"recommended_min_delay={s['recommended_min_delay_ms']:.0f}ms"
                     )
+                    if missing_tgts:
+                        diag_out.appendPlainText(
+                            f"MACRO MISSING TARGETS: {missing_tgts}"
+                        )
                 except Exception:
                     pass
 
