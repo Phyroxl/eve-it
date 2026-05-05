@@ -264,41 +264,7 @@ _HOTKEY_DEFAULTS = {
     'cycle_next': {'combo': 'F14'},
     'cycle_prev': {'combo': 'CTRL+F14'},
     'groups': {}, # group_id: {enabled, name, clients_order, next, prev}
-    'performance_mode': 'safe',
 }
-
-PERFORMANCE_MODE_CONFIGS = {
-    'safe': {
-        'min_cycle_ms': 120, 'capture_suspend_ms': 150,
-        'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False,
-        'verify_foreground': False, 'verify_timeout_ms': 0,
-        'notify_active_client': True,
-    },
-    'balanced': {
-        'min_cycle_ms': 80, 'capture_suspend_ms': 100,
-        'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False,
-        'verify_foreground': False, 'verify_timeout_ms': 0,
-        'notify_active_client': True,
-    },
-    'combat': {
-        'min_cycle_ms': 50, 'capture_suspend_ms': 80,
-        'use_ultra_raw_path': True, 'skip_hwnd_validity_check': False,
-        'verify_foreground': True, 'verify_timeout_ms': 40,
-        'notify_active_client': False,
-    },
-    'ultra': {
-        'min_cycle_ms': 20, 'capture_suspend_ms': 50,
-        'use_ultra_raw_path': True, 'skip_hwnd_validity_check': False,
-        'verify_foreground': True, 'verify_timeout_ms': 25,
-        'notify_active_client': False,
-    },
-}
-
-
-def get_perf_cfg(hk_cfg: dict) -> dict:
-    """Retorna la config del modo de rendimiento activo (defecto: safe)."""
-    mode = hk_cfg.get('performance_mode', 'safe')
-    return PERFORMANCE_MODE_CONFIGS.get(mode, PERFORMANCE_MODE_CONFIGS['safe'])
 
 
 def get_layout_profiles(cfg: dict) -> dict:

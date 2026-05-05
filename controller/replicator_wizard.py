@@ -175,23 +175,6 @@ class ReplicatorWizard:
         scr_row.addWidget(self.scr_combo); scr_row.addStretch()
         conf_lay.addLayout(scr_row)
 
-        # Performance mode selector
-        perf_row = QHBoxLayout(); perf_row.setSpacing(8)
-        perf_lbl = QLabel("Modo de rendimiento:")
-        perf_lbl.setFixedWidth(145)
-        perf_row.addWidget(perf_lbl)
-        self.perf_combo = QComboBox(); self.perf_combo.setMinimumWidth(180)
-        self.perf_combo.addItem("Seguro", "safe")
-        self.perf_combo.addItem("Equilibrado", "balanced")
-        self.perf_combo.addItem("Combate", "combat")
-        self.perf_combo.addItem("Ultra experimental", "ultra")
-        perf_row.addWidget(self.perf_combo); perf_row.addStretch()
-        conf_lay.addLayout(perf_row)
-        perf_help = QLabel("Seguro mantiene la máxima estabilidad. Ultra experimental reduce comprobaciones internas para macros muy rápidas.")
-        perf_help.setWordWrap(True)
-        perf_help.setStyleSheet("color: rgba(180,200,220,0.55); font-size: 9px;")
-        conf_lay.addWidget(perf_help)
-
         l1.addWidget(conf_box)
 
         # Footer
@@ -211,7 +194,6 @@ class ReplicatorWizard:
         self.btn_visual.clicked.connect(self._on_visual_select)
         self.prof_combo.currentIndexChanged.connect(self._on_profile_change)
         self.fps_combo.currentIndexChanged.connect(self._sync_to_cfg)
-        self.perf_combo.currentIndexChanged.connect(self._on_perf_mode_change)
         btn_p_add.clicked.connect(self._on_profile_add); btn_p_del.clicked.connect(self._on_profile_del)
         self.btn_all.clicked.connect(lambda: [self._set_checked_helper(c, True) for c in self._custom_cards])
         self.btn_none.clicked.connect(lambda: [self._set_checked_helper(c, False) for c in self._custom_cards])
@@ -228,7 +210,6 @@ class ReplicatorWizard:
         
         self._update_visual_button_state()
         self._populate_screens()
-        self._load_perf_mode()
         self._load_position()
 
     def _populate_screens(self):
@@ -506,8 +487,6 @@ class ReplicatorWizard:
                 _QTimer.singleShot(350, _init_active)
             except Exception:
                 pass
-            mode = self._cfg.get('hotkeys', {}).get('performance_mode', 'safe')
-            logger.info(f'[REPLICATOR WIZARD] Launching with performance_mode={mode!r}')
         except Exception as e: logger.error(f"Error en lanzamiento directo: {e}")
 
     def _show_custom_dialog(self, title, msg, is_input=False):
@@ -527,33 +506,6 @@ class ReplicatorWizard:
         res = d.exec()
         if is_input: return input_f.text(), res == QDialog.Accepted
         return res
-
-    def _load_perf_mode(self):
-        """Restore the saved performance mode in the combo (default: safe)."""
-        mode = self._cfg.get('hotkeys', {}).get('performance_mode', 'safe')
-        self.perf_combo.blockSignals(True)
-        for i in range(self.perf_combo.count()):
-            if self.perf_combo.itemData(i) == mode:
-                self.perf_combo.setCurrentIndex(i)
-                break
-        self.perf_combo.blockSignals(False)
-
-    def _on_perf_mode_change(self):
-        """Persist the selected performance mode to config immediately."""
-        mode = self.perf_combo.currentData()
-        if mode:
-            self._cfg.setdefault('hotkeys', {})['performance_mode'] = mode
-            self._cfg_mod.save_config(self._cfg)
-            logger.info(f'[REPLICATOR WIZARD] performance_mode set to {mode!r}')
-            try:
-                from overlay import replicator_hotkeys as _hk
-                if _hk._running:
-                    logger.info(
-                        '[REPLICATOR WIZARD] Hotkeys ya activos — '
-                        're-lanzar réplicas para aplicar el nuevo modo de rendimiento.'
-                    )
-            except Exception:
-                pass
 
     def show(self):
         self.dlg.show(); self.dlg.raise_(); self.dlg.activateWindow()
