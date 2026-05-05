@@ -278,6 +278,22 @@ def focus_eve_window_perf(hwnd: int) -> tuple:
     )
     return ok, perf_line
 
+
+def focus_eve_window_ultra(hwnd: int) -> bool:
+    """Ultra-fast focus — no logging, no sleeps, minimal Win32 calls.
+
+    Skips validity checks, restore, and AttachThreadInput.
+    Safe from hotkey thread which already holds foreground rights via WM_HOTKEY.
+    """
+    if not hwnd:
+        return False
+    try:
+        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _SWP_ASYNC_RAISE)
+        return bool(user32.SetForegroundWindow(hwnd))
+    except Exception:
+        return False
+
+
 def get_window_title(hwnd: int) -> str:
     """Devuelve el título de una ventana dado su HWND."""
     if not hwnd:

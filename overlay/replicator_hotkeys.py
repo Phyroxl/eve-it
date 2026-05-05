@@ -10,6 +10,7 @@ import ctypes
 import ctypes.wintypes as wt
 import threading
 import logging
+from collections import deque
 from typing import Dict, Callable, List, Optional
 
 logger = logging.getLogger('eve.hotkeys')
@@ -78,6 +79,11 @@ _last_cycle_client_id_time: float = 0.0           # monotonic() of above
 # CaptureThread skips one frame while < now, reducing competition with Win32 focus.
 _capture_suspended_until: float = 0.0
 
+# Ultra mode state — in-memory only, no disk I/O in hot path
+_group_hwnd_order_cache: Dict[str, list] = {}   # group_id → [{title, hwnd}, ...]
+_hotkey_ultra_events: deque = deque(maxlen=500)  # ring buffer: (type, group_id, ...)
+_active_perf_cfg: dict = {}                       # active performance mode config
+
 
 # ── Compact perf logger (FileHandler stays open — no open/close per call) ────
 
@@ -131,6 +137,40 @@ def _log_to_file(msg: str):
             f.write(f'[{ts}] {msg}\n')
     except Exception:
         pass
+
+
+def _dump_ultra_summary():
+    """Write compact ultra-mode event summary to the perf log at unregister time."""
+    if not _hotkey_ultra_events:
+        return
+    cycles = sum(1 for e in _hotkey_ultra_events if e[0] == 'cycle')
+    skips  = sum(1 for e in _hotkey_ultra_events if e[0] == 'skip')
+    fails  = sum(1 for e in _hotkey_ultra_events if e[0] == 'fail')
+    _perf_log(
+        f'[ULTRA SUMMARY] total={len(_hotkey_ultra_events)} '
+        f'cycles={cycles} skips={skips} fails={fails}'
+    )
+
+
+def _build_group_hwnd_cache(groups: dict):
+    """Pre-resolve HWNDs for all enabled groups (called at register time in ultra mode)."""
+    global _group_hwnd_order_cache
+    from overlay.win32_capture import resolve_eve_window_handle, is_hwnd_valid
+    new_cache: Dict[str, list] = {}
+    for g_id, g_data in groups.items():
+        if not g_data.get('enabled'):
+            continue
+        entries = []
+        for title in g_data.get('clients_order', []):
+            hwnd = _hwnd_cache.get(title, 0)
+            if not hwnd or not is_hwnd_valid(hwnd):
+                hwnd = resolve_eve_window_handle(title) or 0
+                if hwnd:
+                    _hwnd_cache[title] = hwnd
+            entries.append({'title': title, 'hwnd': hwnd})
+        new_cache[g_id] = entries
+    _group_hwnd_order_cache = new_cache
+    logger.debug(f'[HOTKEY ULTRA] Group HWND cache built for {len(new_cache)} groups')
 
 
 # ── Hotkey parsing ────────────────────────────────────────────────────────────
@@ -241,6 +281,17 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
     hk_cfg = cfg.get('hotkeys', {})
     registrations = []
+
+    # ── Performance mode config ───────────────────────────────────────────────
+    from overlay.replicator_config import get_perf_cfg
+    perf_cfg = get_perf_cfg(hk_cfg)
+    _active_perf_cfg.update(perf_cfg)
+    use_ultra = perf_cfg.get('use_ultra_raw_path', False)
+    _perf_log(
+        f'[HOTKEY PERF MODE] mode={hk_cfg.get("performance_mode", "safe")} '
+        f'min_cycle_ms={perf_cfg["min_cycle_ms"]} '
+        f'capture_suspend_ms={perf_cfg["capture_suspend_ms"]} use_ultra={use_ultra}'
+    )
 
     # ── Per-client hotkeys ────────────────────────────────────────────────────
     for title, entry in hk_cfg.get('per_client', {}).items():
@@ -528,6 +579,97 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         finally:
             _cycle_in_progress = False
 
+    def _cycle_group_ultra(group_id: str, direction: int, perf_cfg: dict):
+        """Ultra-fast group cycle — in-memory ring buffer log, pre-built HWND cache, no fg resolve."""
+        global _cycle_in_progress, _last_cycle_time
+        global _last_cycle_client_id, _last_cycle_client_id_time
+        global _capture_suspended_until
+        import time as _time
+
+        t0  = _time.perf_counter()
+        now = _time.monotonic()
+        min_ms     = perf_cfg.get('min_cycle_ms', 120)
+        suspend_ms = perf_cfg.get('capture_suspend_ms', 150)
+        skip_valid = perf_cfg.get('skip_hwnd_validity_check', False)
+
+        if _cycle_in_progress:
+            _hotkey_ultra_events.append(('skip', group_id, 'in_progress', now))
+            return
+        delta_ms = (now - _last_cycle_time) * 1000
+        if _last_cycle_time > 0 and delta_ms < min_ms:
+            _hotkey_ultra_events.append(('skip', group_id, 'cooldown', now))
+            return
+
+        _cycle_in_progress = True
+        _last_cycle_time   = now
+
+        try:
+            from overlay.win32_capture import (
+                focus_eve_window_ultra, resolve_eve_window_handle, is_hwnd_valid,
+            )
+            from overlay.replication_overlay import ReplicationOverlay
+
+            group = cfg.get('hotkeys', {}).get('groups', {}).get(group_id)
+            if not group or not group.get('enabled'):
+                return
+
+            titles = group.get('clients_order', [])
+            if not titles:
+                return
+
+            cached_entries = _group_hwnd_order_cache.get(group_id)
+
+            # Index resolution: last focused → saved index (skip fg Win32 calls for speed)
+            current_idx = -1
+            if (_last_cycle_client_id and _last_cycle_client_id in titles
+                    and (now - _last_cycle_client_id_time) < 5.0):
+                current_idx = titles.index(_last_cycle_client_id)
+            if current_idx == -1:
+                current_idx = _last_group_index.get(group_id, -1)
+
+            start    = current_idx if current_idx != -1 else (-1 if direction > 0 else 0)
+            target   = target_hwnd = None
+            next_idx = -1
+
+            for attempt in range(1, len(titles) + 1):
+                idx     = (start + direction * attempt) % len(titles)
+                t_title = titles[idx]
+
+                hwnd = 0
+                if cached_entries and idx < len(cached_entries):
+                    hwnd = cached_entries[idx].get('hwnd', 0)
+                if not hwnd:
+                    hwnd = _hwnd_cache.get(t_title, 0)
+                if not hwnd or (not skip_valid and not is_hwnd_valid(hwnd)):
+                    hwnd = resolve_eve_window_handle(t_title) or 0
+                    if hwnd:
+                        _hwnd_cache[t_title] = hwnd
+                        if cached_entries and idx < len(cached_entries):
+                            cached_entries[idx]['hwnd'] = hwnd
+
+                if hwnd and (skip_valid or is_hwnd_valid(hwnd)):
+                    target, target_hwnd, next_idx = t_title, hwnd, idx
+                    break
+
+            if not target_hwnd:
+                _hotkey_ultra_events.append(('fail', group_id, 'no_valid_window', now))
+                return
+
+            _capture_suspended_until = now + suspend_ms / 1000.0
+            ok = focus_eve_window_ultra(target_hwnd)
+
+            if ok:
+                _last_group_index[group_id]   = next_idx
+                _last_cycle_client_id         = target
+                _last_cycle_client_id_time    = now
+                ReplicationOverlay.notify_active_client_changed(target_hwnd)
+
+            total_ms = (_time.perf_counter() - t0) * 1000
+            _hotkey_ultra_events.append(('cycle', group_id, target, ok, total_ms, now))
+
+        finally:
+            _cycle_in_progress = False
+
     # ── Registration logic ────────────────────────────────────────────────────
 
     # Collect group-reserved combos to prevent global conflicts
@@ -565,30 +707,38 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 registrations.append((mods, vk, partial(_cycle, direction)))
 
     # Group hotkeys (registered after globals; priority guaranteed by dedup above)
+    cb_label = '_cycle_group_ultra' if use_ultra else '_cycle_group'
     for g_id, g_data in groups.items():
         if not g_data.get('enabled'):
             continue
         n_mods, n_vk = parse_hotkey(g_data.get('next', ''))
         if n_vk:
-            logger.info(f'[HOTKEY] Registering group {g_id} next → {g_data.get("next")}')
+            logger.info(f'[HOTKEY] Registering group {g_id} next → {g_data.get("next")} [{cb_label}]')
             _perf_log(
                 f'[HOTKEY REGISTER] scope=group group_id={g_id} group_name={g_data.get("name","")} '
-                f'hotkey={g_data.get("next")} direction=next callback=_cycle_group'
+                f'hotkey={g_data.get("next")} direction=next callback={cb_label}'
             )
-            registrations.append((n_mods, n_vk, partial(_cycle_group, g_id, +1)))
+            cb_n = partial(_cycle_group_ultra, g_id, +1, perf_cfg) if use_ultra else partial(_cycle_group, g_id, +1)
+            registrations.append((n_mods, n_vk, cb_n))
         p_mods, p_vk = parse_hotkey(g_data.get('prev', ''))
         if p_vk:
-            logger.info(f'[HOTKEY] Registering group {g_id} prev → {g_data.get("prev")}')
+            logger.info(f'[HOTKEY] Registering group {g_id} prev → {g_data.get("prev")} [{cb_label}]')
             _perf_log(
                 f'[HOTKEY REGISTER] scope=group group_id={g_id} group_name={g_data.get("name","")} '
-                f'hotkey={g_data.get("prev")} direction=prev callback=_cycle_group'
+                f'hotkey={g_data.get("prev")} direction=prev callback={cb_label}'
             )
-            registrations.append((p_mods, p_vk, partial(_cycle_group, g_id, -1)))
+            cb_p = partial(_cycle_group_ultra, g_id, -1, perf_cfg) if use_ultra else partial(_cycle_group, g_id, -1)
+            registrations.append((p_mods, p_vk, cb_p))
+
+    # Build pre-resolved HWND cache for ultra mode before starting the listener thread
+    if use_ultra and groups:
+        _build_group_hwnd_cache(groups)
 
     _perf_log(
         f'[HOTKEY REGISTER SUMMARY] total={len(registrations)} '
         f'group_reserved={len(group_combos)} global_skipped={n_global_skipped} '
-        f'groups_enabled={sum(1 for g in groups.values() if g.get("enabled"))}'
+        f'groups_enabled={sum(1 for g in groups.values() if g.get("enabled"))} '
+        f'mode={hk_cfg.get("performance_mode", "safe")} use_ultra={use_ultra}'
     )
 
     if not registrations:
@@ -604,6 +754,8 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
 def unregister_hotkeys():
     global _running, _thread
+    if _active_perf_cfg.get('use_ultra_raw_path') and _hotkey_ultra_events:
+        _dump_ultra_summary()
     _running = False
     if _thread and _thread.is_alive():
         _thread.join(timeout=0.3)

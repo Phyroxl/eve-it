@@ -125,7 +125,7 @@ def get_overlay_cfg(cfg, title: str) -> dict:
         merged['border_shape'] = 'rounded'
     elif shape == 'brackets':
         merged['border_shape'] = 'square'
-    elif shape not in ('square', 'rounded', 'pill'):
+    elif shape not in ('square', 'rounded', 'pill', 'diamond'):
         merged['border_shape'] = 'square'
         
     return merged
@@ -264,7 +264,21 @@ _HOTKEY_DEFAULTS = {
     'cycle_next': {'combo': 'F14'},
     'cycle_prev': {'combo': 'CTRL+F14'},
     'groups': {}, # group_id: {enabled, name, clients_order, next, prev}
+    'performance_mode': 'safe',
 }
+
+PERFORMANCE_MODE_CONFIGS = {
+    'safe':     {'min_cycle_ms': 120, 'capture_suspend_ms': 150, 'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False},
+    'balanced': {'min_cycle_ms':  80, 'capture_suspend_ms': 100, 'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False},
+    'combat':   {'min_cycle_ms':  40, 'capture_suspend_ms':  60, 'use_ultra_raw_path': False, 'skip_hwnd_validity_check': True},
+    'ultra':    {'min_cycle_ms':  20, 'capture_suspend_ms':  30, 'use_ultra_raw_path': True,  'skip_hwnd_validity_check': True},
+}
+
+
+def get_perf_cfg(hk_cfg: dict) -> dict:
+    """Retorna la config del modo de rendimiento activo (defecto: safe)."""
+    mode = hk_cfg.get('performance_mode', 'safe')
+    return PERFORMANCE_MODE_CONFIGS.get(mode, PERFORMANCE_MODE_CONFIGS['safe'])
 
 
 def get_layout_profiles(cfg: dict) -> dict:
