@@ -36,11 +36,11 @@ if not _qt_ok:
         def name(self): return "#ffffff"
 
 REPLICATOR_STYLE = """
-QDialog { background: #05070a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+QDialog { background: #0a0f14; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
 QTabWidget::pane { background: #0b1016; border: 1px solid #1e293b; }
 QTabBar::tab { background: #0b1016; color: #64748b; padding: 6px 14px;
                border: 1px solid #1e293b; border-bottom: none; }
-QTabBar::tab:selected { background: #05070a; color: #00c8ff; border-bottom: 1px solid #05070a; }
+QTabBar::tab:selected { background: #0a0f14; color: #00c8ff; border-bottom: 1px solid #0a0f14; }
 QLabel { color: #94a3b8; font-size: 11px; }
 QLabel#section { color: #00c8ff; font-size: 10px; font-weight: 800;
                  letter-spacing: 1px; margin-top: 6px; }

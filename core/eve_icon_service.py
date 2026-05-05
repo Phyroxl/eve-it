@@ -97,12 +97,16 @@ class EveIconService(QObject):
         """Fetch character portrait from ESI."""
         # Using a negative ID space for characters in cache to avoid collisions with type_ids
         cache_id = -char_id
-        
+
         if cache_id in self.icon_cache:
             pix = self.icon_cache[cache_id]
-            if callback: callback(pix)
+            if callback:
+                try:
+                    callback(pix)
+                except Exception:
+                    pass
             return pix
-            
+
         if cache_id in self.pending_requests:
             if callback: self.pending_requests[cache_id].append(callback)
         else:
@@ -182,7 +186,11 @@ class EveIconService(QObject):
         
         callbacks = self.pending_requests.pop(type_id, [])
         for cb in callbacks:
-            if cb: cb(pixmap)
+            if cb:
+                try:
+                    cb(pixmap)
+                except Exception:
+                    pass
         self.icon_loaded.emit(type_id, pixmap)
 
     def _on_total_failure(self, type_id: int, size: int, label: Optional[str] = None):
@@ -202,7 +210,11 @@ class EveIconService(QObject):
         
         callbacks = self.pending_requests.pop(type_id, [])
         for cb in callbacks:
-            if cb: cb(pixmap)
+            if cb:
+                try:
+                    cb(pixmap)
+                except Exception:
+                    pass
         self.icon_failed.emit(type_id, "All endpoints failed")
 
     def _generate_placeholder(self, type_id: int, size: int, label: Optional[str] = None) -> QPixmap:

@@ -3,7 +3,7 @@
 Clona la configuración visual y el layout de ventanas de un personaje
 EVE Online a otros personajes de forma segura, con backup automático.
 
-Mejoras v2: portrait + nombre resuelto para origen y destinos.
+v3: portrait + nombre resuelto; sin panel de log visible.
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QComboBox, QListWidget, QListWidgetItem, QTextEdit, QCheckBox,
-    QFileDialog, QLineEdit, QSplitter, QAbstractItemView, QProgressBar,
-    QScrollArea,
+    QComboBox, QListWidget, QListWidgetItem, QCheckBox,
+    QFileDialog, QLineEdit, QAbstractItemView, QProgressBar,
+    QScrollArea, QMessageBox,
 )
 
 logger = logging.getLogger('eve.visual_clon')
@@ -39,6 +39,7 @@ QLabel#VCCharId { color: #64748b; font-size: 9px; }
 QLabel#VCCharInfo { color: #64748b; font-size: 9px; }
 QLabel#VCStatusOk { color: #10b981; font-size: 10px; }
 QLabel#VCStatusErr { color: #ef4444; font-size: 10px; }
+QLabel#VCStatus { color: #94a3b8; font-size: 10px; }
 QLabel#VCPortrait { border: 2px solid #1e2a3a; border-radius: 3px;
                     background: #0d1626; }
 QLabel#VCPortraitSrc { border: 2px solid #00c8ff; border-radius: 3px;
@@ -66,8 +67,6 @@ QListWidget::item { padding: 0; border-bottom: 1px solid #111827; }
 QListWidget::item:hover { background: #111827; }
 QLineEdit { background: #0d1626; color: #e2e8f0; border: 1px solid #1e293b;
     border-radius: 3px; padding: 5px 8px; }
-QTextEdit { background: #030508; color: #94a3b8; border: 1px solid #1e293b;
-    border-radius: 3px; font-family: 'Consolas', monospace; font-size: 9px; }
 QCheckBox { color: #e2e8f0; spacing: 6px; }
 QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #1e293b;
     background: #0d1626; border-radius: 2px; }
@@ -82,7 +81,7 @@ QScrollArea { border: none; background: transparent; }
 """
 
 
-# ── Reusable helper functions ──────────────────────────────────────────────────
+# ── Reusable helpers ───────────────────────────────────────────────────────────
 
 def _panel() -> tuple:
     f = QFrame(); f.setObjectName("VCPanel")
@@ -100,7 +99,6 @@ def _label(text: str, obj: str = '') -> QLabel:
 
 
 def _make_portrait_placeholder(size: int, label: str = 'PILOT') -> QPixmap:
-    """Generate a pilot placeholder pixmap matching the dark theme."""
     from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
@@ -139,8 +137,7 @@ class CharSourceCard(QFrame):
         self.portrait_lbl.setObjectName("VCPortraitSrc")
         self.portrait_lbl.setFixedSize(64, 64)
         self.portrait_lbl.setAlignment(Qt.AlignCenter)
-        placeholder = _make_portrait_placeholder(60)
-        self.portrait_lbl.setPixmap(placeholder)
+        self.portrait_lbl.setPixmap(_make_portrait_placeholder(60))
         lay.addWidget(self.portrait_lbl)
 
         text = QVBoxLayout()
@@ -178,14 +175,15 @@ class CharSourceCard(QFrame):
         try:
             from core.eve_icon_service import EveIconService
             char_id_int = int(profile.char_id)
-            pix = EveIconService.instance().get_portrait(
+            svc = EveIconService.instance()
+            pix = svc.get_portrait(
                 char_id_int, size=64,
-                callback=lambda p: self.set_portrait(p),
+                callback=lambda p, w=self: w.set_portrait(p),
             )
             if pix and not pix.isNull():
                 self.set_portrait(pix)
         except Exception as e:
-            logger.debug(f"[VC] Portrait load src {profile.char_id}: {e}")
+            logger.debug(f"[VC] Portrait src {profile.char_id}: {e}")
 
 
 # ── Custom target row widget ───────────────────────────────────────────────────
@@ -199,6 +197,7 @@ class CharRowWidget(QWidget):
         super().__init__(parent)
         self.profile = profile
         self.setFixedHeight(62)
+        self._portrait_loaded = False
         self._setup()
 
     def _setup(self):
@@ -233,27 +232,37 @@ class CharRowWidget(QWidget):
         self.chk.setChecked(checked)
 
     def set_portrait(self, pixmap: QPixmap):
-        if pixmap and not pixmap.isNull():
-            s = self._PORTRAIT_SIZE - 4
-            scaled = pixmap.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.portrait_lbl.setPixmap(scaled)
+        try:
+            if pixmap and not pixmap.isNull():
+                s = self._PORTRAIT_SIZE - 4
+                scaled = pixmap.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.portrait_lbl.setPixmap(scaled)
+        except RuntimeError:
+            pass
 
     def set_name(self, name: str):
         if name:
-            self.name_lbl.setText(name)
+            try:
+                self.name_lbl.setText(name)
+            except RuntimeError:
+                pass
 
     def load_portrait(self):
+        if self._portrait_loaded:
+            return
+        self._portrait_loaded = True
         try:
             from core.eve_icon_service import EveIconService
             char_id_int = int(self.profile.char_id)
-            pix = EveIconService.instance().get_portrait(
+            svc = EveIconService.instance()
+            pix = svc.get_portrait(
                 char_id_int, size=64,
-                callback=lambda p: self.set_portrait(p),
+                callback=lambda p, w=self: w.set_portrait(p),
             )
             if pix and not pix.isNull():
                 self.set_portrait(pix)
         except Exception as e:
-            logger.debug(f"[VC] Portrait load dst {self.profile.char_id}: {e}")
+            logger.debug(f"[VC] Portrait dst {self.profile.char_id}: {e}")
 
 
 # ── Main view ─────────────────────────────────────────────────────────────────
@@ -270,7 +279,6 @@ class VisualClonView(QWidget):
         self._scan_worker = None
         self._clone_worker = None
         self._identity_worker = None
-        # {char_id: name} resolved from ESI
         self._resolved_names: Dict[str, str] = {}
 
         self._setup_ui()
@@ -292,13 +300,11 @@ class VisualClonView(QWidget):
         sub.setWordWrap(True)
         root.addWidget(sub)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(4)
-        splitter.setStyleSheet("QSplitter::handle { background: #1e293b; }")
-        splitter.addWidget(self._build_left())
-        splitter.addWidget(self._build_right())
-        splitter.setSizes([530, 330])
-        root.addWidget(splitter, 1)
+        root.addWidget(self._build_left(), 1)
+
+        self.lbl_result = _label("", 'VCStatus')
+        self.lbl_result.setWordWrap(True)
+        root.addWidget(self.lbl_result)
 
         btns = QHBoxLayout()
         btns.setSpacing(8)
@@ -339,7 +345,7 @@ class VisualClonView(QWidget):
         lay.setContentsMargins(0, 0, 8, 0)
         lay.setSpacing(8)
 
-        # ── EVE folder ───────────────────────────────────────────────────────
+        # ── EVE folder ──────────────────────────────────────────────────────
         fp, fl = _panel()
         fl.addWidget(_label("CARPETA DE CONFIGURACIÓN EVE", 'VCSectionLabel'))
         self.edit_path = QLineEdit()
@@ -363,7 +369,7 @@ class VisualClonView(QWidget):
         self.btn_detect.clicked.connect(self._on_detect)
         self.btn_browse.clicked.connect(self._on_browse)
 
-        # ── Source selector + card ───────────────────────────────────────────
+        # ── Source selector + card ──────────────────────────────────────────
         sp, sl = _panel()
         sl.addWidget(_label("PERSONAJE ORIGEN", 'VCSectionLabel'))
         self.combo_source = QComboBox()
@@ -374,7 +380,7 @@ class VisualClonView(QWidget):
         lay.addWidget(sp)
         self.combo_source.currentIndexChanged.connect(self._on_source_changed)
 
-        # ── Targets list ─────────────────────────────────────────────────────
+        # ── Targets list ────────────────────────────────────────────────────
         tp, tl = _panel()
         tl.addWidget(_label("PERSONAJES DESTINO", 'VCSectionLabel'))
         self.list_targets = QListWidget()
@@ -395,7 +401,7 @@ class VisualClonView(QWidget):
         btn_all.clicked.connect(self._select_all_targets)
         btn_clr.clicked.connect(self._clear_targets)
 
-        # ── Sections ─────────────────────────────────────────────────────────
+        # ── Sections ────────────────────────────────────────────────────────
         sec_p, sec_l = _panel()
         sec_l.addWidget(_label("SECCIONES A COPIAR", 'VCSectionLabel'))
         note = _label(
@@ -414,7 +420,7 @@ class VisualClonView(QWidget):
             self._section_checks.append(cb)
         lay.addWidget(sec_p)
 
-        # ── Safety ────────────────────────────────────────────────────────────
+        # ── Safety ──────────────────────────────────────────────────────────
         safe_p, safe_l = _panel()
         safe_l.addWidget(_label("OPCIONES DE SEGURIDAD", 'VCSectionLabel'))
         self.chk_backup = QCheckBox("Crear backup antes de aplicar (recomendado)")
@@ -429,28 +435,16 @@ class VisualClonView(QWidget):
         scroll.setWidget(w)
         return scroll
 
-    # ── Right panel ────────────────────────────────────────────────────────────
-
-    def _build_right(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 0, 0, 0)
-        lay.setSpacing(6)
-        lay.addWidget(_label("RESULTADOS / LOG", 'VCSectionLabel'))
-        self.log_view = QTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMinimumHeight(200)
-        lay.addWidget(self.log_view, 1)
-        self.lbl_result = _label("", 'VCStatusOk')
-        self.lbl_result.setWordWrap(True)
-        lay.addWidget(self.lbl_result)
-        return w
-
     # ── Helpers ────────────────────────────────────────────────────────────────
 
-    def _log(self, msg: str, color: str = '#94a3b8'):
-        self.log_view.append(f'<span style="color:{color};">{msg}</span>')
-        logger.info(f"[VC UI] {msg}")
+    def _set_status(self, msg: str, ok: bool = True, warn: bool = False):
+        self.lbl_result.setText(msg)
+        if warn:
+            self.lbl_result.setStyleSheet('color: #f59e0b;')
+        elif ok:
+            self.lbl_result.setStyleSheet('color: #10b981;')
+        else:
+            self.lbl_result.setStyleSheet('color: #ef4444;')
 
     def _set_busy(self, busy: bool):
         self.progress.setVisible(busy)
@@ -548,7 +542,6 @@ class VisualClonView(QWidget):
         self._resolved_names.update(names)
         if not self._folder:
             return
-        # Update combo labels
         self.combo_source.blockSignals(True)
         for i in range(self.combo_source.count()):
             p = self.combo_source.itemData(i)
@@ -557,12 +550,10 @@ class VisualClonView(QWidget):
                 if name:
                     self.combo_source.setItemText(i, name)
         self.combo_source.blockSignals(False)
-        # Update source card
         src = self.combo_source.currentData()
         if src:
             name = names.get(src.char_id, '')
             self.source_card.update_profile(src, name_override=name)
-        # Update target row names
         for i in range(self.list_targets.count()):
             item = self.list_targets.item(i)
             p = item.data(Qt.UserRole)
@@ -571,14 +562,13 @@ class VisualClonView(QWidget):
                 name = names.get(p.char_id, '')
                 if name:
                     w.set_name(name)
-        resolved_count = sum(1 for cid in names if not names[cid].startswith('Personaje '))
-        self._log(f"Nombres resueltos: {resolved_count}/{len(names)}", '#00c8ff')
+        resolved_count = sum(1 for v in names.values() if not v.startswith('Personaje '))
+        logger.debug(f"[VC] Nombres resueltos: {resolved_count}/{len(names)}")
 
     # ── Slots ───────────────────────────────────────────────────────────────────
 
     def _on_detect(self):
-        self.log_view.clear()
-        self._log("Buscando instalaciones de EVE Online…", '#00c8ff')
+        self._set_status("Buscando instalaciones de EVE Online…", ok=True)
         self._set_busy(True)
         self._scan_worker = self._make_scan_worker(path=None)
         self._scan_worker.start()
@@ -589,8 +579,7 @@ class VisualClonView(QWidget):
         )
         if not path:
             return
-        self.log_view.clear()
-        self._log(f"Escaneando: {path}", '#00c8ff')
+        self._set_status(f"Escaneando: {path}", ok=True)
         self._set_busy(True)
         self._scan_worker = self._make_scan_worker(path=Path(path))
         self._scan_worker.start()
@@ -598,7 +587,7 @@ class VisualClonView(QWidget):
     def _make_scan_worker(self, path):
         from ui.tools.visual_clon_worker import ScanWorker
         w = ScanWorker(path=path, parent=self)
-        w.status.connect(lambda m: self._log(m))
+        w.status.connect(lambda m: logger.info(f"[VC] {m}"))
         w.finished.connect(self._on_scan_done)
         w.error.connect(self._on_scan_error)
         return w
@@ -610,20 +599,19 @@ class VisualClonView(QWidget):
         self.edit_path.setText(str(folder.path))
         n = len(folder.char_profiles)
         self._show_folder_status(True, f"Válido — {n} perfil(es) de personaje encontrados.")
-        self._log(f"Carpeta: {folder.path}", '#10b981')
-        self._log(f"Perfiles encontrados: {n}", '#10b981')
+        if n == 0:
+            self._set_status("No se encontraron perfiles (core_char_*.dat).", ok=False, warn=True)
+        else:
+            self._set_status(f"{n} perfiles encontrados. Resolviendo nombres…", ok=True)
         self._populate_profiles()
         self._set_action_enabled(n > 0)
-        if n == 0:
-            self._log("No se encontraron perfiles (core_char_*.dat).", '#f59e0b')
-        else:
-            self._log("Resolviendo nombres de personaje…", '#64748b')
+        if n > 0:
             self._start_identity_resolution()
 
     def _on_scan_error(self, msg: str):
         self._set_busy(False)
         self._show_folder_status(False, msg)
-        self._log(f"ERROR: {msg}", '#ef4444')
+        self._set_status(f"Error: {msg}", ok=False)
 
     def _on_source_changed(self):
         src = self.combo_source.currentData()
@@ -637,39 +625,39 @@ class VisualClonView(QWidget):
     def _on_analyze(self):
         if not self._validate_selection():
             return
-        self.log_view.clear()
         src = self.combo_source.currentData()
         targets = self._get_selected_targets()
         src_name = self._resolved_names.get(src.char_id, src.display_name)
-        self._log("Analizando…", '#00c8ff')
-        self._log(f"Origen: {src_name} (ID {src.char_id})")
         target_names = [
             self._resolved_names.get(t.char_id, t.display_name) for t in targets
         ]
-        self._log(f"Destinos ({len(targets)}): {', '.join(target_names)}")
-        self._log(f"Archivo origen: {src.file_path.name} ({src.file_size // 1024} KB)")
-        self._log("Secciones incluidas en el archivo de perfil EVE:")
+        lines = [
+            f"Origen: {src_name} (ID {src.char_id})",
+            f"Destinos ({len(targets)}): {', '.join(target_names)}",
+            f"Archivo: {src.file_path.name} ({src.file_size // 1024} KB)",
+            "",
+            "Archivos destino (con backup previo):",
+        ]
         from core.visual_clon_models import COPY_SECTIONS
-        for cb, (_, sec_name, _) in zip(self._section_checks, COPY_SECTIONS):
-            self._log(f"  {'✓' if cb.isChecked() else '○'} {sec_name}")
-        self._log("Archivos destino (con backup previo):")
         for t in targets:
             dst = src.file_path.parent / f"core_char_{t.char_id}.dat"
             exists = "existe" if dst.exists() else "no existe aún"
             tname = self._resolved_names.get(t.char_id, t.display_name)
-            self._log(f"  → {dst.name} — {tname} ({exists})")
-        self._log("Análisis completado.", '#10b981')
-        self.lbl_result.setText("Análisis completado.")
-        self.lbl_result.setStyleSheet('color: #10b981;')
+            lines.append(f"  → {dst.name} — {tname} ({exists})")
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Análisis — Visual Clon")
+        msg_box.setText('\n'.join(lines))
+        msg_box.exec()
+        self._set_status("Análisis completado.", ok=True)
 
     def _on_simulate(self):
         self._run_clone(dry_run=True)
 
     def _on_apply(self):
-        from PySide6.QtWidgets import QMessageBox
         targets = self._get_selected_targets()
         src = self.combo_source.currentData()
         if not src or not targets:
+            self._set_status("Selecciona origen y al menos un destino.", ok=False, warn=True)
             return
         src_name = self._resolved_names.get(src.char_id, src.display_name)
         msg = QMessageBox(self)
@@ -696,48 +684,45 @@ class VisualClonView(QWidget):
         targets = self._get_selected_targets()
         plan = build_copy_plan(source=src, targets=targets, dry_run=dry_run)
 
-        self.log_view.clear()
         mode_lbl = "SIMULACIÓN" if dry_run else "APLICANDO"
         src_name = self._resolved_names.get(src.char_id, src.display_name)
-        self._log(f"[{mode_lbl}] Origen: {src_name}", '#00c8ff')
-        self._log(f"[{mode_lbl}] Destinos: {len(targets)}", '#00c8ff')
+        logger.info(f"[VC] [{mode_lbl}] {src_name} → {len(targets)} destino(s)")
+        self._set_status(f"[{mode_lbl}] Iniciando…", ok=True)
 
         self._set_busy(True)
         self._clone_worker = CloneWorker(plan=plan, parent=self)
-        self._clone_worker.status.connect(self._log)
+        self._clone_worker.status.connect(lambda m: logger.info(f"[VC] {m}"))
         self._clone_worker.finished.connect(self._on_clone_done)
         self._clone_worker.error.connect(self._on_clone_error)
         self._clone_worker.start()
 
     def _on_clone_done(self, result):
         self._set_busy(False)
-        color = '#10b981' if result.success else '#f59e0b'
         if result.dry_run:
-            msg = "Simulación completada. No se han modificado archivos."
+            self._set_status("Simulación completada. No se han modificado archivos.", ok=True)
         elif result.success:
-            msg = (f"¡Visual Clon aplicado! {len(result.files_copied)} archivo(s) copiados, "
-                   f"{len(result.backups)} backup(s) creados.")
+            self._set_status(
+                f"¡Visual Clon aplicado! {len(result.files_copied)} archivo(s) copiados, "
+                f"{len(result.backups)} backup(s) creados.",
+                ok=True,
+            )
         else:
-            msg = f"Completado con errores: {'; '.join(result.errors[:2])}"
-        self.lbl_result.setText(msg)
-        self.lbl_result.setStyleSheet(f'color: {color};')
-        for err in result.errors:
-            self._log(f"ERROR: {err}", '#ef4444')
+            detail = '; '.join(result.errors[:2])
+            self._set_status(f"Completado con errores: {detail}", ok=False)
+            if result.errors:
+                QMessageBox.warning(self, "Errores — Visual Clon", '\n'.join(result.errors))
 
     def _on_clone_error(self, msg: str):
         self._set_busy(False)
-        self._log(f"ERROR: {msg}", '#ef4444')
-        self.lbl_result.setText(f"Error: {msg}")
-        self.lbl_result.setStyleSheet('color: #ef4444;')
+        self._set_status(f"Error: {msg}", ok=False)
+        QMessageBox.critical(self, "Error — Visual Clon", msg)
 
     def _on_restore(self):
         from core.visual_clon_backup import list_backups, restore_backup
         from PySide6.QtWidgets import QInputDialog
         backups = list_backups()
         if not backups:
-            self._log("No hay backups disponibles.", '#f59e0b')
-            self.lbl_result.setText("No hay backups disponibles.")
-            self.lbl_result.setStyleSheet('color: #f59e0b;')
+            self._set_status("No hay backups disponibles.", ok=False, warn=True)
             return
         items = [
             f"{b.timestamp.strftime('%d/%m/%Y %H:%M:%S')} — "
@@ -751,7 +736,6 @@ class VisualClonView(QWidget):
         if not ok:
             return
         record = backups[items.index(item)]
-        from PySide6.QtWidgets import QMessageBox
         conf = QMessageBox.question(
             self, "Confirmar restauración",
             f"¿Restaurar backup del {record.timestamp.strftime('%d/%m/%Y %H:%M')}?\n"
@@ -759,24 +743,19 @@ class VisualClonView(QWidget):
         )
         if conf != QMessageBox.Yes:
             return
-        self.log_view.clear()
-        self._log(f"Restaurando backup: {record.backup_dir.name}…", '#00c8ff')
+        self._set_status("Restaurando backup…", ok=True)
         errors = restore_backup(record)
         if errors:
-            for e in errors:
-                self._log(f"ERROR: {e}", '#ef4444')
-            self.lbl_result.setText("Restauración con errores.")
-            self.lbl_result.setStyleSheet('color: #f59e0b;')
+            self._set_status("Restauración con errores.", ok=False, warn=True)
+            QMessageBox.warning(self, "Errores — Restauración", '\n'.join(errors))
         else:
-            self._log("Backup restaurado correctamente.", '#10b981')
-            self.lbl_result.setText("Backup restaurado.")
-            self.lbl_result.setStyleSheet('color: #10b981;')
+            self._set_status("Backup restaurado correctamente.", ok=True)
 
     def _validate_selection(self) -> bool:
         if not self.combo_source.currentData():
-            self._log("Selecciona un personaje origen.", '#f59e0b')
+            self._set_status("Selecciona un personaje origen.", ok=False, warn=True)
             return False
         if not self._get_selected_targets():
-            self._log("Selecciona al menos un personaje destino.", '#f59e0b')
+            self._set_status("Selecciona al menos un personaje destino.", ok=False, warn=True)
             return False
         return True
