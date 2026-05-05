@@ -894,3 +894,65 @@ Autodetecta sin hardcodear rutas del usuario:
 - `python -m pytest tests/test_visual_clon.py -v` → **26 passed**
 - `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py
   tests/test_replicator_active_border.py tests/test_cycle_sync.py -q` → **142 passed**
+
+## 24) FEAT — Improve Visual Clon character identification UI
+
+**Commit `FEAT: Improve Visual Clon character identification UI`**
+
+### Qué implementa
+
+Mejora visual del panel de Visual Clon para mostrar retratos y nombres de personaje
+resueltos vía ESI, en lugar de IDs numéricos crudos.
+
+### Rutas creadas / modificadas
+
+| Ruta | Acción |
+|---|---|
+| `core/character_identity_service.py` | Nuevo — resolución de nombres vía ESI |
+| `ui/tools/visual_clon_worker.py` | Modificado — añadido `IdentityResolveWorker` |
+| `ui/tools/visual_clon_view.py` | Modificado — UI con retratos y nombres |
+
+### Componentes nuevos
+
+**`core/character_identity_service.py`**
+- Cache en memoria (`_NAME_CACHE: Dict[str, str]`) + cache en disco (`config/visual_clon_name_cache.json`)
+- `get_name(char_id)` → nombre cacheado o "Personaje {id}" (nunca bloquea)
+- `resolve_names_batch(char_ids)` → POST a ESI `/universe/names/` filtrando ya cacheados
+- `_load_disk_cache()` se ejecuta al importar el módulo
+
+**`IdentityResolveWorker(QThread)`** (en `visual_clon_worker.py`)
+- Señal: `names_ready = Signal(dict)` → `{char_id: name}`
+- Llama `resolve_names_batch` en hilo secundario; emite `{}` ante cualquier error
+
+**`CharSourceCard(QFrame)`** (en `visual_clon_view.py`)
+- `objectName = "VCSourceCard"` — borde cyan (`#00c8ff`)
+- Retrato 64×64 + nombre en negrita + ID + info de archivo
+- Métodos: `set_char(profile)`, `set_portrait(pixmap)`, `set_name(name)`
+
+**`CharRowWidget(QWidget)`** (en `visual_clon_view.py`)
+- Altura fija 62px; checkbox + retrato 48×48 + nombre + ID
+- Métodos: `is_checked()`, `set_checked(v)`, `set_portrait(pixmap)`, `set_name(name)`, `load_portrait()`
+
+**`_make_portrait_placeholder(size, label)`** — `QPixmap` con `QPainter` + `QLinearGradient` tema oscuro
+
+### Flujo de carga
+
+1. `_populate_from_folder()` → crea combo source + filas targets con placeholders
+2. `_start_identity_resolution()` → lanza `IdentityResolveWorker`
+3. `_on_names_ready(names)` → actualiza combo labels, `CharSourceCard`, y cada `CharRowWidget`
+4. Retratos: `EveIconService.get_portrait()` (ya async+cached); se llama en `CharRowWidget.load_portrait()` y en `_update_source_card()`
+
+### Estilos añadidos
+
+```
+QFrame#VCSourceCard   { background: #0b1016; border: 1px solid #00c8ff; border-radius: 3px; }
+QLabel#VCPortrait     { border: 2px solid #1e2a3a; border-radius: 3px; background: #0d1626; }
+QLabel#VCPortraitSrc  { border: 2px solid #00c8ff; border-radius: 3px; background: #0d1626; }
+QLabel#VCCharName     { color: #e2e8f0; font-size: 12px; font-weight: 800; }
+QLabel#VCCharId       { color: #64748b; font-size: 9px; }
+```
+
+### Tests
+
+- `python -m compileall core/character_identity_service.py ui/tools/visual_clon_worker.py ui/tools/visual_clon_view.py` → OK
+- `python -m pytest tests/test_visual_clon.py -q` → **26 passed**

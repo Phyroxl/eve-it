@@ -1,4 +1,4 @@
-"""QThread workers for Visual Clon — scan and clone operations."""
+"""QThread workers for Visual Clon — scan, clone, and identity resolution."""
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -11,7 +11,7 @@ logger = logging.getLogger('eve.visual_clon')
 class ScanWorker(QThread):
     """Scans EVE settings folders in a background thread."""
     status = Signal(str)
-    finished = Signal(object)   # EveSettingsFolder or None
+    finished = Signal(object)   # EveSettingsFolder
     error = Signal(str)
 
     def __init__(self, path: Optional[Path] = None, parent=None):
@@ -85,3 +85,21 @@ class CloneWorker(QThread):
         except Exception as e:
             logger.error(f"[CLONE WORKER] {e}", exc_info=True)
             self.error.emit(str(e))
+
+
+class IdentityResolveWorker(QThread):
+    """Resolves character names from ESI in a background thread."""
+    names_ready = Signal(dict)  # {char_id: name}
+
+    def __init__(self, char_ids: List[str], parent=None):
+        super().__init__(parent)
+        self._char_ids = list(char_ids)
+
+    def run(self):
+        try:
+            from core.character_identity_service import resolve_names_batch
+            result = resolve_names_batch(self._char_ids)
+            self.names_ready.emit(result)
+        except Exception as e:
+            logger.error(f"[IDENTITY WORKER] {e}", exc_info=True)
+            self.names_ready.emit({})
