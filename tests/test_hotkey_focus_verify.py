@@ -194,5 +194,121 @@ class TestCycleGroupIndexGuard(unittest.TestCase):
         self.assertEqual(evs[0]['actual_hwnd'], 0)
 
 
+# ── focus_eve_window_reliable unit tests ─────────────────────────────────────
+
+class TestFocusEveWindowReliable(unittest.TestCase):
+    """Tests for the budgeted focus_eve_window_reliable function."""
+
+    def _make_user32(self, is_window=True, is_visible=True, is_iconic=False, fg_hwnd=9999):
+        m = MagicMock()
+        m.IsWindow.return_value = int(is_window)
+        m.IsWindowVisible.return_value = int(is_visible)
+        m.IsIconic.return_value = int(is_iconic)
+        m.GetForegroundWindow.return_value = fg_hwnd
+        m.SetForegroundWindow.return_value = 1
+        m.SetWindowPos.return_value = 1
+        m.ShowWindow.return_value = 1
+        return m
+
+    def test_returns_false_for_hwnd_zero(self):
+        from overlay.win32_capture import focus_eve_window_reliable
+        ok, detail = focus_eve_window_reliable(0)
+        self.assertFalse(ok)
+        self.assertIn('invalid_hwnd', detail)
+
+    def test_returns_false_for_invalid_window(self):
+        from overlay.win32_capture import focus_eve_window_reliable
+        with patch('overlay.win32_capture.user32') as mu:
+            mu.IsWindow.return_value = 0
+            ok, detail = focus_eve_window_reliable(1234)
+        self.assertFalse(ok)
+        self.assertIn('invalid_hwnd', detail)
+
+    def test_detail_contains_strategy_and_total_ms(self):
+        from overlay.win32_capture import focus_eve_window_reliable
+        with patch('overlay.win32_capture.user32') as mu, \
+             patch('overlay.win32_capture.verify_foreground_window', return_value=(True, 9999, 3.0)):
+            mu.IsWindow.return_value = 1
+            mu.IsWindowVisible.return_value = 1
+            mu.IsIconic.return_value = 0
+            ok, detail = focus_eve_window_reliable(9999)
+        self.assertTrue(ok)
+        self.assertIn('strategy=', detail)
+        self.assertIn('total_ms=', detail)
+
+    def test_fast_strategy_on_immediate_verify(self):
+        from overlay.win32_capture import focus_eve_window_reliable
+        with patch('overlay.win32_capture.user32') as mu, \
+             patch('overlay.win32_capture.verify_foreground_window', return_value=(True, 9999, 2.0)):
+            mu.IsWindow.return_value = 1
+            mu.IsWindowVisible.return_value = 1
+            mu.IsIconic.return_value = 0
+            ok, detail = focus_eve_window_reliable(9999)
+        self.assertTrue(ok)
+        self.assertIn('strategy=fast', detail)
+        self.assertIn('verified=True', detail)
+
+    def test_retry_async_strategy_when_fast_fails(self):
+        from overlay.win32_capture import focus_eve_window_reliable
+        call_count = [0]
+        def fake_verify(hwnd, timeout_ms=40, poll_ms=2):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return False, 0, float(timeout_ms)  # fast fails
+            return True, hwnd, 5.0                   # retry_async succeeds
+        with patch('overlay.win32_capture.user32') as mu, \
+             patch('overlay.win32_capture.verify_foreground_window', side_effect=fake_verify):
+            mu.IsWindow.return_value = 1
+            mu.IsWindowVisible.return_value = 1
+            mu.IsIconic.return_value = 0
+            ok, detail = focus_eve_window_reliable(9999, max_total_ms=60)
+        self.assertTrue(ok)
+        self.assertIn('strategy=retry_async', detail)
+
+    def test_fails_fast_respects_budget(self):
+        """With max_total_ms=1, should return quickly with budget_exceeded or fast:skipped."""
+        from overlay.win32_capture import focus_eve_window_reliable
+        with patch('overlay.win32_capture.user32') as mu, \
+             patch('overlay.win32_capture.verify_foreground_window', return_value=(False, 0, 50.0)):
+            mu.IsWindow.return_value = 1
+            mu.IsWindowVisible.return_value = 1
+            mu.IsIconic.return_value = 0
+            t0 = time.perf_counter()
+            ok, detail = focus_eve_window_reliable(9999, max_total_ms=1)
+            elapsed = (time.perf_counter() - t0) * 1000
+        self.assertFalse(ok)
+        # Must not have taken much longer than budget
+        self.assertLess(elapsed, 500)
+
+    def test_no_attach_thread_when_flag_false(self):
+        """AttachThreadInput must NOT be called when ENABLE_ATTACH_THREAD_FALLBACK=False."""
+        import overlay.win32_capture as wc
+        from overlay.win32_capture import focus_eve_window_reliable
+        original = wc.ENABLE_ATTACH_THREAD_FALLBACK
+        try:
+            wc.ENABLE_ATTACH_THREAD_FALLBACK = False
+            with patch('overlay.win32_capture.user32') as mu, \
+                 patch('overlay.win32_capture.verify_foreground_window', return_value=(False, 0, 20.0)):
+                mu.IsWindow.return_value = 1
+                mu.IsWindowVisible.return_value = 1
+                mu.IsIconic.return_value = 0
+                focus_eve_window_reliable(9999, max_total_ms=60)
+            mu.AttachThreadInput.assert_not_called()
+        finally:
+            wc.ENABLE_ATTACH_THREAD_FALLBACK = original
+
+    def test_budget_exceeded_flag_in_detail(self):
+        """When all strategies exhaust the budget, detail should contain budget_exceeded."""
+        from overlay.win32_capture import focus_eve_window_reliable
+        with patch('overlay.win32_capture.user32') as mu, \
+             patch('overlay.win32_capture.verify_foreground_window', return_value=(False, 0, 30.0)):
+            mu.IsWindow.return_value = 1
+            mu.IsWindowVisible.return_value = 1
+            mu.IsIconic.return_value = 0
+            ok, detail = focus_eve_window_reliable(9999, max_total_ms=60)
+        self.assertFalse(ok)
+        self.assertIn('budget_exceeded=', detail)
+
+
 if __name__ == '__main__':
     unittest.main()

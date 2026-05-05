@@ -189,43 +189,53 @@
 
 ## 12) FIX — Replicator window focus reliability (focus_eve_window_reliable)
 
-**Fase:** Fase 1 — Mejorar fiabilidad del cambio de foco de ventana.
+**Commit 90bc585** — Primera implementación. Introdujo `focus_eve_window_reliable` con estrategias fast → raise_sync → attach_thread.
 
-**Problema:** En macros rápidas (Sleep 50-70ms), `verify_foreground_window` devolvía `[NOT VERIFIED]` frecuentemente porque `focus_eve_window_perf` solo hacía una pasada rápida (async Z-order + SetForegroundWindow) sin garantías de foreground. Ejemplos reales:
+**Problema detectado en 90bc585:** Las estrategias `raise_sync` (SetWindowPos síncrono) y `attach_thread` (SetFocus/SetActiveWindow) usan SendMessage cross-process que puede bloquear 200-900 ms esperando la cola de mensajes de EVE. Ejemplos reales:
 ```
-VERIFY ok=True verified=False actual=0 verify=42.0ms [NOT VERIFIED]
-VERIFY ok=True verified=False actual=0 verify=41.6ms [NOT VERIFIED]
+FOCUS ok=True title='EVE — Arien Inkura' total=982.9ms
+FOCUS ok=True title='EVE — KonaN Herrera' total=292.0ms
 ```
 
-**Solución:** Nueva función `focus_eve_window_reliable(hwnd) -> (ok, detail)` con tres estrategias en cascada:
-1. **fast** — BringWindowToTop + SetForegroundWindow + SetWindowPos async. Verifica en 20ms.
-2. **raise_sync** — SetWindowPos síncrono + BringWindowToTop + SetForegroundWindow. Verifica en 25ms adicionales.
-3. **attach_thread** — AttachThreadInput (target + fg thread), SetForegroundWindow + SetActiveWindow + SetFocus. Verifica en 35ms adicionales. try/finally garantiza detach.
+## 13) FIX — Bound Replicator reliable focus latency
 
-`ok=True` solo cuando `GetForegroundWindow` confirma el target. Budget total ~90ms worst case.
+**Motivo:** focus_eve_window_reliable verificaba foreground pero bloqueaba la macro durante cientos de ms. `BringWindowToTop` y `SetWindowPos` sin `SWP_ASYNCWINDOWPOS` son SendMessage síncronos; `SetFocus`/`SetActiveWindow` también.
 
-**Cambio en `_cycle_group` y `_cycle`:** Sustituyen `focus_eve_window_perf` + llamada externa `verify_foreground_window(40ms)` por `focus_eve_window_reliable`. Opción A: `verified = ok` (ya verificado internamente). El índice solo avanza si `ok=True`. Eliminado el `elif ok:` que avanzaba `notify_active_client_changed` sin verificación.
+**Nuevo diseño — presupuesto estricto:**
+- `focus_eve_window_reliable(hwnd, max_total_ms=60)` — nunca supera el presupuesto.
+- Solo usa `SetForegroundWindow` + `SetWindowPos(SWP_ASYNCWINDOWPOS)` — ambos async, < 5ms.
+- Sin `BringWindowToTop` (SendMessage síncrono). Sin `SetWindowPos` síncrono.
+- `ENABLE_ATTACH_THREAD_FALLBACK = False` — AttachThreadInput desactivado por defecto.
 
-**Diagnóstico:** El log ahora incluye `strategy=fast/raise_sync/attach_thread/failed` en `[FOCUS PERF]` y `[HOTKEY PERF]`. El evento `focus_result` incluye `focus_detail`. El evento `cycle_group_done`/`cycle_done` incluye `strategy`.
+**Estrategias activas por defecto:**
+1. **fast** — SetForegroundWindow + SetWindowPos(async) → verify 20ms
+2. **retry_async** — repite la misma llamada → verify 25ms
+3. **final** — un SetForegroundWindow más → verify 10ms
 
-**Ejemplo de salida esperada:**
+**Protección de presupuesto:** `_elapsed()` / `_remaining()` antes de cada verify. Si `remaining <= 0`, devuelve `ok=False` inmediatamente con `budget_exceeded=True`. El timeout de cada verify es `min(deseado, remaining)`.
+
+**Detección de llamadas lentas:** Si alguna llamada Win32 tarda > 50ms, se añade `slow_call=NombreLlamada:Xms` al detail.
+
+**Detail de ejemplo:**
 ```
-[FOCUS PERF] target='EVE — X' reliable_focus strategy=attach_thread verified=True verify_ms=18.7 actual=123456 total_ms=23.4
-[HOTKEY PERF] accepted ... focus_ok=True focus_verified=True strategy=attach_thread verify_ms=18.7
+reliable_focus strategy=fast verified=True verify_ms=8.2 actual=123 total_ms=9.1 attempts=fast:true budget_exceeded=False
+reliable_focus strategy=retry_async verified=True verify_ms=18.7 actual=123 total_ms=31.4 attempts=fast:false,retry_async:true budget_exceeded=False
+reliable_focus strategy=failed verified=False actual=0 total_ms=58.9 attempts=fast:false,retry_async:false budget_exceeded=False
+reliable_focus strategy=failed verified=False actual=0 total_ms=63.2 attempts=fast:false,retry_async:false budget_exceeded=True
 ```
 
 **Archivos Modificados:**
-- `overlay/win32_capture.py` — kernel32 module-level, nuevas constantes SWP, `focus_eve_window_reliable()`
-- `overlay/replicator_hotkeys.py` — `_cycle_group` y `_cycle` usan `focus_eve_window_reliable`, lógica simplificada
-- `tests/test_hotkey_focus_verify.py` — `_run_cb` actualizado para parchear `focus_eve_window_reliable`
+- `overlay/win32_capture.py` — `ENABLE_ATTACH_THREAD_FALLBACK=False`, rediseño completo de `focus_eve_window_reliable`
+- `tests/test_hotkey_focus_verify.py` — 8 tests nuevos en `TestFocusEveWindowReliable`
 
 **Pruebas:**
 - `python -m py_compile overlay/win32_capture.py overlay/replicator_hotkeys.py` → OK
-- `python -m pytest tests -k "replicator or hotkey or focus or win32"` → **117 passed**
+- `python -m pytest tests -k "replicator or hotkey or focus or win32"` → **125 passed**
 
 **Cómo validar en diagnóstico:**
-1. Abrir diagnóstico en vivo → pestaña Hotkeys → Iniciar diagnóstico.
-2. Ejecutar macro con Sleep 70ms. Verificar que desaparecen o bajan los `[NOT VERIFIED]`.
-3. Comprobar línea FOCUS: `strategy=fast` (caso ideal), `strategy=raise_sync` (medio), `strategy=attach_thread` (lento).
-4. Si persisten NOT VERIFIED con `strategy=failed`, el problema es más profundo (DWM, otro proceso bloqueando foco).
-5. Probar Sleep 60ms y 50ms si Sleep 70 funciona.
+1. Limpiar `logs/hotkey_perf.log`. Abrir diagnóstico en vivo.
+2. Ejecutar macro Sleep 70ms. Revisar líneas FOCUS.
+3. No debe aparecer `total=900ms`, `total=200ms` etc.
+4. Objetivo: mayoría < 30ms, peor caso < 80ms.
+5. Si un ciclo falla, la línea debe mostrar `strategy=failed budget_exceeded=False/True` y no bloquear la macro.
+6. Probar Sleep 60ms y Sleep 50ms si Sleep 70 funciona.

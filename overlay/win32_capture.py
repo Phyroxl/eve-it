@@ -309,15 +309,26 @@ def focus_eve_window_perf(hwnd: int) -> tuple:
     )
     return ok, perf_line
 
-def focus_eve_window_reliable(hwnd: int) -> tuple:
-    """Multi-strategy focus with internal foreground verification.
+# Set to True only for experimental testing of blocking AttachThreadInput fallback.
+# Must remain False in production — AttachThreadInput + SetFocus can stall 200-900 ms.
+ENABLE_ATTACH_THREAD_FALLBACK = False
+
+
+def focus_eve_window_reliable(hwnd: int, max_total_ms: int = 60) -> tuple:
+    """Budgeted multi-strategy focus with internal foreground verification.
 
     Returns (ok: bool, detail: str).
     ok=True only when GetForegroundWindow confirms the target is active.
-    Tries three strategies in order: fast → raise_sync → attach_thread.
-    Total budget: ~90 ms worst case.
+    Only uses async (non-blocking) Win32 calls by default.
+    Hard budget: max_total_ms (default 60 ms) — never blocks beyond that.
     """
     t0 = time.perf_counter()
+
+    def _elapsed() -> float:
+        return (time.perf_counter() - t0) * 1000
+
+    def _remaining() -> float:
+        return max_total_ms - _elapsed()
 
     if not hwnd or not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
         return False, f'reliable_focus invalid_hwnd hwnd={hwnd}'
@@ -329,89 +340,154 @@ def focus_eve_window_reliable(hwnd: int) -> tuple:
         pass
 
     _flags_async = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_ASYNCWINDOWPOS | _SWP_SHOWWINDOW
-    _flags_sync  = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW
+    slow_calls: list = []
 
-    # Strategy 1: fast — async Z-order raise + SetForegroundWindow
-    try:
-        user32.BringWindowToTop(hwnd)
-        user32.SetForegroundWindow(hwnd)
-        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _flags_async)
-    except Exception:
-        pass
+    def _async_raise():
+        # SetForegroundWindow + async SetWindowPos: both post to queues, < 5 ms.
+        # Never uses BringWindowToTop or sync SetWindowPos — those are SendMessage
+        # and can stall 200-900 ms waiting for EVE's message loop.
+        t_sfg = time.perf_counter()
+        try:
+            user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        sfg_ms = (time.perf_counter() - t_sfg) * 1000
+        if sfg_ms > 50:
+            slow_calls.append(f'SetForegroundWindow:{sfg_ms:.1f}ms')
 
-    verified, actual, verify_ms = verify_foreground_window(hwnd, timeout_ms=20, poll_ms=1)
-    total_ms = (time.perf_counter() - t0) * 1000
+        t_swp = time.perf_counter()
+        try:
+            user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _flags_async)
+        except Exception:
+            pass
+        swp_ms = (time.perf_counter() - t_swp) * 1000
+        if swp_ms > 50:
+            slow_calls.append(f'SetWindowPos:{swp_ms:.1f}ms')
+
+    def _slow_tag() -> str:
+        return (' slow_call=' + ','.join(slow_calls)) if slow_calls else ''
+
+    # Strategy 1: fast
+    _async_raise()
+    rem = _remaining()
+    if rem <= 0:
+        return False, (
+            f'reliable_focus strategy=failed verified=False actual=0 '
+            f'total_ms={_elapsed():.1f} attempts=fast:skipped '
+            f'budget_exceeded=True{_slow_tag()}'
+        )
+    verified, actual, verify_ms = verify_foreground_window(
+        hwnd, timeout_ms=max(1, min(20, int(rem))), poll_ms=1
+    )
     if verified:
         return True, (
             f'reliable_focus strategy=fast verified=True '
-            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={total_ms:.1f}'
+            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={_elapsed():.1f} '
+            f'attempts=fast:true budget_exceeded=False{_slow_tag()}'
         )
 
-    # Strategy 2: raise_sync — synchronous Z-order raise
-    try:
-        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _flags_sync)
-        user32.BringWindowToTop(hwnd)
-        user32.SetForegroundWindow(hwnd)
-    except Exception:
-        pass
-
-    verified, actual, verify_ms = verify_foreground_window(hwnd, timeout_ms=25, poll_ms=1)
-    total_ms = (time.perf_counter() - t0) * 1000
+    # Strategy 2: retry_async
+    rem = _remaining()
+    if rem <= 0:
+        return False, (
+            f'reliable_focus strategy=failed verified=False actual={actual} '
+            f'total_ms={_elapsed():.1f} attempts=fast:false,retry_async:skipped '
+            f'budget_exceeded=True{_slow_tag()}'
+        )
+    _async_raise()
+    rem = _remaining()
+    if rem <= 0:
+        return False, (
+            f'reliable_focus strategy=failed verified=False actual={actual} '
+            f'total_ms={_elapsed():.1f} attempts=fast:false,retry_async:false '
+            f'budget_exceeded=True{_slow_tag()}'
+        )
+    verified, actual, verify_ms = verify_foreground_window(
+        hwnd, timeout_ms=max(1, min(25, int(rem))), poll_ms=1
+    )
     if verified:
         return True, (
-            f'reliable_focus strategy=raise_sync verified=True '
-            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={total_ms:.1f}'
+            f'reliable_focus strategy=retry_async verified=True '
+            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={_elapsed():.1f} '
+            f'attempts=fast:false,retry_async:true budget_exceeded=False{_slow_tag()}'
         )
 
-    # Strategy 3: attach_thread — temporarily share input queues
-    try:
-        fg_hwnd = user32.GetForegroundWindow()
-        current_thread = kernel32.GetCurrentThreadId()
-        pid_buf = wt.DWORD()
-        target_thread = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_buf))
-        fg_thread = 0
-        if fg_hwnd and fg_hwnd != hwnd:
-            fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
-
-        attached_target = False
-        attached_fg = False
+    # Strategy 3: final (ultracorta — one last SetForegroundWindow + short verify)
+    rem = _remaining()
+    if rem > 5:
         try:
-            if target_thread and target_thread != current_thread:
-                user32.AttachThreadInput(current_thread, target_thread, True)
-                attached_target = True
-            if fg_thread and fg_thread != current_thread and fg_thread != target_thread:
-                user32.AttachThreadInput(current_thread, fg_thread, True)
-                attached_fg = True
-            user32.BringWindowToTop(hwnd)
             user32.SetForegroundWindow(hwnd)
-            user32.SetActiveWindow(hwnd)
-            user32.SetFocus(hwnd)
-            verified, actual, verify_ms = verify_foreground_window(hwnd, timeout_ms=35, poll_ms=1)
-        finally:
-            if attached_target:
-                try:
-                    user32.AttachThreadInput(current_thread, target_thread, False)
-                except Exception:
-                    pass
-            if attached_fg:
-                try:
-                    user32.AttachThreadInput(current_thread, fg_thread, False)
-                except Exception:
-                    pass
-    except Exception:
-        verified, actual, verify_ms = False, 0, 0.0
+        except Exception:
+            pass
+        rem = _remaining()
+        if rem > 0:
+            verified, actual, verify_ms = verify_foreground_window(
+                hwnd, timeout_ms=max(1, min(10, int(rem))), poll_ms=1
+            )
+            if verified:
+                return True, (
+                    f'reliable_focus strategy=final verified=True '
+                    f'verify_ms={verify_ms:.1f} actual={actual} total_ms={_elapsed():.1f} '
+                    f'attempts=fast:false,retry_async:false,final:true '
+                    f'budget_exceeded=False{_slow_tag()}'
+                )
 
-    total_ms = (time.perf_counter() - t0) * 1000
-    if verified:
-        return True, (
-            f'reliable_focus strategy=attach_thread verified=True '
-            f'verify_ms={verify_ms:.1f} actual={actual} total_ms={total_ms:.1f}'
-        )
+    # AttachThreadInput fallback — disabled by default (blocking, can stall 200-900 ms).
+    if ENABLE_ATTACH_THREAD_FALLBACK:
+        rem = _remaining()
+        if rem > 10:
+            try:
+                fg_hwnd = user32.GetForegroundWindow()
+                current_thread = kernel32.GetCurrentThreadId()
+                pid_buf = wt.DWORD()
+                target_thread = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_buf))
+                fg_thread = 0
+                if fg_hwnd and fg_hwnd != hwnd:
+                    fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
+                attached_target = False
+                attached_fg = False
+                try:
+                    if target_thread and target_thread != current_thread:
+                        user32.AttachThreadInput(current_thread, target_thread, True)
+                        attached_target = True
+                    if fg_thread and fg_thread != current_thread and fg_thread != target_thread:
+                        user32.AttachThreadInput(current_thread, fg_thread, True)
+                        attached_fg = True
+                    user32.SetForegroundWindow(hwnd)
+                    user32.SetActiveWindow(hwnd)
+                    user32.SetFocus(hwnd)
+                    rem = _remaining()
+                    if rem > 0:
+                        verified, actual, verify_ms = verify_foreground_window(
+                            hwnd, timeout_ms=max(1, min(35, int(rem))), poll_ms=1
+                        )
+                finally:
+                    if attached_target:
+                        try:
+                            user32.AttachThreadInput(current_thread, target_thread, False)
+                        except Exception:
+                            pass
+                    if attached_fg:
+                        try:
+                            user32.AttachThreadInput(current_thread, fg_thread, False)
+                        except Exception:
+                            pass
+            except Exception:
+                verified, actual, verify_ms = False, 0, 0.0
+            if verified:
+                return True, (
+                    f'reliable_focus strategy=attach_thread verified=True '
+                    f'verify_ms={verify_ms:.1f} actual={actual} total_ms={_elapsed():.1f} '
+                    f'attempts=fast:false,retry_async:false,final:false,attach_thread:true '
+                    f'budget_exceeded=False{_slow_tag()}'
+                )
 
+    total_ms = _elapsed()
     return False, (
         f'reliable_focus strategy=failed verified=False '
         f'actual={actual} total_ms={total_ms:.1f} '
-        f'attempts=fast:false,raise_sync:false,attach_thread:false'
+        f'attempts=fast:false,retry_async:false budget_exceeded={total_ms > max_total_ms}'
+        f'{_slow_tag()}'
     )
 
 
