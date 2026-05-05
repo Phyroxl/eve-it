@@ -506,6 +506,8 @@ class ReplicatorWizard:
                 _QTimer.singleShot(350, _init_active)
             except Exception:
                 pass
+            mode = self._cfg.get('hotkeys', {}).get('performance_mode', 'safe')
+            logger.info(f'[REPLICATOR WIZARD] Launching with performance_mode={mode!r}')
         except Exception as e: logger.error(f"Error en lanzamiento directo: {e}")
 
     def _show_custom_dialog(self, title, msg, is_input=False):
@@ -543,6 +545,15 @@ class ReplicatorWizard:
             self._cfg.setdefault('hotkeys', {})['performance_mode'] = mode
             self._cfg_mod.save_config(self._cfg)
             logger.info(f'[REPLICATOR WIZARD] performance_mode set to {mode!r}')
+            try:
+                from overlay import replicator_hotkeys as _hk
+                if _hk._running:
+                    logger.info(
+                        '[REPLICATOR WIZARD] Hotkeys ya activos — '
+                        're-lanzar réplicas para aplicar el nuevo modo de rendimiento.'
+                    )
+            except Exception:
+                pass
 
     def show(self):
         self.dlg.show(); self.dlg.raise_(); self.dlg.activateWindow()

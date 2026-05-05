@@ -294,6 +294,41 @@ def focus_eve_window_ultra(hwnd: int) -> bool:
         return False
 
 
+def focus_eve_window_ultra_verified(hwnd: int, timeout_ms: int = 25, poll_ms: int = 1) -> tuple:
+    """Ultra-fast focus with lightweight foreground verification.
+
+    Returns (requested_ok, verified, actual_fg_hwnd, elapsed_ms).
+    No disk I/O, no logging, no AttachThreadInput.
+    Polls GetForegroundWindow() up to timeout_ms to confirm Windows accepted focus.
+    """
+    t0 = time.perf_counter()
+    if not hwnd:
+        return False, False, 0, 0.0
+    requested_ok = False
+    try:
+        user32.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0, _SWP_ASYNC_RAISE)
+        requested_ok = bool(user32.SetForegroundWindow(hwnd))
+    except Exception:
+        pass
+    if not requested_ok:
+        return False, False, 0, (time.perf_counter() - t0) * 1000
+    # Poll until foreground matches or deadline
+    deadline = time.perf_counter() + timeout_ms / 1000.0
+    poll_s   = max(0.0005, poll_ms / 1000.0)
+    actual_fg = 0
+    verified  = False
+    while time.perf_counter() < deadline:
+        try:
+            actual_fg = user32.GetForegroundWindow()
+        except Exception:
+            break
+        if actual_fg == hwnd:
+            verified = True
+            break
+        time.sleep(poll_s)
+    return requested_ok, verified, actual_fg, (time.perf_counter() - t0) * 1000
+
+
 def get_window_title(hwnd: int) -> str:
     """Devuelve el título de una ventana dado su HWND."""
     if not hwnd:

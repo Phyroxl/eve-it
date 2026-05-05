@@ -268,10 +268,30 @@ _HOTKEY_DEFAULTS = {
 }
 
 PERFORMANCE_MODE_CONFIGS = {
-    'safe':     {'min_cycle_ms': 120, 'capture_suspend_ms': 150, 'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False},
-    'balanced': {'min_cycle_ms':  80, 'capture_suspend_ms': 100, 'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False},
-    'combat':   {'min_cycle_ms':  40, 'capture_suspend_ms':  60, 'use_ultra_raw_path': False, 'skip_hwnd_validity_check': True},
-    'ultra':    {'min_cycle_ms':  20, 'capture_suspend_ms':  30, 'use_ultra_raw_path': True,  'skip_hwnd_validity_check': True},
+    'safe': {
+        'min_cycle_ms': 120, 'capture_suspend_ms': 150,
+        'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False,
+        'verify_foreground': False, 'verify_timeout_ms': 0,
+        'notify_active_client': True,
+    },
+    'balanced': {
+        'min_cycle_ms': 80, 'capture_suspend_ms': 100,
+        'use_ultra_raw_path': False, 'skip_hwnd_validity_check': False,
+        'verify_foreground': False, 'verify_timeout_ms': 0,
+        'notify_active_client': True,
+    },
+    'combat': {
+        'min_cycle_ms': 50, 'capture_suspend_ms': 80,
+        'use_ultra_raw_path': True, 'skip_hwnd_validity_check': False,
+        'verify_foreground': True, 'verify_timeout_ms': 40,
+        'notify_active_client': False,
+    },
+    'ultra': {
+        'min_cycle_ms': 20, 'capture_suspend_ms': 50,
+        'use_ultra_raw_path': True, 'skip_hwnd_validity_check': False,
+        'verify_foreground': True, 'verify_timeout_ms': 25,
+        'notify_active_client': False,
+    },
 }
 
 

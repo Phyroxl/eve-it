@@ -140,16 +140,34 @@ def _log_to_file(msg: str):
 
 
 def _dump_ultra_summary():
-    """Write compact ultra-mode event summary to the perf log at unregister time."""
+    """Write extended ultra-mode summary; dump last 20 entries when failures > threshold."""
     if not _hotkey_ultra_events:
         return
-    cycles = sum(1 for e in _hotkey_ultra_events if e[0] == 'cycle')
-    skips  = sum(1 for e in _hotkey_ultra_events if e[0] == 'skip')
-    fails  = sum(1 for e in _hotkey_ultra_events if e[0] == 'fail')
+    counts: Dict[str, int] = {}
+    ms_list = []
+    for e in _hotkey_ultra_events:
+        counts[e[0]] = counts.get(e[0], 0) + 1
+        if e[0] == 'cycle_ok' and len(e) > 3:
+            try:
+                ms_list.append(float(e[3]))
+            except (TypeError, ValueError):
+                pass
+    avg_ms = sum(ms_list) / len(ms_list) if ms_list else 0.0
+    max_ms = max(ms_list, default=0.0)
+    parts  = ' '.join(f'{k}={v}' for k, v in sorted(counts.items()))
     _perf_log(
-        f'[ULTRA SUMMARY] total={len(_hotkey_ultra_events)} '
-        f'cycles={cycles} skips={skips} fails={fails}'
+        f'[ULTRA SUMMARY] total={len(_hotkey_ultra_events)} {parts} '
+        f'avg_cycle_ms={avg_ms:.1f} max_cycle_ms={max_ms:.1f}'
     )
+    _FAIL_TYPES = {
+        'cycle_focus_failed', 'cycle_not_verified',
+        'cache_refresh_failed', 'invalid_hwnd',
+    }
+    n_fail = sum(counts.get(t, 0) for t in _FAIL_TYPES)
+    if n_fail >= 3:
+        _perf_log(f'[ULTRA DETAIL] {n_fail} failure events — last 20:')
+        for ev in list(_hotkey_ultra_events)[-20:]:
+            _perf_log(f'  {ev}')
 
 
 def _build_group_hwnd_cache(groups: dict):
@@ -580,32 +598,31 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             _cycle_in_progress = False
 
     def _cycle_group_ultra(group_id: str, direction: int, perf_cfg: dict):
-        """Ultra-fast group cycle — in-memory ring buffer log, pre-built HWND cache, no fg resolve."""
+        """Ultra-fast group cycle — ring buffer log, pre-built HWND cache, verified focus."""
         global _cycle_in_progress, _last_cycle_time
         global _last_cycle_client_id, _last_cycle_client_id_time
         global _capture_suspended_until
         import time as _time
 
-        t0  = _time.perf_counter()
-        now = _time.monotonic()
-        min_ms     = perf_cfg.get('min_cycle_ms', 120)
-        suspend_ms = perf_cfg.get('capture_suspend_ms', 150)
-        skip_valid = perf_cfg.get('skip_hwnd_validity_check', False)
+        now    = _time.monotonic()
+        min_ms = perf_cfg.get('min_cycle_ms', 120)
 
         if _cycle_in_progress:
-            _hotkey_ultra_events.append(('skip', group_id, 'in_progress', now))
+            _hotkey_ultra_events.append(('in_progress_skip', group_id, now))
             return
         delta_ms = (now - _last_cycle_time) * 1000
         if _last_cycle_time > 0 and delta_ms < min_ms:
-            _hotkey_ultra_events.append(('skip', group_id, 'cooldown', now))
+            _hotkey_ultra_events.append(('cooldown_skip', group_id, delta_ms, now))
             return
 
+        # Mark in-progress; _last_cycle_time is set only AFTER a valid HWND is found
+        # so an early exit (invalid HWND) does NOT impose a full cooldown on the next press.
         _cycle_in_progress = True
-        _last_cycle_time   = now
 
         try:
             from overlay.win32_capture import (
-                focus_eve_window_ultra, resolve_eve_window_handle, is_hwnd_valid,
+                focus_eve_window_ultra, focus_eve_window_ultra_verified,
+                resolve_eve_window_handle, is_hwnd_valid,
             )
             from overlay.replication_overlay import ReplicationOverlay
 
@@ -619,7 +636,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
             cached_entries = _group_hwnd_order_cache.get(group_id)
 
-            # Index resolution: last focused → saved index (skip fg Win32 calls for speed)
+            # Index resolution: last focused → saved index (no fg Win32 calls for speed)
             current_idx = -1
             if (_last_cycle_client_id and _last_cycle_client_id in titles
                     and (now - _last_cycle_client_id_time) < 5.0):
@@ -640,32 +657,63 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     hwnd = cached_entries[idx].get('hwnd', 0)
                 if not hwnd:
                     hwnd = _hwnd_cache.get(t_title, 0)
-                if not hwnd or (not skip_valid and not is_hwnd_valid(hwnd)):
-                    hwnd = resolve_eve_window_handle(t_title) or 0
-                    if hwnd:
-                        _hwnd_cache[t_title] = hwnd
-                        if cached_entries and idx < len(cached_entries):
-                            cached_entries[idx]['hwnd'] = hwnd
 
-                if hwnd and (skip_valid or is_hwnd_valid(hwnd)):
+                # Always validate HWND — IsWindow/IsWindowVisible costs < 0.1 ms
+                if not hwnd or not is_hwnd_valid(hwnd):
+                    new_hwnd = resolve_eve_window_handle(t_title) or 0
+                    if new_hwnd:
+                        _hwnd_cache[t_title] = new_hwnd
+                        if cached_entries and idx < len(cached_entries):
+                            cached_entries[idx]['hwnd'] = new_hwnd
+                        hwnd = new_hwnd
+                        _hotkey_ultra_events.append(('cache_refresh_ok', group_id, t_title, new_hwnd, now))
+                    else:
+                        _hotkey_ultra_events.append(('cache_refresh_failed', group_id, t_title, now))
+                        continue
+
+                if is_hwnd_valid(hwnd):
                     target, target_hwnd, next_idx = t_title, hwnd, idx
                     break
 
             if not target_hwnd:
-                _hotkey_ultra_events.append(('fail', group_id, 'no_valid_window', now))
+                _hotkey_ultra_events.append(('invalid_hwnd', group_id, 'no_valid_target', now))
                 return
 
+            # Valid target found — commit cooldown timer NOW
+            _last_cycle_time = now
+            suspend_ms = perf_cfg.get('capture_suspend_ms', 150)
             _capture_suspended_until = now + suspend_ms / 1000.0
-            ok = focus_eve_window_ultra(target_hwnd)
 
-            if ok:
-                _last_group_index[group_id]   = next_idx
-                _last_cycle_client_id         = target
-                _last_cycle_client_id_time    = now
+            t0 = _time.perf_counter()
+            verify         = perf_cfg.get('verify_foreground', False)
+            verify_timeout = perf_cfg.get('verify_timeout_ms', 25)
+
+            if verify:
+                req_ok, verified, _, elapsed_ms = focus_eve_window_ultra_verified(
+                    target_hwnd, timeout_ms=verify_timeout
+                )
+            else:
+                req_ok   = focus_eve_window_ultra(target_hwnd)
+                verified = req_ok
+                elapsed_ms = (_time.perf_counter() - t0) * 1000
+
+            if not req_ok:
+                _hotkey_ultra_events.append(('cycle_focus_failed', group_id, target, elapsed_ms, now))
+                return
+
+            if not verified:
+                _hotkey_ultra_events.append(('cycle_not_verified', group_id, target, req_ok, elapsed_ms, now))
+                return
+
+            # Focus accepted and verified — advance state
+            _last_group_index[group_id]   = next_idx
+            _last_cycle_client_id         = target
+            _last_cycle_client_id_time    = now
+
+            if perf_cfg.get('notify_active_client', True):
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
-            total_ms = (_time.perf_counter() - t0) * 1000
-            _hotkey_ultra_events.append(('cycle', group_id, target, ok, total_ms, now))
+            _hotkey_ultra_events.append(('cycle_ok', group_id, target, elapsed_ms, now))
 
         finally:
             _cycle_in_progress = False
