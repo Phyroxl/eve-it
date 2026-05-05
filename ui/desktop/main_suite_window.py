@@ -648,7 +648,8 @@ class MainSuiteWindow(QMainWindow):
         
         # Fila 2 (Preparado para expansión 3x5)
         g.addWidget(self.create_tool_card("Market Command", "Station Trading AI.", "📈", self._on_market_clicked), 1, 0)
-        
+        g.addWidget(self.create_tool_card("Visual Clon", "Copia el layout visual de un personaje a otros.", "🖥️", self._on_visual_clon_clicked), 1, 1)
+
         cont_l.addLayout(g); cont_l.addStretch()
         scroll.setWidget(cont)
         l.addWidget(scroll); return p
@@ -1035,6 +1036,36 @@ class MainSuiteWindow(QMainWindow):
             self._market_window.activateWindow()
         except Exception as e:
             print(f"Error opening Market Command: {e}")
+            import traceback
+            traceback.print_exc()
+    def _on_visual_clon_clicked(self):
+        try:
+            if not hasattr(self, '_visual_clon_window') or self._visual_clon_window is None:
+                from ui.tools.visual_clon_view import VisualClonView
+                from ui.common.custom_titlebar import CustomTitleBar
+                from PySide6.QtWidgets import QVBoxLayout as _QVBox
+
+                self._visual_clon_window = QWidget()
+                self._visual_clon_window.setWindowTitle("Salva Suite — Visual Clon")
+                self._visual_clon_window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+                self._visual_clon_window.resize(900, 620)
+
+                outer = _QVBox(self._visual_clon_window)
+                outer.setContentsMargins(0, 0, 0, 0)
+                outer.setSpacing(0)
+
+                tb = CustomTitleBar("Salva Suite — Visual Clon", self._visual_clon_window)
+                outer.addWidget(tb)
+
+                vc = VisualClonView()
+                outer.addWidget(vc, 1)
+                self._visual_clon_window._vc = vc
+
+            self._visual_clon_window.show()
+            self._visual_clon_window.raise_()
+            self._visual_clon_window.activateWindow()
+        except Exception as e:
+            print(f"Error opening Visual Clon: {e}")
             import traceback
             traceback.print_exc()
     def _on_browse_logs(self):

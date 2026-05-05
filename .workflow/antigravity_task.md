@@ -818,3 +818,79 @@ Wizard acepta → _restore_replicator_overlays
 ### Pruebas
 - `python -m py_compile controller/tray_manager.py controller/replicator_wizard.py` → OK
 - `python -m pytest tests/ -q` → **142 passed**
+
+## 23) FEAT — Visual Clon tool for EVE client layout cloning
+
+**Commit `FEAT: Add Visual Clon tool for EVE client layout cloning`**
+
+### Qué implementa
+
+Herramienta independiente de clonado de configuración visual del cliente EVE Online.
+No toca nada del Window Replicator, hotkeys, perfiles de replicador ni overlays.
+
+### Rutas creadas
+
+```
+core/visual_clon_models.py      — Dataclasses: EveCharProfile, EveSettingsFolder,
+                                   CopyPlan, BackupRecord, CloneResult, COPY_SECTIONS
+core/visual_clon_backup.py      — Gestión de backups: create, restore, list
+                                   Backups en config/visual_clon_backups/
+core/visual_clon_service.py     — Lógica core: detección de rutas EVE,
+                                   escaneo de perfiles, validación, build plan,
+                                   execute clone (dry-run + apply)
+ui/tools/__init__.py            — Package init
+ui/tools/visual_clon_worker.py  — ScanWorker + CloneWorker (QThread con signals)
+ui/tools/visual_clon_view.py    — UI principal: carpeta EVE, origen, destinos,
+                                   secciones, opciones, log, botones
+tests/test_visual_clon.py       — 26 tests unitarios (todos passing)
+```
+
+### Archivos modificados
+
+**`ui/desktop/main_suite_window.py`**:
+- Tool card "Visual Clon" añadida en Herramientas (fila 2, col 1)
+- Callback `_on_visual_clon_clicked()` — abre ventana frameless con CustomTitleBar
+
+### Qué copia Visual Clon v1
+
+- Archivo `core_char_[ID].dat` de un personaje origen a uno o varios destinos.
+- El archivo es binario y contiene TODO el layout visual: ventanas, overview, chats,
+  inventario, preferencias UI, etc. (copia completa en v1).
+- Backup automático e inmutable antes de cada copia (con manifest JSON).
+- Restauración de backups desde la UI.
+- Modo dry-run: muestra exactamente qué se copiaría sin tocar nada.
+
+### Detección de rutas EVE
+
+Autodetecta sin hardcodear rutas del usuario:
+- `%LOCALAPPDATA%\CCP\EVE\*\settings_Default\`
+- `%APPDATA%\CCP\EVE\*\settings_Default\`
+- `Documents\EVE\*\settings_Default\` (via SHGetFolderPathW)
+- También acepta carpeta manual vía selector.
+
+### Limitaciones actuales (pendiente en futuras versiones)
+
+- Copia completa del archivo char (no subsecciones independientes).
+- No resuelve nombres de personaje (muestra char ID). Futuro: parseo de logs EVE.
+- No soporta múltiples instalaciones EVE simultáneas (usa la primera encontrada).
+- Partial section copy requeriría parsear el formato binario propietario de CCP.
+
+### Cómo probar
+
+1. Ir a Herramientas → Visual Clon
+2. "Detectar automáticamente" o seleccionar carpeta `settings_Default` de EVE
+3. Seleccionar personaje origen
+4. Marcar personajes destino
+5. "Analizar" → ver informe
+6. "Simular copia" → dry-run sin modificar nada
+7. "Aplicar Visual Clon" → backup + copia real (cerrar EVE antes)
+8. "Restaurar backup" → revertir si algo va mal
+
+### Tests
+
+- `python -m compileall core/visual_clon_models.py core/visual_clon_backup.py
+  core/visual_clon_service.py ui/tools/visual_clon_worker.py
+  ui/tools/visual_clon_view.py ui/desktop/main_suite_window.py` → OK
+- `python -m pytest tests/test_visual_clon.py -v` → **26 passed**
+- `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py
+  tests/test_replicator_active_border.py tests/test_cycle_sync.py -q` → **142 passed**
