@@ -289,3 +289,69 @@ reliable_focus strategy=failed verified=False actual=0 total_ms=63.2 attempts=fa
 4. Los bordes activos se actualizan a más tardar 75ms después de cada ráfaga.
 5. Comprobar que bajan o desaparecen los `[NOT VERIFIED]` puntuales.
 6. Probar Sleep 60ms y Sleep 50ms si Sleep 70ms funciona.
+
+## 15) DIAG — Observación pasiva de timing de macros F1–F8 (commit 8a7344d)
+
+**Problema:** Foco verificado correctamente pero algunos módulos EVE no se activan. Hipótesis: F1–F8 llegan antes de que EVE procese el cambio de foco internamente, aunque Windows ya confirme el foreground.
+
+**Solución:** Hook WH_KEYBOARD_LL pasivo (solo observa, no consume ni bloquea F1–F8). Mide delta entre FOCUS DONE y cada keydown. Agrupa teclas consecutivas en MACRO_SEQ.
+
+**Archivos Modificados:**
+- `overlay/replicator_hotkeys.py` — `_last_focus_done_*` globals, `_on_macro_key()`, `_flush_macro_seq()`, `_KBDLLHOOKSTRUCT`, `_macro_hook_loop/install/uninstall`
+- `overlay/replicator_settings_dialog.py` — formatos `macro_key_observed` y `macro_seq_complete` en `_fmt_event`
+- `tests/test_macro_timing_diag.py` — 19 tests
+
+**Pruebas:** 53 passed
+
+## 16) DIAG — Agrupación por epoch + análisis completo de ráfagas (commit actual)
+
+**Problema detectado en §15:** `MACRO SEQ` acumulaba 80 teclas de cuentas distintas en una sola secuencia (count=80, duration=1200ms) porque solo se separaba por tiempo, no por cambio de cliente.
+
+**Solución:** `_focus_epoch_id` incremental. Cada ciclo completado (ok o no) incrementa el epoch. La MACRO_SEQ se cierra automáticamente cuando cambia el epoch, pasan 300ms sin teclas, se inicia nuevo ciclo, o se detiene el diagnóstico.
+
+**Cambios en thresholds de clasificación:**
+- Anterior: <10ms=too_early, 10-30ms=risky, >=30ms=safe-ish
+- Nuevo: <30ms=too_early, 30-50ms=risky, >=50ms=safer
+
+**Nuevos campos en `macro_seq_complete`:**
+- `epoch`, `target`, `focus_hwnd`, `focus_ok`
+- `first_key_delta_ms`, `last_key_delta_ms`, `min_delta_ms`, `max_delta_ms`
+- `too_early_keys`, `risky_keys`, `fg_mismatch_keys`
+- `sequence_status`: complete_safe / complete_risky / incomplete / foreground_mismatch
+- `recommended_min_delay_ms`
+
+**Reglas de recommended_min_delay_ms:**
+- status=incomplete o fg_mismatch → max(80, first_delta+20)
+- first_delta < 50ms → 50
+- first_delta 50-70ms → 70
+- first_delta >= 70ms → ceil(first_delta/10)*10
+
+**Resumen acumulado (`get_macro_summary()`):**
+- Se emite como línea `MACRO SUMMARY:` al detener el diagnóstico
+- Campos: sequences, safe, risky, incomplete, fg_mismatch, min_first, recommended_min_delay
+
+**Archivos Modificados:**
+- `overlay/replicator_hotkeys.py` — nuevos globals epoch/stats, `_on_macro_key` reescrito, `_flush_macro_seq` reescrito, `get_macro_summary()`, flush pre-ciclo en `_cycle`/`_cycle_group`
+- `overlay/replicator_settings_dialog.py` — formatos actualizados + MACRO SUMMARY al detener
+- `tests/test_macro_timing_diag.py` — 39 tests (reescrito completo)
+
+**Pruebas:** 73 passed (sin regresiones)
+
+**Qué debe copiar el usuario del log para reportar:**
+```
+[HH:MM:SS.mmm] FOCUS  ok=True/False  title='...'  total=X.Xms
+[HH:MM:SS.mmm] VERIFY  ok=True  verified=True  verify=X.Xms
+[HH:MM:SS.mmm] DONE  ok=True  N -> M  total=X.Xms
+[HH:MM:SS.mmm] MACRO KEY  epoch=N F1  delta=X.Xms  [too_early/RISKY/ok]  target='...'  fg_match=True/False
+[HH:MM:SS.mmm] MACRO SEQ  epoch=N  target='...'  status=complete_risky  keys=8/8  missing=[]  first=X.Xms  rec_delay=50ms
+MACRO SUMMARY: sequences=12 safe=7 risky=5 incomplete=0 fg_mismatch=0 min_first=27.5ms recommended_min_delay=50ms
+```
+
+**Cómo validar:**
+1. Abrir Ajustes → Hotkeys → Iniciar diagnóstico.
+2. Ejecutar macro (Sleep 50ms / Sleep 70ms).
+3. Verificar que cada cuenta genera su propia `MACRO SEQ` separada (no count=80).
+4. Revisar `status`: si es `complete_risky`, el delay de la macro es demasiado bajo.
+5. Tomar nota de `recommended_min_delay_ms` y ajustar el Sleep de la macro.
+6. Detener diagnóstico → leer línea `MACRO SUMMARY` para resumen global.
+7. Si `fg_mismatch > 0`, el foreground cambió antes de que llegara alguna tecla (raro).

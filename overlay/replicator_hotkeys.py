@@ -96,12 +96,27 @@ _MACRO_VK_TO_NAME: dict = {
     0x74: 'F5', 0x75: 'F6', 0x76: 'F7', 0x77: 'F8',
 }
 _MACRO_SEQ_WINDOW_MS: float = 300.0
+_focus_epoch_id: int = 0
 _macro_hook_handle = None
 _macro_hook_thread: Optional[threading.Thread] = None
 _macro_hook_running: bool = False
+_macro_seq_epoch_id: int = -1
+_macro_seq_target: str = ''
+_macro_seq_focus_hwnd: int = 0
+_macro_seq_focus_ok: bool = False
 _macro_seq_keys: list = []
 _macro_seq_key_times: list = []
+_macro_seq_key_deltas: list = []
+_macro_seq_key_fg_hwnds: list = []
 _macro_seq_last_key_perf: float = 0.0
+_macro_stats_total: int = 0
+_macro_stats_complete_safe: int = 0
+_macro_stats_complete_risky: int = 0
+_macro_stats_incomplete: int = 0
+_macro_stats_fg_mismatch: int = 0
+_macro_stats_min_first_delta: float = float('inf')
+_macro_stats_max_first_delta: float = 0.0
+_macro_stats_recommended_min_delay: float = 0.0
 
 # ── Live diagnostics (zero-overhead when disabled) ────────────────────────────
 _hotkey_diagnostics_enabled: bool = False
@@ -177,13 +192,38 @@ def set_hotkey_diagnostics_enabled(enabled: bool, callback=None):
 
 
 def clear_hotkey_diagnostics():
-    """Clear the in-memory event ring buffer."""
+    """Clear the in-memory event ring buffer and reset cumulative stats."""
+    global _macro_stats_total, _macro_stats_complete_safe, _macro_stats_complete_risky
+    global _macro_stats_incomplete, _macro_stats_fg_mismatch
+    global _macro_stats_min_first_delta, _macro_stats_max_first_delta, _macro_stats_recommended_min_delay
     _hotkey_diagnostics_events.clear()
+    _macro_stats_total = 0
+    _macro_stats_complete_safe = 0
+    _macro_stats_complete_risky = 0
+    _macro_stats_incomplete = 0
+    _macro_stats_fg_mismatch = 0
+    _macro_stats_min_first_delta = float('inf')
+    _macro_stats_max_first_delta = 0.0
+    _macro_stats_recommended_min_delay = 0.0
 
 
 def get_hotkey_diagnostics_events():
     """Return a snapshot of current diagnostic events."""
     return list(_hotkey_diagnostics_events)
+
+
+def get_macro_summary() -> dict:
+    """Return cumulative macro sequence diagnostics summary."""
+    return {
+        'total_macro_sequences': _macro_stats_total,
+        'complete_safe_count': _macro_stats_complete_safe,
+        'complete_risky_count': _macro_stats_complete_risky,
+        'incomplete_count': _macro_stats_incomplete,
+        'foreground_mismatch_count': _macro_stats_fg_mismatch,
+        'min_first_delta_seen_ms': round(_macro_stats_min_first_delta, 1) if _macro_stats_min_first_delta < float('inf') else 0.0,
+        'max_first_delta_seen_ms': round(_macro_stats_max_first_delta, 1),
+        'recommended_min_delay_ms': round(_macro_stats_recommended_min_delay, 1),
+    }
 
 
 def _diag_event(event_type: str, **data):
@@ -219,57 +259,81 @@ def _get_last_focus_done_snapshot() -> dict:
 def _on_macro_key(vk: int) -> None:
     """Called from hook thread on each F1–F8 keydown. Purely observational — no blocking."""
     global _macro_seq_keys, _macro_seq_key_times, _macro_seq_last_key_perf
+    global _macro_seq_epoch_id, _macro_seq_target, _macro_seq_focus_hwnd, _macro_seq_focus_ok
+    global _macro_seq_key_deltas, _macro_seq_key_fg_hwnds
     if not _hotkey_diagnostics_enabled:
         return
     import time as _t
     now_perf = _t.perf_counter()
 
-    if _last_focus_done_time > 0:
-        delta_ms = (now_perf - _last_focus_done_time) * 1000.0
-        if delta_ms < 5000.0:
-            if delta_ms < 10.0:
-                timing_class = 'too_early'
-            elif delta_ms < 30.0:
-                timing_class = 'risky'
-            else:
-                timing_class = 'safe-ish'
-            key_name = _MACRO_VK_TO_NAME.get(vk, f'VK_{vk:#x}')
-            try:
-                from overlay.win32_capture import get_foreground_hwnd
-                fg_hwnd = get_foreground_hwnd()
-            except Exception:
-                fg_hwnd = 0
-            _diag_event('macro_key_observed',
-                key=key_name, vk=vk,
-                delta_after_focus_done_ms=round(delta_ms, 1),
-                timing_class=timing_class,
-                fg_hwnd=fg_hwnd,
-                focus_target=_last_focus_done_target,
-                focus_ok=_last_focus_done_ok,
-            )
-            _perf_log(
-                f'[MACRO INPUT] key={key_name} delta={delta_ms:.1f}ms '
-                f'class={timing_class} fg_hwnd={fg_hwnd} '
-                f'focus_target={_last_focus_done_target!r}'
-            )
+    delta_ms = (now_perf - _last_focus_done_time) * 1000.0 if _last_focus_done_time > 0 else -1.0
+    key_name = _MACRO_VK_TO_NAME.get(vk, f'VK_{vk:#x}')
+    try:
+        from overlay.win32_capture import get_foreground_hwnd
+        fg_hwnd = get_foreground_hwnd()
+    except Exception:
+        fg_hwnd = 0
 
+    if 0.0 <= delta_ms < 5000.0:
+        if delta_ms < 30.0:
+            timing_class = 'too_early'
+        elif delta_ms < 50.0:
+            timing_class = 'risky'
+        else:
+            timing_class = 'safer'
+        fg_matches = bool(fg_hwnd and _last_focus_done_hwnd and fg_hwnd == _last_focus_done_hwnd)
+        _diag_event('macro_key_observed',
+            epoch=_focus_epoch_id,
+            key=key_name, vk=vk,
+            delta_after_focus_done_ms=round(delta_ms, 1),
+            timing_class=timing_class,
+            fg_hwnd=fg_hwnd,
+            fg_matches_focus_hwnd=fg_matches,
+            focus_target=_last_focus_done_target,
+            focus_hwnd=_last_focus_done_hwnd,
+            focus_ok=_last_focus_done_ok,
+        )
+        _perf_log(
+            f'[MACRO INPUT] epoch={_focus_epoch_id} key={key_name} delta={delta_ms:.1f}ms '
+            f'class={timing_class} fg_hwnd={fg_hwnd} fg_match={fg_matches} '
+            f'focus_target={_last_focus_done_target!r}'
+        )
+
+    # MACRO_SEQ grouping — split on epoch change or inter-key timeout
+    current_epoch = _focus_epoch_id
     elapsed_since_last = (
         (now_perf - _macro_seq_last_key_perf) * 1000.0
         if _macro_seq_last_key_perf > 0 else _MACRO_SEQ_WINDOW_MS + 1
     )
-    if elapsed_since_last > _MACRO_SEQ_WINDOW_MS and _macro_seq_keys:
+    epoch_changed = bool(_macro_seq_keys) and (_macro_seq_epoch_id != current_epoch)
+    timed_out = bool(_macro_seq_keys) and elapsed_since_last > _MACRO_SEQ_WINDOW_MS
+    if epoch_changed or timed_out:
         _flush_macro_seq()
+
+    if not _macro_seq_keys:
+        _macro_seq_epoch_id = current_epoch
+        _macro_seq_target = _last_focus_done_target
+        _macro_seq_focus_hwnd = _last_focus_done_hwnd
+        _macro_seq_focus_ok = _last_focus_done_ok
 
     _macro_seq_keys.append(vk)
     _macro_seq_key_times.append(now_perf)
+    _macro_seq_key_deltas.append(max(delta_ms, 0.0))
+    _macro_seq_key_fg_hwnds.append(fg_hwnd)
     _macro_seq_last_key_perf = now_perf
 
 
 def _flush_macro_seq() -> None:
-    """Finalize and emit the current MACRO_SEQ. Clears seq state."""
+    """Finalize and emit the current MACRO_SEQ with per-epoch analysis. Clears seq state."""
     global _macro_seq_keys, _macro_seq_key_times, _macro_seq_last_key_perf
+    global _macro_seq_epoch_id, _macro_seq_target, _macro_seq_focus_hwnd, _macro_seq_focus_ok
+    global _macro_seq_key_deltas, _macro_seq_key_fg_hwnds
+    global _macro_stats_total, _macro_stats_complete_safe, _macro_stats_complete_risky
+    global _macro_stats_incomplete, _macro_stats_fg_mismatch
+    global _macro_stats_min_first_delta, _macro_stats_max_first_delta, _macro_stats_recommended_min_delay
     if not _macro_seq_keys:
         return
+
     seen_names = [_MACRO_VK_TO_NAME.get(vk, f'VK_{vk:#x}') for vk in _macro_seq_keys]
     seen_vk_set = set(_macro_seq_keys)
     missing_names = [name for vk, name in _MACRO_VK_TO_NAME.items() if vk not in seen_vk_set]
@@ -277,19 +341,96 @@ def _flush_macro_seq() -> None:
         (_macro_seq_key_times[-1] - _macro_seq_key_times[0]) * 1000.0
         if len(_macro_seq_key_times) > 1 else 0.0
     )
+
+    deltas = _macro_seq_key_deltas
+    first_delta = deltas[0] if deltas else 0.0
+    last_delta = deltas[-1] if deltas else 0.0
+    min_delta = min(deltas) if deltas else 0.0
+    max_delta = max(deltas) if deltas else 0.0
+
+    focus_hwnd = _macro_seq_focus_hwnd
+    too_early_keys = [_MACRO_VK_TO_NAME.get(_macro_seq_keys[i], '') for i, d in enumerate(deltas) if d < 30.0]
+    risky_keys = [_MACRO_VK_TO_NAME.get(_macro_seq_keys[i], '') for i, d in enumerate(deltas) if 30.0 <= d < 50.0]
+    fg_mismatch_keys = [
+        _MACRO_VK_TO_NAME.get(_macro_seq_keys[i], '')
+        for i, fgh in enumerate(_macro_seq_key_fg_hwnds)
+        if focus_hwnd and fgh and fgh != focus_hwnd
+    ]
+
+    has_fg_mismatch = bool(fg_mismatch_keys)
+    has_missing = bool(missing_names)
+    if has_fg_mismatch:
+        status = 'foreground_mismatch'
+    elif has_missing:
+        status = 'incomplete'
+    elif first_delta < 50.0:
+        status = 'complete_risky'
+    else:
+        status = 'complete_safe'
+
+    import math
+    if status in ('foreground_mismatch', 'incomplete'):
+        rec_delay = max(80.0, first_delta + 20.0)
+    elif first_delta < 50.0:
+        rec_delay = 50.0
+    elif first_delta < 70.0:
+        rec_delay = 70.0
+    else:
+        rec_delay = math.ceil(first_delta / 10.0) * 10.0
+
+    epoch_id = _macro_seq_epoch_id
+    target = _macro_seq_target
+
     _diag_event('macro_seq_complete',
+        epoch=epoch_id,
+        target=target,
+        focus_hwnd=focus_hwnd,
+        focus_ok=_macro_seq_focus_ok,
         keys_seen=seen_names,
         keys_missing=missing_names,
         key_count=len(_macro_seq_keys),
         seq_duration_ms=round(seq_duration_ms, 1),
+        first_key_delta_ms=round(first_delta, 1),
+        last_key_delta_ms=round(last_delta, 1),
+        min_delta_ms=round(min_delta, 1),
+        max_delta_ms=round(max_delta, 1),
+        too_early_keys=too_early_keys,
+        risky_keys=risky_keys,
+        fg_mismatch_keys=fg_mismatch_keys,
+        sequence_status=status,
+        recommended_min_delay_ms=round(rec_delay, 1),
     )
     _perf_log(
-        f'[MACRO SEQ] keys={seen_names} missing={missing_names} '
-        f'count={len(_macro_seq_keys)} duration_ms={seq_duration_ms:.1f}'
+        f'[MACRO SEQ] epoch={epoch_id} target={target!r} status={status} '
+        f'keys={seen_names} missing={missing_names} count={len(_macro_seq_keys)} '
+        f'duration_ms={seq_duration_ms:.1f} first={first_delta:.1f}ms last={last_delta:.1f}ms '
+        f'too_early={too_early_keys} risky={risky_keys} fg_mismatch={fg_mismatch_keys} '
+        f'rec_delay={rec_delay:.0f}ms'
     )
+
+    _macro_stats_total += 1
+    if status == 'complete_safe':
+        _macro_stats_complete_safe += 1
+    elif status == 'complete_risky':
+        _macro_stats_complete_risky += 1
+    elif status == 'incomplete':
+        _macro_stats_incomplete += 1
+    elif status == 'foreground_mismatch':
+        _macro_stats_fg_mismatch += 1
+    if first_delta > 0:
+        _macro_stats_min_first_delta = min(_macro_stats_min_first_delta, first_delta)
+        _macro_stats_max_first_delta = max(_macro_stats_max_first_delta, first_delta)
+    _macro_stats_recommended_min_delay = max(_macro_stats_recommended_min_delay, rec_delay)
+
     _macro_seq_keys = []
     _macro_seq_key_times = []
+    _macro_seq_key_deltas = []
+    _macro_seq_key_fg_hwnds = []
     _macro_seq_last_key_perf = 0.0
+    _macro_seq_epoch_id = -1
+    _macro_seq_target = ''
+    _macro_seq_focus_hwnd = 0
+    _macro_seq_focus_ok = False
 
 
 class _KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -521,6 +662,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _last_cycle_client_id, _last_cycle_client_id_time
         global _capture_suspended_until
         global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
+        global _focus_epoch_id
         import time as _time
 
         t0  = _time.perf_counter()
@@ -555,6 +697,8 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         _cycle_in_progress = True
         _last_cycle_time   = now
+        if _macro_seq_keys:
+            _flush_macro_seq()
 
         try:
             from overlay.win32_capture import (
@@ -712,6 +856,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'focus_ok={ok} focus_verified={verified} strategy={_strategy} '
                 f'verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
             )
+            _focus_epoch_id += 1
             _last_focus_done_time   = _time.perf_counter()
             _last_focus_done_hwnd   = target_hwnd if ok else 0
             _last_focus_done_target = target or ''
@@ -731,6 +876,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
         global _last_cycle_client_id, _last_cycle_client_id_time
         global _capture_suspended_until
         global _last_focus_done_time, _last_focus_done_hwnd, _last_focus_done_target, _last_focus_done_ok
+        global _focus_epoch_id
         import time as _time
 
         t0  = _time.perf_counter()
@@ -766,6 +912,8 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         _cycle_in_progress = True
         _last_cycle_time   = now
+        if _macro_seq_keys:
+            _flush_macro_seq()
 
         try:
             from overlay.win32_capture import (
@@ -937,6 +1085,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 f'focus_ok={ok} focus_verified={verified} strategy={_strategy} '
                 f'verify_ms={verify_ms:.1f} used_last_cycle={used_last}'
             )
+            _focus_epoch_id += 1
             _last_focus_done_time   = _time.perf_counter()
             _last_focus_done_hwnd   = target_hwnd if ok else 0
             _last_focus_done_target = target or ''

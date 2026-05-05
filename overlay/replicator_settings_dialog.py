@@ -1215,17 +1215,25 @@ class ReplicatorSettingsDialog(QDialog):
                         f"resolver={ev.get('resolver_used')}")
             if etype == 'macro_key_observed':
                 cls = ev.get('timing_class', '')
-                cls_tag = {'too_early': '!!! TOO EARLY', 'risky': '~ risky ~', 'safe-ish': 'ok'}.get(cls, cls)
-                return (f"[{t}] MACRO KEY  {ev.get('key')}  "
+                cls_tag = {'too_early': 'TOO EARLY', 'risky': 'RISKY', 'safer': 'ok'}.get(cls, cls)
+                fm = 'True' if ev.get('fg_matches_focus_hwnd') else 'False'
+                return (f"[{t}] MACRO KEY  epoch={ev.get('epoch')} {ev.get('key')}  "
                         f"delta={ev.get('delta_after_focus_done_ms', 0):.1f}ms  [{cls_tag}]  "
-                        f"target={ev.get('focus_target')!r}")
+                        f"target={ev.get('focus_target')!r}  fg_match={fm}")
             if etype == 'macro_seq_complete':
                 seen = ev.get('keys_seen', [])
                 missing = ev.get('keys_missing', [])
-                return (f"[{t}] MACRO SEQ  keys={seen}  "
-                        f"missing={missing}  "
-                        f"count={ev.get('key_count', 0)}  "
-                        f"duration={ev.get('seq_duration_ms', 0):.1f}ms")
+                status = ev.get('sequence_status', '')
+                risky = ev.get('risky_keys', [])
+                fm_keys = ev.get('fg_mismatch_keys', [])
+                return (f"[{t}] MACRO SEQ  epoch={ev.get('epoch')}  "
+                        f"target={ev.get('target')!r}  status={status}  "
+                        f"keys={len(seen)}/8  missing={missing}  "
+                        f"duration={ev.get('seq_duration_ms', 0):.1f}ms  "
+                        f"first={ev.get('first_key_delta_ms', 0):.1f}ms  "
+                        f"last={ev.get('last_key_delta_ms', 0):.1f}ms  "
+                        f"risky={risky}  fg_mismatch={fm_keys}  "
+                        f"rec_delay={ev.get('recommended_min_delay_ms', 0):.0f}ms")
             if etype == 'state_snapshot':
                 lines = [f"[{t}] ── STATE SNAPSHOT ──",
                          f"  FG: hwnd={ev.get('fg_hwnd')} title={ev.get('fg_title')!r}",
@@ -1283,6 +1291,21 @@ class ReplicatorSettingsDialog(QDialog):
                 lbl_diag_status.setText("Diagnostico: inactivo")
                 lbl_diag_status.setStyleSheet("color:#64748b; font-size:10px;")
                 diag_out.appendPlainText("--- Diagnostico detenido ---")
+                try:
+                    from overlay.replicator_hotkeys import get_macro_summary
+                    s = get_macro_summary()
+                    min_d = s['min_first_delta_seen_ms']
+                    diag_out.appendPlainText(
+                        f"MACRO SUMMARY: sequences={s['total_macro_sequences']} "
+                        f"safe={s['complete_safe_count']} "
+                        f"risky={s['complete_risky_count']} "
+                        f"incomplete={s['incomplete_count']} "
+                        f"fg_mismatch={s['foreground_mismatch_count']} "
+                        f"min_first={min_d:.1f}ms "
+                        f"recommended_min_delay={s['recommended_min_delay_ms']:.0f}ms"
+                    )
+                except Exception:
+                    pass
 
         btn_toggle.clicked.connect(_toggle_diag)
 

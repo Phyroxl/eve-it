@@ -1,4 +1,4 @@
-"""Tests: passive macro input timing diagnostics."""
+"""Tests: passive macro input timing diagnostics — epoch-aware grouping."""
 import sys
 import time
 import unittest
@@ -14,9 +14,24 @@ def _reset_diag_state():
     hk._last_focus_done_hwnd = 0
     hk._last_focus_done_target = ''
     hk._last_focus_done_ok = False
+    hk._focus_epoch_id = 0
+    hk._macro_seq_epoch_id = -1
+    hk._macro_seq_target = ''
+    hk._macro_seq_focus_hwnd = 0
+    hk._macro_seq_focus_ok = False
     hk._macro_seq_keys = []
     hk._macro_seq_key_times = []
+    hk._macro_seq_key_deltas = []
+    hk._macro_seq_key_fg_hwnds = []
     hk._macro_seq_last_key_perf = 0.0
+    hk._macro_stats_total = 0
+    hk._macro_stats_complete_safe = 0
+    hk._macro_stats_complete_risky = 0
+    hk._macro_stats_incomplete = 0
+    hk._macro_stats_fg_mismatch = 0
+    hk._macro_stats_min_first_delta = float('inf')
+    hk._macro_stats_max_first_delta = 0.0
+    hk._macro_stats_recommended_min_delay = 0.0
     hk._hotkey_diagnostics_enabled = False
     hk._hotkey_diagnostics_events.clear()
 
@@ -56,6 +71,7 @@ class TestFocusDoneSnapshot(unittest.TestCase):
 # ── Delta classification ──────────────────────────────────────────────────────
 
 class TestMacroKeyClassification(unittest.TestCase):
+    """New thresholds: <30ms=too_early, 30-50ms=risky, >=50ms=safer"""
 
     def setUp(self):
         _reset_diag_state()
@@ -72,9 +88,9 @@ class TestMacroKeyClassification(unittest.TestCase):
             _on_macro_key(vk)
         return [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_key_observed']
 
-    def test_too_early_under_10ms(self):
+    def test_too_early_under_30ms(self):
         import overlay.replicator_hotkeys as hk
-        hk._last_focus_done_time = time.perf_counter() - 0.005  # 5ms ago
+        hk._last_focus_done_time = time.perf_counter() - 0.010  # 10ms ago
         hk._last_focus_done_ok = True
         hk._last_focus_done_target = 'EVE - Alpha'
         evs = self._call_with_fg(0x70)  # F1
@@ -82,23 +98,32 @@ class TestMacroKeyClassification(unittest.TestCase):
         self.assertEqual(evs[0]['timing_class'], 'too_early')
         self.assertEqual(evs[0]['key'], 'F1')
 
-    def test_risky_10_to_30ms(self):
+    def test_too_early_at_0ms(self):
         import overlay.replicator_hotkeys as hk
-        hk._last_focus_done_time = time.perf_counter() - 0.020  # 20ms ago
+        hk._last_focus_done_time = time.perf_counter() - 0.001  # ~1ms ago
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        evs = self._call_with_fg(0x70)  # F1
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['timing_class'], 'too_early')
+
+    def test_risky_30_to_50ms(self):
+        import overlay.replicator_hotkeys as hk
+        hk._last_focus_done_time = time.perf_counter() - 0.040  # 40ms ago
         hk._last_focus_done_ok = True
         hk._last_focus_done_target = 'EVE - Alpha'
         evs = self._call_with_fg(0x71)  # F2
         self.assertEqual(len(evs), 1)
         self.assertEqual(evs[0]['timing_class'], 'risky')
 
-    def test_safe_ish_30ms_or_more(self):
+    def test_safer_50ms_or_more(self):
         import overlay.replicator_hotkeys as hk
         hk._last_focus_done_time = time.perf_counter() - 0.060  # 60ms ago
         hk._last_focus_done_ok = True
         hk._last_focus_done_target = 'EVE - Alpha'
         evs = self._call_with_fg(0x72)  # F3
         self.assertEqual(len(evs), 1)
-        self.assertEqual(evs[0]['timing_class'], 'safe-ish')
+        self.assertEqual(evs[0]['timing_class'], 'safer')
 
     def test_no_event_when_no_focus_done(self):
         """No macro_key_observed event if _last_focus_done_time == 0."""
@@ -121,9 +146,19 @@ class TestMacroKeyClassification(unittest.TestCase):
         evs = self._call_with_fg(0x70)
         self.assertEqual(len(evs), 0)
 
+    def test_event_carries_epoch_id(self):
+        import overlay.replicator_hotkeys as hk
+        hk._last_focus_done_time = time.perf_counter() - 0.060
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 7
+        evs = self._call_with_fg(0x70)
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['epoch'], 7)
+
     def test_event_carries_fg_hwnd(self):
         import overlay.replicator_hotkeys as hk
-        hk._last_focus_done_time = time.perf_counter() - 0.050
+        hk._last_focus_done_time = time.perf_counter() - 0.060
         hk._last_focus_done_ok = True
         hk._last_focus_done_target = 'EVE - Bravo'
         evs = self._call_with_fg(0x73, fg_hwnd=9876)  # F4
@@ -135,24 +170,26 @@ class TestMacroKeyClassification(unittest.TestCase):
         """_on_macro_key must not consume the key — it returns None."""
         from overlay.replicator_hotkeys import _on_macro_key
         import overlay.replicator_hotkeys as hk
-        hk._last_focus_done_time = time.perf_counter() - 0.050
+        hk._last_focus_done_time = time.perf_counter() - 0.060
         hk._last_focus_done_ok = True
         with patch('overlay.win32_capture.get_foreground_hwnd', return_value=0):
             result = _on_macro_key(0x70)
         self.assertIsNone(result)
 
 
-# ── MACRO_SEQ grouping ────────────────────────────────────────────────────────
+# ── MACRO_SEQ epoch-aware grouping ───────────────────────────────────────────
 
-class TestMacroSeqGrouping(unittest.TestCase):
+class TestMacroSeqEpochGrouping(unittest.TestCase):
 
     def setUp(self):
         _reset_diag_state()
         import overlay.replicator_hotkeys as hk
         hk._hotkey_diagnostics_enabled = True
-        hk._last_focus_done_time = time.perf_counter() - 0.100  # 100ms (safe-ish)
+        hk._last_focus_done_time = time.perf_counter() - 0.100  # 100ms
+        hk._last_focus_done_hwnd = 1001
         hk._last_focus_done_ok = True
         hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
 
     def tearDown(self):
         _reset_diag_state()
@@ -163,17 +200,8 @@ class TestMacroSeqGrouping(unittest.TestCase):
             for vk in vks:
                 _on_macro_key(vk)
 
-    def test_single_key_seq_flushed(self):
-        from overlay.replicator_hotkeys import _flush_macro_seq
-        import overlay.replicator_hotkeys as hk
-        self._press(0x70)  # F1
-        _flush_macro_seq()
-        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
-        self.assertEqual(len(seqs), 1)
-        self.assertIn('F1', seqs[0]['keys_seen'])
-        self.assertEqual(seqs[0]['key_count'], 1)
-
-    def test_multi_key_seq_grouped(self):
+    def test_same_epoch_groups_keys_together(self):
+        """Keys within same epoch and 300ms window form one sequence."""
         from overlay.replicator_hotkeys import _flush_macro_seq
         import overlay.replicator_hotkeys as hk
         self._press(0x70, 0x71, 0x72)  # F1, F2, F3
@@ -184,28 +212,65 @@ class TestMacroSeqGrouping(unittest.TestCase):
         for key in ('F1', 'F2', 'F3'):
             self.assertIn(key, seqs[0]['keys_seen'])
 
-    def test_missing_keys_reported(self):
-        from overlay.replicator_hotkeys import _flush_macro_seq
+    def test_different_epochs_split_sequences(self):
+        """The count=80 bug: epoch change must split the sequence."""
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
         import overlay.replicator_hotkeys as hk
-        self._press(0x70)  # F1 only
-        _flush_macro_seq()
-        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
-        missing = seqs[0]['keys_missing']
-        self.assertNotIn('F1', missing)
-        for key in ('F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8'):
-            self.assertIn(key, missing)
 
-    def test_seq_split_after_timeout(self):
+        # Epoch 1: press F1
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)  # F1
+
+        # Simulate macro cycling to next account — epoch increments
+        hk._focus_epoch_id = 2
+        hk._last_focus_done_target = 'EVE - Bravo'
+        hk._last_focus_done_hwnd = 1002
+
+        # Epoch 2: press F1 again — should flush epoch 1 first
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1002):
+            _on_macro_key(0x70)  # F1 again
+
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        # Epoch 1 was flushed on epoch change; epoch 2 is still pending
+        self.assertEqual(len(seqs), 1, "Epoch change must produce exactly one flushed sequence")
+        self.assertEqual(seqs[0]['epoch'], 1)
+        self.assertEqual(seqs[0]['key_count'], 1)
+
+        # Flush epoch 2
+        _flush_macro_seq()
+        seqs2 = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs2), 2)
+        self.assertEqual(seqs2[1]['epoch'], 2)
+
+    def test_epoch_change_triggers_flush(self):
+        """Verify that merely changing epoch causes flush without explicit call."""
+        from overlay.replicator_hotkeys import _on_macro_key
+        import overlay.replicator_hotkeys as hk
+
+        hk._focus_epoch_id = 5
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)  # F1 in epoch 5
+
+        # Now change epoch — next key press should flush
+        hk._focus_epoch_id = 6
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1002):
+            _on_macro_key(0x71)  # F2 in epoch 6 — triggers flush of epoch 5
+
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['epoch'], 5)
+
+    def test_timeout_triggers_flush(self):
         """Keys > 300ms apart must form separate sequences."""
         from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
         import overlay.replicator_hotkeys as hk
         with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
-            _on_macro_key(0x70)  # F1 — starts seq 1
+            _on_macro_key(0x70)  # F1 — starts seq
             hk._macro_seq_last_key_perf -= 0.401  # simulate 401ms elapsed
             _on_macro_key(0x71)  # F2 — flushes seq 1, starts seq 2
 
         seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
-        # Seq 1 (F1) flushed; seq 2 (F2) still pending
         self.assertEqual(len(seqs), 1)
         self.assertIn('F1', seqs[0]['keys_seen'])
         self.assertNotIn('F2', seqs[0]['keys_seen'])
@@ -217,7 +282,13 @@ class TestMacroSeqGrouping(unittest.TestCase):
         _flush_macro_seq()
         self.assertEqual(hk._macro_seq_keys, [])
         self.assertEqual(hk._macro_seq_key_times, [])
+        self.assertEqual(hk._macro_seq_key_deltas, [])
+        self.assertEqual(hk._macro_seq_key_fg_hwnds, [])
         self.assertEqual(hk._macro_seq_last_key_perf, 0.0)
+        self.assertEqual(hk._macro_seq_epoch_id, -1)
+        self.assertEqual(hk._macro_seq_target, '')
+        self.assertEqual(hk._macro_seq_focus_hwnd, 0)
+        self.assertFalse(hk._macro_seq_focus_ok)
 
     def test_flush_noop_when_empty(self):
         from overlay.replicator_hotkeys import _flush_macro_seq
@@ -226,17 +297,350 @@ class TestMacroSeqGrouping(unittest.TestCase):
         seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
         self.assertEqual(len(seqs), 0)
 
-    def test_seq_duration_positive_for_multi_key(self):
-        from overlay.replicator_hotkeys import _flush_macro_seq
+
+# ── MACRO_SEQ analysis ────────────────────────────────────────────────────────
+
+class TestMacroSeqAnalysis(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
         import overlay.replicator_hotkeys as hk
-        self._press(0x70, 0x71, 0x72)
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def _setup_focus(self, hwnd=1001, target='EVE - Alpha', delta_ago_s=0.100):
+        import overlay.replicator_hotkeys as hk
+        hk._last_focus_done_time = time.perf_counter() - delta_ago_s
+        hk._last_focus_done_hwnd = hwnd
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = target
+        hk._focus_epoch_id = 1
+
+    def _press_all_8(self, fg_hwnd=1001):
+        from overlay.replicator_hotkeys import _on_macro_key
+        vks = [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]  # F1-F8
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=fg_hwnd):
+            for vk in vks:
+                _on_macro_key(vk)
+
+    def _get_seq(self):
+        import overlay.replicator_hotkeys as hk
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        return seqs
+
+    def test_complete_safe_all_8_keys_first_delta_50ms(self):
+        """All 8 keys, first_delta >= 50ms → complete_safe."""
+        from overlay.replicator_hotkeys import _flush_macro_seq
+        self._setup_focus(delta_ago_s=0.080)  # 80ms
+        self._press_all_8()
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'complete_safe')
+        self.assertEqual(seqs[0]['key_count'], 8)
+        self.assertEqual(seqs[0]['keys_missing'], [])
+
+    def test_complete_risky_all_8_keys_first_delta_under_50ms(self):
+        """All 8 keys, first_delta < 50ms → complete_risky."""
+        from overlay.replicator_hotkeys import _flush_macro_seq
+        self._setup_focus(delta_ago_s=0.035)  # 35ms
+        self._press_all_8()
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'complete_risky')
+
+    def test_incomplete_missing_f4(self):
+        """Missing F4 → incomplete status."""
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        self._setup_focus(delta_ago_s=0.080)
+        vks = [0x70, 0x71, 0x72, 0x74, 0x75, 0x76, 0x77]  # F1,F2,F3,F5,F6,F7,F8 (no F4)
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in vks:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'incomplete')
+        self.assertIn('F4', seqs[0]['keys_missing'])
+
+    def test_foreground_mismatch(self):
+        """fg_hwnd != focus_hwnd → foreground_mismatch status."""
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        import overlay.replicator_hotkeys as hk
+        self._setup_focus(hwnd=1001, delta_ago_s=0.080)
+        # Press with fg_hwnd different from focus_hwnd (1001)
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=9999):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'foreground_mismatch')
+        self.assertTrue(len(seqs[0]['fg_mismatch_keys']) > 0)
+
+    def test_first_last_min_max_deltas(self):
+        """first/last/min/max delta fields are present and reasonable."""
+        from overlay.replicator_hotkeys import _flush_macro_seq
+        self._setup_focus(delta_ago_s=0.080)
+        self._press_all_8()
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        seq = seqs[0]
+        self.assertIn('first_key_delta_ms', seq)
+        self.assertIn('last_key_delta_ms', seq)
+        self.assertIn('min_delta_ms', seq)
+        self.assertIn('max_delta_ms', seq)
+        self.assertGreaterEqual(seq['first_key_delta_ms'], 0.0)
+        self.assertGreaterEqual(seq['last_key_delta_ms'], 0.0)
+        self.assertGreaterEqual(seq['min_delta_ms'], 0.0)
+        self.assertGreaterEqual(seq['max_delta_ms'], seq['min_delta_ms'])
+
+    def test_too_early_keys_classification(self):
+        """Keys pressed <30ms after focus are flagged as too_early."""
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        import overlay.replicator_hotkeys as hk
+        # Set focus_done just now so delta is ~0
+        hk._last_focus_done_time = time.perf_counter() - 0.005  # 5ms
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)  # F1
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        self.assertIn('F1', seqs[0]['too_early_keys'])
+
+    def test_risky_keys_classification(self):
+        """Keys pressed 30-50ms after focus are flagged as risky."""
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        import overlay.replicator_hotkeys as hk
+        hk._last_focus_done_time = time.perf_counter() - 0.040  # 40ms
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)  # F1
+        _flush_macro_seq()
+        seqs = self._get_seq()
+        self.assertEqual(len(seqs), 1)
+        self.assertIn('F1', seqs[0]['risky_keys'])
+
+
+# ── Recommended delay logic ───────────────────────────────────────────────────
+
+class TestRecommendedDelay(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def _press_all_8_with_delta(self, delta_s, hwnd=1001):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        hk._last_focus_done_time = time.perf_counter() - delta_s
+        hk._last_focus_done_hwnd = hwnd
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=hwnd):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
         _flush_macro_seq()
         seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
-        # Duration should be >= 0
-        self.assertGreaterEqual(seqs[0]['seq_duration_ms'], 0.0)
+        return seqs[0] if seqs else None
+
+    def test_risky_first_delta_under_50ms_rec_50(self):
+        """complete_risky (first_delta < 50ms) → recommended = 50ms."""
+        seq = self._press_all_8_with_delta(0.035)  # 35ms
+        self.assertIsNotNone(seq)
+        self.assertEqual(seq['sequence_status'], 'complete_risky')
+        self.assertEqual(seq['recommended_min_delay_ms'], 50.0)
+
+    def test_rec_70_when_first_delta_50_to_70ms(self):
+        """first_delta in [50, 70) → recommended = 70ms."""
+        seq = self._press_all_8_with_delta(0.060)  # 60ms
+        self.assertIsNotNone(seq)
+        self.assertEqual(seq['sequence_status'], 'complete_safe')
+        self.assertEqual(seq['recommended_min_delay_ms'], 70.0)
+
+    def test_rec_round_up_to_10_when_first_delta_ge_70ms(self):
+        """first_delta >= 70ms → round up to next multiple of 10."""
+        seq = self._press_all_8_with_delta(0.083)  # ~83ms → ceil(83/10)*10 = 90
+        self.assertIsNotNone(seq)
+        self.assertEqual(seq['sequence_status'], 'complete_safe')
+        self.assertEqual(seq['recommended_min_delay_ms'], 90.0)
+
+    def test_incomplete_rec_max_80_first_plus_20(self):
+        """incomplete → rec = max(80, first_delta + 20)."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        hk._last_focus_done_time = time.perf_counter() - 0.080  # 80ms
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        # Press only F1 (missing F2-F8)
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'incomplete')
+        first = seqs[0]['first_key_delta_ms']
+        expected = max(80.0, first + 20.0)
+        self.assertAlmostEqual(seqs[0]['recommended_min_delay_ms'], round(expected, 1), delta=1.0)
+
+    def test_fg_mismatch_rec_max_80_first_plus_20(self):
+        """foreground_mismatch → rec = max(80, first_delta + 20)."""
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq
+        hk._last_focus_done_time = time.perf_counter() - 0.080  # 80ms
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=9999):  # mismatch
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        seqs = [e for e in hk._hotkey_diagnostics_events if e['type'] == 'macro_seq_complete']
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]['sequence_status'], 'foreground_mismatch')
+        first = seqs[0]['first_key_delta_ms']
+        expected = max(80.0, first + 20.0)
+        self.assertAlmostEqual(seqs[0]['recommended_min_delay_ms'], round(expected, 1), delta=1.0)
 
 
-# ── set_hotkey_diagnostics_enabled hook lifecycle ─────────────────────────────
+# ── Macro summary stats ───────────────────────────────────────────────────────
+
+class TestMacroSummary(unittest.TestCase):
+
+    def setUp(self):
+        _reset_diag_state()
+        import overlay.replicator_hotkeys as hk
+        hk._hotkey_diagnostics_enabled = True
+
+    def tearDown(self):
+        _reset_diag_state()
+
+    def test_initial_all_zeros(self):
+        from overlay.replicator_hotkeys import get_macro_summary
+        s = get_macro_summary()
+        self.assertEqual(s['total_macro_sequences'], 0)
+        self.assertEqual(s['complete_safe_count'], 0)
+        self.assertEqual(s['complete_risky_count'], 0)
+        self.assertEqual(s['incomplete_count'], 0)
+        self.assertEqual(s['foreground_mismatch_count'], 0)
+        self.assertEqual(s['min_first_delta_seen_ms'], 0.0)
+        self.assertEqual(s['max_first_delta_seen_ms'], 0.0)
+        self.assertEqual(s['recommended_min_delay_ms'], 0.0)
+
+    def test_increments_on_complete_safe(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary
+        hk._last_focus_done_time = time.perf_counter() - 0.100
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        s = get_macro_summary()
+        self.assertEqual(s['total_macro_sequences'], 1)
+        self.assertEqual(s['complete_safe_count'], 1)
+        self.assertEqual(s['complete_risky_count'], 0)
+
+    def test_increments_on_complete_risky(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary
+        hk._last_focus_done_time = time.perf_counter() - 0.035  # 35ms
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        s = get_macro_summary()
+        self.assertEqual(s['complete_risky_count'], 1)
+        self.assertEqual(s['total_macro_sequences'], 1)
+
+    def test_increments_on_incomplete(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary
+        hk._last_focus_done_time = time.perf_counter() - 0.100
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            _on_macro_key(0x70)  # only F1
+        _flush_macro_seq()
+        s = get_macro_summary()
+        self.assertEqual(s['incomplete_count'], 1)
+
+    def test_increments_on_fg_mismatch(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary
+        hk._last_focus_done_time = time.perf_counter() - 0.100
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=9999):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        s = get_macro_summary()
+        self.assertEqual(s['foreground_mismatch_count'], 1)
+
+    def test_clear_resets_stats(self):
+        import overlay.replicator_hotkeys as hk
+        from overlay.replicator_hotkeys import _on_macro_key, _flush_macro_seq, get_macro_summary, clear_hotkey_diagnostics
+        hk._last_focus_done_time = time.perf_counter() - 0.100
+        hk._last_focus_done_hwnd = 1001
+        hk._last_focus_done_ok = True
+        hk._last_focus_done_target = 'EVE - Alpha'
+        hk._focus_epoch_id = 1
+        with patch('overlay.win32_capture.get_foreground_hwnd', return_value=1001):
+            for vk in [0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77]:
+                _on_macro_key(vk)
+        _flush_macro_seq()
+        s_before = get_macro_summary()
+        self.assertEqual(s_before['total_macro_sequences'], 1)
+
+        clear_hotkey_diagnostics()
+        s_after = get_macro_summary()
+        self.assertEqual(s_after['total_macro_sequences'], 0)
+        self.assertEqual(s_after['complete_safe_count'], 0)
+        self.assertEqual(s_after['recommended_min_delay_ms'], 0.0)
+
+    def test_get_macro_summary_returns_correct_structure(self):
+        from overlay.replicator_hotkeys import get_macro_summary
+        s = get_macro_summary()
+        expected_keys = {
+            'total_macro_sequences', 'complete_safe_count', 'complete_risky_count',
+            'incomplete_count', 'foreground_mismatch_count',
+            'min_first_delta_seen_ms', 'max_first_delta_seen_ms', 'recommended_min_delay_ms',
+        }
+        self.assertEqual(set(s.keys()), expected_keys)
+
+
+# ── Hook lifecycle ────────────────────────────────────────────────────────────
 
 class TestHookLifecycle(unittest.TestCase):
 
