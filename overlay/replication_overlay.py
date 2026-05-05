@@ -238,10 +238,15 @@ class CaptureThread(QThread):
             self.wait(500)
 
     def run(self):
-        # Cache module reference once — avoids repeated import overhead per frame
+        # Cache module references once — avoids repeated import overhead per frame
         _hk_mod = None
+        _rs_mod = None
         try:
             import overlay.replicator_hotkeys as _hk_mod
+        except Exception:
+            pass
+        try:
+            import overlay.replicator_runtime_state as _rs_mod
         except Exception:
             pass
 
@@ -252,11 +257,21 @@ class CaptureThread(QThread):
                 w, h = self._out_w, self._out_h
                 fps = self._fps
 
-            # Skip one frame while a hotkey cycle is in progress.
+            # Skip frame during capture suspension window (set by hotkey cycles).
             # Reduces capture-thread competition with Win32 SetForegroundWindow.
             if _hk_mod is not None:
                 try:
                     if time.monotonic() < _hk_mod._capture_suspended_until:
+                        self._stop_event.wait(max(0.0, (1.0 / fps) - (time.perf_counter() - t_start)))
+                        self._stop_event.clear()
+                        continue
+                except Exception:
+                    pass
+
+            # Belt-and-suspenders: also skip during hotkey burst window.
+            if _rs_mod is not None:
+                try:
+                    if _rs_mod.is_hotkey_burst_active():
                         self._stop_event.wait(max(0.0, (1.0 / fps) - (time.perf_counter() - t_start)))
                         self._stop_event.clear()
                         continue
@@ -300,6 +315,10 @@ class ReplicationOverlay(QWidget):
     # Settle period after programmatic focus change — prevents monitor timer from undoing F14/click
     _active_hwnd_override: int = 0
     _active_hwnd_override_until: float = 0.0
+
+    # Deferred border repaint: set True when notify fires during a hotkey burst.
+    # Flushed by _monitor_focus() once the burst window expires.
+    _pending_border_flush: bool = False
 
     # Overlay currently under the mouse cursor — used by the WH_MOUSE_LL hook to route wheel events
     _hover_overlay: 'ReplicationOverlay | None' = None
@@ -729,6 +748,17 @@ class ReplicationOverlay(QWidget):
 
     def _monitor_focus(self):
         try:
+            # Flush deferred border repaints once hotkey burst window has expired
+            if ReplicationOverlay._pending_border_flush:
+                try:
+                    from overlay.replicator_runtime_state import is_hotkey_burst_active
+                    if not is_hotkey_burst_active():
+                        ReplicationOverlay._pending_border_flush = False
+                        for _ov in list(_OVERLAY_REGISTRY):
+                            _ov.update()
+                except Exception:
+                    pass
+
             # Lazily resolve hwnd for overlays created without explicit hwnd (restore path)
             if not self._hwnd and callable(self._hwnd_getter):
                 self._hwnd = self._hwnd_getter()
@@ -790,20 +820,36 @@ class ReplicationOverlay(QWidget):
 
     @staticmethod
     def notify_active_client_changed(active_hwnd: int):
-        """Instant update of active border for all overlays. Single source of truth."""
+        """Instant update of active border for all overlays. Single source of truth.
+
+        During a hotkey burst, state is updated but repaints are deferred to the
+        next monitor-timer tick (≤ 75 ms) to reduce DWM/BitBlt competition.
+        """
         t0 = time.perf_counter()
-        # 300ms settle: prevents the 500ms monitor timer from undoing programmatic focus changes
+        # 300ms settle: prevents the monitor timer from undoing programmatic focus changes
         ReplicationOverlay._active_hwnd_override = active_hwnd
         ReplicationOverlay._active_hwnd_override_until = t0 + 0.3
+
+        burst_active = False
+        try:
+            from overlay.replicator_runtime_state import is_hotkey_burst_active
+            burst_active = is_hotkey_burst_active()
+        except Exception:
+            pass
+
         count = 0
         for ov in list(_OVERLAY_REGISTRY):
             was_active = ov._is_active_client
             ov._is_active_client = bool(ov._hwnd and active_hwnd == ov._hwnd)
             if was_active != ov._is_active_client:
-                ov.update()
-                count += 1
+                if burst_active:
+                    # State is correct; skip the repaint — monitor timer will flush within 75 ms
+                    ReplicationOverlay._pending_border_flush = True
+                else:
+                    ov.update()
+                    count += 1
         dt = (time.perf_counter() - t0) * 1000
-        logger.info(f"[REPLICATOR ACTIVE BORDER] target_hwnd={active_hwnd} updated={count} ms={dt:.2f}")
+        logger.debug(f"[REPLICATOR ACTIVE BORDER] target_hwnd={active_hwnd} updated={count} burst={burst_active} ms={dt:.2f}")
 
     # ------------------------------------------------------------------
     # Monitor: active-border + hide_when_inactive (Fix #4)

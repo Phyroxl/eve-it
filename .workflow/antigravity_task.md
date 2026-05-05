@@ -239,3 +239,53 @@ reliable_focus strategy=failed verified=False actual=0 total_ms=63.2 attempts=fa
 4. Objetivo: mayoría < 30ms, peor caso < 80ms.
 5. Si un ciclo falla, la línea debe mostrar `strategy=failed budget_exceeded=False/True` y no bloquear la macro.
 6. Probar Sleep 60ms y Sleep 50ms si Sleep 70 funciona.
+
+## 14) PERF — Reducción de carga visual durante ráfagas de hotkeys
+
+**Problema:** Durante macros rápidas (F14/F15 con Sleep 50-70ms), la captura visual y los repaints de bordes compiten con el cambio de foco de ventana. Esto puede causar `[NOT VERIFIED]` puntuales incluso cuando el foco es correcto en la siguiente invocación (0.4ms).
+
+**Solución:** Nuevo módulo `overlay/replicator_runtime_state.py` con estado de ráfaga compartido. Tanto `replicator_hotkeys.py` como `replication_overlay.py` lo importan sin riesgo de circular imports.
+
+**Constantes:**
+- `HOTKEY_BURST_VISUAL_SUSPEND_MS = 120` — ventana de suspensión visual por hotkey
+- `HOTKEY_BURST_LOG_THROTTLE_MS = 500` — throttle de logs para evitar spam
+
+**API pública del módulo:**
+- `note_hotkey_burst_event(reason)` — extiende ventana de suspensión, incrementa contador
+- `is_hotkey_burst_active() -> bool` — True durante ventana activa (barato, sin I/O)
+- `get_hotkey_burst_remaining_ms() -> float` — ms restantes
+- `get_hotkey_burst_count() -> int` — total de eventos registrados
+- `should_log_burst() -> bool` — throttle de 500ms para entradas de log
+
+**Cambios en `replicator_hotkeys.py`:**
+- En `_cycle` y `_cycle_group`, justo después de `_capture_suspended_until`, se llama a `note_hotkey_burst_event(reason)`.
+- Si `should_log_burst()`, se emite `[HOTKEY BURST] active suspend_ms=120 count=N` al perf log y evento `burst_visual_suspend` al diagnóstico en vivo.
+
+**Cambios en `replication_overlay.py`:**
+- `_pending_border_flush = False` añadido como variable de clase.
+- `CaptureThread.run()`: importa `replicator_runtime_state` y añade guard `if _rs_mod.is_hotkey_burst_active(): skip frame`. Belt-and-suspenders junto con `_capture_suspended_until` existente.
+- `notify_active_client_changed()`: durante burst, actualiza `_is_active_client` pero NO llama `ov.update()`. Establece `_pending_border_flush = True`. El log cambia de `logger.info` a `logger.debug`.
+- `_monitor_focus()`: al inicio, verifica `_pending_border_flush`. Si burst ha terminado, limpia el flag y llama `ov.update()` en todos los overlays. Garantiza repaint en máximo 75ms tras fin de ráfaga.
+
+**Log de diagnóstico:**
+```
+[HOTKEY BURST] active suspend_ms=120 count=42
+```
+
+**Archivos Modificados:**
+- `overlay/replicator_runtime_state.py` — nuevo módulo (estado compartido)
+- `overlay/replicator_hotkeys.py` — `note_hotkey_burst_event` en `_cycle` y `_cycle_group`
+- `overlay/replication_overlay.py` — burst guard en captura, deferral en notify, flush en monitor
+- `tests/test_replicator_burst.py` — nuevo archivo, 17 tests
+
+**Pruebas:**
+- `python -m py_compile overlay/replicator_runtime_state.py overlay/replicator_hotkeys.py overlay/replication_overlay.py` → OK
+- `python -m pytest tests -k "replicator or hotkey or overlay or focus or win32 or burst"` → **146 passed, 1 skipped**
+
+**Cómo validar en diagnóstico:**
+1. Limpiar `logs/hotkey_perf.log`. Abrir diagnóstico en vivo.
+2. Ejecutar macro Sleep 70ms. Revisar que aparecen líneas `[HOTKEY BURST]`.
+3. Las réplicas pueden congelarse visualmente ~120ms durante la ráfaga — esto es correcto.
+4. Los bordes activos se actualizan a más tardar 75ms después de cada ráfaga.
+5. Comprobar que bajan o desaparecen los `[NOT VERIFIED]` puntuales.
+6. Probar Sleep 60ms y Sleep 50ms si Sleep 70ms funciona.

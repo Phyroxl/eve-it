@@ -470,6 +470,19 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
             # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──
             _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
 
+            # ── Mark hotkey burst — suspends visual updates for 120 ms ──
+            try:
+                from overlay.replicator_runtime_state import (
+                    note_hotkey_burst_event, should_log_burst, get_hotkey_burst_count,
+                )
+                note_hotkey_burst_event("cycle")
+                if should_log_burst():
+                    _cnt = get_hotkey_burst_count()
+                    _perf_log(f'[HOTKEY BURST] active suspend_ms=120 count={_cnt}')
+                    _diag_event('burst_visual_suspend', suspend_ms=120, count=_cnt, reason='cycle')
+            except Exception:
+                pass
+
             # ── Focus target — reliable multi-strategy (verified internally) ──
             ok, focus_detail = focus_eve_window_reliable(target_hwnd)
             _perf_log(f'[FOCUS PERF] target={target!r} {focus_detail}')
@@ -669,6 +682,19 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
             # ── Suspend capture for CAPTURE_SUSPEND_MS — reduces BitBlt competition ──
             _capture_suspended_until = now + CAPTURE_SUSPEND_MS / 1000.0
+
+            # ── Mark hotkey burst — suspends visual updates for 120 ms ──
+            try:
+                from overlay.replicator_runtime_state import (
+                    note_hotkey_burst_event, should_log_burst, get_hotkey_burst_count,
+                )
+                note_hotkey_burst_event("cycle_group")
+                if should_log_burst():
+                    _cnt = get_hotkey_burst_count()
+                    _perf_log(f'[HOTKEY BURST] active suspend_ms=120 count={_cnt}')
+                    _diag_event('burst_visual_suspend', suspend_ms=120, count=_cnt, reason='cycle_group')
+            except Exception:
+                pass
 
             # ── Focus target — reliable multi-strategy (verified internally) ──
             ok, focus_detail = focus_eve_window_reliable(target_hwnd)
