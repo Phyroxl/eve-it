@@ -754,17 +754,6 @@ class ReplicationOverlay(QWidget):
 
     def _monitor_focus(self):
         try:
-            # Flush deferred border repaints once hotkey burst window has expired
-            if ReplicationOverlay._pending_border_flush:
-                try:
-                    from overlay.replicator_runtime_state import is_hotkey_burst_active
-                    if not is_hotkey_burst_active():
-                        ReplicationOverlay._pending_border_flush = False
-                        for _ov in list(_OVERLAY_REGISTRY):
-                            _ov.update()
-                except Exception:
-                    pass
-
             # Lazily resolve hwnd for overlays created without explicit hwnd (restore path)
             if not self._hwnd and callable(self._hwnd_getter):
                 self._hwnd = self._hwnd_getter()
@@ -840,6 +829,10 @@ class ReplicationOverlay(QWidget):
         ReplicationOverlay._active_epoch += 1
         epoch = ReplicationOverlay._active_epoch
 
+        # Read burst state only for logging — it must NOT gate the border repaint.
+        # The burst system suppresses the CaptureThread (heavy BitBlt). The active-
+        # border repaint is a lightweight Qt paint that reads the already-captured
+        # _pixmap; deferring it caused 75-195 ms lag in the active border during hotkeys.
         burst_active = False
         try:
             from overlay.replicator_runtime_state import is_hotkey_burst_active
@@ -856,15 +849,17 @@ class ReplicationOverlay(QWidget):
                 changed += 1
 
         if changed:
-            if burst_active:
-                # State is correct; skip the repaint — monitor timer will flush within 75 ms
-                ReplicationOverlay._pending_border_flush = True
-            else:
-                # Repaint ALL overlays to atomically clear old and set new border.
-                # Only repainting changed ones risks a frame with two active borders
-                # if a previous repaint was deferred or batched by Qt.
-                for ov in ovs:
-                    ov.update()
+            # Always repaint ALL overlays immediately — never defer the border update.
+            # Repainting all (not just changed ones) atomically clears the old border
+            # and sets the new one in the same Qt paint cycle, preventing double-border.
+            t_repaint = time.perf_counter()
+            for ov in ovs:
+                ov.update()
+            logger.debug(
+                f"[ACTIVE_VISUAL_APPLY] hwnd={active_hwnd} epoch={epoch} "
+                f"changed={changed} burst={burst_active} "
+                f"repaint_ms={(time.perf_counter() - t_repaint) * 1000:.2f}"
+            )
 
         dt = (time.perf_counter() - t0) * 1000
         active_titles = [ov._title for ov in ovs if ov._is_active_client]
@@ -1531,6 +1526,9 @@ class ReplicationOverlay(QWidget):
             hwnd = self._hwnd or self._hwnd_getter()
             if hwnd:
                 self._hwnd = hwnd
+                logger.debug(
+                    f"[ACTIVE_VISUAL_SET] source=click target={self._title!r} hwnd={hwnd}"
+                )
                 ReplicationOverlay.notify_active_client_changed(hwnd)
                 t_border = time.perf_counter()
                 logger.debug(

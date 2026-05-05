@@ -694,3 +694,59 @@ es completa y no requiere modificar cada ruta individualmente.
 ### Pruebas
 - `python -m py_compile overlay/replicator_hotkeys.py overlay/replication_overlay.py` → OK
 - `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py tests/test_replicator_active_border.py tests/test_cycle_sync.py -q` → **142 passed**
+
+## 21) FIX — Active replica border update instant (hotkey + click)
+
+**Commit `FIX: Make active replica border update instant`**
+
+### Causa del lag en el borde activo durante hotkeys
+
+El sistema de "hotkey burst" (`note_hotkey_burst_event`) se activa dentro de `_cycle_group` **antes** de llamar a `notify_active_client_changed`. Cuando `notify_active_client_changed` llegaba, `is_hotkey_burst_active()` devolvía True y en vez de llamar `ov.update()` inmediatamente, ponía `_pending_border_flush = True`. El borde entonces se actualizaba al expirar el burst (120ms) o al siguiente tick del monitor timer (75ms), añadiendo hasta **75–195ms de lag visual**.
+
+El burst fue diseñado para suprimir el `CaptureThread` (captura BitBlt pesada) durante macros rápidas. Esto es correcto — el CaptureThread ya tiene su propio guard (`_capture_suspended_until`). Pero el `ov.update()` del borde activo es un paint Qt ligero que lee el `_pixmap` ya capturado: **no hace BitBlt nuevo**. Diferirlo causaba el lag sin ningún beneficio.
+
+### Cambios implementados
+
+**`overlay/replication_overlay.py`**:
+- `notify_active_client_changed`: eliminada la bifurcación `if burst_active: ... else: ...`. Ahora siempre llama `ov.update()` para todos los overlays cuando hay cambio. El `burst_active` se lee solo para logging.
+- `_monitor_focus`: eliminado el bloque `if ReplicationOverlay._pending_border_flush:` — era código muerto ya que `_pending_border_flush` nunca se pondría a True.
+- Añadido log `[ACTIVE_VISUAL_SET]` en `mousePressEvent` (click).
+- Añadido log `[ACTIVE_VISUAL_APPLY]` en `notify_active_client_changed` cuando hay repaint.
+
+**`overlay/replicator_hotkeys.py`**:
+- `_cycle_group`: añadido `[ACTIVE_VISUAL_SET]` log antes de `notify_active_client_changed`.
+- `_cycle` (global): ídem.
+
+### Flujo corregido
+```
+Hotkey pulsada:
+  _cycle_group → note_hotkey_burst_event (CaptureThread suspendido)
+              → focus_eve_window_reliable (verificado)
+              → [ACTIVE_VISUAL_SET] log
+              → notify_active_client_changed(target_hwnd):
+                  actualiza _is_active_client en todos los overlays
+                  ov.update() en todos ← INMEDIATO, sin esperar burst/timer
+                  [ACTIVE_VISUAL_APPLY] log
+```
+
+### Logs esperados
+```
+[ACTIVE_VISUAL_SET] group=g1 target='EVE — Lana Drake' hwnd=4788500 idx=2
+[ACTIVE_VISUAL_APPLY] hwnd=4788500 epoch=7 changed=2 burst=True repaint_ms=0.05
+[ACTIVE_BORDER_UPDATE] hwnd=4788500 epoch=7 changed=2 cleared=1 applied=1 burst=True ms=0.12 active=['EVE — Lana Drake']
+```
+
+### Instrucciones de prueba manual
+1. Click izquierdo en réplica 1, réplica 5, réplica 9:
+   - Borde cambia instantáneamente, solo queda marcada la activa.
+2. Hotkey 1 → 2 → 3 → 4:
+   - Borde activo sigue el ritmo del cambio de cuenta, sin lag.
+3. Hotkeys rápidas en ráfaga:
+   - El borde final corresponde siempre a la cuenta realmente activa.
+4. Mezcla: hotkey hasta cuenta 4 → click en cuenta 1 → hotkey siguiente:
+   - Borde instantáneo en cuenta 1 y luego cuenta 2.
+5. Sin doble borde visible en ningún momento.
+
+### Pruebas
+- `python -m py_compile overlay/replication_overlay.py overlay/replicator_hotkeys.py` → OK
+- `python -m pytest tests/test_macro_timing_diag.py tests/test_replicator_burst.py tests/test_replicator_active_border.py tests/test_cycle_sync.py -q` → **142 passed**

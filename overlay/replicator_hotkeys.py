@@ -1095,6 +1095,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 _last_cycle_client_id           = target
                 _last_cycle_client_id_time      = now
                 _last_verified_focus_perf       = _time.perf_counter()
+                _perf_log(
+                    f'[ACTIVE_VISUAL_SET] scope=global target={target!r} '
+                    f'hwnd={target_hwnd} idx={next_idx}'
+                )
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
             total_ms = (_time.perf_counter() - t0) * 1000
@@ -1386,6 +1390,10 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 _last_cycle_client_id          = target
                 _last_cycle_client_id_time     = now
                 _last_verified_focus_perf      = _time.perf_counter()
+                _perf_log(
+                    f'[ACTIVE_VISUAL_SET] group={group_id} target={target!r} '
+                    f'hwnd={target_hwnd} idx={next_idx}'
+                )
                 ReplicationOverlay.notify_active_client_changed(target_hwnd)
 
             total_ms = (_time.perf_counter() - t0) * 1000
