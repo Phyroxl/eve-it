@@ -297,30 +297,26 @@ class ReplicatorSettingsDialog(QDialog):
         lbl_gen_status = QLabel("")
         lbl_gen_status.setStyleSheet("color:#00ff64; font-size:10px;")
  
-        chk_inc_color = QCheckBox("Incluir color por cliente")
-        chk_inc_color.setStyleSheet("color:#cbd5e1; font-size:10px;")
-        lay.addWidget(chk_inc_color)
-
         def _replicate_all():
             from overlay.replicator_config import apply_settings_keys_to_all, FULL_REPLICATE_KEYS
             from overlay.replication_overlay import _OVERLAY_REGISTRY
-            
+
             # 1. Sincronizar estado actual del widget a ov_cfg
             self._ov._do_save()
-            
+
             src_title = self._ov._title
             keys = FULL_REPLICATE_KEYS
-            
+
             # 2. Replicar en el archivo de configuración
             apply_settings_keys_to_all(
-                self._ov._cfg, src_title, 
-                keys=keys, 
-                include_client_color=chk_inc_color.isChecked()
+                self._ov._cfg, src_title,
+                keys=keys,
+                include_client_color=True
             )
-            
+
             # 3. Replicar en caliente a los objetos activos
             src = {k: self._ov._ov_cfg[k] for k in keys if k in self._ov._ov_cfg}
-            if chk_inc_color.isChecked() and 'client_color' in self._ov._ov_cfg:
+            if 'client_color' in self._ov._ov_cfg:
                 src['client_color'] = self._ov._ov_cfg['client_color']
 
             peers = [p for p in list(_OVERLAY_REGISTRY) if p is not self._ov]

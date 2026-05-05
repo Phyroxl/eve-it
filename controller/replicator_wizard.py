@@ -166,15 +166,6 @@ class ReplicatorWizard:
         self.btn_visual.setMinimumHeight(35); self.btn_visual.setObjectName("primary")
         conf_lay.addWidget(self.btn_visual)
 
-        # Screen selector — populated later in _populate_screens()
-        scr_row = QHBoxLayout(); scr_row.setSpacing(8)
-        scr_lbl = QLabel("Seleccionar pantalla:")
-        scr_lbl.setFixedWidth(145)
-        scr_row.addWidget(scr_lbl)
-        self.scr_combo = QComboBox(); self.scr_combo.setMinimumWidth(180)
-        scr_row.addWidget(self.scr_combo); scr_row.addStretch()
-        conf_lay.addLayout(scr_row)
-
         l1.addWidget(conf_box)
 
         # Footer
@@ -209,7 +200,6 @@ class ReplicatorWizard:
         self._sync_to_cfg()
         
         self._update_visual_button_state()
-        self._populate_screens()
         self._load_position()
 
     def _populate_screens(self):
@@ -236,14 +226,7 @@ class ReplicatorWizard:
         logger.info("[REPLICATOR SCREEN] Detected %d screen(s)", len(screens))
 
     def _get_selected_screen(self):
-        """Return the QScreen corresponding to the current combo selection."""
-        idx = self.scr_combo.currentIndex()
-        screens = QApplication.screens()
-        if 0 <= idx < len(screens):
-            s = screens[idx]
-            logger.info("[REPLICATOR SCREEN] Selected screen index=%d name=%s geometry=%s",
-                        idx, s.name(), s.geometry())
-            return s
+        """Return the primary screen (screen selector removed)."""
         return QApplication.primaryScreen()
 
     def _update_visual_button_state(self):
@@ -377,6 +360,11 @@ class ReplicatorWizard:
             self.sp_y.setValue(int(reg.get('region_y', 0) * 1080))
             self.sp_w.setValue(int(reg.get('region_w', 0.1) * 1920))
             self.sp_h.setValue(int(reg.get('region_h', 0.1) * 1080))
+            if 'fps' in reg:
+                fps_str = str(int(reg['fps']))
+                idx = self.fps_combo.findText(fps_str)
+                if idx >= 0:
+                    self.fps_combo.setCurrentIndex(idx)
 
     def _on_profile_add(self):
         from overlay.replicator_config import save_layout_profile, LAYOUT_PROFILE_KEYS
@@ -444,11 +432,12 @@ class ReplicatorWizard:
                 h = handles.get(title)
                 if not h: continue
                 ov_region = region.copy()
-                fps = self._cfg.get('global_fps', 30)
-                # Bug 2 fix: only write global_fps if overlay has no per-overlay fps saved
+                # Priority: profile fps > wizard global_fps > 30
+                from overlay.replicator_config import get_active_layout_profile as _gap
+                _pname, _pd = _gap(self._cfg)
+                fps = _pd.get('fps', self._cfg.get('global_fps', 30))
                 ov_stored = self._cfg.setdefault('overlays', {}).setdefault(title, {})
-                if 'fps' not in ov_stored:
-                    ov_stored['fps'] = fps
+                ov_stored['fps'] = fps
                 ov = ReplicationOverlay(title=title, hwnd=h, region_rel=ov_region, cfg=self._cfg,
                                         save_callback=lambda *a: cfg_lib.save_overlay_state(self._cfg, *a))
 

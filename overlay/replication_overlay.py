@@ -995,6 +995,10 @@ class ReplicationOverlay(QWidget):
             QMenu { background: #0a0a0a; border: 1px solid #00c8ff; color: #fff; padding: 5px; }
             QMenu::item { padding: 5px 25px; }
             QMenu::item:selected { background: #004466; }
+            QMenu::item:checked { color: #00c8ff; }
+            QMenu::indicator { width: 14px; height: 14px; }
+            QMenu::indicator:checked { background: #00c8ff; border: 1px solid #00c8ff; border-radius: 2px; }
+            QMenu::indicator:unchecked { background: transparent; border: 1px solid #334155; border-radius: 2px; }
         """)
 
         style = self.style()
@@ -1044,7 +1048,20 @@ class ReplicationOverlay(QWidget):
         act_close = menu.addAction(icon_close, "Cerrar")
         act_close.triggered.connect(self.close)
 
+        # 7. Cerrar todo
+        act_close_all = menu.addAction(icon_close, "Cerrar todo")
+        act_close_all.triggered.connect(self._close_all_replicas)
+
         menu.exec(event.globalPos())
+
+    def _close_all_replicas(self):
+        """Cierra todas las réplicas activas registradas."""
+        from overlay.replication_overlay import _OVERLAY_REGISTRY
+        for ov in list(_OVERLAY_REGISTRY):
+            try:
+                ov.close()
+            except Exception:
+                pass
 
     def _open_settings(self, _checked=False):
         """Abre o trae al frente el diálogo de ajustes del Replicador."""
