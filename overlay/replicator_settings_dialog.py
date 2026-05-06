@@ -390,6 +390,13 @@ class ReplicatorSettingsDialog(QDialog):
         lay.addWidget(chk_lp_all)
 
         def _reload_lp_combo():
+            # Re-read from disk so profiles saved by other replicas' dialogs appear
+            try:
+                from overlay.replicator_config import load_config as _load_cfg
+                disk = _load_cfg()
+                self._ov._cfg['layout_profiles'] = disk.get('layout_profiles', {})
+            except Exception:
+                pass
             profiles = get_layout_profiles(self._ov._cfg)
             active, _ = get_active_layout_profile(self._ov._cfg)
             lp_combo.blockSignals(True)
@@ -400,6 +407,7 @@ class ReplicatorSettingsDialog(QDialog):
             if idx >= 0:
                 lp_combo.setCurrentIndex(idx)
             lp_combo.blockSignals(False)
+            logger.debug(f"[LAYOUT PROFILE LOAD] count={len(profiles)} names={list(profiles.keys())}")
 
         _reload_lp_combo()
 
@@ -487,6 +495,11 @@ class ReplicatorSettingsDialog(QDialog):
                 replicas = _collect_global_replicas()
                 save_layout_profile(self._ov._cfg, name.strip(), profile, replicas=replicas)
                 logger.info(f"[PROFILE SAVE GLOBAL] name='{name.strip()}' replicas={len(replicas)} hotkeys_saved={bool(hk_cfg)}")
+                # Propagate updated profiles dict to all active overlays so any
+                # open settings dialog sees the new profile immediately
+                _profs = self._ov._cfg.get('layout_profiles', {})
+                for _ov in list(_OVERLAY_REGISTRY):
+                    _ov._cfg['layout_profiles'] = _profs
                 _profile_auto_applying[0] = True
                 _reload_lp_combo()
                 lp_combo.setCurrentText(name.strip())
@@ -503,6 +516,10 @@ class ReplicatorSettingsDialog(QDialog):
                 replicas = _collect_global_replicas()
                 save_layout_profile(self._ov._cfg, name, profile, replicas=replicas)
                 logger.info(f"[PROFILE SAVE GLOBAL] name='{name}' replicas={len(replicas)} hotkeys_saved={bool(hk_cfg)}")
+                # Propagate updated profiles dict to all active overlays
+                _profs = self._ov._cfg.get('layout_profiles', {})
+                for _ov in list(_OVERLAY_REGISTRY):
+                    _ov._cfg['layout_profiles'] = _profs
 
         def _lp_del():
             name = lp_combo.currentText()
@@ -513,6 +530,39 @@ class ReplicatorSettingsDialog(QDialog):
         btn_lp_new.clicked.connect(_lp_new)
         btn_lp_save.clicked.connect(_lp_save)
         btn_lp_del.clicked.connect(_lp_del)
+
+        # --- Copy region to all other replicas ---
+        btn_copy_region = QPushButton("Copiar región a todas")
+        btn_copy_region.setToolTip(
+            "Copia la región capturada de ESTA réplica a todas las demás.\n"
+            "No cambia posición ni tamaño de ventana."
+        )
+        btn_copy_region.setFixedHeight(24)
+        lay.addWidget(btn_copy_region)
+
+        def _copy_region_to_all():
+            from overlay.replication_overlay import _OVERLAY_REGISTRY
+            src_region = dict(self._ov._region)
+            peers = [ov for ov in list(_OVERLAY_REGISTRY) if ov is not self._ov]
+            for target in peers:
+                try:
+                    target._region.update(src_region)
+                    # Keep per-overlay config keys in sync for persistence
+                    target._ov_cfg['region_x'] = src_region.get('x', 0)
+                    target._ov_cfg['region_y'] = src_region.get('y', 0)
+                    target._ov_cfg['region_w'] = src_region.get('w', 1)
+                    target._ov_cfg['region_h'] = src_region.get('h', 1)
+                    target.update()
+                    target._schedule_autosave()
+                except Exception as e:
+                    logger.error(f"[COPY REGION] error target={target._title!r}: {e}")
+            logger.info(
+                f"COPY REGION source={self._ov._title!r} targets={len(peers)} region={src_region}"
+            )
+            btn_copy_region.setText(f"✓ Copiado a {len(peers)} réplicas")
+            QTimer.singleShot(3000, lambda: btn_copy_region.setText("Copiar región a todas"))
+
+        btn_copy_region.clicked.connect(_copy_region_to_all)
 
         # --- Live-apply dispatcher: broadcasts non-X/Y changes to all overlays when checkbox is on ---
         _syncing = [False]

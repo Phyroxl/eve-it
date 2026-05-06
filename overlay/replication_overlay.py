@@ -150,6 +150,89 @@ if IS_WINDOWS:
             except Exception:
                 pass
 
+    # ── WH_KEYBOARD_LL — global keyboard hook so arrow keys reach overlays ────
+    # EVE Online has Win32 focus, so Qt keyPressEvent never fires for arrow keys.
+    # We intercept them here, nudge the hovered overlay's region, and suppress
+    # the key so EVE does NOT receive it (returns 1 without CallNextHookEx).
+    _WH_KEYBOARD_LL  = 13
+    _WM_KEYDOWN      = 0x0100
+    _WM_SYSKEYDOWN   = 0x0104
+    _VK_LEFT         = 0x25
+    _VK_UP           = 0x26
+    _VK_RIGHT        = 0x27
+    _VK_DOWN         = 0x28
+    _VK_SHIFT        = 0x10
+
+    def _keyboard_ll_hook_proc(nCode, wParam, lParam):
+        global _keyboard_hook_handle
+        if nCode >= 0 and wParam in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
+            try:
+                vk = ctypes.cast(lParam, ctypes.POINTER(ctypes.c_uint32)).contents.value
+                if vk in (_VK_UP, _VK_DOWN, _VK_LEFT, _VK_RIGHT):
+                    ov = ReplicationOverlay._hover_overlay
+                    if ov is not None and not ReplicationOverlay._global_shutdown:
+                        shift = bool(_u32h.GetKeyState(_VK_SHIFT) & 0x8000)
+                        _ov_ref = weakref.ref(ov)
+                        QTimer.singleShot(
+                            0, lambda v=vk, r=_ov_ref, s=shift: _deliver_hook_nudge(r, v, s)
+                        )
+                        return _LRESULT(1)  # suppress key from EVE
+            except Exception:
+                pass
+        return _u32h.CallNextHookEx(_keyboard_hook_handle, nCode, wParam, lParam)
+
+    def _deliver_hook_nudge(ov_ref, vk, shift):
+        ov = ov_ref()
+        if ov is None or ReplicationOverlay._global_shutdown:
+            return
+        try:
+            step = 0.01 if shift else 0.002
+            r = ov._region
+            if vk == _VK_UP:
+                r['y'] = max(0.0, r['y'] - step)
+            elif vk == _VK_DOWN:
+                r['y'] = min(1.0 - r['h'], r['y'] + step)
+            elif vk == _VK_LEFT:
+                r['x'] = max(0.0, r['x'] - step)
+            elif vk == _VK_RIGHT:
+                r['x'] = min(1.0 - r['w'], r['x'] + step)
+            logger.debug(f"REGION NUDGE title={ov._title!r} vk={hex(vk)} region={dict(r)}")
+            ov.update()
+            ov._schedule_autosave()
+        except Exception:
+            pass
+
+
+_keyboard_hook_handle   = None
+_keyboard_hook_proc_ref = None  # keep WINFUNCTYPE alive to prevent GC crash
+
+
+def _install_keyboard_hook():
+    global _keyboard_hook_handle, _keyboard_hook_proc_ref
+    if not IS_WINDOWS or _keyboard_hook_handle:
+        return
+    try:
+        proc = _HOOKPROC(_keyboard_ll_hook_proc)
+        _keyboard_hook_proc_ref = proc
+        _keyboard_hook_handle = _u32h.SetWindowsHookExW(_WH_KEYBOARD_LL, proc, None, 0)
+        if _keyboard_hook_handle:
+            logger.info(f"[KEYBOARD HOOK] WH_KEYBOARD_LL installed handle={_keyboard_hook_handle}")
+        else:
+            logger.warning("[KEYBOARD HOOK] SetWindowsHookExW returned NULL")
+    except Exception as e:
+        logger.warning(f"[KEYBOARD HOOK] Failed to install: {e}")
+
+
+def _uninstall_keyboard_hook():
+    global _keyboard_hook_handle
+    if _keyboard_hook_handle and IS_WINDOWS:
+        try:
+            ok = _u32h.UnhookWindowsHookEx(_keyboard_hook_handle)
+            logger.info(f"[KEYBOARD HOOK] uninstalled ok={bool(ok)}")
+        except Exception as e:
+            logger.warning(f"[KEYBOARD HOOK] uninstall error: {e}")
+        _keyboard_hook_handle = None
+
 
 def _install_global_mouse_hook():
     global _mouse_hook_handle, _mouse_hook_proc_ref
@@ -180,6 +263,19 @@ def _uninstall_global_mouse_hook():
         except Exception as e:
             logger.warning(f"[MOUSE HOOK] uninstall error: {e}")
         _mouse_hook_handle = None
+
+
+def _stop_client_watcher() -> None:
+    """Stop the client-watcher QTimer. Call during global shutdown to prevent
+    relaunch attempts and Win32 lookups while overlays are being torn down."""
+    global _client_watch_timer
+    if _client_watch_timer is not None:
+        try:
+            _client_watch_timer.stop()
+            logger.debug("[REPLICA WATCHER] Client watcher stopped (global shutdown)")
+        except Exception:
+            pass
+        _client_watch_timer = None
 
 
 def _log_hook_event(event: str, detail: str = ""):
@@ -489,10 +585,12 @@ class ReplicationOverlay(QWidget):
         _OVERLAY_REGISTRY.add(self)
         _install_client_watcher()
 
-        # Install the global mouse hook on first overlay creation so scroll
-        # events are delivered even when EVE has OS focus.
+        # Install global hooks on first overlay creation so wheel + arrow key
+        # events reach overlays even when EVE has OS focus.
         if not _mouse_hook_handle:
             _install_global_mouse_hook()
+        if not _keyboard_hook_handle:
+            _install_keyboard_hook()
 
         # Native region state (populated by _apply_native_window_region)
         self._last_native_region_status = 'not_called'

@@ -293,3 +293,71 @@ Logs: CLIENT CLOSED DETECTED, REPLICA AUTO CLOSED, CLIENT REOPENED DETECTED, REP
 
 ### Tests
 82 passed, 1 skipped.
+
+---
+
+## Session 6 — Replicator shutdown layout region profiles and Intel Alert diagnosis
+
+**Fecha:** 2026-05-06
+**Commit:** FIX: Repair replicator shutdown layout region profiles and intel diagnostics
+
+### Problemas diagnosticados y resueltos
+
+#### 1. Cierre/logout con réplicas — lag en PC
+- **Causa raíz**: `_client_watch_timer` (QTimer cada 1 s) NO se detenía durante el shutdown global. Seguía disparando `_client_watcher_tick()` después de que las réplicas fueran cerradas, haciendo llamadas Win32 (`resolve_eve_window_handle`) para cada entrada en `_REPLICA_STATE_CACHE`. Con 4 cuentas y entradas en cache = 4×Win32 lookups/s durante el apagado.
+- **Fix**: Añadida función `_stop_client_watcher()` en `replication_overlay.py`. Llamada al inicio de `close_replicator_overlays()` en `tray_manager.py` — antes de tocar ningún overlay. Esto previene cualquier reintento de relaunch durante el teardown.
+- **Fix adicional**: El keyboard hook (nuevo) también se desinstala durante shutdown.
+- **Logging añadido**: `REPLICATOR SHUTDOWN START count=N`, `REPLICATOR SHUTDOWN DONE overlays=N hide_ms=X total_ms=Y`.
+
+#### 2. Flechas de región rotas
+- **Causa raíz**: Las réplicas tienen `WS_EX_NOACTIVATE` — EVE Online siempre tiene Win32 focus. Las flechas van a EVE, no al widget Qt. El `setFocus()` en `enterEvent()` da focus Qt interno pero Win32 sigue en EVE. El `keyPressEvent()` de Qt nunca se activa para flechas cuando EVE tiene focus.
+- **Fix**: Nuevo hook global `WH_KEYBOARD_LL` (análogo al `WH_MOUSE_LL` existente para la rueda).
+  - Intercepta VK_UP/DOWN/LEFT/RIGHT cuando `_hover_overlay` no es None.
+  - Llama `_deliver_hook_nudge(ref, vk, shift)` via `QTimer.singleShot(0, ...)` — igual que el mouse hook.
+  - Retorna `_LRESULT(1)` SIN llamar `CallNextHookEx` → suprime la tecla de EVE.
+  - Shift + flecha = step grande (0.01), sin Shift = pequeño (0.002).
+  - Se instala junto al mouse hook en el primer overlay creado.
+  - Se desinstala en `close_replicator_overlays()`.
+- **Logging**: `REGION NUDGE title=... vk=... region=...`
+
+#### 3. Botón "Copiar región" en perfil de layout
+- Añadido botón `"Copiar región a todas"` en el tab Layout del settings dialog.
+- Al pulsar: copia `self._ov._region` (dict x/y/w/h relativo) a todos los peers.
+- Actualiza `_ov_cfg['region_x/y/w/h']` en cada destino para persistencia.
+- Llama `target.update()` + `target._schedule_autosave()` en cada destino.
+- No toca geometría de ventana, FPS, colores, hotkeys.
+- Feedback en botón: `"✓ Copiado a N réplicas"` por 3 s.
+- Logging: `COPY REGION source=... targets=N region=...`
+
+#### 4. Perfiles de layout no globales
+- **Causa raíz**: Cada overlay tiene su propio `_cfg` dict en memoria. Al guardar un perfil desde la réplica A (`save_layout_profile` actualiza `_cfg['layout_profiles']`), el dict en memoria de la réplica B no se actualizaba. Cuando B abría el settings dialog, `_reload_lp_combo()` leía el dict de B que estaba desactualizado.
+- **Fix 1**: `_reload_lp_combo()` ahora re-lee los perfiles desde disco (`load_config()`) y actualiza `self._ov._cfg['layout_profiles']` antes de poblar el combo.
+- **Fix 2**: Después de cada `_lp_new()` y `_lp_save()`, propaga el dict actualizado de perfiles a todos los overlays activos en `_OVERLAY_REGISTRY`.
+- **Logging**: `[LAYOUT PROFILE LOAD] count=N names=[...]`
+
+#### 5. Intel Alert — sin detección de enemigo al entrar al sistema
+- **Causa raíz y limitación EVE confirmada**: EVE Online NO escribe en los chatlogs la lista de presencia de Local ni las entradas/salidas de pilotos. Los chatlogs solo registran MENSAJES ESCRITOS por pilotos (formato `[timestamp] piloto > texto`). Si un enemigo entra al sistema y no escribe nada en Local, el chatlog no lo registra. Esta limitación es inherente al formato de chatlogs de EVE y no tiene solución desde la app.
+- **Lo que SÍ funciona**: Si un piloto enemigo ESCRIBE en Local → alerta. Si un mensaje Intel tiene keyword (neutral/red/hostile/neut/attn/spike) → alerta. Lista de vigilancia (watch_names) en texto Intel → alerta.
+- **Mejoras de diagnóstico**:
+  - `_diag_local_log_path`: trackea el path real del archivo Local detectado.
+  - `_diag_last_skip_pilot` + `_diag_last_skip_reason`: registra por qué se saltó la última alerta (already_seen_this_session / standing:... / safe_list).
+  - Panel UI nuevo: `Local: ruta_archivo` (verde si detectado, rojo si NO DETECTADO).
+  - Label de skip: `Skip: piloto — reason`.
+  - Label de limitación EVE: explicación clara en la UI.
+  - Nuevo botón "▶ Probar alerta simulada": dispara `fire_test_alert()` que reproduce sonido y añade evento al historial.
+  - `fire_test_alert()` en `IntelAlertService`: crea evento PRUEBA_ALERTA, llama `_play_alert_sound()` y callback.
+
+### Limitaciones reales documentadas
+- **Intel Alert — detección Local**: EVE no escribe presencia en chatlogs. Solo se detectan pilotos que ESCRIBEN en Local o aparecen en mensajes Intel con keywords. Documentado en UI y workflow.
+- **Flechas**: el keyboard hook suprime las teclas de EVE cuando el ratón está sobre una réplica. Si el usuario necesita las flechas en EVE mientras ve una réplica, debe mover el ratón fuera.
+- **Perfiles de layout — ESI standing**: los checkboxes de corp/alliance/good-standing requieren ESI auth (no implementado todavía). Los filtros operan sobre listas manuales.
+
+### Archivos modificados
+- `overlay/replication_overlay.py` (keyboard hook WH_KEYBOARD_LL, _stop_client_watcher, install en __init__)
+- `controller/tray_manager.py` (shutdown: _stop_client_watcher, _uninstall_keyboard_hook, logging)
+- `overlay/replicator_settings_dialog.py` (_reload_lp_combo desde disco, propagación perfiles, botón Copiar región)
+- `core/intel_alert_service.py` (diag: local_log_path, skip_reason/pilot; fire_test_alert())
+- `ui/tools/intel_alert_window.py` (diag: local label, skip label, limitación EVE, botón prueba)
+
+### Tests
+170 passed, 2 skipped.

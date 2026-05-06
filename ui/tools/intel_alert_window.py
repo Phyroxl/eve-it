@@ -471,6 +471,11 @@ class IntelAlertWindow(QWidget):
         self._lbl_diag_files.setStyleSheet("color:#475569;font-size:10px;")
         rv.addWidget(self._lbl_diag_files)
 
+        self._lbl_diag_local = QLabel("Local: —")
+        self._lbl_diag_local.setStyleSheet("color:#475569;font-size:10px;")
+        self._lbl_diag_local.setWordWrap(True)
+        rv.addWidget(self._lbl_diag_local)
+
         self._lbl_diag_last_msg = QLabel("Último mensaje: —")
         self._lbl_diag_last_msg.setStyleSheet("color:#475569;font-size:10px;")
         self._lbl_diag_last_msg.setWordWrap(True)
@@ -479,6 +484,27 @@ class IntelAlertWindow(QWidget):
         self._lbl_diag_last_alert = QLabel("Última alerta: —")
         self._lbl_diag_last_alert.setStyleSheet("color:#475569;font-size:10px;")
         rv.addWidget(self._lbl_diag_last_alert)
+
+        self._lbl_diag_skip = QLabel("Último skip: —")
+        self._lbl_diag_skip.setStyleSheet("color:#475569;font-size:10px;")
+        self._lbl_diag_skip.setWordWrap(True)
+        rv.addWidget(self._lbl_diag_skip)
+
+        # Limitation notice
+        lbl_limit = QLabel(
+            "⚠ EVE NO escribe entradas/salidas en chatlogs.\n"
+            "Solo detecta pilotos que ESCRIBEN en Local o\n"
+            "mensajes Intel con keywords."
+        )
+        lbl_limit.setStyleSheet("color:#64748b;font-size:9px;")
+        lbl_limit.setWordWrap(True)
+        rv.addWidget(lbl_limit)
+
+        btn_test = QPushButton("▶ Probar alerta simulada")
+        btn_test.setStyleSheet(_BTN_CYAN)
+        btn_test.setFixedHeight(26)
+        btn_test.clicked.connect(self._fire_test_alert)
+        rv.addWidget(btn_test)
 
         self._diag_timer = QTimer(self)
         self._diag_timer.timeout.connect(self._refresh_diagnostics_ui)
@@ -766,10 +792,33 @@ class IntelAlertWindow(QWidget):
             return
         d = self._service.get_diagnostics()
         self._lbl_diag_files.setText(f"Archivos vigilados: {d['files_watched']}")
+        local_path = d.get('local_log_path', '—')
+        if local_path != '—':
+            import os
+            self._lbl_diag_local.setText(f"Local: {os.path.basename(local_path)}")
+            self._lbl_diag_local.setStyleSheet("color:#4ade80;font-size:10px;")
+        else:
+            self._lbl_diag_local.setText("Local: NO DETECTADO")
+            self._lbl_diag_local.setStyleSheet("color:#f87171;font-size:10px;")
         if d['last_message']:
             self._lbl_diag_last_msg.setText(f"Último msg ({d['last_message_ago']}): {d['last_message'][:60]}")
         if d['last_alert']:
             self._lbl_diag_last_alert.setText(f"Última alerta ({d['last_alert_ago']}): {d['last_alert']}")
+        skip_pilot = d.get('last_skip_pilot', '')
+        skip_reason = d.get('last_skip_reason', '')
+        if skip_pilot:
+            self._lbl_diag_skip.setText(f"Skip: {skip_pilot[:20]} — {skip_reason}")
+
+    def _fire_test_alert(self):
+        """Fire a simulated alert to test sound + history."""
+        if not self._service:
+            self._lbl_status.setText("● Activa el servicio primero")
+            return
+        try:
+            event = self._service.fire_test_alert()
+            self._on_event_ui(event)
+        except Exception as e:
+            logger.debug(f"fire_test_alert error: {e}")
 
     def _show_diagnostics(self):
         if not self._service:

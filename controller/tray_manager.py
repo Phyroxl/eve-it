@@ -329,11 +329,19 @@ class TrayManager:
             if not overlays:
                 return
 
-            # 0. Marcar shutdown global + desinstalar hook
+            logger.info(f"REPLICATOR SHUTDOWN START count={len(overlays)}")
+
+            # 0. Marcar shutdown global + detener watcher + desinstalar hooks
             try:
-                from overlay.replication_overlay import _uninstall_global_mouse_hook, ReplicationOverlay
+                from overlay.replication_overlay import (
+                    _uninstall_global_mouse_hook, _uninstall_keyboard_hook,
+                    _stop_client_watcher, ReplicationOverlay,
+                )
+                # Stop client watcher FIRST — prevents relaunch attempts during teardown
+                _stop_client_watcher()
                 ReplicationOverlay._global_shutdown = True
                 _uninstall_global_mouse_hook()
+                _uninstall_keyboard_hook()
             except Exception:
                 pass
 
@@ -381,7 +389,7 @@ class TrayManager:
 
             dt_total = (_time.perf_counter() - t0) * 1000
             logger.info(
-                f"[REPLICATOR SHUTDOWN] overlays={len(overlays)} "
+                f"REPLICATOR SHUTDOWN DONE overlays={len(overlays)} "
                 f"hide_ms={dt_hide:.1f} total_ms={dt_total:.1f}"
             )
 

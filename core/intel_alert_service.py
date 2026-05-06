@@ -217,6 +217,9 @@ class IntelAlertService:
         self._diag_last_alert: str = ""
         self._diag_last_alert_ts: float = 0.0
         self._diag_total_alerts: int = 0
+        self._diag_local_log_path: str = "—"
+        self._diag_last_skip_pilot: str = ""
+        self._diag_last_skip_reason: str = ""
 
     def start(self):
         if self._running:
@@ -248,6 +251,26 @@ class IntelAlertService:
         self._alert_cooldowns.clear()
         logger.debug("IntelAlert: session reset")
 
+    def fire_test_alert(self) -> IntelEvent:
+        """Simulate an alert from an unknown pilot for testing sound + UI flow."""
+        import datetime
+        ts = datetime.datetime.now().strftime('%Y.%m.%d %H:%M:%S')
+        event = IntelEvent(
+            timestamp=ts,
+            pilot="PRUEBA_ALERTA",
+            channel="Local",
+            message="[Alerta simulada — verificación de sonido y UI]",
+            classification="unknown",
+            source="local",
+            system=self._config.current_system.strip() or None,
+        )
+        self._play_alert_sound()
+        try:
+            self._callback(event)
+        except Exception as e:
+            logger.debug(f"fire_test_alert callback error: {e}")
+        return event
+
     def get_diagnostics(self) -> dict:
         now = time.time()
         return {
@@ -261,6 +284,9 @@ class IntelAlertService:
             'source_mode': self._config.source_mode,
             'intel_channels': self._config.intel_channels,
             'keywords': self._config.alert_keywords,
+            'local_log_path': self._diag_local_log_path,
+            'last_skip_pilot': self._diag_last_skip_pilot,
+            'last_skip_reason': self._diag_last_skip_reason,
         }
 
     # ------------------------------------------------------------------
@@ -436,6 +462,8 @@ class IntelAlertService:
                     first_part = fpath.name.split('_')[0]
                     is_local = 'local' in first_part.lower()
                     src = "local" if is_local else "intel"
+                    if is_local and self._diag_local_log_path == "—":
+                        self._diag_local_log_path = str(fpath)
 
                     for msg in reader.read_new():
                         pilot = msg.sender.strip()
@@ -474,6 +502,8 @@ class IntelAlertService:
 
     def _handle_local_pilot(self, pilot: str, ts: str, channel: str, src: str):
         if pilot in self._seen_pilots:
+            self._diag_last_skip_pilot = pilot
+            self._diag_last_skip_reason = "already_seen_this_session"
             return
         self._seen_pilots.add(pilot)
 
@@ -482,12 +512,16 @@ class IntelAlertService:
             from core.intel_standing_resolver import get_resolver
             standing = get_resolver().resolve(pilot, self._config)
             if not standing.should_alert:
+                self._diag_last_skip_pilot = pilot
+                self._diag_last_skip_reason = f"standing:{standing.reason}"
                 logger.debug(f"IntelAlert: SKIP {pilot!r} reason={standing.reason}")
                 return
             classification = standing.classification
         except Exception:
             classification = classify_pilot(pilot, self._config)
             if classification == 'safe':
+                self._diag_last_skip_pilot = pilot
+                self._diag_last_skip_reason = "safe_list"
                 return
 
         event = IntelEvent(
