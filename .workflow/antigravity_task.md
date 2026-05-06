@@ -179,3 +179,60 @@ Logs: CLIENT CLOSED DETECTED, REPLICA AUTO CLOSED, CLIENT REOPENED DETECTED, REP
 - Distancias por saltos: distance_jumps() siempre None (sin SDE). alert_unknown_distance controla el comportamiento.
 - Local Intel chat: el watcher detecta pilotos que HABLAN en Local, no toda la lista local (EVE no escribe toda la lista en el chatlog, solo mensajes).
 - Portraits: si ESI /universe/ids/ falla o el personaje no existe en ESI, el retrato no carga. TTL 30min en memoria para reintentar.
+
+---
+
+## Session 4 — HUD visibility fix, square corners DWM, Intel Alert reliability and sound
+
+**Fecha:** 2026-05-06
+**Commit:** FIX: Repair HUD visibility portraits square overlays and Intel Alert reliability
+
+### Problemas diagnosticados y resueltos
+
+#### 1. HUD/Overlay — excepción silenciosa en _check_eve_foreground
+- Causa: `except Exception: pass` tragaba cualquier ImportError o fallo en should_show_overlays.
+- Fix: `except Exception as _exc: logger.debug(...)` en overlay_app.py y chat_overlay.py.
+
+#### 2. Esquinas cuadradas reales en Win11
+- Causa: CSS `border-radius:0` no es suficiente — DWM de Win11 fuerza esquinas redondeadas a nivel OS.
+- Fix: `ui/common/window_shape.py` nuevo con `force_square_corners(hwnd)`:
+  DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE=33, &DWMWCP_DONOTROUND=1, 4).
+- Aplicado en `showEvent` de OverlayWindow (overlay_app.py), ChatOverlay (chat_overlay.py), IntelAlertWindow.
+
+#### 3. Intel Alert — nunca detectaba mensajes de canales Intel
+- Causa: `_handle_intel_message` solo disparaba cuando un watch_name estaba en el texto.
+  Con watch_names:[] (config por defecto), NUNCA alertaba.
+- Fix: detección por keywords (neutral/neut/red/hostile/spike/attn…) como clasificación 'intel'.
+  Watchlist tiene prioridad; si hay keyword sin watchlist → clasifica 'intel' y alerta.
+  Lista de keywords configurable en alert_keywords (con defaults).
+
+#### 4. Intel Alert — descubrimiento de canales
+- Nuevo: `discover_chat_channels(max_age_hours=48)` escanea el directorio de chatlogs.
+- UI: botón "⟳ Descubrir" + combo de canales detectados para seleccionar y añadir a la lista.
+
+#### 5. Intel Alert — selector de sonido
+- Nuevos campos en IntelAlertConfig: `alert_sound_mode` ("beep"|"silent"|"wav"), `alert_sound_path`.
+- Back-compat: carga configs antiguas con `alert_sound:bool` y lo convierte a `alert_sound_mode`.
+- UI: combo Pitido/Silencio/WAV + botón "▶" para probar + selector de archivo .wav.
+
+#### 6. Intel Alert — modo compacto
+- Añadido QStackedWidget: página 0 = compact (340×88, solo ON/OFF + estado); página 1 = full.
+- Botón "▣" en titlebar alterna entre modos.
+- Ambos botones de toggle están sincronizados.
+
+#### 7. Intel Alert — diagnósticos
+- IntelAlertService.get_diagnostics(): archivos vigilados, último archivo, último mensaje, última alerta, total alertas, modo fuente, canales, keywords.
+- Panel de diagnóstico mini en columna derecha: se refresca cada 3 s.
+- Botón "📋 Diagnóstico" inserta snapshot en el historial.
+- Botón "Copiar" copia diagnóstico al portapapeles.
+
+### Archivos modificados
+- ui/common/window_shape.py (nuevo)
+- overlay/overlay_app.py (fix excepción + showEvent square corners)
+- translator/chat_overlay.py (fix excepción + showEvent square corners)
+- core/intel_alert_service.py (keyword detection, discover_chat_channels, sound fields, diagnostics)
+- ui/tools/intel_alert_window.py (compact mode, channel discovery, sound selector, diagnostics panel)
+- tests/test_intel_alert_v2.py (47 tests: +15 nuevos para keywords, sound, diagnostics, discover)
+
+### Tests
+47 tests, todos pasan.

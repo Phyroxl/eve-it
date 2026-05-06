@@ -6,16 +6,19 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QLineEdit, QCheckBox,
     QFrame, QScrollArea, QComboBox, QSpinBox, QSizePolicy,
+    QFileDialog, QStackedWidget, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from ui.common.custom_titlebar import CustomTitleBar, apply_salva_close_btn_style, apply_salva_min_btn_style
-from core.intel_alert_service import IntelAlertService, IntelAlertConfig, IntelEvent
+from core.intel_alert_service import (
+    IntelAlertService, IntelAlertConfig, IntelEvent, discover_chat_channels,
+)
 
 logger = logging.getLogger('eve.intel')
 
-# ── Shared styles (minimal — lean on CustomTitleBar for titlebar) ─────────────
+# ── Shared styles ─────────────────────────────────────────────────────────────
 _BTN = ("QPushButton{background:#0f172a;border:1px solid #1e293b;"
         "color:#94a3b8;font-size:11px;padding:3px 8px;}"
         "QPushButton:hover{background:#1e293b;color:#e2e8f0;}"
@@ -26,6 +29,9 @@ _BTN_GREEN = ("QPushButton{background:#052e16;border:1px solid #16a34a;"
 _BTN_RED = ("QPushButton{background:#1a0000;border:1px solid #7f1d1d;"
             "color:#f87171;font-size:11px;font-weight:bold;padding:3px 8px;}"
             "QPushButton:hover{background:#450a0a;}")
+_BTN_CYAN = ("QPushButton{background:#0c1a2e;border:1px solid #0891b2;"
+             "color:#38bdf8;font-size:11px;padding:3px 8px;}"
+             "QPushButton:hover{background:#0e2440;}")
 _INPUT = ("background:#060d18;border:1px solid #1e293b;"
           "color:#e2e8f0;padding:3px;font-size:11px;")
 _SECTION = "color:#64748b;font-size:10px;font-weight:bold;margin-top:4px;"
@@ -60,6 +66,7 @@ class IntelAlertWindow(QWidget):
         self._service: Optional[IntelAlertService] = None
         self._active = False
         self._event_history = []
+        self._compact_mode = False
 
         self._setup_ui()
         self._load_config_to_ui()
@@ -69,24 +76,60 @@ class IntelAlertWindow(QWidget):
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     def _setup_ui(self):
-        self.setMinimumSize(700, 600)
         self.setStyleSheet("QWidget{background:#060d18;color:#94a3b8;font-size:11px;}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Titlebar (shared component) ───────────────────────────────────
+        # ── Titlebar ──────────────────────────────────────────────────────
         self._tb = CustomTitleBar("⚠  INTEL ALERT", self)
-        # Override close: hide instead of destroy
         self._tb.btn_close.clicked.disconnect()
         self._tb.btn_close.clicked.connect(self._on_close)
         self._tb.btn_min.clicked.disconnect()
         self._tb.btn_min.clicked.connect(self.hide)
+        # Compact toggle button on titlebar
+        self._btn_compact_toggle = QPushButton("▣")
+        self._btn_compact_toggle.setFixedSize(24, 24)
+        self._btn_compact_toggle.setToolTip("Modo compacto")
+        self._btn_compact_toggle.setStyleSheet(_BTN)
+        self._btn_compact_toggle.clicked.connect(self._toggle_compact)
+        self._tb.layout().insertWidget(self._tb.layout().count() - 2, self._btn_compact_toggle)
         root.addWidget(self._tb)
 
-        # ── Body ──────────────────────────────────────────────────────────
-        body = QHBoxLayout()
+        # ── Stacked: compact (0) / full (1) ───────────────────────────────
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_compact_panel())
+        self._stack.addWidget(self._build_full_panel())
+        self._stack.setCurrentIndex(1)
+        root.addWidget(self._stack, 1)
+
+    def _build_compact_panel(self) -> QWidget:
+        """220×60 panel: ON/OFF + status only."""
+        panel = QWidget()
+        panel.setFixedSize(340, 60)
+        lay = QHBoxLayout(panel)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(10)
+
+        self._btn_toggle_compact = QPushButton("▶  ACTIVAR")
+        self._btn_toggle_compact.setStyleSheet(_BTN_GREEN)
+        self._btn_toggle_compact.setFixedHeight(36)
+        self._btn_toggle_compact.clicked.connect(self._toggle_service)
+        lay.addWidget(self._btn_toggle_compact, 1)
+
+        self._lbl_status_compact = QLabel("● Inactivo")
+        self._lbl_status_compact.setStyleSheet("color:#475569;font-size:11px;")
+        lay.addWidget(self._lbl_status_compact)
+
+        return panel
+
+    def _build_full_panel(self) -> QWidget:
+        """Full configuration + history panel."""
+        panel = QWidget()
+        panel.setMinimumSize(700, 580)
+
+        body = QHBoxLayout(panel)
         body.setContentsMargins(10, 8, 10, 8)
         body.setSpacing(10)
 
@@ -99,7 +142,7 @@ class IntelAlertWindow(QWidget):
 
         body.addWidget(self._build_right_panel(), 1)
 
-        root.addLayout(body, 1)
+        return panel
 
     def _build_left_panel(self) -> QWidget:
         """Scrollable config column (fixed 290px)."""
@@ -148,15 +191,32 @@ class IntelAlertWindow(QWidget):
         ich_v = QVBoxLayout(self._intel_ch_frame)
         ich_v.setContentsMargins(0, 0, 0, 0)
         ich_v.setSpacing(3)
-        ich_v.addWidget(QLabel("Canales Intel:", styleSheet=_SECTION))
+
+        ich_header = QHBoxLayout()
+        ich_header.addWidget(QLabel("Canales Intel:", styleSheet=_SECTION))
+        ich_header.addStretch()
+        self._btn_discover = QPushButton("⟳ Descubrir")
+        self._btn_discover.setFixedHeight(18)
+        self._btn_discover.setStyleSheet(_BTN_CYAN)
+        self._btn_discover.clicked.connect(self._discover_channels)
+        ich_header.addWidget(self._btn_discover)
+        ich_v.addLayout(ich_header)
+
         self._list_intel_ch = QListWidget()
         self._list_intel_ch.setFixedHeight(64)
         self._list_intel_ch.setStyleSheet(_LIST_STYLE)
         ich_v.addWidget(self._list_intel_ch)
 
+        # Discovered channels chooser
+        self._combo_discovered = QComboBox()
+        self._combo_discovered.setStyleSheet(_COMBO)
+        self._combo_discovered.addItem("— canales detectados —")
+        self._combo_discovered.currentIndexChanged.connect(self._on_discovered_selected)
+        ich_v.addWidget(self._combo_discovered)
+
         ich_row = QHBoxLayout()
         self._edit_intel_ch = QLineEdit()
-        self._edit_intel_ch.setPlaceholderText("Delve.Intel, Standing Fleet…")
+        self._edit_intel_ch.setPlaceholderText("Nombre manual…")
         self._edit_intel_ch.setStyleSheet(_INPUT)
         btn_add_ich = QPushButton("+")
         btn_add_ich.setFixedWidth(24)
@@ -171,7 +231,7 @@ class IntelAlertWindow(QWidget):
         ich_row.addWidget(btn_del_ich)
         ich_v.addLayout(ich_row)
 
-        self._lbl_intel_hint = QLabel("Sin canales configurados: detecta ficheros con 'intel'.")
+        self._lbl_intel_hint = QLabel("Sin canales: detecta ficheros con 'intel'.")
         self._lbl_intel_hint.setStyleSheet("color:#475569;font-size:9px;")
         self._lbl_intel_hint.setWordWrap(True)
         ich_v.addWidget(self._lbl_intel_hint)
@@ -191,7 +251,7 @@ class IntelAlertWindow(QWidget):
         iv.addLayout(sys_row)
 
         jumps_row = QHBoxLayout()
-        jumps_row.addWidget(QLabel("Rango de alerta (saltos):"))
+        jumps_row.addWidget(QLabel("Rango (saltos):"))
         self._spin_jumps = QSpinBox()
         self._spin_jumps.setRange(0, 10)
         self._spin_jumps.setValue(5)
@@ -205,8 +265,8 @@ class IntelAlertWindow(QWidget):
         self._chk_unknown_dist.setStyleSheet(_CHK)
         iv.addWidget(self._chk_unknown_dist)
 
-        lbl_map = QLabel("⚠ Sin dataset SDE/mapa cargado. distance_jumps → None.\n"
-                         "Las alertas de distancia dependen del checkbox anterior.")
+        lbl_map = QLabel("⚠ Sin SDE/mapa. distance_jumps → None.\n"
+                         "Las alertas de distancia dependen del checkbox.")
         lbl_map.setStyleSheet("color:#475569;font-size:9px;")
         lbl_map.setWordWrap(True)
         iv.addWidget(lbl_map)
@@ -216,7 +276,7 @@ class IntelAlertWindow(QWidget):
         # ── Safe names ────────────────────────────────────────────────────
         iv.addWidget(QLabel("Lista segura (nunca alertan):", styleSheet=_SECTION))
         self._list_safe = QListWidget()
-        self._list_safe.setFixedHeight(64)
+        self._list_safe.setFixedHeight(52)
         self._list_safe.setStyleSheet(_LIST_STYLE)
         iv.addWidget(self._list_safe)
         safe_row = QHBoxLayout()
@@ -241,7 +301,7 @@ class IntelAlertWindow(QWidget):
         # ── Watch names ───────────────────────────────────────────────────
         iv.addWidget(QLabel("Lista vigilancia (alerta siempre):", styleSheet=_SECTION))
         self._list_watch = QListWidget()
-        self._list_watch.setFixedHeight(64)
+        self._list_watch.setFixedHeight(52)
         self._list_watch.setStyleSheet(_LIST_STYLE)
         iv.addWidget(self._list_watch)
         watch_row = QHBoxLayout()
@@ -264,7 +324,7 @@ class IntelAlertWindow(QWidget):
         iv.addWidget(self._hline())
 
         # ── Toggles ───────────────────────────────────────────────────────
-        self._chk_alert_unknown = QCheckBox("Alertar pilotos desconocidos")
+        self._chk_alert_unknown = QCheckBox("Alertar pilotos desconocidos / keywords Intel")
         self._chk_alert_unknown.setStyleSheet(_CHK)
         iv.addWidget(self._chk_alert_unknown)
 
@@ -272,10 +332,43 @@ class IntelAlertWindow(QWidget):
         self._chk_alert_watch.setStyleSheet(_CHK)
         iv.addWidget(self._chk_alert_watch)
 
-        self._chk_sound = QCheckBox("Alerta sonora")
-        self._chk_sound.setStyleSheet(_CHK)
-        iv.addWidget(self._chk_sound)
+        iv.addWidget(self._hline())
 
+        # ── Sound selector ────────────────────────────────────────────────
+        iv.addWidget(QLabel("Sonido de alerta:", styleSheet=_SECTION))
+        snd_row = QHBoxLayout()
+        self._combo_sound = QComboBox()
+        self._combo_sound.setStyleSheet(_COMBO)
+        self._combo_sound.addItems(["Pitido sistema", "Silencio", "Archivo WAV…"])
+        self._combo_sound.currentIndexChanged.connect(self._on_sound_mode_changed)
+        snd_row.addWidget(self._combo_sound, 1)
+        self._btn_test_sound = QPushButton("▶")
+        self._btn_test_sound.setFixedWidth(26)
+        self._btn_test_sound.setStyleSheet(_BTN)
+        self._btn_test_sound.setToolTip("Probar sonido")
+        self._btn_test_sound.clicked.connect(self._test_sound)
+        snd_row.addWidget(self._btn_test_sound)
+        iv.addLayout(snd_row)
+
+        wav_row = QHBoxLayout()
+        self._edit_wav_path = QLineEdit()
+        self._edit_wav_path.setPlaceholderText("Ruta .wav…")
+        self._edit_wav_path.setStyleSheet(_INPUT)
+        self._edit_wav_path.setReadOnly(True)
+        btn_browse = QPushButton("…")
+        btn_browse.setFixedWidth(26)
+        btn_browse.setStyleSheet(_BTN)
+        btn_browse.clicked.connect(self._browse_wav)
+        wav_row.addWidget(self._edit_wav_path)
+        wav_row.addWidget(btn_browse)
+        self._wav_row_widget = QWidget()
+        self._wav_row_widget.setLayout(wav_row)
+        self._wav_row_widget.setVisible(False)
+        iv.addWidget(self._wav_row_widget)
+
+        iv.addWidget(self._hline())
+
+        # ── Cooldown ──────────────────────────────────────────────────────
         cd_row = QHBoxLayout()
         cd_row.addWidget(QLabel("Cooldown (s):"))
         self._edit_cooldown = QLineEdit("120")
@@ -293,15 +386,15 @@ class IntelAlertWindow(QWidget):
         btn_save = QPushButton("💾 Guardar")
         btn_save.setStyleSheet(_BTN)
         btn_save.clicked.connect(self._save)
-        btn_test = QPushButton("🔔 Sonido")
-        btn_test.setStyleSheet(_BTN)
-        btn_test.clicked.connect(self._test_sound)
         btn_reset = QPushButton("🔄 Reset")
         btn_reset.setStyleSheet(_BTN)
         btn_reset.clicked.connect(self._reset_session)
+        btn_diag = QPushButton("📋 Diagnóstico")
+        btn_diag.setStyleSheet(_BTN)
+        btn_diag.clicked.connect(self._show_diagnostics)
         btn_row.addWidget(btn_save)
-        btn_row.addWidget(btn_test)
         btn_row.addWidget(btn_reset)
+        btn_row.addWidget(btn_diag)
         iv.addLayout(btn_row)
 
         iv.addStretch()
@@ -310,7 +403,7 @@ class IntelAlertWindow(QWidget):
         return wrapper
 
     def _build_right_panel(self) -> QWidget:
-        """History panel (stretch)."""
+        """History + diagnostics panel (stretch)."""
         right = QWidget()
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
@@ -340,6 +433,35 @@ class IntelAlertWindow(QWidget):
         legend.addStretch()
         rv.addLayout(legend)
 
+        # ── Diagnostics mini-panel ────────────────────────────────────────
+        rv.addWidget(self._hline())
+        diag_hdr = QHBoxLayout()
+        diag_hdr.addWidget(QLabel("Diagnóstico:", styleSheet=_SECTION))
+        diag_hdr.addStretch()
+        self._btn_copy_diag = QPushButton("Copiar")
+        self._btn_copy_diag.setFixedWidth(50)
+        self._btn_copy_diag.setStyleSheet(_BTN)
+        self._btn_copy_diag.clicked.connect(self._copy_diagnostics)
+        diag_hdr.addWidget(self._btn_copy_diag)
+        rv.addLayout(diag_hdr)
+
+        self._lbl_diag_files = QLabel("Archivos vigilados: —")
+        self._lbl_diag_files.setStyleSheet("color:#475569;font-size:10px;")
+        rv.addWidget(self._lbl_diag_files)
+
+        self._lbl_diag_last_msg = QLabel("Último mensaje: —")
+        self._lbl_diag_last_msg.setStyleSheet("color:#475569;font-size:10px;")
+        self._lbl_diag_last_msg.setWordWrap(True)
+        rv.addWidget(self._lbl_diag_last_msg)
+
+        self._lbl_diag_last_alert = QLabel("Última alerta: —")
+        self._lbl_diag_last_alert.setStyleSheet("color:#475569;font-size:10px;")
+        rv.addWidget(self._lbl_diag_last_alert)
+
+        self._diag_timer = QTimer(self)
+        self._diag_timer.timeout.connect(self._refresh_diagnostics_ui)
+        self._diag_timer.start(3000)
+
         return right
 
     @staticmethod
@@ -348,6 +470,20 @@ class IntelAlertWindow(QWidget):
         f.setFrameShape(QFrame.HLine)
         f.setStyleSheet("color:#1e293b;margin:2px 0;")
         return f
+
+    # ── Compact mode ──────────────────────────────────────────────────────────
+
+    def _toggle_compact(self):
+        self._compact_mode = not self._compact_mode
+        if self._compact_mode:
+            self._stack.setCurrentIndex(0)
+            self.setFixedSize(340, 88)
+        else:
+            self._stack.setCurrentIndex(1)
+            self.setMinimumSize(700, 580)
+            self.setMaximumSize(16777215, 16777215)
+            self.resize(780, 620)
+        self._btn_compact_toggle.setText("▣" if not self._compact_mode else "□")
 
     # ── Config I/O ────────────────────────────────────────────────────────────
 
@@ -373,8 +509,13 @@ class IntelAlertWindow(QWidget):
 
         self._chk_alert_unknown.setChecked(self._config.alert_on_unknown)
         self._chk_alert_watch.setChecked(self._config.alert_on_watchlist)
-        self._chk_sound.setChecked(self._config.alert_sound)
         self._edit_cooldown.setText(str(self._config.pilot_cooldown_secs))
+
+        # Sound mode
+        sound_idx = {"beep": 0, "silent": 1, "wav": 2}.get(self._config.alert_sound_mode, 0)
+        self._combo_sound.setCurrentIndex(sound_idx)
+        self._edit_wav_path.setText(self._config.alert_sound_path or "")
+        self._wav_row_widget.setVisible(sound_idx == 2)
 
     def _collect_config_from_ui(self):
         modes = ["local", "intel", "both"]
@@ -394,7 +535,10 @@ class IntelAlertWindow(QWidget):
         ]
         self._config.alert_on_unknown = self._chk_alert_unknown.isChecked()
         self._config.alert_on_watchlist = self._chk_alert_watch.isChecked()
-        self._config.alert_sound = self._chk_sound.isChecked()
+        sound_modes = ["beep", "silent", "wav"]
+        self._config.alert_sound_mode = sound_modes[self._combo_sound.currentIndex()]
+        self._config.alert_sound = self._config.alert_sound_mode != "silent"
+        self._config.alert_sound_path = self._edit_wav_path.text().strip()
         try:
             self._config.pilot_cooldown_secs = max(5, int(self._edit_cooldown.text()))
         except ValueError:
@@ -440,6 +584,72 @@ class IntelAlertWindow(QWidget):
     def _list_has(lst: QListWidget, name: str) -> bool:
         return any(lst.item(i).text().lower() == name.lower() for i in range(lst.count()))
 
+    # ── Channel discovery ─────────────────────────────────────────────────────
+
+    def _discover_channels(self):
+        self._btn_discover.setEnabled(False)
+        self._btn_discover.setText("Buscando…")
+
+        def _do():
+            channels = discover_chat_channels(max_age_hours=48)
+            QTimer.singleShot(0, lambda: self._on_discovered(channels))
+
+        import threading
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_discovered(self, channels):
+        self._btn_discover.setEnabled(True)
+        self._btn_discover.setText("⟳ Descubrir")
+        self._combo_discovered.clear()
+        if channels:
+            self._combo_discovered.addItem("— seleccionar canal —")
+            for ch in channels:
+                self._combo_discovered.addItem(ch)
+        else:
+            self._combo_discovered.addItem("— sin canales encontrados —")
+
+    def _on_discovered_selected(self, idx: int):
+        if idx <= 0:
+            return
+        name = self._combo_discovered.currentText()
+        if name and not name.startswith("—") and not self._list_has(self._list_intel_ch, name):
+            self._list_intel_ch.addItem(name)
+        self._combo_discovered.setCurrentIndex(0)
+
+    # ── Sound ─────────────────────────────────────────────────────────────────
+
+    def _on_sound_mode_changed(self, idx: int):
+        self._wav_row_widget.setVisible(idx == 2)
+
+    def _browse_wav(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar archivo WAV", "", "Archivos WAV (*.wav)"
+        )
+        if path:
+            self._edit_wav_path.setText(path)
+
+    def _test_sound(self):
+        mode = ["beep", "silent", "wav"][self._combo_sound.currentIndex()]
+        if mode == "silent":
+            return
+        if mode == "wav":
+            path = self._edit_wav_path.text().strip()
+            if path:
+                try:
+                    import winsound
+                    winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                    return
+                except Exception:
+                    pass
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        except Exception:
+            try:
+                QApplication.beep()
+            except Exception:
+                pass
+
     # ── Service control ───────────────────────────────────────────────────────
 
     def _toggle_service(self):
@@ -451,15 +661,17 @@ class IntelAlertWindow(QWidget):
             self._service = IntelAlertService(self._config, self._on_event_thread)
             self._service.start()
             self._active = True
-            self._btn_toggle.setText("⏹  DETENER")
-            self._btn_toggle.setStyleSheet(_BTN_RED)
+            for btn in (self._btn_toggle, self._btn_toggle_compact):
+                btn.setText("⏹  DETENER")
+                btn.setStyleSheet(_BTN_RED)
         else:
             if self._service:
                 self._service.stop()
                 self._service = None
             self._active = False
-            self._btn_toggle.setText("▶  ACTIVAR")
-            self._btn_toggle.setStyleSheet(_BTN_GREEN)
+            for btn in (self._btn_toggle, self._btn_toggle_compact):
+                btn.setText("▶  ACTIVAR")
+                btn.setStyleSheet(_BTN_GREEN)
         self._refresh_status()
 
     def _reset_session(self):
@@ -471,11 +683,57 @@ class IntelAlertWindow(QWidget):
     def _refresh_status(self):
         if self._active:
             mode = self._config.source_mode.capitalize()
-            self._lbl_status.setText(f"● Activo ({mode})")
-            self._lbl_status.setStyleSheet("color:#4ade80;font-size:10px;")
+            text = f"● Activo ({mode})"
+            style = "color:#4ade80;font-size:10px;"
         else:
-            self._lbl_status.setText("● Inactivo")
-            self._lbl_status.setStyleSheet("color:#475569;font-size:10px;")
+            text = "● Inactivo"
+            style = "color:#475569;font-size:10px;"
+        self._lbl_status.setText(text)
+        self._lbl_status.setStyleSheet(style)
+        self._lbl_status_compact.setText(text)
+        self._lbl_status_compact.setStyleSheet(style.replace("10px", "11px"))
+
+    # ── Diagnostics ───────────────────────────────────────────────────────────
+
+    def _refresh_diagnostics_ui(self):
+        if not self._service:
+            return
+        d = self._service.get_diagnostics()
+        self._lbl_diag_files.setText(f"Archivos vigilados: {d['files_watched']}")
+        if d['last_message']:
+            self._lbl_diag_last_msg.setText(f"Último msg ({d['last_message_ago']}): {d['last_message'][:60]}")
+        if d['last_alert']:
+            self._lbl_diag_last_alert.setText(f"Última alerta ({d['last_alert_ago']}): {d['last_alert']}")
+
+    def _show_diagnostics(self):
+        if not self._service:
+            self._lbl_status.setText("● Servicio inactivo")
+            return
+        d = self._service.get_diagnostics()
+        lines = [
+            f"Archivos vigilados: {d['files_watched']}",
+            f"Último archivo: {d['last_file']}",
+            f"Último mensaje ({d['last_message_ago']}): {d['last_message']}",
+            f"Última alerta ({d['last_alert_ago']}): {d['last_alert']}",
+            f"Total alertas sesión: {d['total_alerts']}",
+            f"Modo fuente: {d['source_mode']}",
+            f"Canales Intel: {', '.join(d['intel_channels']) or 'ninguno'}",
+            f"Keywords: {', '.join(d['keywords'][:8])}…",
+        ]
+        self._list_history.insertItem(0, QListWidgetItem("── Diagnóstico ──────────────────────────────────"))
+        for line in reversed(lines):
+            item = QListWidgetItem(line)
+            item.setForeground(QColor("#475569"))
+            self._list_history.insertItem(1, item)
+
+    def _copy_diagnostics(self):
+        if not self._service:
+            return
+        d = self._service.get_diagnostics()
+        text = "\n".join(f"{k}: {v}" for k, v in d.items())
+        QApplication.clipboard().setText(text)
+        self._btn_copy_diag.setText("✓")
+        QTimer.singleShot(1500, lambda: self._btn_copy_diag.setText("Copiar"))
 
     # ── Events ────────────────────────────────────────────────────────────────
 
@@ -520,20 +778,15 @@ class IntelAlertWindow(QWidget):
         self._list_history.clear()
         self._event_history.clear()
 
-    # ── Sound test ────────────────────────────────────────────────────────────
-
-    def _test_sound(self):
-        try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-        except Exception:
-            try:
-                from PySide6.QtWidgets import QApplication
-                QApplication.beep()
-            except Exception:
-                pass
-
     # ── Window lifecycle ──────────────────────────────────────────────────────
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from ui.common.window_shape import force_square_corners
+            force_square_corners(int(self.winId()))
+        except Exception:
+            pass
 
     def _on_close(self):
         if self._service:

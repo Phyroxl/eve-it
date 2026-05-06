@@ -911,6 +911,14 @@ class ChatOverlay(W.QWidget):
                     self.hide()
                 elif self._fg_hide_count < 2:
                     logger.debug("OVERLAY VISIBILITY DEBOUNCE_SKIP")
+        except Exception as _exc:
+            logger.debug(f"Chat FG check error: {_exc}")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from ui.common.window_shape import force_square_corners
+            force_square_corners(int(self.winId()))
         except Exception:
             pass
 

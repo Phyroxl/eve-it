@@ -327,6 +327,15 @@ class OverlayWindow(QWidget):
                 if self._fg_hide_count >= 2 and self.isVisible() and not self._user_hidden:
                     self._auto_hidden = True
                     self.hide()
+        except Exception as _exc:
+            import logging as _lg
+            _lg.getLogger('eve.overlay').debug(f"HUD FG check error: {_exc}")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from ui.common.window_shape import force_square_corners
+            force_square_corners(int(self.winId()))
         except Exception:
             pass
 

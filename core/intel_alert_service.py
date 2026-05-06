@@ -14,6 +14,15 @@ source_mode controls which chatlog files are monitored:
 Distance filtering:
   Requires EveMapService.distance_jumps() to return a value (currently always None
   because no SDE is loaded). When distance is unknown, alert_unknown_distance governs.
+
+Intel keyword detection:
+  Even with an empty watch_names list, intel channel messages containing any of
+  alert_keywords (neutral, neut, red, hostile, etc.) fire an 'intel' classification
+  alert. This makes the service useful out of the box without a watchlist.
+
+Sound modes:
+  alert_sound_mode: "beep" | "wav" | "silent"
+  alert_sound_path: path to a .wav file (used when mode == "wav")
 """
 import re
 import threading
@@ -28,6 +37,11 @@ logger = logging.getLogger('eve.intel')
 
 CONFIG_FILE = Path(__file__).resolve().parent.parent / 'config' / 'intel_alert.json'
 
+_DEFAULT_KEYWORDS = [
+    "neutral", "neut", "nv", "red", "hostile", "attn", "spike",
+    "neutrales", "hostil", "rojo",
+]
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -35,10 +49,13 @@ CONFIG_FILE = Path(__file__).resolve().parent.parent / 'config' / 'intel_alert.j
 class IntelAlertConfig:
     enabled: bool = True
     alert_sound: bool = True
+    alert_sound_mode: str = "beep"        # "beep" | "wav" | "silent"
+    alert_sound_path: str = ""
     alert_on_unknown: bool = True
     alert_on_watchlist: bool = True
     source_mode: str = "local"              # "local" | "intel" | "both"
     intel_channels: List[str] = field(default_factory=list)
+    alert_keywords: List[str] = field(default_factory=lambda: list(_DEFAULT_KEYWORDS))
     current_system: str = ""
     max_jumps: int = 5
     alert_unknown_distance: bool = True
@@ -64,6 +81,12 @@ class IntelAlertConfig:
                 for k, v in data.items():
                     if hasattr(obj, k):
                         setattr(obj, k, v)
+                # Back-compat: migrate alert_sound bool to alert_sound_mode
+                if 'alert_sound' in data and 'alert_sound_mode' not in data:
+                    obj.alert_sound_mode = "beep" if data['alert_sound'] else "silent"
+                # Ensure alert_keywords list is populated
+                if not obj.alert_keywords:
+                    obj.alert_keywords = list(_DEFAULT_KEYWORDS)
                 return obj
         except Exception as e:
             logger.debug(f"IntelAlertConfig load error: {e}")
@@ -93,10 +116,9 @@ class IntelEvent:
 # ── Pure helper functions (testable without Qt) ───────────────────────────────
 
 def parse_intel_message(text: str) -> dict:
-    """Extract system name and any watchlist name hints from an intel text line.
+    """Extract system name from intel text.
 
     Returns: {'system': str | None, 'raw': str}
-    Does NOT invent system names — returns None when uncertain.
     """
     from core.eve_map_service import EveMapService
     system = EveMapService.instance().extract_system_from_text(text)
@@ -119,7 +141,7 @@ def should_alert(event: IntelEvent, config: IntelAlertConfig) -> bool:
         return False
     if event.classification == 'watchlist' and not config.alert_on_watchlist:
         return False
-    if event.classification == 'unknown' and not config.alert_on_unknown:
+    if event.classification in ('unknown', 'intel') and not config.alert_on_unknown:
         return False
 
     # Distance filtering only applies when max_jumps > 0 and a reference system is set
@@ -133,6 +155,39 @@ def should_alert(event: IntelEvent, config: IntelAlertConfig) -> bool:
         return config.alert_unknown_distance
 
     return True
+
+
+def discover_chat_channels(max_age_hours: int = 24) -> List[str]:
+    """Scan chatlog directory and return channel names from recent files.
+
+    Returns sorted list of unique channel name stems (e.g. ['Delve.Intel',
+    'Standing.Fleet']), excluding 'Local' and system channels.
+    """
+    try:
+        from translator.chat_reader import _get_chatlog_dir
+        chatlog_dir = _get_chatlog_dir()
+        if not chatlog_dir:
+            return []
+        cutoff = time.time() - max_age_hours * 3600
+        seen: Set[str] = set()
+        # EVE chatlog filenames: ChannelName_YYYYMMDD_HHMMSS.txt
+        _date_pat = re.compile(r'_\d{8}_\d{6}$')
+        for fpath in chatlog_dir.glob('*.txt'):
+            try:
+                if fpath.stat().st_mtime < cutoff:
+                    continue
+            except Exception:
+                continue
+            stem = fpath.stem  # filename without .txt
+            # Remove trailing _YYYYMMDD_HHMMSS
+            name = _date_pat.sub('', stem)
+            if not name or name.lower() in ('local', 'sistema', 'system'):
+                continue
+            seen.add(name)
+        return sorted(seen, key=str.lower)
+    except Exception as e:
+        logger.debug(f"discover_chat_channels error: {e}")
+        return []
 
 
 # ── Service ───────────────────────────────────────────────────────────────────
@@ -149,6 +204,14 @@ class IntelAlertService:
         self._alert_cooldowns: Dict[str, float] = {}
         self._readers: dict = {}
         self._readers_lock = threading.Lock()
+        # Diagnostics
+        self._diag_files_watched: int = 0
+        self._diag_last_file: str = ""
+        self._diag_last_message: str = ""
+        self._diag_last_message_ts: float = 0.0
+        self._diag_last_alert: str = ""
+        self._diag_last_alert_ts: float = 0.0
+        self._diag_total_alerts: int = 0
 
     def start(self):
         if self._running:
@@ -179,6 +242,21 @@ class IntelAlertService:
         self._seen_pilots.clear()
         self._alert_cooldowns.clear()
         logger.debug("IntelAlert: session reset")
+
+    def get_diagnostics(self) -> dict:
+        now = time.time()
+        return {
+            'files_watched': self._diag_files_watched,
+            'last_file': self._diag_last_file,
+            'last_message': self._diag_last_message,
+            'last_message_ago': f"{now - self._diag_last_message_ts:.0f}s ago" if self._diag_last_message_ts else "never",
+            'last_alert': self._diag_last_alert,
+            'last_alert_ago': f"{now - self._diag_last_alert_ts:.0f}s ago" if self._diag_last_alert_ts else "never",
+            'total_alerts': self._diag_total_alerts,
+            'source_mode': self._config.source_mode,
+            'intel_channels': self._config.intel_channels,
+            'keywords': self._config.alert_keywords,
+        }
 
     # ------------------------------------------------------------------
     # Channel matching
@@ -235,21 +313,42 @@ class IntelAlertService:
             return
         self._alert_cooldowns[key] = now
 
-        if self._config.alert_sound:
-            try:
-                import winsound
-                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-            except Exception:
-                try:
-                    from PySide6.QtWidgets import QApplication
-                    QApplication.beep()
-                except Exception:
-                    pass
+        # Diagnostics
+        self._diag_last_alert = f"{event.pilot} [{event.channel}]"
+        self._diag_last_alert_ts = now
+        self._diag_total_alerts += 1
+
+        self._play_alert_sound()
 
         try:
             self._callback(event)
         except Exception as e:
             logger.debug(f"IntelAlert callback error: {e}")
+
+    def _play_alert_sound(self):
+        mode = self._config.alert_sound_mode if self._config.alert_sound else "silent"
+        if mode == "silent":
+            return
+        if mode == "wav" and self._config.alert_sound_path:
+            try:
+                import winsound
+                winsound.PlaySound(
+                    self._config.alert_sound_path,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+                )
+                return
+            except Exception:
+                pass
+        # Default: system beep
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        except Exception:
+            try:
+                from PySide6.QtWidgets import QApplication
+                QApplication.beep()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Main loop
@@ -269,6 +368,7 @@ class IntelAlertService:
                     continue
 
                 cutoff = time.time() - 20 * 60
+                active_files = 0
                 for fpath in chatlog_dir.glob('*.txt'):
                     try:
                         if fpath.stat().st_mtime < cutoff:
@@ -278,6 +378,9 @@ class IntelAlertService:
 
                     if not self._channel_file_matches(fpath.name):
                         continue
+
+                    active_files += 1
+                    self._diag_last_file = fpath.name
 
                     with self._readers_lock:
                         if fpath not in self._readers:
@@ -297,12 +400,17 @@ class IntelAlertService:
                         ):
                             continue
 
+                        self._diag_last_message = f"{pilot}: {msg.text[:60]}"
+                        self._diag_last_message_ts = time.time()
+
                         if is_local:
                             self._handle_local_pilot(pilot, msg.timestamp, first_part, src)
                         else:
                             self._handle_intel_message(
                                 pilot, msg.text, msg.timestamp, first_part, src
                             )
+
+                self._diag_files_watched = active_files
 
             except Exception as e:
                 logger.debug(f"IntelAlert loop error: {e}")
@@ -344,9 +452,9 @@ class IntelAlertService:
     def _handle_intel_message(self, sender: str, text: str, ts: str, channel: str, src: str):
         parsed = parse_intel_message(text)
         system = parsed.get('system')
-
-        # Check if any watch_name appears in the text
         text_low = text.lower()
+
+        # Priority 1: watchlist name in text
         watch_hit: Optional[str] = None
         for name in self._config.watch_names:
             n = name.lower().strip()
@@ -354,18 +462,32 @@ class IntelAlertService:
                 watch_hit = name
                 break
 
-        if not watch_hit:
-            return  # Intel channel: only alert when watchlist name found in text
+        if watch_hit:
+            event = IntelEvent(
+                timestamp=ts,
+                pilot=watch_hit,
+                channel=channel,
+                message=text[:120],
+                classification='watchlist',
+                source=src,
+                system=system,
+                jumps=None,
+            )
+            self._fire_alert(event)
+            return
 
-        classification = 'watchlist'
-        event = IntelEvent(
-            timestamp=ts,
-            pilot=watch_hit,
-            channel=channel,
-            message=text[:120],
-            classification=classification,
-            source=src,
-            system=system,
-            jumps=None,
-        )
-        self._fire_alert(event)
+        # Priority 2: keyword detection — fires even with empty watch_names
+        keywords = self._config.alert_keywords or _DEFAULT_KEYWORDS
+        kw_hit = next((kw for kw in keywords if kw.lower() in text_low), None)
+        if kw_hit:
+            event = IntelEvent(
+                timestamp=ts,
+                pilot=sender,
+                channel=channel,
+                message=text[:120],
+                classification='intel',
+                source=src,
+                system=system,
+                jumps=None,
+            )
+            self._fire_alert(event)

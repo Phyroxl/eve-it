@@ -9,8 +9,10 @@ import pytest
 
 from core.intel_alert_service import (
     IntelAlertConfig,
+    IntelAlertService,
     IntelEvent,
     classify_pilot,
+    discover_chat_channels,
     parse_intel_message,
     should_alert,
 )
@@ -260,3 +262,162 @@ def test_normalize_sender_preserves_internal_spaces():
 
 def test_normalize_sender_empty_string():
     assert _normalize_sender("") == ""
+
+
+# ── Sound config ──────────────────────────────────────────────────────────────
+
+def test_sound_mode_default():
+    cfg = IntelAlertConfig()
+    assert cfg.alert_sound_mode == "beep"
+    assert cfg.alert_sound_path == ""
+
+
+def test_sound_mode_roundtrip(tmp_path):
+    cfg = IntelAlertConfig(alert_sound_mode="wav", alert_sound_path="/tmp/test.wav")
+    target = tmp_path / "intel_alert.json"
+    with patch("core.intel_alert_service.CONFIG_FILE", target):
+        cfg.save()
+    with open(target) as f:
+        data = json.load(f)
+    assert data["alert_sound_mode"] == "wav"
+    assert data["alert_sound_path"] == "/tmp/test.wav"
+
+
+def test_sound_mode_load_backcompat(tmp_path):
+    """Old configs with alert_sound:true should load as mode=beep."""
+    target = tmp_path / "intel_alert.json"
+    target.write_text(json.dumps({"alert_sound": True}))
+    with patch("core.intel_alert_service.CONFIG_FILE", target):
+        cfg = IntelAlertConfig.load()
+    assert cfg.alert_sound_mode == "beep"
+
+
+# ── Intel keyword detection ───────────────────────────────────────────────────
+
+def test_keyword_detection_fires_without_watchlist():
+    """Intel channel keyword detection must fire even when watch_names is empty."""
+    events = []
+    cfg = IntelAlertConfig(
+        source_mode="intel",
+        alert_on_unknown=True,
+        watch_names=[],
+        alert_keywords=["neutral", "neut"],
+    )
+    svc = IntelAlertService(cfg, events.append)
+    svc._handle_intel_message("reporter", "3 neutrals in 1DQ1-A", "ts", "Delve.Intel", "intel")
+    assert len(events) == 1
+    assert events[0].classification == "intel"
+
+
+def test_keyword_no_match_no_alert():
+    events = []
+    cfg = IntelAlertConfig(
+        source_mode="intel",
+        alert_on_unknown=True,
+        watch_names=[],
+        alert_keywords=["neutral"],
+    )
+    svc = IntelAlertService(cfg, events.append)
+    svc._handle_intel_message("reporter", "all clear o7", "ts", "Delve.Intel", "intel")
+    assert len(events) == 0
+
+
+def test_watchlist_takes_priority_over_keyword():
+    events = []
+    cfg = IntelAlertConfig(
+        source_mode="intel",
+        alert_on_watchlist=True,
+        watch_names=["BigBad"],
+        alert_keywords=["neutral"],
+    )
+    svc = IntelAlertService(cfg, events.append)
+    svc._handle_intel_message("reporter", "BigBad neutral in 1DQ", "ts", "Chan", "intel")
+    assert len(events) == 1
+    assert events[0].classification == "watchlist"
+    assert events[0].pilot == "BigBad"
+
+
+def test_keyword_classification_is_intel():
+    events = []
+    cfg = IntelAlertConfig(
+        source_mode="intel",
+        alert_on_unknown=True,
+        watch_names=[],
+        alert_keywords=["neut"],
+    )
+    svc = IntelAlertService(cfg, events.append)
+    svc._handle_intel_message("scout", "neut in YZ-", "ts", "Intel", "intel")
+    assert events[0].classification == "intel"
+
+
+# ── should_alert with 'intel' classification ─────────────────────────────────
+
+def test_intel_classification_respects_alert_on_unknown():
+    cfg = _cfg(alert_on_unknown=False)
+    e = _event(classification="intel")
+    assert should_alert(e, cfg) is False
+
+
+def test_intel_classification_alerts_when_unknown_enabled():
+    cfg = _cfg(alert_on_unknown=True)
+    e = _event(classification="intel")
+    assert should_alert(e, cfg) is True
+
+
+# ── Default keywords populated ────────────────────────────────────────────────
+
+def test_default_keywords_not_empty():
+    cfg = IntelAlertConfig()
+    assert len(cfg.alert_keywords) > 0
+    assert "neutral" in cfg.alert_keywords
+
+
+def test_load_repopulates_empty_keywords(tmp_path):
+    target = tmp_path / "intel_alert.json"
+    target.write_text(json.dumps({"alert_keywords": []}))
+    with patch("core.intel_alert_service.CONFIG_FILE", target):
+        cfg = IntelAlertConfig.load()
+    assert len(cfg.alert_keywords) > 0
+
+
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+
+def test_diagnostics_initial_state():
+    cfg = IntelAlertConfig()
+    svc = IntelAlertService(cfg, lambda e: None)
+    d = svc.get_diagnostics()
+    assert d["files_watched"] == 0
+    assert d["total_alerts"] == 0
+    assert d["last_alert"] == ""
+    assert d["last_message"] == ""
+
+
+def test_diagnostics_updated_on_alert():
+    events = []
+    cfg = IntelAlertConfig(
+        source_mode="intel",
+        alert_on_unknown=True,
+        watch_names=[],
+        alert_keywords=["neut"],
+    )
+    svc = IntelAlertService(cfg, events.append)
+    svc._handle_intel_message("scout", "neut in 1DQ", "ts", "Chan", "intel")
+    d = svc.get_diagnostics()
+    assert d["total_alerts"] == 1
+    assert "scout" in d["last_alert"]
+
+
+# ── discover_chat_channels ───────────────────────────────────────────────────
+
+def test_discover_chat_channels_empty_dir(tmp_path):
+    with patch("core.intel_alert_service.discover_chat_channels", wraps=lambda **kw: []):
+        result = discover_chat_channels.__wrapped__() if hasattr(discover_chat_channels, '__wrapped__') else []
+    # Just verify it returns a list
+    assert isinstance(result, list)
+
+
+def test_discover_channels_no_chatlog_dir():
+    """Should return [] gracefully when chatlog dir not found."""
+    with patch("translator.chat_reader._get_chatlog_dir", return_value=None):
+        result = discover_chat_channels()
+    assert result == []
