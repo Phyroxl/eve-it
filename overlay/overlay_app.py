@@ -297,20 +297,27 @@ class OverlayWindow(QWidget):
         self._eve_fg_timer.start(500)
 
     def _check_eve_foreground(self):
+        """Auto-hide when user switches to an external non-EVE, non-app window.
+
+        Uses should_show_overlays() (PID-based check) from win32_capture so all
+        Salva Suite Qt windows (replicas, chat overlay, menus, dialogs) are
+        correctly treated as 'own'. Debounced at 4 ticks × 500 ms = ~2 s.
+        """
         try:
-            import ctypes as _ct, sys as _sys
+            import sys as _sys
             if _sys.platform != 'win32':
                 return
+            from overlay.win32_capture import should_show_overlays, find_eve_windows
+            import ctypes as _ct
             hwnd = _ct.windll.user32.GetForegroundWindow()
             if not hwnd:
                 return
-            buf = _ct.create_unicode_buffer(512)
-            _ct.windll.user32.GetWindowTextW(hwnd, buf, 512)
-            title = buf.value
-            is_eve = title.startswith("EVE —") or title.startswith("EVE - ")
-            is_own = any(x in title for x in ["EVE iT", "Salva Suite", "ISK Tracker"])
-            is_frameless = (title == "")
-            if is_eve or is_own or is_frameless:
+            now = __import__('time').monotonic()
+            if now - getattr(self, '_hud_eve_hwnds_ts', 0.0) > 2.0:
+                self._hud_eve_hwnds = {w['hwnd'] for w in find_eve_windows()}
+                self._hud_eve_hwnds_ts = now
+            keep = should_show_overlays(hwnd, getattr(self, '_hud_eve_hwnds', set()))
+            if keep:
                 self._fg_hide_count = 0
                 if self._auto_hidden and not self._user_hidden:
                     self._auto_hidden = False
@@ -368,28 +375,34 @@ class OverlayWindow(QWidget):
 
         title_row.setSpacing(5)
         
+        # Estilo canónico idéntico a la ventana principal (main_suite_window._TitleBar)
         BTN_NEON_STYLE = """
             QPushButton {
-                background: rgba(0, 180, 255, 0.15);
-                border: 1px solid rgba(0, 180, 255, 0.4);
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
                 border-radius: 3px;
-                color: #00c8ff;
-                font-size: 10px;
+                color: #94a3b8;
+                font-size: 11px;
+                font-weight: 700;
             }
             QPushButton:hover {
-                background: rgba(0, 180, 255, 0.35);
+                background-color: #1e293b;
+                color: #e2e8f0;
             }
         """
         BTN_RED_STYLE = """
             QPushButton {
-                background: rgba(255, 50, 50, 0.15);
-                border: 1px solid rgba(255, 50, 50, 0.4);
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
                 border-radius: 3px;
-                color: #ff6666;
-                font-size: 10px;
+                color: #94a3b8;
+                font-size: 11px;
+                font-weight: 700;
             }
             QPushButton:hover {
-                background: rgba(255, 50, 50, 0.35);
+                background-color: rgba(239, 68, 68, 0.2);
+                border-color: #ef4444;
+                color: #ef4444;
             }
         """
 

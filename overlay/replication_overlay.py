@@ -210,17 +210,31 @@ def _log_hide_show_event(action: str, title: str, detail: str = ""):
         pass
 
 
+def _extract_character_name(title: str) -> str:
+    """Extract character name from an EVE window title like 'EVE — Nina Herrera'."""
+    for sep in (' — ', ' - ', ' – '):
+        if sep in title:
+            return title.split(sep, 1)[-1].strip()
+    return title.strip()
+
+
 def _save_replica_state(ov: 'ReplicationOverlay') -> None:
     """Persists an overlay's state so it can be auto-relaunched when the client reopens."""
     try:
+        char_name = _extract_character_name(ov._title)
         _REPLICA_STATE_CACHE[ov._title] = {
+            'character_name': char_name,
+            'normalized_title': ov._title,
+            'last_hwnd': ov._hwnd,
             'x': ov.x(), 'y': ov.y(),
             'w': ov.width(), 'h': ov.height(),
             'fps': ov._ov_cfg.get('fps', 30),
             'region': dict(ov._region) if isinstance(ov._region, dict) else ov._region,
             'cfg': ov._cfg,
+            'reason': 'source_client_closed',
         }
-        logger.info(f"[REPLICA WATCHER] State saved for relaunch: {ov._title!r}")
+        logger.info(f"CLIENT CLOSED DETECTED: {char_name!r} title={ov._title!r}")
+        logger.info(f"REPLICA AUTO CLOSED: {char_name!r} pos=({ov.x()},{ov.y()}) size=({ov.width()},{ov.height()})")
     except Exception as e:
         logger.debug(f"[REPLICA WATCHER] Error saving state: {e}")
 
@@ -231,50 +245,68 @@ def _relaunch_replica(title: str, hwnd: int, state: dict) -> None:
         from overlay import replicator_config as cfg_lib
         cfg = state['cfg']
         region = state['region']
+        char_name = state.get('character_name', _extract_character_name(title))
+        logger.info(f"CLIENT REOPENED DETECTED: {char_name!r} hwnd={hwnd}")
         ov = ReplicationOverlay(
             title=title, hwnd=hwnd, region_rel=region, cfg=cfg,
             save_callback=lambda *a: cfg_lib.save_overlay_state(cfg, *a),
         )
-        ov.setGeometry(state['x'], state['y'], state['w'], state['h'])
+        x, y, w, h = state['x'], state['y'], state['w'], state['h']
+        ov.setGeometry(x, y, w, h)
         ov.show()
         _REPLICA_STATE_CACHE.pop(title, None)
-        logger.info(f"[REPLICA WATCHER] Auto-relaunched: {title!r} at ({state['x']}, {state['y']})")
+        logger.info(f"REPLICA AUTO RELAUNCHED: {char_name!r} pos=({x},{y}) size=({w},{h})")
     except Exception as e:
         logger.error(f"[REPLICA WATCHER] Relaunch failed for {title!r}: {e}")
 
 
 def _client_watcher_tick() -> None:
-    """Periodic check: auto-close dead replicas and relaunch cached ones."""
+    """Periodic check: auto-close dead replicas and relaunch cached ones.
+
+    Rules:
+    - If source EVE client disappears → auto-close replica, save state.
+    - If user manually closed replica (_user_closed) → skip, no relaunch.
+    - If source EVE client reopens → relaunch replica at saved position.
+    - Never duplicate a replica that already exists for the same client.
+    """
     try:
+        active_overlays = list(_OVERLAY_REGISTRY)
+
         # 1. Check active overlays for dead source clients
-        for ov in list(_OVERLAY_REGISTRY):
-            if getattr(ov, '_user_closed', False) or getattr(ov, '_auto_closed', False):
+        for ov in active_overlays:
+            if getattr(ov, '_user_closed', False):
+                continue  # SKIP RELAUNCH MANUAL CLOSE — user intentionally closed
+            if getattr(ov, '_auto_closed', False):
                 continue
             if getattr(ov, '_shutting_down', False):
                 continue
             hwnd = getattr(ov, '_hwnd', None)
             if hwnd and not user32.IsWindow(hwnd):
-                # Secondary check: maybe the window just moved hwnd
+                # Secondary check: window might have changed hwnd (restart)
                 new_hwnd = resolve_eve_window_handle(ov._title)
-                if not new_hwnd:
-                    logger.info(
-                        f"[REPLICA WATCHER] Source client disappeared: {ov._title!r} — auto-closing replica"
-                    )
+                if new_hwnd:
+                    # Client is alive, just updated hwnd
+                    ov._hwnd = new_hwnd
+                else:
                     _save_replica_state(ov)
                     ov._auto_closed = True
                     QTimer.singleShot(0, ov.close)
 
-        # 2. Check cached states for windows that have reopened
+        # 2. Check cached states for EVE clients that have reopened
+        active_titles = {getattr(ov, '_title', '') for ov in list(_OVERLAY_REGISTRY)}
         for title in list(_REPLICA_STATE_CACHE.keys()):
-            # Skip if already active
-            if any(getattr(ov, '_title', '') == title for ov in list(_OVERLAY_REGISTRY)):
+            state = _REPLICA_STATE_CACHE.get(title)
+            if not state:
+                continue
+            char_name = state.get('character_name', _extract_character_name(title))
+            # Skip if replica already active (SKIP DUPLICATE REPLICA)
+            if title in active_titles:
+                logger.debug(f"SKIP DUPLICATE REPLICA: {char_name!r}")
                 _REPLICA_STATE_CACHE.pop(title, None)
                 continue
             new_hwnd = resolve_eve_window_handle(title)
             if new_hwnd:
-                state = _REPLICA_STATE_CACHE.get(title)
-                if state:
-                    _relaunch_replica(title, new_hwnd, state)
+                _relaunch_replica(title, new_hwnd, state)
     except Exception as e:
         logger.debug(f"[REPLICA WATCHER] Tick error: {e}")
 
@@ -1852,6 +1884,8 @@ class ReplicationOverlay(QWidget):
         if not self._auto_closed:
             self._user_closed = True
             _REPLICA_STATE_CACHE.pop(self._title, None)  # don't relaunch user-closed replicas
+            char_name = _extract_character_name(self._title)
+            logger.info(f"SKIP RELAUNCH MANUAL CLOSE: {char_name!r}")
 
         if ReplicationOverlay._global_shutdown:
             # Timers already stopped and thread already signaled by close_replicator_overlays

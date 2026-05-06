@@ -308,31 +308,36 @@ class ChatOverlay(W.QWidget):
         ttl = W.QLabel("EVE Chat Translator")
         ttl.setStyleSheet("color:rgba(0,200,255,0.8);font-size:10px;background:transparent;")
         
-        # Estilo idéntico a la App Principal
+        # Estilo canónico idéntico a la ventana principal (main_suite_window._TitleBar)
         BTN_MIN_STYLE = """
             QPushButton {
-                background: rgba(0, 180, 255, 0.15);
-                border: 1px solid rgba(0, 180, 255, 0.4);
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
                 border-radius: 3px;
-                color: #00c8ff;
-                font-size: 10px;
+                color: #94a3b8;
+                font-size: 11px;
+                font-weight: 700;
                 padding: 0;
             }
             QPushButton:hover {
-                background: rgba(0, 180, 255, 0.35);
+                background-color: #1e293b;
+                color: #e2e8f0;
             }
         """
         BTN_CLS_STYLE = """
             QPushButton {
-                background: rgba(255, 50, 50, 0.15);
-                border: 1px solid rgba(255, 50, 50, 0.4);
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
                 border-radius: 3px;
-                color: #ff6666;
-                font-size: 10px;
+                color: #94a3b8;
+                font-size: 11px;
+                font-weight: 700;
                 padding: 0;
             }
             QPushButton:hover {
-                background: rgba(255, 50, 50, 0.35);
+                background-color: rgba(239, 68, 68, 0.2);
+                border-color: #ef4444;
+                color: #ef4444;
             }
         """
         
@@ -480,6 +485,12 @@ class ChatOverlay(W.QWidget):
         self._profile.show_portraits = checked
         self._config.save_profile(self._profile)
         self._config.save()
+        # Toggle visibility of portrait labels in existing message bubbles.
+        # When unchecked the QLabel is hidden and the layout collapses the space.
+        for bubble in self._bubbles:
+            lbl = getattr(bubble, '_portrait_lbl', None)
+            if lbl is not None:
+                lbl.setVisible(checked)
 
     def _pick_color(self, attr_name):
         initial = G.QColor(getattr(self._profile, attr_name))
@@ -850,29 +861,46 @@ class ChatOverlay(W.QWidget):
             pass
 
     def _check_eve_foreground(self):
+        """Auto-hide when the user switches to an external (non-EVE, non-app) window.
+
+        Uses should_show_overlays() from win32_capture which checks by PID, so
+        ALL Salva Suite Qt windows (replicas, HUD, Visual Clon, menus) are
+        correctly classified as 'own' without relying on fragile title matching.
+        A 4-tick debounce (~2 s at 500 ms interval) prevents flicker during
+        brief OS transitions between EVE clients.
+        """
         try:
-            import ctypes as _ct, sys as _sys
+            import sys as _sys
             if _sys.platform != 'win32':
                 return
+            from overlay.win32_capture import should_show_overlays, find_eve_windows
+            import ctypes as _ct
             hwnd = _ct.windll.user32.GetForegroundWindow()
             if not hwnd:
+                # No foreground window reported → transient state, skip
                 return
-            buf = _ct.create_unicode_buffer(512)
-            _ct.windll.user32.GetWindowTextW(hwnd, buf, 512)
-            title = buf.value
-            is_eve = title.startswith("EVE —") or title.startswith("EVE - ")
-            is_own = any(x in title for x in ["EVE iT", "Salva Suite", "Chat Translator"])
-            is_frameless = (title == "")
-            if is_eve or is_own or is_frameless:
+            # Refresh EVE hwnd set every ~2 s to avoid per-tick enumeration
+            now = __import__('time').monotonic()
+            if now - getattr(self, '_eve_hwnds_ts', 0.0) > 2.0:
+                self._eve_hwnds = {w['hwnd'] for w in find_eve_windows()}
+                self._eve_hwnds_ts = now
+            keep = should_show_overlays(hwnd, getattr(self, '_eve_hwnds', set()))
+            if keep:
                 self._fg_hide_count = 0
                 if self._auto_hidden and not self._user_hidden:
                     self._auto_hidden = False
+                    logger.debug("OVERLAY VISIBILITY SHOW reason=returned_to_eve_or_app")
                     self.show()
             else:
                 self._fg_hide_count += 1
                 if self._fg_hide_count >= 4 and self.isVisible() and not self._user_hidden:
                     self._auto_hidden = True
+                    buf = _ct.create_unicode_buffer(256)
+                    _ct.windll.user32.GetWindowTextW(hwnd, buf, 256)
+                    logger.debug(f"OVERLAY VISIBILITY HIDE reason=external_window title={buf.value!r}")
                     self.hide()
+                elif self._fg_hide_count < 4:
+                    logger.debug("OVERLAY VISIBILITY DEBOUNCE_SKIP")
         except Exception:
             pass
 

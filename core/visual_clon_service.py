@@ -5,6 +5,7 @@ safe copy operations with automatic backup.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -146,12 +147,56 @@ def validate_settings_folder(path: Path) -> Tuple[bool, str]:
     return True, f"Carpeta válida — {len(char_files)} perfil(es) de personaje."
 
 
+def _md5(path: Path) -> str:
+    """Compute MD5 hex digest of a file. Returns '' on error."""
+    try:
+        h = hashlib.md5()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ''
+
+
+def is_eve_running() -> bool:
+    """Return True if any EVE Online process is running (best-effort, Windows only)."""
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        # Check for 'exefile.exe' (EVE launcher/client process name)
+        eve_titles: list = []
+
+        def _enum_cb(hwnd, _):
+            if not ctypes.windll.user32.IsWindowVisible(hwnd):
+                return True
+            class_buf = ctypes.create_unicode_buffer(256)
+            ctypes.windll.user32.GetClassNameW(hwnd, class_buf, 256)
+            if class_buf.value == 'trinityWindow':
+                eve_titles.append(hwnd)
+            return True
+
+        ctypes.windll.user32.EnumWindows(
+            ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)(_enum_cb), 0
+        )
+        return bool(eve_titles)
+    except Exception:
+        return False
+
+
 def build_copy_plan(
     source: EveCharProfile,
     targets: List[EveCharProfile],
     dry_run: bool = True,
 ) -> CopyPlan:
-    """Build a CopyPlan without executing any file operations."""
+    """Build a CopyPlan without executing any file operations.
+
+    Only core_char_*.dat is copied (character-specific layout/settings).
+    core_user_*.dat files are account-scoped and shared across multiple
+    characters; copying them by char_id would produce invalid filenames
+    and corrupt account-level settings.
+    """
     files_to_copy = [source.file_path] if source.file_path.exists() else []
     size = sum(f.stat().st_size for f in files_to_copy if f.exists())
     return CopyPlan(
@@ -187,6 +232,13 @@ def execute_clone(plan: CopyPlan) -> CloneResult:
             result.success = False
             return result
 
+    # Warn if EVE is running — it may overwrite settings on close
+    if not plan.dry_run and is_eve_running():
+        msg = ("WARNING EVE RUNNING — El cliente EVE está abierto. "
+               "Ciérralo antes de aplicar para evitar que sobrescriba los cambios al cerrar.")
+        _log(msg)
+        result.log_lines.append(msg)
+
     if plan.dry_run:
         _log(f"[SIMULACIÓN] Origen: {plan.source.display_name}")
         _log(f"[SIMULACIÓN] Archivos a copiar: {[f.name for f in plan.files_to_copy]}")
@@ -198,12 +250,14 @@ def execute_clone(plan: CopyPlan) -> CloneResult:
         _log("[SIMULACIÓN] Ningún archivo modificado. EVE debe estar cerrado para aplicar.")
         return result
 
-    _log(f"Origen: {plan.source.display_name}")
+    _log(f"VISUAL CLON SOURCE profile={plan.source.file_path.name} char={plan.source.display_name}")
     _log(f"Destinos: {', '.join(t.display_name for t in plan.targets)}")
 
     for target in plan.targets:
         for src_file in plan.files_to_copy:
             target_file = src_file.parent / f"core_char_{target.char_id}.dat"
+
+            _log(f"VISUAL CLON DEST profile={target_file.name} char={target.display_name}")
 
             # Backup existing destination file
             if target_file.exists():
@@ -214,7 +268,7 @@ def execute_clone(plan: CopyPlan) -> CloneResult:
                         files_to_backup=[target_file],
                     )
                     result.backups.append(backup)
-                    _log(f"Backup: {backup.backup_dir.name}")
+                    _log(f"BACKUP CREATED path={backup.backup_dir}")
                 except Exception as e:
                     err = f"Error creando backup para {target.display_name}: {e}"
                     result.errors.append(err)
@@ -223,9 +277,18 @@ def execute_clone(plan: CopyPlan) -> CloneResult:
                     continue
 
             try:
+                src_hash = _md5(src_file)
+                _log(f"COPY FILE source={src_file.name} dest={target_file.name}")
                 shutil.copy2(src_file, target_file)
                 result.files_copied.append(target_file)
-                _log(f"Copiado: {src_file.name} → {target_file.name}")
+                # Verify hash after copy
+                dst_hash = _md5(target_file)
+                if src_hash and dst_hash:
+                    if src_hash == dst_hash:
+                        _log(f"VERIFY HASH OK {target_file.name} md5={dst_hash[:8]}…")
+                    else:
+                        _log(f"VERIFY HASH FAIL {target_file.name} src={src_hash[:8]} dst={dst_hash[:8]}")
+                        result.errors.append(f"Hash mismatch after copy: {target_file.name}")
             except Exception as e:
                 err = f"Error copiando a {target_file.name}: {e}"
                 result.errors.append(err)
