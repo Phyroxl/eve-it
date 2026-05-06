@@ -285,23 +285,25 @@ class VisualClonView(QWidget):
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(10)
+        root.setContentsMargins(14, 10, 14, 10)
+        root.setSpacing(8)
 
+        # ── Header ─────────────────────────────────────────────────────────
         hdr = QHBoxLayout()
         hdr.addWidget(_label("VISUAL CLON", 'VCTitle'))
         hdr.addStretch()
+        sub = _label("Clona configuración visual y layout de ventanas entre personajes EVE.", 'VCSub')
+        hdr.addWidget(sub)
         root.addLayout(hdr)
 
-        sub = _label(
-            "Clona la configuración visual y el layout de ventanas de un "
-            "personaje EVE a otros personajes.", 'VCSub'
-        )
-        sub.setWordWrap(True)
-        root.addWidget(sub)
+        # ── Two-column body ─────────────────────────────────────────────────
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        body.addWidget(self._build_left_col(), 0)   # fixed width left
+        body.addWidget(self._build_right_col(), 1)  # stretch right
+        root.addLayout(body, 1)
 
-        root.addWidget(self._build_left(), 1)
-
+        # ── Bottom bar ──────────────────────────────────────────────────────
         self.lbl_result = _label("", 'VCStatus')
         self.lbl_result.setWordWrap(True)
         root.addWidget(self.lbl_result)
@@ -333,30 +335,27 @@ class VisualClonView(QWidget):
         self.btn_restore.clicked.connect(self._on_restore)
         self._set_action_enabled(False)
 
-    # ── Left panel ─────────────────────────────────────────────────────────────
+    # ── Left column: folder + source ───────────────────────────────────────────
 
-    def _build_left(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-
+    def _build_left_col(self) -> QWidget:
         w = QWidget()
+        w.setFixedWidth(370)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 8, 0)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        # ── EVE folder ──────────────────────────────────────────────────────
+        # EVE folder
         fp, fl = _panel()
-        fl.addWidget(_label("CARPETA DE CONFIGURACIÓN EVE", 'VCSectionLabel'))
+        fl.addWidget(_label("CARPETA EVE", 'VCSectionLabel'))
         self.edit_path = QLineEdit()
-        self.edit_path.setPlaceholderText("Ruta a la carpeta settings_Default de EVE…")
+        self.edit_path.setPlaceholderText("Ruta settings_Default de EVE…")
         self.edit_path.setReadOnly(True)
         fl.addWidget(self.edit_path)
         btn_row = QHBoxLayout()
-        self.btn_detect = QPushButton("Detectar automáticamente")
+        self.btn_detect = QPushButton("Detectar auto")
         self.btn_detect.setObjectName("VCSecondary")
         self.btn_detect.setCursor(Qt.PointingHandCursor)
-        self.btn_browse = QPushButton("Seleccionar carpeta…")
+        self.btn_browse = QPushButton("Seleccionar…")
         self.btn_browse.setObjectName("VCSecondary")
         self.btn_browse.setCursor(Qt.PointingHandCursor)
         btn_row.addWidget(self.btn_detect)
@@ -369,7 +368,7 @@ class VisualClonView(QWidget):
         self.btn_detect.clicked.connect(self._on_detect)
         self.btn_browse.clicked.connect(self._on_browse)
 
-        # ── Source selector + card ──────────────────────────────────────────
+        # Source
         sp, sl = _panel()
         sl.addWidget(_label("PERSONAJE ORIGEN", 'VCSectionLabel'))
         self.combo_source = QComboBox()
@@ -380,12 +379,35 @@ class VisualClonView(QWidget):
         lay.addWidget(sp)
         self.combo_source.currentIndexChanged.connect(self._on_source_changed)
 
-        # ── Targets list ────────────────────────────────────────────────────
+        # Safety options
+        safe_p, safe_l = _panel()
+        safe_l.addWidget(_label("SEGURIDAD", 'VCSectionLabel'))
+        self.chk_backup = QCheckBox("Backup antes de aplicar (recomendado)")
+        self.chk_backup.setChecked(True)
+        self.chk_backup.setEnabled(False)
+        safe_l.addWidget(self.chk_backup)
+        self.chk_validate = QCheckBox("Validar archivos antes de copiar")
+        self.chk_validate.setChecked(True)
+        safe_l.addWidget(self.chk_validate)
+        lay.addWidget(safe_p)
+
+        lay.addStretch()
+        return w
+
+    # ── Right column: targets + sections ───────────────────────────────────────
+
+    def _build_right_col(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+
+        # Targets
         tp, tl = _panel()
         tl.addWidget(_label("PERSONAJES DESTINO", 'VCSectionLabel'))
         self.list_targets = QListWidget()
         self.list_targets.setSelectionMode(QAbstractItemView.NoSelection)
-        self.list_targets.setMinimumHeight(130)
+        self.list_targets.setMinimumHeight(220)
         self.list_targets.setSpacing(0)
         tl.addWidget(self.list_targets, 1)
         trow = QHBoxLayout()
@@ -401,39 +423,23 @@ class VisualClonView(QWidget):
         btn_all.clicked.connect(self._select_all_targets)
         btn_clr.clicked.connect(self._clear_targets)
 
-        # ── Sections ────────────────────────────────────────────────────────
+        # Sections info (read-only note, no interactive checkboxes shown)
         sec_p, sec_l = _panel()
         sec_l.addWidget(_label("SECCIONES A COPIAR", 'VCSectionLabel'))
         note = _label(
-            "En v1, el archivo de perfil EVE es binario — se copia completo "
-            "incluyendo todas las secciones.", 'VCSub'
+            "El perfil EVE es binario — se copia el archivo completo "
+            "(layout, overview, chat, inventario, preferencias visuales).", 'VCSub'
         )
         note.setWordWrap(True)
         sec_l.addWidget(note)
-        from core.visual_clon_models import COPY_SECTIONS
         self._section_checks: List[QCheckBox] = []
-        for _, sec_name, sec_desc in COPY_SECTIONS:
-            cb = QCheckBox(sec_name)
-            cb.setChecked(True)
-            cb.setToolTip(sec_desc)
-            sec_l.addWidget(cb)
-            self._section_checks.append(cb)
         lay.addWidget(sec_p)
 
-        # ── Safety ──────────────────────────────────────────────────────────
-        safe_p, safe_l = _panel()
-        safe_l.addWidget(_label("OPCIONES DE SEGURIDAD", 'VCSectionLabel'))
-        self.chk_backup = QCheckBox("Crear backup antes de aplicar (recomendado)")
-        self.chk_backup.setChecked(True)
-        self.chk_backup.setEnabled(False)
-        safe_l.addWidget(self.chk_backup)
-        self.chk_validate = QCheckBox("Validar archivos antes de copiar")
-        self.chk_validate.setChecked(True)
-        safe_l.addWidget(self.chk_validate)
-        lay.addWidget(safe_p)
+        return w
 
-        scroll.setWidget(w)
-        return scroll
+    # ── Legacy alias kept for compatibility ────────────────────────────────────
+    def _build_left(self) -> QWidget:
+        return self._build_left_col()
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

@@ -42,10 +42,16 @@ class MessageBubble(W.QFrame):
 
         def _resolve():
             try:
-                from utils.eve_api import resolve_character_id
-                char_id = resolve_character_id(sender)
-                if not char_id:
+                from utils.eve_api import resolve_character_id, _normalize_sender
+                sender_clean = _normalize_sender(sender)
+                if not sender_clean:
+                    logger.debug(f"PORTRAIT SKIP empty sender after normalize: {sender!r}")
                     return
+                char_id = resolve_character_id(sender_clean)
+                if not char_id:
+                    logger.debug(f"PORTRAIT NO_ID sender={sender_clean!r}")
+                    return
+                logger.debug(f"PORTRAIT FETCHING sender={sender_clean!r} char_id={char_id}")
 
                 def _on_main():
                     s = ref()
@@ -59,22 +65,25 @@ class MessageBubble(W.QFrame):
                             if sl is None or getattr(sl, '_portrait_lbl', None) is None:
                                 return
                             try:
+                                if pixmap.isNull():
+                                    logger.debug(f"PORTRAIT NULL pixmap for char_id={char_id}")
+                                    return
                                 scaled = pixmap.scaled(32, 32, C.Qt.KeepAspectRatio, C.Qt.SmoothTransformation)
                                 sl._portrait_lbl.setPixmap(scaled)
                                 sl._portrait_lbl.setText("")
                                 sl._portrait_lbl.setStyleSheet(
-                                    "QLabel{border:1px solid #334155;border-radius:3px;background:transparent;}"
+                                    "QLabel{border:1px solid #334155;background:transparent;}"
                                 )
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.debug(f"PORTRAIT set pixmap error: {exc}")
 
-                        EveIconService.instance().get_portrait(char_id, 32, _on_portrait)
-                    except Exception:
-                        pass
+                        EveIconService.instance().get_portrait(char_id, 64, _on_portrait)
+                    except Exception as exc:
+                        logger.debug(f"PORTRAIT on_main error: {exc}")
 
                 C.QTimer.singleShot(0, _on_main)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"PORTRAIT resolve thread error: {exc}")
 
         threading.Thread(target=_resolve, daemon=True).start()
 
@@ -246,7 +255,7 @@ class ChatOverlay(W.QWidget):
         self._fg_hide_count = 0
         self._eve_fg_timer = C.QTimer(self)
         self._eve_fg_timer.timeout.connect(self._check_eve_foreground)
-        self._eve_fg_timer.start(500)
+        self._eve_fg_timer.start(75)  # 75 ms — matches replicator speed
         self._fade_timer = C.QTimer(self)
         self._fade_timer.timeout.connect(self._update_fade)
         self._fade_timer.start(500)
@@ -300,7 +309,7 @@ class ChatOverlay(W.QWidget):
         self._is_at_bottom = True
         tb = W.QWidget()
         tb.setFixedHeight(26)
-        tb.setStyleSheet("background:#000000;border-bottom:1px solid rgba(0,180,255,0.3);border-radius:5px 5px 0 0;")
+        tb.setStyleSheet("background:#000000;border-bottom:1px solid rgba(0,180,255,0.3);")
         tbl = W.QHBoxLayout(tb)
         tbl.setContentsMargins(8, 0, 6, 0)
         ico = W.QLabel("\U0001f4ac")
@@ -398,7 +407,7 @@ class ChatOverlay(W.QWidget):
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_manual)
         
         main.addWidget(self._scroll)
-        self.setStyleSheet("ChatOverlay{background:#000000;border:1px solid rgba(0,180,255,0.3);border-radius:5px;}")
+        self.setStyleSheet("ChatOverlay{background:#000000;border:1px solid rgba(0,180,255,0.3);}")
         
         # Composer Integrado: [Canal] [Input] [Bandera]
         self._composer_lay = W.QHBoxLayout()
@@ -505,7 +514,7 @@ class ChatOverlay(W.QWidget):
     def _apply_theme(self):
         # Forzar opacidad y color de fondo del overlay
         self.setWindowOpacity(1.0)
-        self.setStyleSheet(f"ChatOverlay{{background:{self._profile.bg_color};border:1px solid rgba(0,180,255,0.4);border-radius:5px;}}")
+        self.setStyleSheet(f"ChatOverlay{{background:{self._profile.bg_color};border:1px solid rgba(0,180,255,0.4);}}")
         self.style().unpolish(self)
         self.style().polish(self)
         
@@ -866,8 +875,8 @@ class ChatOverlay(W.QWidget):
         Uses should_show_overlays() from win32_capture which checks by PID, so
         ALL Salva Suite Qt windows (replicas, HUD, Visual Clon, menus) are
         correctly classified as 'own' without relying on fragile title matching.
-        A 4-tick debounce (~2 s at 500 ms interval) prevents flicker during
-        brief OS transitions between EVE clients.
+        Runs at 75 ms (same as replicator _monitor_focus). Debounce 2 ticks =
+        ~150 ms to absorb single-tick OS transitions without introducing flicker.
         """
         try:
             import sys as _sys
@@ -893,13 +902,13 @@ class ChatOverlay(W.QWidget):
                     self.show()
             else:
                 self._fg_hide_count += 1
-                if self._fg_hide_count >= 4 and self.isVisible() and not self._user_hidden:
+                if self._fg_hide_count >= 2 and self.isVisible() and not self._user_hidden:
                     self._auto_hidden = True
                     buf = _ct.create_unicode_buffer(256)
                     _ct.windll.user32.GetWindowTextW(hwnd, buf, 256)
                     logger.debug(f"OVERLAY VISIBILITY HIDE reason=external_window title={buf.value!r}")
                     self.hide()
-                elif self._fg_hide_count < 4:
+                elif self._fg_hide_count < 2:
                     logger.debug("OVERLAY VISIBILITY DEBOUNCE_SKIP")
         except Exception:
             pass
@@ -917,7 +926,7 @@ class ChatOverlay(W.QWidget):
         
         # En modo compacto, el fondo es más transparente
         if self._is_compact:
-            self.setStyleSheet(f"ChatOverlay{{background:rgba(0,0,0,0.6);border:1px solid rgba(0,180,255,0.2);border-radius:5px;}}")
+            self.setStyleSheet(f"ChatOverlay{{background:rgba(0,0,0,0.6);border:1px solid rgba(0,180,255,0.2);}}")
         else:
             self._apply_theme()
             

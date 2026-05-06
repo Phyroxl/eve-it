@@ -646,9 +646,10 @@ class MainSuiteWindow(QMainWindow):
         g.addWidget(self.create_tool_card("Traductor", "Traducción de logs.", "🌐", self._on_translator_clicked), 0, 1)
         g.addWidget(self.create_tool_card("Replicador", "Sincronización.", "🪟", self._on_replicator_clicked), 0, 2)
         
-        # Fila 2 (Preparado para expansión 3x5)
+        # Fila 2
         g.addWidget(self.create_tool_card("Market Command", "Station Trading AI.", "📈", self._on_market_clicked), 1, 0)
         g.addWidget(self.create_tool_card("Visual Clon", "Copia el layout visual de un personaje a otros.", "🖥️", self._on_visual_clon_clicked), 1, 1)
+        g.addWidget(self.create_tool_card("Intel Alert", "Hostiles en Local / Intel.", "⚠️", self._on_intel_alert_clicked), 1, 2)
 
         cont_l.addLayout(g); cont_l.addStretch()
         scroll.setWidget(cont)
@@ -1048,7 +1049,7 @@ class MainSuiteWindow(QMainWindow):
                 self._visual_clon_window = QWidget()
                 self._visual_clon_window.setWindowTitle("Salva Suite — Visual Clon")
                 self._visual_clon_window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-                self._visual_clon_window.setFixedSize(450, 1000)
+                self._visual_clon_window.setFixedSize(900, 675)
 
                 outer = _QVBox(self._visual_clon_window)
                 outer.setContentsMargins(0, 0, 0, 0)
@@ -1068,6 +1069,21 @@ class MainSuiteWindow(QMainWindow):
             print(f"Error opening Visual Clon: {e}")
             import traceback
             traceback.print_exc()
+
+    def _on_intel_alert_clicked(self):
+        try:
+            if not hasattr(self, '_intel_alert_win') or self._intel_alert_win is None:
+                from ui.tools.intel_alert_window import IntelAlertWindow
+                self._intel_alert_win = IntelAlertWindow(controller=self._ctrl if hasattr(self, '_ctrl') else None)
+                self._intel_alert_win.setWindowTitle("Salva Suite — Intel Alert")
+            self._intel_alert_win.show()
+            self._intel_alert_win.raise_()
+            self._intel_alert_win.activateWindow()
+        except Exception as e:
+            print(f"Error opening Intel Alert: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _on_browse_logs(self):
         d = QFileDialog.getExistingDirectory(self, "Logs EVE"); self.edit_log_dir.setText(d if d else "")
     def load_settings(self):

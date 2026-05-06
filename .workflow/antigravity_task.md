@@ -62,3 +62,61 @@ Logs: CLIENT CLOSED DETECTED, REPLICA AUTO CLOSED, CLIENT REOPENED DETECTED, REP
 2. Pegado automatico de traduccion: se copia al portapapeles (seguro). Auto-paste directo interfiere con el Replicador y puede violar ToS.
 3. Visual Clon desplazamiento de coordenadas: si el perfil origen fue grabado con diferente resolucion/DPI, las coordenadas binarias en core_char_*.dat estaran desfasadas. El formato binario de CCP no esta documentado publicamente.
 4. HUD Overlay standalone: el import de should_show_overlays esta dentro de try/except para evitar ImportError si se ejecuta sin el paquete overlay en sys.path.
+
+---
+
+## Session 2 — Overlay visibility, portraits, Visual Clone resize, Intel Alert
+
+**Fecha:** 2026-05-06
+**Commit:** FIX: Improve overlay visibility portraits visual clone and add intel alert
+
+### Cambios aplicados
+
+#### 1. Chat Translator — velocidad de ocultacion (75 ms)
+- `translator/chat_overlay.py`: timer 500 ms → 75 ms; debounce threshold >= 4 → >= 2 ticks.
+  Resultado: ocultacion en ~150 ms, igual que el Replicador.
+
+#### 2. HUD ISK Tracker — ocultacion al perder foco
+- `overlay/overlay_app.py`: mismo cambio de timer 500 → 75 ms y debounce 4 → 2.
+  La ventana ahora se oculta y reaparece al mismo ritmo que el Replicador.
+
+#### 3. Visual Clone — 900x675 con layout 2 columnas
+- `ui/desktop/main_suite_window.py`: setFixedSize(450, 1000) → setFixedSize(900, 675).
+- `ui/tools/visual_clon_view.py`: _setup_ui() reescrito con QHBoxLayout.
+  Columna izquierda fija 370 px: carpeta + source + seguridad.
+  Columna derecha stretch: targets + info de secciones.
+
+#### 4. Chat Translator — portraits
+- `utils/eve_api.py`: resolve_character_id() ya NO cachea None en disco.
+  - Exitos: cachados en disco indefinidamente.
+  - Fallos ESI definitivos (4xx / not found): TTL 30 min en memoria (_FAILED_NAMES).
+  - Errores de red (5xx / timeout): no se cachean, se reintenta la proxima vez.
+  - _load_cache() filtra entradas None/invalidas al iniciar.
+  - _normalize_sender() elimina caracteres de control/invisibles del chatlog EVE.
+- `translator/chat_overlay.py`: _start_portrait_load() normaliza sender antes de ESI;
+  añade logging DEBUG PORTRAIT *; tamaño pedido 64 px (antes 32) para mejor calidad;
+  portrait label sin border-radius (cuadrado).
+
+#### 5. Bordes cuadrados
+- `translator/chat_overlay.py`: eliminados todos los border-radius de los QStyleSheet del overlay.
+- `overlay/overlay_app.py`: border-radius: 8px → 0px en el contenedor principal.
+
+#### 6. Intel Alert — nueva herramienta
+- `core/intel_alert_service.py` (nuevo): IntelAlertConfig (persistente en config/intel_alert.json),
+  IntelAlertService (thread), IntelEvent.
+  Monitorea chatlogs: Local (piloto nuevo = alerta) + canales custom (watchlist en texto).
+  Cooldown anti-spam configurable. Sonido: winsound.MessageBeep → QApplication.beep() fallback.
+- `ui/tools/intel_alert_window.py` (nuevo): UI frameless 620x560.
+  Lista segura (whitelist), lista vigilancia (watchlist), toggle Activar/Detener,
+  historial de eventos codificado por color, test sonido, reset sesion.
+- `ui/desktop/main_suite_window.py`: card Intel Alert en Tools grid fila 1 col 2;
+  handler _on_intel_alert_clicked().
+
+### Archivos modificados en Session 2
+- utils/eve_api.py
+- translator/chat_overlay.py
+- overlay/overlay_app.py
+- ui/desktop/main_suite_window.py
+- ui/tools/visual_clon_view.py
+- core/intel_alert_service.py (nuevo)
+- ui/tools/intel_alert_window.py (nuevo)

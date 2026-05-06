@@ -294,7 +294,7 @@ class OverlayWindow(QWidget):
         self._fg_hide_count = 0
         self._eve_fg_timer = QTimer(self)
         self._eve_fg_timer.timeout.connect(self._check_eve_foreground)
-        self._eve_fg_timer.start(500)
+        self._eve_fg_timer.start(75)  # 75 ms — matches replicator speed
 
     def _check_eve_foreground(self):
         """Auto-hide when user switches to an external non-EVE, non-app window.
@@ -324,7 +324,7 @@ class OverlayWindow(QWidget):
                     self.show()
             else:
                 self._fg_hide_count += 1
-                if self._fg_hide_count >= 4 and self.isVisible() and not self._user_hidden:
+                if self._fg_hide_count >= 2 and self.isVisible() and not self._user_hidden:
                     self._auto_hidden = True
                     self.hide()
         except Exception:
@@ -338,7 +338,7 @@ class OverlayWindow(QWidget):
             self._container = None
 
         self._container = QWidget(self)
-        self._container.setStyleSheet(f"QWidget {{ background: {C['bg']}; border: 1px solid {C['border']}; border-radius: 8px; }}")
+        self._container.setStyleSheet(f"QWidget {{ background: {C['bg']}; border: 1px solid {C['border']}; border-radius: 0px; }}")
         self._root_lay.addWidget(self._container)
         
         main_lay = QVBoxLayout(self._container); main_lay.setContentsMargins(10, 8, 10, 8); main_lay.setSpacing(6)
