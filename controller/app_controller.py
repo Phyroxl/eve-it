@@ -251,10 +251,9 @@ class AppController:
             from overlay.overlay_server import build_overlay_payload
             payload = build_overlay_payload(self._tracker)
             self._overlay_server.push(payload)
-
-            # Si el overlay HUD Qt está activo, actualizar directamente
-            if self.overlay_window and self.state.overlay_active:
-                self.overlay_window._on_data(payload)
+            # DataPoller recibe los datos del servidor via socket en hilo Qt (safe).
+            # La llamada directa anterior causaba doble-actualización y race condition
+            # entre el thread del tracker y _local_tick en el hilo principal.
         except Exception as e:
             logger.warning(f"_push_overlay_data error: {e}")
 
@@ -369,10 +368,13 @@ class AppController:
     def show_overlay(self):
         if self.overlay_window:
             try:
-                self.overlay_window.show()
+                # reveal() resetea _user_hidden para que auto-hide vuelva a funcionar
+                if hasattr(self.overlay_window, 'reveal'):
+                    self.overlay_window.reveal()
+                else:
+                    self.overlay_window.show()
                 if hasattr(self.overlay_window, '_animate_restore'):
                     self.overlay_window._animate_restore()
-                # Standard Qt way to bring to front
                 self.overlay_window.raise_()
                 self.overlay_window.activateWindow()
                 self.state.update(overlay_active=True)

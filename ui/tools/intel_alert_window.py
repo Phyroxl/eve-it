@@ -57,7 +57,8 @@ _COL_UNKNOWN = "#94a3b8"
 class IntelAlertWindow(QWidget):
     """Frameless Intel Alert window — detection of hostiles in EVE chatlogs."""
 
-    _event_signal = Signal(object)   # IntelEvent, cross-thread
+    _event_signal = Signal(object)    # IntelEvent, cross-thread
+    _discover_done = Signal(list)     # list[str] channel names — cross-thread safe
 
     def __init__(self, parent=None, controller=None):
         super().__init__(parent, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
@@ -72,6 +73,7 @@ class IntelAlertWindow(QWidget):
         self._load_config_to_ui()
 
         self._event_signal.connect(self._on_event_ui)
+        self._discover_done.connect(self._on_discovered)
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -105,21 +107,23 @@ class IntelAlertWindow(QWidget):
         root.addWidget(self._stack, 1)
 
     def _build_compact_panel(self) -> QWidget:
-        """220×60 panel: ON/OFF + status only."""
+        """200×80 panel: ON/OFF + status — máximo compacto."""
         panel = QWidget()
-        panel.setFixedSize(340, 60)
-        lay = QHBoxLayout(panel)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(10)
+        panel.setFixedSize(200, 80)
+        panel.setStyleSheet("QWidget{background:#060d18;}")
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
 
         self._btn_toggle_compact = QPushButton("▶  ACTIVAR")
         self._btn_toggle_compact.setStyleSheet(_BTN_GREEN)
-        self._btn_toggle_compact.setFixedHeight(36)
+        self._btn_toggle_compact.setFixedHeight(32)
         self._btn_toggle_compact.clicked.connect(self._toggle_service)
-        lay.addWidget(self._btn_toggle_compact, 1)
+        lay.addWidget(self._btn_toggle_compact)
 
         self._lbl_status_compact = QLabel("● Inactivo")
-        self._lbl_status_compact.setStyleSheet("color:#475569;font-size:11px;")
+        self._lbl_status_compact.setStyleSheet("color:#475569;font-size:10px;")
+        self._lbl_status_compact.setAlignment(Qt.AlignCenter)
         lay.addWidget(self._lbl_status_compact)
 
         return panel
@@ -324,13 +328,31 @@ class IntelAlertWindow(QWidget):
         iv.addWidget(self._hline())
 
         # ── Toggles ───────────────────────────────────────────────────────
-        self._chk_alert_unknown = QCheckBox("Alertar pilotos desconocidos / keywords Intel")
+        self._chk_alert_unknown = QCheckBox("Alertar neutrales / desconocidos")
         self._chk_alert_unknown.setStyleSheet(_CHK)
         iv.addWidget(self._chk_alert_unknown)
 
         self._chk_alert_watch = QCheckBox("Alertar lista vigilancia")
         self._chk_alert_watch.setStyleSheet(_CHK)
         iv.addWidget(self._chk_alert_watch)
+
+        iv.addWidget(QLabel("Filtro standing (ESI):", styleSheet=_SECTION))
+        self._chk_ignore_corp = QCheckBox("Ignorar miembros de mi corp")
+        self._chk_ignore_corp.setStyleSheet(_CHK)
+        iv.addWidget(self._chk_ignore_corp)
+
+        self._chk_ignore_good_standing = QCheckBox("Ignorar buen standing")
+        self._chk_ignore_good_standing.setStyleSheet(_CHK)
+        iv.addWidget(self._chk_ignore_good_standing)
+
+        self._chk_alert_bad_standing = QCheckBox("Alertar mal standing")
+        self._chk_alert_bad_standing.setStyleSheet(_CHK)
+        iv.addWidget(self._chk_alert_bad_standing)
+
+        self._lbl_esi_status = QLabel("⚠ ESI standing no disponible — listas manuales activas")
+        self._lbl_esi_status.setStyleSheet("color:#475569;font-size:9px;")
+        self._lbl_esi_status.setWordWrap(True)
+        iv.addWidget(self._lbl_esi_status)
 
         iv.addWidget(self._hline())
 
@@ -352,7 +374,7 @@ class IntelAlertWindow(QWidget):
 
         wav_row = QHBoxLayout()
         self._edit_wav_path = QLineEdit()
-        self._edit_wav_path.setPlaceholderText("Ruta .wav…")
+        self._edit_wav_path.setPlaceholderText("Ruta .wav o .mp3…")
         self._edit_wav_path.setStyleSheet(_INPUT)
         self._edit_wav_path.setReadOnly(True)
         btn_browse = QPushButton("…")
@@ -477,13 +499,15 @@ class IntelAlertWindow(QWidget):
         self._compact_mode = not self._compact_mode
         if self._compact_mode:
             self._stack.setCurrentIndex(0)
-            self.setFixedSize(340, 88)
+            self.setMinimumSize(200, 80)
+            self.setMaximumSize(200, 80)
+            self.resize(200, 80)
         else:
-            self._stack.setCurrentIndex(1)
             self.setMinimumSize(700, 580)
             self.setMaximumSize(16777215, 16777215)
             self.resize(780, 620)
-        self._btn_compact_toggle.setText("▣" if not self._compact_mode else "□")
+            self._stack.setCurrentIndex(1)
+        self._btn_compact_toggle.setText("□" if self._compact_mode else "▣")
 
     # ── Config I/O ────────────────────────────────────────────────────────────
 
@@ -509,6 +533,9 @@ class IntelAlertWindow(QWidget):
 
         self._chk_alert_unknown.setChecked(self._config.alert_on_unknown)
         self._chk_alert_watch.setChecked(self._config.alert_on_watchlist)
+        self._chk_ignore_corp.setChecked(getattr(self._config, 'ignore_corp_members', True))
+        self._chk_ignore_good_standing.setChecked(getattr(self._config, 'ignore_good_standing', True))
+        self._chk_alert_bad_standing.setChecked(getattr(self._config, 'alert_bad_standing', True))
         self._edit_cooldown.setText(str(self._config.pilot_cooldown_secs))
 
         # Sound mode
@@ -535,6 +562,9 @@ class IntelAlertWindow(QWidget):
         ]
         self._config.alert_on_unknown = self._chk_alert_unknown.isChecked()
         self._config.alert_on_watchlist = self._chk_alert_watch.isChecked()
+        self._config.ignore_corp_members = self._chk_ignore_corp.isChecked()
+        self._config.ignore_good_standing = self._chk_ignore_good_standing.isChecked()
+        self._config.alert_bad_standing = self._chk_alert_bad_standing.isChecked()
         sound_modes = ["beep", "silent", "wav"]
         self._config.alert_sound_mode = sound_modes[self._combo_sound.currentIndex()]
         self._config.alert_sound = self._config.alert_sound_mode != "silent"
@@ -587,15 +617,22 @@ class IntelAlertWindow(QWidget):
     # ── Channel discovery ─────────────────────────────────────────────────────
 
     def _discover_channels(self):
+        """Escanea chatlogs en background y devuelve canales via Signal (thread-safe)."""
         self._btn_discover.setEnabled(False)
         self._btn_discover.setText("Buscando…")
 
         def _do():
-            channels = discover_chat_channels(max_age_hours=48)
-            QTimer.singleShot(0, lambda: self._on_discovered(channels))
+            try:
+                channels = discover_chat_channels(max_age_hours=72)
+                logger.debug(f"discover_channels found: {channels}")
+            except Exception as e:
+                logger.debug(f"discover_channels error: {e}")
+                channels = []
+            # Signal.emit() es thread-safe — entrega en el hilo principal
+            self._discover_done.emit(channels)
 
         import threading
-        threading.Thread(target=_do, daemon=True).start()
+        threading.Thread(target=_do, daemon=True, name='intel_discover').start()
 
     def _on_discovered(self, channels):
         self._btn_discover.setEnabled(True)
@@ -623,7 +660,8 @@ class IntelAlertWindow(QWidget):
 
     def _browse_wav(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Seleccionar archivo WAV", "", "Archivos WAV (*.wav)"
+            self, "Seleccionar archivo de audio", "",
+            "Audio (*.wav *.mp3);;WAV (*.wav);;MP3 (*.mp3)"
         )
         if path:
             self._edit_wav_path.setText(path)
@@ -635,18 +673,46 @@ class IntelAlertWindow(QWidget):
         if mode == "wav":
             path = self._edit_wav_path.text().strip()
             if path:
-                try:
-                    import winsound
-                    winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                    return
-                except Exception:
-                    pass
+                self._play_audio_file(path)
+                return
         try:
             import winsound
             winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         except Exception:
             try:
                 QApplication.beep()
+            except Exception:
+                pass
+
+    def _play_audio_file(self, path: str):
+        """Reproduce WAV o MP3. Para WAV usa winsound; para MP3 usa QMediaPlayer."""
+        import os
+        if not os.path.isfile(path):
+            logger.debug(f"SOUND file not found: {path}")
+            return
+        lower = path.lower()
+        if lower.endswith('.wav'):
+            try:
+                import winsound
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                return
+            except Exception as e:
+                logger.debug(f"SOUND winsound error: {e}")
+        # MP3 o fallback WAV via QMediaPlayer
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtCore import QUrl
+            if not hasattr(self, '_media_player'):
+                self._media_player = QMediaPlayer(self)
+                self._audio_output = QAudioOutput(self)
+                self._media_player.setAudioOutput(self._audio_output)
+            self._media_player.setSource(QUrl.fromLocalFile(path))
+            self._media_player.play()
+        except Exception as e:
+            logger.debug(f"SOUND QMediaPlayer error: {e} — fallback beep")
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
             except Exception:
                 pass
 

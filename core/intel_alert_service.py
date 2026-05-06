@@ -53,6 +53,11 @@ class IntelAlertConfig:
     alert_sound_path: str = ""
     alert_on_unknown: bool = True
     alert_on_watchlist: bool = True
+    # Standing filter (requires ESI auth — see intel_standing_resolver.py)
+    ignore_corp_members: bool = True
+    ignore_good_standing: bool = True
+    alert_neutrals: bool = True
+    alert_bad_standing: bool = True
     source_mode: str = "local"              # "local" | "intel" | "both"
     intel_channels: List[str] = field(default_factory=list)
     alert_keywords: List[str] = field(default_factory=lambda: list(_DEFAULT_KEYWORDS))
@@ -329,16 +334,26 @@ class IntelAlertService:
         mode = self._config.alert_sound_mode if self._config.alert_sound else "silent"
         if mode == "silent":
             return
-        if mode == "wav" and self._config.alert_sound_path:
-            try:
-                import winsound
-                winsound.PlaySound(
-                    self._config.alert_sound_path,
-                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
-                )
-                return
-            except Exception:
-                pass
+        path = self._config.alert_sound_path
+        if mode == "wav" and path:
+            import os
+            if os.path.isfile(path):
+                lower = path.lower()
+                if lower.endswith('.mp3'):
+                    # MP3 must be played in main thread via QMediaPlayer — post to queue
+                    self._post_mp3_play(path)
+                    return
+                try:
+                    import winsound
+                    winsound.PlaySound(
+                        path,
+                        winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+                    )
+                    return
+                except Exception:
+                    pass
+            else:
+                logger.debug(f"SOUND file not found: {path}")
         # Default: system beep
         try:
             import winsound
@@ -347,6 +362,35 @@ class IntelAlertService:
             try:
                 from PySide6.QtWidgets import QApplication
                 QApplication.beep()
+            except Exception:
+                pass
+
+    def _post_mp3_play(self, path: str):
+        """Posts MP3 playback request to the main Qt thread."""
+        try:
+            from PySide6.QtCore import QTimer, QCoreApplication
+            app = QCoreApplication.instance()
+            if app:
+                QTimer.singleShot(0, app, lambda p=path: self._play_mp3_main(p))
+        except Exception as e:
+            logger.debug(f"SOUND post_mp3 error: {e}")
+
+    def _play_mp3_main(self, path: str):
+        """Plays MP3 in main thread using QMediaPlayer."""
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtCore import QUrl
+            if not hasattr(self, '_media_player'):
+                self._media_player = QMediaPlayer()
+                self._audio_output = QAudioOutput()
+                self._media_player.setAudioOutput(self._audio_output)
+            self._media_player.setSource(QUrl.fromLocalFile(path))
+            self._media_player.play()
+        except Exception as e:
+            logger.debug(f"SOUND mp3 error: {e} — fallback beep")
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
             except Exception:
                 pass
 
@@ -433,9 +477,18 @@ class IntelAlertService:
             return
         self._seen_pilots.add(pilot)
 
-        classification = classify_pilot(pilot, self._config)
-        if classification == 'safe':
-            return
+        # Use standing resolver (includes manual lists + ESI fallback)
+        try:
+            from core.intel_standing_resolver import get_resolver
+            standing = get_resolver().resolve(pilot, self._config)
+            if not standing.should_alert:
+                logger.debug(f"IntelAlert: SKIP {pilot!r} reason={standing.reason}")
+                return
+            classification = standing.classification
+        except Exception:
+            classification = classify_pilot(pilot, self._config)
+            if classification == 'safe':
+                return
 
         event = IntelEvent(
             timestamp=ts,

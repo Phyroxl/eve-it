@@ -36,57 +36,43 @@ class MessageBubble(W.QFrame):
         self._setup_ui(msg, translation, profile)
 
     def _start_portrait_load(self, sender: str):
-        """Resolves character_id async and loads portrait via EveIconService."""
+        """Resolves character_id async and dispatches to main thread via Signal."""
         import threading, weakref as _wr
         ref = _wr.ref(self)
+
+        # Capture signal emitter IN MAIN THREAD before spawning background thread.
+        # Signal.emit() is always thread-safe; QTimer.singleShot from a non-Qt
+        # thread (no event loop) is NOT reliable — that was the previous bug.
+        _emit_fn = None
+        p = self.parent()
+        for _ in range(10):
+            if p is None:
+                break
+            if hasattr(p, '_portrait_request'):
+                _emit_fn = p._portrait_request.emit
+                break
+            p = p.parent()
 
         def _resolve():
             try:
                 from utils.eve_api import resolve_character_id, _normalize_sender
                 sender_clean = _normalize_sender(sender)
                 if not sender_clean:
-                    logger.debug(f"PORTRAIT SKIP empty sender after normalize: {sender!r}")
+                    logger.debug(f"PORTRAIT SKIP empty sender: {sender!r}")
                     return
                 char_id = resolve_character_id(sender_clean)
                 if not char_id:
                     logger.debug(f"PORTRAIT NO_ID sender={sender_clean!r}")
                     return
-                logger.debug(f"PORTRAIT FETCHING sender={sender_clean!r} char_id={char_id}")
-
-                def _on_main():
-                    s = ref()
-                    if s is None:
-                        return
-                    try:
-                        from core.eve_icon_service import EveIconService
-
-                        def _on_portrait(pixmap):
-                            sl = ref()
-                            if sl is None or getattr(sl, '_portrait_lbl', None) is None:
-                                return
-                            try:
-                                if pixmap.isNull():
-                                    logger.debug(f"PORTRAIT PIXMAP NULL char_id={char_id}")
-                                    return
-                                scaled = pixmap.scaled(32, 32, C.Qt.KeepAspectRatio, C.Qt.SmoothTransformation)
-                                sl._portrait_lbl.setPixmap(scaled)
-                                sl._portrait_lbl.setText("")
-                                sl._portrait_lbl.setStyleSheet(
-                                    "QLabel{border:1px solid #334155;background:transparent;}"
-                                )
-                                logger.debug(f"PORTRAIT SET OK char_id={char_id} sender={sender_clean!r}")
-                            except Exception as exc:
-                                logger.debug(f"PORTRAIT set pixmap error: {exc}")
-
-                        EveIconService.instance().get_portrait(char_id, 64, _on_portrait)
-                    except Exception as exc:
-                        logger.debug(f"PORTRAIT on_main error: {exc}")
-
-                C.QTimer.singleShot(0, _on_main)
+                logger.debug(f"PORTRAIT GOT_ID sender={sender_clean!r} char_id={char_id}")
+                if _emit_fn is not None:
+                    _emit_fn(ref, char_id)
+                else:
+                    logger.debug(f"PORTRAIT no overlay signal — skipped char_id={char_id}")
             except Exception as exc:
-                logger.debug(f"PORTRAIT resolve thread error: {exc}")
+                logger.debug(f"PORTRAIT resolve error: {exc}")
 
-        threading.Thread(target=_resolve, daemon=True).start()
+        threading.Thread(target=_resolve, daemon=True, name=f'portrait_{sender[:8]}').start()
 
     def _setup_ui(self, msg, translation, profile):
         outer = W.QHBoxLayout(self)
@@ -221,8 +207,9 @@ class MessageBubble(W.QFrame):
 
 
 class ChatOverlay(W.QWidget):
-    _new_message = C.Signal(object, object) # msg, translation
-    _translation_ready = C.Signal(object, str) # msg, translated_text
+    _new_message = C.Signal(object, object)      # (msg, translation)
+    _translation_ready = C.Signal(object, str)   # (msg, translated_text)
+    _portrait_request = C.Signal(object, int)    # (bubble_weakref, char_id) — cross-thread safe
 
     def __init__(self, config, parent=None, controller=None):
         super().__init__(parent, C.Qt.WindowStaysOnTopHint | C.Qt.FramelessWindowHint | C.Qt.Tool)
@@ -251,6 +238,7 @@ class ChatOverlay(W.QWidget):
             self._ctrl.state.subscribe(self._on_state_change)
         self._new_message.connect(self._on_new_message_ui)
         self._translation_ready.connect(self._on_translation_ready_ui)
+        self._portrait_request.connect(self._on_portrait_request)
         self._user_hidden = False
         self._auto_hidden = False
         self._fg_hide_count = 0
@@ -921,6 +909,34 @@ class ChatOverlay(W.QWidget):
             force_square_corners(int(self.winId()))
         except Exception:
             pass
+
+    @C.Slot(object, int)
+    def _on_portrait_request(self, bubble_ref, char_id):
+        """Runs in main thread — loads portrait via EveIconService and updates bubble."""
+        try:
+            from core.eve_icon_service import EveIconService
+
+            def _on_portrait(pixmap):
+                sl = bubble_ref()
+                if sl is None or not hasattr(sl, '_portrait_lbl') or sl._portrait_lbl is None:
+                    return
+                try:
+                    if pixmap.isNull():
+                        logger.debug(f"PORTRAIT PIXMAP NULL char_id={char_id}")
+                        return
+                    scaled = pixmap.scaled(32, 32, C.Qt.KeepAspectRatio, C.Qt.SmoothTransformation)
+                    sl._portrait_lbl.setPixmap(scaled)
+                    sl._portrait_lbl.setText("")
+                    sl._portrait_lbl.setStyleSheet(
+                        "QLabel{border:1px solid #334155;background:transparent;}"
+                    )
+                    logger.debug(f"PORTRAIT SET OK char_id={char_id}")
+                except Exception as exc:
+                    logger.debug(f"PORTRAIT set pixmap error: {exc}")
+
+            EveIconService.instance().get_portrait(char_id, 64, _on_portrait)
+        except Exception as exc:
+            logger.debug(f"PORTRAIT on_portrait_request error: {exc}")
 
     def toggle_visibility(self):
         self.hide() if self.isVisible() else self.show()

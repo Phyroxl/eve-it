@@ -296,6 +296,12 @@ class OverlayWindow(QWidget):
         self._eve_fg_timer.timeout.connect(self._check_eve_foreground)
         self._eve_fg_timer.start(75)  # 75 ms — matches replicator speed
 
+    def reveal(self):
+        """Mostrar desde trigger externo (tray). Resetea _user_hidden para que auto-hide funcione."""
+        self._user_hidden = False
+        self._auto_hidden = False
+        self.show()
+
     def _check_eve_foreground(self):
         """Auto-hide when user switches to an external non-EVE, non-app window.
 
@@ -317,15 +323,40 @@ class OverlayWindow(QWidget):
                 self._hud_eve_hwnds = {w['hwnd'] for w in find_eve_windows()}
                 self._hud_eve_hwnds_ts = now
             keep = should_show_overlays(hwnd, getattr(self, '_hud_eve_hwnds', set()))
+
+            # Throttled debug logging every ~5 s
+            _now_log = now
+            if _now_log - getattr(self, '_hud_log_ts', 0.0) > 5.0:
+                self._hud_log_ts = _now_log
+                try:
+                    _buf = _ct.create_unicode_buffer(256)
+                    _ct.windll.user32.GetWindowTextW(hwnd, _buf, 256)
+                    _title = _buf.value[:50]
+                    _pid_dw = _ct.wintypes.DWORD()
+                    _ct.windll.user32.GetWindowThreadProcessId(hwnd, _ct.byref(_pid_dw))
+                    import os as _os
+                    import logging as _lg2
+                    _lg2.getLogger('eve.overlay').debug(
+                        f"HUD VIS CHECK fg=0x{hwnd:x} title={_title!r} "
+                        f"pid={_pid_dw.value} own={_os.getpid()} "
+                        f"keep={keep} user_hidden={self._user_hidden} auto_hidden={self._auto_hidden}"
+                    )
+                except Exception:
+                    pass
+
             if keep:
                 self._fg_hide_count = 0
                 if self._auto_hidden and not self._user_hidden:
                     self._auto_hidden = False
+                    import logging as _lg
+                    _lg.getLogger('eve.overlay').debug("HUD SHOW eve_or_app")
                     self.show()
             else:
                 self._fg_hide_count += 1
                 if self._fg_hide_count >= 2 and self.isVisible() and not self._user_hidden:
                     self._auto_hidden = True
+                    import logging as _lg
+                    _lg.getLogger('eve.overlay').debug("HUD HIDE external_window")
                     self.hide()
         except Exception as _exc:
             import logging as _lg
@@ -611,8 +642,12 @@ class OverlayWindow(QWidget):
             pass
 
     def _local_tick(self):
-        """Timer local de 1s para interpolar contadores suavemente."""
+        """Timer local de 1s para interpolar suavemente. Solo actúa si hay datos frescos."""
         if self._is_paused:
+            return
+        # No incrementar si no hemos recibido datos del servidor en los últimos 8s
+        import time as _t
+        if _t.monotonic() - getattr(self, '_last_data_ts', 0.0) > 8.0:
             return
         self._local_secs += 1
         self._m_sess.set_value(self._fmt_dur(self._local_secs))
@@ -632,6 +667,8 @@ class OverlayWindow(QWidget):
         self._m_iskh.set_value(self._fmt(data.get('isk_h_rolling', 0)))
         self._m_isks.set_value(self._fmt(data.get('total_isk', 0)))
         # Sincronizar el contador local con el servidor
+        import time as _t
+        self._last_data_ts = _t.monotonic()
         server_secs = data.get('session_secs', 0)
         self._local_secs = server_secs
         self._m_sess.set_value(self._fmt_dur(server_secs))

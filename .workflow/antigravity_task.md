@@ -236,3 +236,60 @@ Logs: CLIENT CLOSED DETECTED, REPLICA AUTO CLOSED, CLIENT REOPENED DETECTED, REP
 
 ### Tests
 47 tests, todos pasan.
+
+---
+
+## Session 5 — HUD visibility, session timer, portraits and Intel Alert UX reliability
+
+**Fecha:** 2026-05-06
+**Commit:** FIX: Repair HUD session portraits and Intel Alert detection UX
+
+### Problemas diagnosticados y resueltos
+
+#### 1. HUD ISK Tracker — visibilidad no seguía al foco (igual que Chat Translator)
+- Causa raíz: `_user_hidden=True` se fijaba al cerrar el HUD con el botón X, pero `show_overlay()` en `app_controller` llamaba `.show()` sin resetear ese flag. El check de auto-hide `if not self._user_hidden` fallaba permanentemente.
+- Fix: nuevo método `reveal()` en `overlay_app.py` que resetea `_user_hidden=False, _auto_hidden=False` antes de `show()`. `app_controller.show_overlay()` ahora llama `reveal()` si está disponible.
+- Añadido logging throttled (cada 5 s) en `_check_eve_foreground`: `HUD VIS CHECK`, `HUD SHOW eve_or_app`, `HUD HIDE external_window`.
+
+#### 2. Contador de sesión ISK — se disparaba sin datos (bug de timer descontrolado)
+- Causa raíz 1: `_push_overlay_data` llamaba `overlay_window._on_data(payload)` DIRECTAMENTE desde el thread del tracker, Y el DataPoller también entregaba los mismos datos via socket en el hilo principal → doble-update + race condition en `_local_secs`.
+- Causa raíz 2: `_local_tick` incrementaba aunque no hubiera datos recientes (session timer corriendo en vacío tras desconexión).
+- Fix: eliminada la llamada directa `overlay_window._on_data()` de `_push_overlay_data`. Solo el DataPoller (socket, hilo Qt) entrega datos ahora.
+- Fix: `_local_tick` guarda `_last_data_ts` en `_on_data` y no incrementa si han pasado más de 8 s sin datos frescos.
+
+#### 3. Chat Translator — portraits no cargaban (QTimer.singleShot cross-thread)
+- Causa raíz: `C.QTimer.singleShot(0, _on_main)` llamado desde un `threading.Thread` (sin event loop Qt) → callback NUNCA se ejecutaba.
+- Fix: Se captura `_portrait_request.emit` (Signal.emit) en el hilo principal ANTES de lanzar el thread. El thread llama `_emit_fn(ref, char_id)` — `Signal.emit()` es thread-safe, el slot corre en el hilo principal.
+- Añadida señal `_portrait_request = Signal(object, int)` en `ChatOverlay` + slot `_on_portrait_request` (usa `EveIconService.get_portrait`).
+
+#### 4. Intel Alert — "Descubrir" dejaba UI bloqueada en "Buscando…"
+- Misma causa raíz que portraits: `QTimer.singleShot(0, callback)` desde `threading.Thread` no funcionaba.
+- Fix: señal `_discover_done = Signal(list)` + `self._discover_done.emit(channels)` desde el thread. Slot `_on_discovered` restaura el botón y rellena el combo.
+
+#### 5. Intel Alert — filtro de standing (corp/alianza/buen standing)
+- Nuevo módulo: `core/intel_standing_resolver.py` — `IntelStandingResolver` con cache TTL 30 min.
+  Prioridad: safe_names → watch_names → ESI (no disponible sin auth) → neutral.
+- `IntelAlertConfig` nuevos campos: `ignore_corp_members=True`, `ignore_good_standing=True`, `alert_neutrals=True`, `alert_bad_standing=True`.
+- `_handle_local_pilot` usa `get_resolver().resolve()` → `StandingResult.should_alert` determina si alertar.
+- UI: sección "Filtro standing (ESI)" con 3 checkboxes + label de estado ESI.
+- `_collect_config_from_ui` guarda los 3 valores; `_load_config_to_ui` los carga.
+
+#### 6. Intel Alert — soporte MP3
+- `_browse_wav()`: filtro `"Audio (*.wav *.mp3);;WAV (*.wav);;MP3 (*.mp3)"`.
+- `_play_audio_file(path)`: WAV → winsound; MP3 → QMediaPlayer + QAudioOutput.
+- `_play_alert_sound()` en servicio: detecta `.mp3`, posta a hilo principal via `_post_mp3_play` → `_play_mp3_main`.
+
+#### 7. Intel Alert — modo compacto 200×80 px
+- `_build_compact_panel()`: `panel.setFixedSize(200, 80)`.
+- `_toggle_compact()`: `setMinimumSize/setMaximumSize/resize(200, 80)`.
+
+### Archivos modificados
+- `overlay/overlay_app.py` (reveal(), _last_data_ts, throttled logging)
+- `controller/app_controller.py` (show_overlay usa reveal(); eliminada doble-llamada _on_data)
+- `translator/chat_overlay.py` (Signal-based portraits cross-thread)
+- `core/intel_alert_service.py` (standing fields, MP3, _handle_local_pilot usa resolver)
+- `ui/tools/intel_alert_window.py` (Signal discover, compact 200×80, MP3, standing checkboxes, _collect_config_from_ui)
+- `core/intel_standing_resolver.py` (nuevo)
+
+### Tests
+82 passed, 1 skipped.
