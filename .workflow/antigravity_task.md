@@ -361,3 +361,63 @@ Logs: CLIENT CLOSED DETECTED, REPLICA AUTO CLOSED, CLIENT REOPENED DETECTED, REP
 
 ### Tests
 170 passed, 2 skipped.
+
+---
+
+## Sesión 7 — PERF: Audit and optimize SALVA Suite responsiveness
+
+**Fecha:** 2026-05-06
+**Commit:** PERF: Audit and optimize SALVA Suite responsiveness
+
+### Objetivo
+Auditoría de rendimiento y optimización quirúrgica de SALVA Suite: reducir lag, latencia, uso de CPU y congelaciones de UI sin cambios de comportamiento ni visuales.
+
+### Hallazgos de auditoría — clasificación
+
+**CRÍTICO:**
+- `CaptureThread` ejecuta `PrintWindow` (captura completa del cliente EVE) a 30fps por réplica, incluso cuando la réplica está oculta (usuario en otra app). Con 4 réplicas ocultadas = 120 llamadas wasted/s a PrintWindow.
+
+**ALTO:**
+- N réplicas × 1 `QTimer(75ms)` independiente cada una → N llamadas independientes a `GetForegroundWindow()` por tick (~80 llamadas/s con 4 réplicas + HUD + chat = 6 timers).
+- 3 caches independientes de `find_eve_windows()` (ReplicationOverlay class, overlay_app, chat_overlay) → hasta 3 `EnumWindows` por ventana de 2s.
+
+**MEDIO:**
+- `OVERLAY VISIBILITY DEBOUNCE_SKIP` en `chat_overlay.py` → `logger.debug()` cada 75ms durante el debounce de 1 tick (overhead de llamada a función incluso si logging deshabilitado).
+- `_reassert_topmost()` llama `SetWindowPos()` cada 2s por réplica aunque ya sea topmost.
+
+**BAJO/NO PROBLEMA:**
+- `replicator_hotkeys.py` `time.sleep(0.005)` — aceptable, hilo de background.
+- `app_controller.py` `time.sleep(0.5)` — background, fine.
+- `_monitor_focus` early-exit con `_last_monitor_fg` — ya optimizado.
+- `_global_hide_last_fg` — ya previene N² hide/show.
+
+### Optimizaciones aplicadas
+
+**`overlay/win32_capture.py`:**
+- Añade `get_foreground_hwnd_cached(ttl_s=0.025)` — cache de módulo de 25ms. N timers disparando dentro del mismo tick comparten 1 syscall.
+- Añade `find_eve_windows_cached(ttl_s=2.0)` — cache de módulo de 2s. Reemplaza las 3 caches independientes por instancia; `EnumWindows` dispara máximo 1 vez cada 2s globalmente.
+
+**`overlay/replication_overlay.py`:**
+- `_monitor_focus()`: usa `get_foreground_hwnd_cached()` en lugar de `get_foreground_hwnd()`.
+- `_get_cached_eve_hwnds()`: delega a `find_eve_windows_cached()` (cache de módulo compartida).
+- `CaptureThread`: añade `_paused = False`, `set_paused(bool)` — `True` salta PrintWindow y duerme 100ms; `False` despierta el hilo inmediatamente con `_stop_event.set()`.
+- `ReplicationOverlay.hideEvent()`: llama `self._thread.set_paused(True)` — pausa PrintWindow cuando el overlay está oculto.
+- `ReplicationOverlay.showEvent()`: llama `self._thread.set_paused(False)` — reanuda captura al mostrar.
+- `_reassert_topmost()`: lee `GWL_EXSTYLE` primero; omite `SetWindowPos` si `WS_EX_TOPMOST` ya está activo.
+
+**`translator/chat_overlay.py`:**
+- `_check_eve_foreground()`: usa `get_foreground_hwnd_cached()` + `find_eve_windows_cached()`.
+- Elimina `logger.debug("OVERLAY VISIBILITY DEBOUNCE_SKIP")` — eliminada llamada superfluosa cada 75ms.
+
+**`overlay/overlay_app.py`:**
+- `_check_eve_foreground()`: usa `get_foreground_hwnd_cached()` + `find_eve_windows_cached()`.
+- Elimina la cache por-instancia `_hud_eve_hwnds` / `_hud_eve_hwnds_ts` (redundante con cache de módulo).
+
+### Archivos modificados
+- `overlay/win32_capture.py` (get_foreground_hwnd_cached, find_eve_windows_cached)
+- `overlay/replication_overlay.py` (CaptureThread._paused/set_paused, hideEvent, showEvent, _monitor_focus, _get_cached_eve_hwnds, _reassert_topmost)
+- `translator/chat_overlay.py` (_check_eve_foreground: cached fns, remove DEBOUNCE_SKIP log)
+- `overlay/overlay_app.py` (_check_eve_foreground: cached fns)
+
+### Tests
+28 passed (tests no-Qt). Tests Qt con dialogs crashean por access violation sin QApplication — preexistente, no relacionado con estos cambios.

@@ -203,6 +203,41 @@ def get_foreground_hwnd() -> int:
         return 0
 
 
+# Module-level caches — multiple 75ms timers (N replicas + HUD + chat) share results
+# within the same tick without racing against each other's per-instance TTL counters.
+_fg_hwnd_cache: tuple = (0, 0.0)
+_eve_wins_cache: tuple = ([], 0.0)
+
+
+def get_foreground_hwnd_cached(ttl_s: float = 0.025) -> int:
+    """GetForegroundWindow with 25ms module-level cache.
+
+    Saves N redundant syscalls per 75ms tick when N overlays are active.
+    """
+    global _fg_hwnd_cache
+    ts = time.monotonic()
+    if ts - _fg_hwnd_cache[1] < ttl_s:
+        return _fg_hwnd_cache[0]
+    hwnd = get_foreground_hwnd()
+    _fg_hwnd_cache = (hwnd, ts)
+    return hwnd
+
+
+def find_eve_windows_cached(ttl_s: float = 2.0) -> list:
+    """find_eve_windows with 2s module-level cache.
+
+    Replaces per-instance 2s caches in ReplicationOverlay, overlay_app, and chat_overlay
+    so EnumWindows fires at most once per 2s regardless of how many subsystems call it.
+    """
+    global _eve_wins_cache
+    ts = time.monotonic()
+    if ts - _eve_wins_cache[1] < ttl_s:
+        return _eve_wins_cache[0]
+    result = find_eve_windows()
+    _eve_wins_cache = (result, ts)
+    return result
+
+
 def verify_foreground_window(hwnd: int, timeout_ms: int = 40, poll_ms: int = 2) -> tuple:
     """Poll GetForegroundWindow until it matches hwnd or timeout expires.
 

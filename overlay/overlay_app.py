@@ -313,19 +313,17 @@ class OverlayWindow(QWidget):
             import sys as _sys
             if _sys.platform != 'win32':
                 return
-            from overlay.win32_capture import should_show_overlays, find_eve_windows
+            from overlay.win32_capture import should_show_overlays, get_foreground_hwnd_cached, find_eve_windows_cached
             import ctypes as _ct
-            hwnd = _ct.windll.user32.GetForegroundWindow()
+            hwnd = get_foreground_hwnd_cached()
             if not hwnd:
                 return
-            now = __import__('time').monotonic()
-            if now - getattr(self, '_hud_eve_hwnds_ts', 0.0) > 2.0:
-                self._hud_eve_hwnds = {w['hwnd'] for w in find_eve_windows()}
-                self._hud_eve_hwnds_ts = now
-            keep = should_show_overlays(hwnd, getattr(self, '_hud_eve_hwnds', set()))
+            # Module-level cached find_eve_windows (shared with replicas and chat overlay)
+            eve_hwnds = {w['hwnd'] for w in find_eve_windows_cached()}
+            keep = should_show_overlays(hwnd, eve_hwnds)
 
             # Throttled debug logging every ~5 s
-            _now_log = now
+            _now_log = __import__('time').monotonic()
             if _now_log - getattr(self, '_hud_log_ts', 0.0) > 5.0:
                 self._hud_log_ts = _now_log
                 try:

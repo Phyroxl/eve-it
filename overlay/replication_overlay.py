@@ -43,7 +43,9 @@ if not _qt_ok:
 from overlay.win32_capture import (
     capture_window_region, IS_WINDOWS, resolve_eve_window_handle,
     set_no_activate, user32, focus_eve_window, focus_eve_window_perf,
-    get_foreground_hwnd, set_topmost, should_show_overlays, get_window_size,
+    get_foreground_hwnd, get_foreground_hwnd_cached,
+    find_eve_windows_cached,
+    set_topmost, should_show_overlays, get_window_size,
 )
 from overlay.replicator_config import get_overlay_cfg, save_overlay_cfg
 from overlay.replicator_settings_dialog import ReplicatorSettingsDialog
@@ -433,6 +435,7 @@ class CaptureThread(QThread):
         self._region = region
         self._fps = fps
         self._running = True
+        self._paused = False
         self._out_w, self._out_h = 400, 300
         self._lock = threading.Lock()
         self._fast_stop = False
@@ -440,6 +443,12 @@ class CaptureThread(QThread):
 
     def set_fast_stop(self, enabled=True):
         self._fast_stop = enabled
+
+    def set_paused(self, paused: bool):
+        """Suspend/resume PrintWindow capture. Safe to call from main thread."""
+        self._paused = paused
+        if not paused:
+            self._stop_event.set()  # wake up sleeping thread immediately on resume
 
     def set_output_size(self, w, h):
         with self._lock:
@@ -474,6 +483,13 @@ class CaptureThread(QThread):
             with self._lock:
                 w, h = self._out_w, self._out_h
                 fps = self._fps
+
+            # Skip capture while overlay is auto-hidden (e.g. user in a different app).
+            # Eliminates PrintWindow cost for hidden overlays; frame refreshes on resume.
+            if self._paused:
+                self._stop_event.wait(0.1)
+                self._stop_event.clear()
+                continue
 
             # Skip frame during capture suspension window (set by hotkey cycles).
             # Reduces capture-thread competition with Win32 SetForegroundWindow.
@@ -966,14 +982,13 @@ class ReplicationOverlay(QWidget):
 
     @classmethod
     def _get_cached_eve_hwnds(cls) -> set:
-        now = time.monotonic()
-        if now - cls._eve_hwnds_ts > 2.0:
-            try:
-                from overlay.win32_capture import find_eve_windows
-                cls._eve_hwnds_cache = {w['hwnd'] for w in find_eve_windows()}
-            except Exception:
-                pass
-            cls._eve_hwnds_ts = now
+        # Delegate to module-level cache so all subsystems (HUD, chat, replicas) share
+        # one EnumWindows result instead of each maintaining a separate 2s TTL counter.
+        try:
+            result = {w['hwnd'] for w in find_eve_windows_cached()}
+            cls._eve_hwnds_cache = result
+        except Exception:
+            pass
         return cls._eve_hwnds_cache
 
     def _monitor_focus(self):
@@ -982,7 +997,8 @@ class ReplicationOverlay(QWidget):
             if not self._hwnd and callable(self._hwnd_getter):
                 self._hwnd = self._hwnd_getter()
 
-            fg = get_foreground_hwnd()
+            # Cached: N overlay timers firing within the same 25ms window share one syscall.
+            fg = get_foreground_hwnd_cached()
             # Honour settle period: if F14 or click just changed focus programmatically,
             # use the intended hwnd instead of the real (possibly lagging) Windows fg.
             if time.perf_counter() < ReplicationOverlay._active_hwnd_override_until:
@@ -1424,14 +1440,18 @@ class ReplicationOverlay(QWidget):
         self.selection_requested.emit(self)
 
     def _reassert_topmost(self):
-        if self._ov_cfg.get('always_on_top', True):
-            import ctypes
-            try:
-                ctypes.windll.user32.SetWindowPos(
-                    int(self.winId()), -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010
-                )
-            except Exception:
-                pass
+        if not self._ov_cfg.get('always_on_top', True):
+            return
+        import ctypes
+        try:
+            hwnd = int(self.winId())
+            # GWL_EXSTYLE = -20; WS_EX_TOPMOST = 0x0008
+            ex = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+            if ex & 0x0008:
+                return  # already topmost, skip redundant SetWindowPos
+            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+        except Exception:
+            pass
 
     def _start_capture(self):
         fps = self._ov_cfg.get('fps', 30)
@@ -1964,8 +1984,15 @@ class ReplicationOverlay(QWidget):
         self.geometryChanged.emit(self.x(), self.y(), self.width(), self.height())
         self._apply_window_shape_mask()
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, '_thread') and self._thread is not None:
+            self._thread.set_paused(True)
+
     def showEvent(self, event):
         super().showEvent(event)
+        if hasattr(self, '_thread') and self._thread is not None:
+            self._thread.set_paused(False)
         # Re-apply mask after show(): setWindowFlags + show() can reset the mask on Windows.
         # Extra deferred shots cover DWM re-compositing that happens after the initial show.
         self._apply_window_shape_mask()

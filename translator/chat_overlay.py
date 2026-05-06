@@ -871,18 +871,15 @@ class ChatOverlay(W.QWidget):
             import sys as _sys
             if _sys.platform != 'win32':
                 return
-            from overlay.win32_capture import should_show_overlays, find_eve_windows
+            from overlay.win32_capture import should_show_overlays, get_foreground_hwnd_cached, find_eve_windows_cached
             import ctypes as _ct
-            hwnd = _ct.windll.user32.GetForegroundWindow()
+            hwnd = get_foreground_hwnd_cached()
             if not hwnd:
                 # No foreground window reported → transient state, skip
                 return
-            # Refresh EVE hwnd set every ~2 s to avoid per-tick enumeration
-            now = __import__('time').monotonic()
-            if now - getattr(self, '_eve_hwnds_ts', 0.0) > 2.0:
-                self._eve_hwnds = {w['hwnd'] for w in find_eve_windows()}
-                self._eve_hwnds_ts = now
-            keep = should_show_overlays(hwnd, getattr(self, '_eve_hwnds', set()))
+            # Module-level cached find_eve_windows (shared with replicas and HUD)
+            eve_hwnds = {w['hwnd'] for w in find_eve_windows_cached()}
+            keep = should_show_overlays(hwnd, eve_hwnds)
             if keep:
                 self._fg_hide_count = 0
                 if self._auto_hidden and not self._user_hidden:
@@ -897,8 +894,6 @@ class ChatOverlay(W.QWidget):
                     _ct.windll.user32.GetWindowTextW(hwnd, buf, 256)
                     logger.debug(f"OVERLAY VISIBILITY HIDE reason=external_window title={buf.value!r}")
                     self.hide()
-                elif self._fg_hide_count < 2:
-                    logger.debug("OVERLAY VISIBILITY DEBOUNCE_SKIP")
         except Exception as _exc:
             logger.debug(f"Chat FG check error: {_exc}")
 
