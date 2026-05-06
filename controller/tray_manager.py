@@ -289,6 +289,10 @@ class TrayManager:
         try:
             self.close_replicator_overlays()
             if self._overlay_win:
+                # Stop timers and poller BEFORE close() to avoid blocking in closeEvent
+                if hasattr(self._overlay_win, 'shutdown'):
+                    try: self._overlay_win.shutdown()
+                    except Exception: pass
                 self._overlay_win.close()
             if self._control_window:
                 self._control_window.close()

@@ -220,10 +220,12 @@ class IntelAlertService:
         self._diag_local_log_path: str = "—"
         self._diag_last_skip_pilot: str = ""
         self._diag_last_skip_reason: str = ""
+        self._stop_event = threading.Event()
 
     def start(self):
         if self._running:
             return
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name='IntelAlert')
         self._thread.start()
@@ -231,8 +233,9 @@ class IntelAlertService:
 
     def stop(self):
         self._running = False
+        self._stop_event.set()  # wake up any sleeping poll immediately
         if self._thread:
-            self._thread.join(timeout=3)
+            self._thread.join(timeout=0.5)
         logger.info("IntelAlertService stopped")
 
     def update_config(self, config: IntelAlertConfig):
@@ -434,7 +437,7 @@ class IntelAlertService:
         while self._running:
             try:
                 if not self._config.enabled:
-                    time.sleep(2)
+                    self._stop_event.wait(2)
                     continue
 
                 cutoff = time.time() - 20 * 60
@@ -498,7 +501,7 @@ class IntelAlertService:
             except Exception:
                 pass
 
-            time.sleep(1.5)
+            self._stop_event.wait(1.5)
 
     def _handle_local_pilot(self, pilot: str, ts: str, channel: str, src: str):
         if pilot in self._seen_pilots:

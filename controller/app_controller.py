@@ -425,37 +425,42 @@ class AppController:
     # ══════════════════════════════════════════════════════════════════════════
 
     def shutdown(self):
-        """Cierre limpio de todos los módulos."""
-        logger.info("Iniciando secuencia de apagado...")
-        
+        """Cierre limpio de todos los módulos. Idempotente — seguro llamarlo dos veces."""
+        import time as _t
+        if getattr(self, '_shutdown_done', False):
+            return
+        self._shutdown_done = True
+        t0 = _t.perf_counter()
+        logger.info("SHUTDOWN START")
+
         # 1. Detener servicios de datos y threads
         try:
             with self._lock:
                 self._stop_tracker_internal()
         except Exception as e:
-            logger.error(f"Error apagando tracker: {e}")
-        
+            logger.error(f"SHUTDOWN tracker error: {e}")
+
         # 2. Cerrar ventanas y módulos de UI
         try: self.stop_translator()
-        except Exception as e: logger.error(f"Error apagando traductor: {e}")
-        
+        except Exception as e: logger.error(f"SHUTDOWN translator error: {e}")
+
         try: self.hide_overlay()
-        except Exception as e: logger.error(f"Error ocultando overlay: {e}")
-        
+        except Exception as e: logger.error(f"SHUTDOWN overlay error: {e}")
+
         try: self.stop_replicator()
-        except Exception as e: logger.error(f"Error apagando replicador: {e}")
-        
+        except Exception as e: logger.error(f"SHUTDOWN replicator error: {e}")
+
         # Ocultar icono de bandeja inmediatamente
         if hasattr(self, '_tray') and self._tray:
             try:
                 self._tray.hide()
             except Exception as e:
-                logger.warning(f"Error ocultando tray: {e}")
-        
+                logger.warning(f"SHUTDOWN tray hide error: {e}")
+
         # 3. Detener dashboard (Streamlit)
         try: self.stop_dashboard()
-        except Exception as e: logger.error(f"Error apagando dashboard: {e}")
-        
+        except Exception as e: logger.error(f"SHUTDOWN dashboard error: {e}")
+
         # 4. Limpieza final de recursos del sistema
         try:
             import os
@@ -465,6 +470,7 @@ class AppController:
                 except Exception as e:
                     logger.debug(f"No se pudo borrar {f}: {e}")
         except Exception as e:
-            logger.warning(f"Error en limpieza final: {e}")
-        
-        logger.info("Apagado completo del controlador")
+            logger.warning(f"SHUTDOWN cleanup error: {e}")
+
+        dt = int((_t.perf_counter() - t0) * 1000)
+        logger.info(f"SHUTDOWN done ms={dt}")

@@ -620,7 +620,14 @@ class ChatOverlay(W.QWidget):
         self._watcher.start()
 
     def stop(self):
-        if self._watcher: self._watcher.stop(); self._watcher = None
+        for attr in ('_eve_fg_timer', '_fade_timer'):
+            t = getattr(self, attr, None)
+            if t is not None:
+                try: t.stop()
+                except Exception: pass
+        if self._watcher:
+            self._watcher.stop()
+            self._watcher = None
 
     def _on_chat_message(self, msg):
         try:

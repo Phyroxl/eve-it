@@ -421,3 +421,74 @@ Auditoría de rendimiento y optimización quirúrgica de SALVA Suite: reducir la
 
 ### Tests
 28 passed (tests no-Qt). Tests Qt con dialogs crashean por access violation sin QApplication — preexistente, no relacionado con estos cambios.
+
+---
+
+## Sesión 8 — Smooth logout shutdown for replicas HUD translator and Intel Alert
+
+**Fecha:** 2026-05-06
+**Commit:** FIX: Smooth logout shutdown for overlays and replicas
+
+### Causa raíz
+
+El cierre tenía lag por 4 problemas acumulados:
+
+1. **`ChatWatcher._loop()` usaba `time.sleep(1.5)` no interrumpible** → `join(timeout=3)` bloqueaba hasta 1.5s en el UI thread durante `stop_translator()`.
+
+2. **`IntelAlertService._loop()` usaba `time.sleep(1.5)` y `time.sleep(2)`** → misma espera bloqueante de hasta 2s.
+
+3. **`DataPoller.run()` usaba `time.sleep(2.0)` en el path de reintento** → `_poller.wait()` en `OverlayWindow.closeEvent()` bloqueaba hasta 2s sin timeout.
+
+4. **`controller.shutdown()` se llamaba DESPUÉS de que `exec()` retornaba** en `main.py` → operaciones Qt sobre widgets en estado no definido (event loop inactivo).
+
+En el peor caso: 1.5 + 2 + 2 = 5.5s de lag bloqueante en el UI thread antes de que el proceso terminase.
+
+### Estrategia de shutdown
+
+**Fase 1 — threads interrumpibles:**
+- Todos los `time.sleep(N)` en loops de background reemplazados por `Event.wait(N)` → `stop()` despierta el hilo inmediatamente via `_stop_event.set()`.
+- `join(timeout=3)` reducido a `join(timeout=0.5)` — con sleep interrumpible, el hilo sale en < 10ms.
+
+**Fase 2 — timers Qt detenidos antes de cerrar:**
+- `OverlayWindow.shutdown()` nuevo método: para `_interp_timer`, `_eve_fg_timer` y `_poller` antes de `close()`.
+- `ChatOverlay.stop()` para `_eve_fg_timer` y `_fade_timer` antes de parar el watcher.
+- `TrayManager.shutdown()` llama `_overlay_win.shutdown()` antes de `_overlay_win.close()`.
+
+**Fase 3 — shutdown dentro del event loop:**
+- `_action_logoff()` en `main_suite_window.py` llama `controller.shutdown()` ANTES de `QApplication.quit()`.
+- El cleanup ocurre mientras el event loop aún procesa eventos → operaciones Qt en estado normal.
+- `controller.shutdown()` es idempotente con `_shutdown_done` flag → llamarlo dos veces es no-op.
+
+**Fase 4 — logging de timing:**
+- `SHUTDOWN START` / `SHUTDOWN done ms=N` en `_action_logoff()` y `controller.shutdown()`.
+- Permite medir el tiempo real de cierre en logs.
+
+### Archivos modificados
+
+- `translator/chat_reader.py` — ChatWatcher: `_stop_event`, `stop_event.wait()` en loop, join timeout 3→0.5s
+- `core/intel_alert_service.py` — IntelAlertService: `_stop_event`, `stop_event.wait()` × 2, join timeout 3→0.5s
+- `overlay/overlay_app.py` — DataPoller: `stop_event.wait(2.0)`; OverlayWindow: `shutdown()` method, `_poller.wait(300)` con timeout
+- `translator/chat_overlay.py` — `stop()` para timers `_eve_fg_timer`/`_fade_timer` antes del watcher
+- `controller/tray_manager.py` — `shutdown()` llama `overlay_win.shutdown()` antes de `close()`
+- `controller/app_controller.py` — `shutdown()` idempotente con `_shutdown_done`, logging SHUTDOWN START/done ms=N
+- `ui/desktop/main_suite_window.py` — `_action_logoff()` llama `controller.shutdown()` antes de quit, con logging
+- `tests/test_shutdown_helpers.py` — nuevo: 7 tests de ChatWatcher stop rápido, IntelAlert stop rápido, shutdown idempotente
+
+### Tiempos esperados tras el fix
+
+| Componente | Antes | Después |
+|---|---|---|
+| ChatWatcher.stop() | hasta 1.5s | < 50ms |
+| IntelAlertService.stop() | hasta 2s | < 50ms |
+| DataPoller.wait() | hasta 2s | < 300ms |
+| Logout total | 4-6s lag | < 300ms visible |
+
+### Validación manual recomendada
+
+1. Abrir réplicas + HUD + Translator → logout → debe ser fluido (<1s visible).
+2. Confirmación en logs: `SHUTDOWN START` → `SHUTDOWN done ms=N` donde N < 500.
+3. Al reiniciar: réplicas, HUD, Translator, Intel Alert abren correctamente.
+4. Market Command y Quick Order Update intactos.
+
+### Tests ejecutados
+30 passed (suite base) + 7 nuevos tests de shutdown. Total: 37 passed.

@@ -145,18 +145,21 @@ class ChatWatcher:
         self._lock = threading.Lock()
         self._running = False
         self._thread = None
+        self._stop_event = threading.Event()
         self._chatlog_dir = _get_chatlog_dir()
         logger.info(f"ChatWatcher: chatlog dir = {self._chatlog_dir}")
 
     def start(self):
         if self._running: return
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name='ChatWatcher')
         self._thread.start()
 
     def stop(self):
         self._running = False
-        if self._thread: self._thread.join(timeout=3)
+        self._stop_event.set()  # wake up any sleeping poll immediately
+        if self._thread: self._thread.join(timeout=0.5)
 
     def _get_files(self, window_minutes: Optional[int] = None) -> list:
         files = []
@@ -272,7 +275,7 @@ class ChatWatcher:
                         del self._readers[fp]
                         logger.debug(f"Nettoyage: Lector eliminado por antigüedad -> {fp.name}")
             except Exception: pass
-            time.sleep(self._poll_interval)
+            self._stop_event.wait(self._poll_interval)
 
     def get_known_channels(self) -> list:
         seen = []

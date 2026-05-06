@@ -249,7 +249,7 @@ class DataPoller(QThread):
                             except Exception: pass
             except Exception:
                 if connected: connected = False; self.connection_lost.emit()
-                time.sleep(2.0)
+                self._stop_event.wait(2.0)  # interruptible — stop() unblocks immediately
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OverlayWindow
@@ -849,10 +849,23 @@ class OverlayWindow(QWidget):
         s = QSettings(SETTINGS_ORG, SETTINGS_APP)
         self.move(int(s.value('pos_x', 100)), int(s.value('pos_y', 100)))
 
+    def shutdown(self):
+        """Stop all timers and the data poller. Call before close() for a clean, fast teardown."""
+        for attr in ('_interp_timer', '_eve_fg_timer'):
+            t = getattr(self, attr, None)
+            if t is not None:
+                try: t.stop()
+                except Exception: pass
+        try:
+            self._poller.stop()
+        except Exception:
+            pass
+
     def closeEvent(self, _):
         s = QSettings(SETTINGS_ORG, SETTINGS_APP)
         s.setValue('pos_x', self.x()); s.setValue('pos_y', self.y())
-        self._poller.stop(); self._poller.wait()
+        self._poller.stop()
+        self._poller.wait(300)  # max 300ms — interruptible via _stop_event
 
 def main():
     app = QApplication(sys.argv)

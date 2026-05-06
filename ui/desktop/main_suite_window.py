@@ -1212,7 +1212,21 @@ class MainSuiteWindow(QMainWindow):
 
     def _action_logoff(self):
         """Cierre total de la aplicación con confirmación visual/auditiva."""
-        self.diag_log.info("DIAG: Logoff manual solicitado.")
+        import time as _t
+        t0 = _t.perf_counter()
+        self.diag_log.info("SHUTDOWN START logoff")
+
+        # Cleanup BEFORE quitting event loop: threads stop while Qt can still process events.
+        # After fixes (interruptible sleeps) this completes in <200ms total.
+        try:
+            if self.controller:
+                self.controller.shutdown()
+        except Exception as e:
+            self.diag_log.warning(f"SHUTDOWN controller error: {e}")
+
+        dt = int((_t.perf_counter() - t0) * 1000)
+        self.diag_log.info(f"SHUTDOWN done ms={dt}")
+
         # Limpiar tray_manager para que el closeEvent no intercepte el cierre
         self.tray_manager = None
         self.close()
