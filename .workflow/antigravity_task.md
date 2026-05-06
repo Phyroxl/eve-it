@@ -120,3 +120,62 @@ Logs: CLIENT CLOSED DETECTED, REPLICA AUTO CLOSED, CLIENT REOPENED DETECTED, REP
 - ui/tools/visual_clon_view.py
 - core/intel_alert_service.py (nuevo)
 - ui/tools/intel_alert_window.py (nuevo)
+
+---
+
+## Session 3 — Intel Alert v2, portraits and overlay polish
+
+**Fecha:** 2026-05-06
+**Commit:** FIX: Complete intel alert distance controls and translator portraits
+
+### Completado
+
+#### Intel Alert v2
+- source_mode Local/Intel/Both selector en UI y en servicio.
+- intel_channels: lista editable de canales Intel custom; fallback a ficheros con 'intel' si está vacía.
+- current_system + max_jumps (QSpinBox 0-10) + alert_unknown_distance checkbox.
+- Arquitectura distance: EveMapService singleton (core/eve_map_service.py). Sin SDE = distance_jumps() siempre None. extract_system_from_text() heurística (null-sec pattern + proper noun). distance_jumps(X,X)=0.
+- Clasificación: safe / watchlist / unknown. Funciones puras: classify_pilot, should_alert, parse_intel_message.
+- Cooldown key: source:pilot:system (antes solo pilot).
+- alert_on_watchlist toggle: watchlist no suena si está off.
+- update_config() resetea readers si cambia source/channels.
+- IntelEvent ampliado: classification, source, system, jumps.
+- Historial: [HH:MM:SS] [LOCAL/WATCH/INTEL] [sistema] [Xj] piloto — mensaje.
+- Titlebar: CustomTitleBar compartida; closeEvent llama hide() en vez de destroy.
+- Nota SDE visible en UI.
+
+#### Portraits Chat Translator
+- eve_icon_service.py: añadido redirect policy NoLessSafeRedirectPolicy (EVE image server usa redirects).
+- Logging: PORTRAIT DOWNLOAD OK / PORTRAIT DOWNLOAD ERROR / PORTRAIT PIXMAP NULL / PORTRAIT SET OK.
+- Portrait label initial style: eliminado border-radius:3px (ahora square).
+- log PORTRAIT SET OK confirma que el pixmap llegó al widget.
+
+#### Square borders
+- chat_overlay.py: portrait label sin border-radius.
+- overlay_app.py: container ya tenía border-radius:0px. Comentario stale corregido (4×500ms → 2×75ms).
+
+#### Nuevo: core/eve_map_service.py
+- EveMapService singleton con API extensible.
+- is_available()=False, distance_jumps()=None (excepto same-system=0).
+- extract_system_from_text(): heurística null-sec pattern + fallback proper-noun.
+- TODO claro para integrar BFS con SDE.
+
+### Tests añadidos
+- tests/test_intel_alert_v2.py: 32 tests, todos pasan.
+  - config_round_trip, classify_*, should_alert_*, parse_intel_*, cooldown_key_*, source_*_matches_*, normalize_sender_*
+
+### Archivos modificados
+- core/intel_alert_service.py (reescrito)
+- ui/tools/intel_alert_window.py (reescrito, usa CustomTitleBar)
+- core/eve_icon_service.py (redirect policy + logging portraits)
+- translator/chat_overlay.py (portrait label square + log PORTRAIT SET OK)
+- overlay/overlay_app.py (comentario stale corregido)
+
+### Archivos nuevos
+- core/eve_map_service.py
+- tests/test_intel_alert_v2.py
+
+### Limitaciones conocidas
+- Distancias por saltos: distance_jumps() siempre None (sin SDE). alert_unknown_distance controla el comportamiento.
+- Local Intel chat: el watcher detecta pilotos que HABLAN en Local, no toda la lista local (EVE no escribe toda la lista en el chatlog, solo mensajes).
+- Portraits: si ESI /universe/ids/ falla o el personaje no existe en ESI, el retrato no carga. TTL 30min en memoria para reintentar.

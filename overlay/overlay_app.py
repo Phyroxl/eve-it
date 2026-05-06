@@ -301,7 +301,7 @@ class OverlayWindow(QWidget):
 
         Uses should_show_overlays() (PID-based check) from win32_capture so all
         Salva Suite Qt windows (replicas, chat overlay, menus, dialogs) are
-        correctly treated as 'own'. Debounced at 4 ticks × 500 ms = ~2 s.
+        correctly treated as 'own'. Debounced 2 ticks × 75 ms = ~150 ms.
         """
         try:
             import sys as _sys

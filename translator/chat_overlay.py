@@ -66,7 +66,7 @@ class MessageBubble(W.QFrame):
                                 return
                             try:
                                 if pixmap.isNull():
-                                    logger.debug(f"PORTRAIT NULL pixmap for char_id={char_id}")
+                                    logger.debug(f"PORTRAIT PIXMAP NULL char_id={char_id}")
                                     return
                                 scaled = pixmap.scaled(32, 32, C.Qt.KeepAspectRatio, C.Qt.SmoothTransformation)
                                 sl._portrait_lbl.setPixmap(scaled)
@@ -74,6 +74,7 @@ class MessageBubble(W.QFrame):
                                 sl._portrait_lbl.setStyleSheet(
                                     "QLabel{border:1px solid #334155;background:transparent;}"
                                 )
+                                logger.debug(f"PORTRAIT SET OK char_id={char_id} sender={sender_clean!r}")
                             except Exception as exc:
                                 logger.debug(f"PORTRAIT set pixmap error: {exc}")
 
@@ -101,7 +102,7 @@ class MessageBubble(W.QFrame):
             self._portrait_lbl.setStyleSheet(
                 "QLabel{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
                 "stop:0 #1e293b,stop:1 #0f172a);"
-                "border:1px solid #334155;border-radius:3px;"
+                "border:1px solid #334155;"
                 "color:#64748b;font-size:11px;font-weight:bold;}"
             )
             outer.addWidget(self._portrait_lbl, 0, C.Qt.AlignTop)

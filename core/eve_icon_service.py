@@ -94,9 +94,8 @@ class EveIconService(QObject):
         return self._generate_placeholder(type_id, size, label="...")
 
     def get_portrait(self, char_id: int, size: int = 64, callback: Optional[Callable[[QPixmap], None]] = None) -> QPixmap:
-        """Fetch character portrait from ESI."""
-        # Using a negative ID space for characters in cache to avoid collisions with type_ids
-        cache_id = -char_id
+        """Fetch character portrait from images.evetech.net (async, callback on success)."""
+        cache_id = -char_id  # Negative namespace avoids collision with type_ids
 
         if cache_id in self.icon_cache:
             pix = self.icon_cache[cache_id]
@@ -108,16 +107,28 @@ class EveIconService(QObject):
             return pix
 
         if cache_id in self.pending_requests:
-            if callback: self.pending_requests[cache_id].append(callback)
+            if callback:
+                self.pending_requests[cache_id].append(callback)
         else:
             self.pending_requests[cache_id] = [callback] if callback else []
             norm_size = self.normalize_size(size)
             url = f"https://images.evetech.net/characters/{char_id}/portrait?size={norm_size}"
             request = QNetworkRequest(QUrl(url))
             request.setAttribute(QNetworkRequest.Attribute.User, "portrait")
+            # Follow redirects (EVE image server uses redirects for some IDs)
+            try:
+                request.setAttribute(
+                    QNetworkRequest.Attribute.RedirectPolicyAttribute,
+                    QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+                )
+            except AttributeError:
+                pass  # Older Qt builds — default redirect policy applies
+            logger.debug(f"PORTRAIT DOWNLOAD START char_id={char_id} url={url}")
             reply = self.net_manager.get(request)
-            reply.finished.connect(lambda: self._on_reply_finished(reply, cache_id, size, "portrait"))
-            
+            reply.finished.connect(
+                lambda: self._on_reply_finished(reply, cache_id, size, "portrait")
+            )
+
         return self._generate_placeholder(0, size, label="PILOT")
 
     def _start_fetch_chain(self, type_id: int, size: int):
@@ -142,15 +153,22 @@ class EveIconService(QObject):
                 data = reply.readAll()
                 pixmap = QPixmap()
                 if pixmap.loadFromData(data):
+                    if endpoint_type == "portrait":
+                        logger.debug(f"PORTRAIT DOWNLOAD OK id={type_id} bytes={data.size()}")
                     self._on_success(type_id, pixmap, endpoint_type)
                     reply.deleteLater()
                     return
-            
+                if endpoint_type == "portrait":
+                    logger.debug(f"PORTRAIT PIXMAP NULL id={type_id} bytes={data.size()}")
+
             # If we are here, it failed (404, etc)
             error_str = f"{endpoint_type} failed: {reply.errorString()}"
+            if endpoint_type == "portrait":
+                logger.debug(f"PORTRAIT DOWNLOAD ERROR id={type_id} err={reply.errorString()}")
             self.stats["last_errors"].append(f"ID {type_id}: {error_str}")
-            if len(self.stats["last_errors"]) > 20: self.stats["last_errors"].pop(0)
-            
+            if len(self.stats["last_errors"]) > 20:
+                self.stats["last_errors"].pop(0)
+
             # Fallback chain for types
             chain = ["icon", "render", "bp", "bpc"]
             if endpoint_type in chain:
