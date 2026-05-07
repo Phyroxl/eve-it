@@ -193,7 +193,8 @@ def main():
     splash.showMessage("CARGANDO TELEMETRÍA...", Qt.AlignBottom | Qt.AlignCenter, QColor("#00c8ff"))
     app.processEvents()
 
-    log.info("Desplegando Suite Principal...")
+    t_ui = __import__('time').perf_counter()
+    log.info(f"STARTUP PHASE name=show_main_window ms=0")
     suite_win.show()
     suite_win.raise_()
     # [NUEVO] Modo Sigilo: Evitar que la propia Suite se vea en las réplicas
@@ -203,15 +204,18 @@ def main():
         if ctrl_win: set_window_stealth(int(ctrl_win.winId()))
     except Exception as e:
         log.warning(f"No se pudo activar Modo Sigilo: {e}")
-    
+
     # Finalizar splash
     splash.finish(suite_win)
 
-    # Auto-start con persistencia completa
-    try:
-        _auto_start(controller, tray, suite_win, ctrl_win, log)
-    except Exception as e:
-        log.error(f"Error en auto-start: {e}")
+    # Diferir auto-start para que la UI sea visible antes de hacer I/O pesado
+    from PySide6.QtCore import QTimer
+    def _deferred_auto_start():
+        try:
+            _auto_start(controller, tray, suite_win, ctrl_win, log)
+        except Exception as e:
+            log.error(f"Error en auto-start: {e}")
+    QTimer.singleShot(150, _deferred_auto_start)
 
     import signal
     signal.signal(signal.SIGINT, lambda *_: _on_sigint(controller, app, lock))
@@ -260,28 +264,32 @@ def main():
     os._exit(ret)
 
 def _auto_start(controller, tray, suite_win, ctrl_win, log):
+    import time as _t
+    t0 = _t.perf_counter()
     from PySide6.QtCore import QSettings
     s = QSettings("SalvaSuite", "Suite")
+
+    log.info("STARTUP PHASE name=auto_start ms=0")
 
     # 1. Cargar Log Dir guardado si existe y es válido
     saved_log_dir = s.value("log_dir", "")
     if saved_log_dir and os.path.exists(saved_log_dir):
-        log.info(f"Auto-start: Usando log_dir guardado: {saved_log_dir}")
+        log.info(f"STARTUP PHASE name=log_dir_load ms={int((_t.perf_counter()-t0)*1000)}")
         controller.set_log_directory(saved_log_dir)
     else:
         # Auto-detección: buscar directorios de logs de EVE en el sistema
         try:
+            t1 = _t.perf_counter()
             from core.log_parser import find_all_log_dirs
             dirs = find_all_log_dirs()
+            log.info(f"STARTUP PHASE name=find_log_dirs ms={int((_t.perf_counter()-t1)*1000)}")
             gamelogs = dirs.get('Gamelogs', [])
             if gamelogs:
                 detected = str(gamelogs[0])
                 log.info(f"Auto-start: Directorio detectado automáticamente: {detected}")
                 controller.set_log_directory(detected)
-                # Guardar para futuras sesiones
                 s.setValue("log_dir", detected)
-                # Mostrar en la UI si está disponible
-                if suite_win and suite_win.edit_log_dir:
+                if suite_win and getattr(suite_win, 'edit_log_dir', None):
                     suite_win.edit_log_dir.setText(detected)
             else:
                 log.info("Auto-start: No se encontraron logs de EVE. Tracker iniciará en modo auto-scan.")
@@ -292,18 +300,23 @@ def _auto_start(controller, tray, suite_win, ctrl_win, log):
     retention = float(s.value("ess_retention", 1.0))
     controller.set_ess_retention(retention)
 
-    # 3. Iniciar Tracker SIEMPRE (con log_dir o sin él, en modo auto-scan)
-    # skip=False → lee eventos del log actual (sesión en curso) para que los personajes aparezcan activos
-    skip = s.value("skip_logs", "false") == "true"
-    # 4. Restaurar sesión ESI si existe
-    try:
-        from core.auth_manager import AuthManager
-        AuthManager.instance().try_restore_session()
-    except Exception as e:
-        log.warning(f"Auto-start: Error restaurando sesión ESI: {e}")
-
-    log.info(f"Auto-start: Iniciando tracker (log_dir='{controller.log_directory}', skip={skip})")
+    # 3. skip_existing=True por defecto — evita procesar ISK histórico como sesión nueva.
+    # El usuario puede cambiarlo desde la UI. Solo leer "false" si fue guardado explícitamente.
+    skip = s.value("skip_logs", "true") == "true"
+    log.info(f"STARTUP PHASE name=tracker_start ms={int((_t.perf_counter()-t0)*1000)}")
     controller.start_tracker(skip_existing=skip)
+
+    # 4. Restaurar sesión ESI en background (no bloquear el arranque)
+    def _restore_esi():
+        try:
+            from core.auth_manager import AuthManager
+            AuthManager.instance().try_restore_session()
+        except Exception as e:
+            log.warning(f"Auto-start: Error restaurando sesión ESI: {e}")
+    import threading
+    threading.Thread(target=_restore_esi, daemon=True, name='ESIRestore').start()
+
+    log.info(f"STARTUP PHASE name=auto_start_done ms={int((_t.perf_counter()-t0)*1000)} skip={skip} log_dir={controller.log_directory!r}")
 
 def _on_sigint(controller, app, lock):
     controller.shutdown(); lock.release(); app.quit()

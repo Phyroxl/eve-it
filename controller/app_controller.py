@@ -95,6 +95,20 @@ class AppController:
     def set_log_directory(self, path: str):
         self.log_directory = path
         logger.info(f"Log directory set to: {path}")
+        self._write_shared_config()
+
+    def _write_shared_config(self):
+        """Escribe configuración compartida para que el Dashboard Streamlit pueda leerla."""
+        try:
+            import json as _json, os as _os
+            app_data = Path(_os.environ.get('APPDATA', Path.home())) / 'EVEISKTracker'
+            app_data.mkdir(parents=True, exist_ok=True)
+            cfg = {'log_dir': self.log_directory}
+            (app_data / 'suite_config.json').write_text(
+                _json.dumps(cfg, indent=2), encoding='utf-8'
+            )
+        except Exception as e:
+            logger.warning(f"_write_shared_config error: {e}")
 
     def set_ess_retention(self, val: float):
         self.ess_retention = val

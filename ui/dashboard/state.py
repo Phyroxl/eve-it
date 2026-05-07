@@ -12,7 +12,7 @@ def init_session_state():
         'ess_retention': 1.0,
         'inactivity_threshold': 2.5,
         'log_dir': '',
-        'skip_existing': False,
+        'skip_existing': True,
         'session_start': None,
         'last_save_path': None,
         'activity_type': 'ratting_null',

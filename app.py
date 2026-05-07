@@ -95,10 +95,27 @@ def reset_session():
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
+def _try_load_shared_config():
+    """Lee log_dir del proceso Qt principal si está disponible."""
+    try:
+        import json as _json, os as _os
+        from pathlib import Path as _Path
+        cfg_path = _Path(_os.environ.get('APPDATA', _Path.home())) / 'EVEISKTracker' / 'suite_config.json'
+        if cfg_path.exists() and not st.session_state.get('initialized'):
+            shared = _json.loads(cfg_path.read_text(encoding='utf-8'))
+            ld = shared.get('log_dir', '')
+            if ld and not st.session_state.get('log_dir'):
+                st.session_state.log_dir = ld
+                import logging
+                logging.getLogger('eve.app').info(f"Dashboard: log_dir cargado de suite_config.json: {ld!r}")
+    except Exception:
+        pass
+
 def main():
     init_session_state()
+    _try_load_shared_config()
     render_gear_button()
-    
+
     # Renderizado Modular
     render_sidebar(
         start_tracker_func=start_tracker,

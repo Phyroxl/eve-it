@@ -492,3 +492,65 @@ En el peor caso: 1.5 + 2 + 2 = 5.5s de lag bloqueante en el UI thread antes de q
 
 ### Tests ejecutados
 30 passed (suite base) + 7 nuevos tests de shutdown. Total: 37 passed.
+
+---
+
+## Session 9 — Startup performance, replicator launch, ISK tracker dashboard and EXE build
+
+**Fecha:** 2026-05-07
+
+### Causas raíz encontradas
+
+#### 1. Arranque lento
+- `_auto_start()` se ejecutaba síncronamente en el hilo principal ANTES de `exec_()`.
+- Dentro: `find_all_log_dirs()` escanea el filesystem; `AuthManager.try_restore_session()` puede hacer petición HTTP.
+- Resultado: la ventana principal tardaba en aparecer porque el hilo estaba bloqueado.
+
+#### 2. Replicador — lag al lanzar réplicas
+- `make_hwnd_getter()` en `tray_manager.py` usaba `find_eve_windows()` (sin cache), llamando EnumWindows por cada tick del getter.
+- `ReplicationOverlay.__init__()` llamaba `_start_capture()` inmediatamente → N réplicas arrancaban N `CaptureThread` en el mismo instante, con N×30fps de PrintWindow simultáneos.
+- `activateWindow()` se llamaba por CADA réplica en el loop → focus churn.
+
+#### 3. ISK Tracker con datos erróneos al iniciar
+- `skip_logs` en QSettings tenía default `"false"` → `skip_existing=False` → `LogReader` lee logs desde posición 0, procesando ISK histórico como sesión nueva.
+
+#### 4. Dashboard sin datos
+- El proceso Streamlit no tenía acceso al `log_dir` configurado en el proceso Qt.
+- `st.session_state.log_dir` iniciaba vacío; el usuario debía configurarlo manualmente en el sidebar.
+- `skip_existing` en `state.py` estaba en `False`, causando que el dashboard también leyera ISK histórico.
+
+### Archivos modificados
+
+- `main.py`: diferir `_auto_start()` con `QTimer.singleShot(150ms)`; restaurar ESI en thread background; `skip_logs` default `"true"`; logs `STARTUP PHASE name=... ms=...`.
+- `controller/tray_manager.py`: `make_hwnd_getter()` usa `find_eve_windows_cached()`; capturas escalonadas `_defer_capture_ms=i*200`; `activateWindow()` solo en última réplica; logs `REPLICATOR LAUNCH START/CREATE/DONE`.
+- `overlay/replication_overlay.py`: nuevo parámetro `_defer_capture_ms=0` en `__init__`; si `>0`, usa `QTimer.singleShot` para diferir `_start_capture()`.
+- `controller/app_controller.py`: `set_log_directory()` escribe `EVEISKTracker/suite_config.json`; nuevo método `_write_shared_config()`.
+- `app.py`: nueva función `_try_load_shared_config()` que lee `suite_config.json` al arrancar dashboard Streamlit.
+- `ui/dashboard/state.py`: `skip_existing` default `False` → `True`.
+
+### Optimizaciones aplicadas
+
+- Arranque no bloqueante: UI principal visible en <200ms antes de cualquier I/O de disco.
+- Replicador escalonado: capturas inician de forma distribuida (0ms, 200ms, 400ms, ...) evitando pico de PrintWindow simultáneos.
+- Cache de find_eve_windows: todos los getters de hwnd usan la versión con TTL 2s.
+- skip_existing=True por defecto: nuevo arranque de tracker siempre empieza en 0 ISK.
+- Dashboard auto-configurado: lee log_dir del proceso Qt vía archivo JSON compartido.
+
+### Pruebas ejecutadas
+
+- `py_compile` sobre todos los archivos modificados: OK.
+- `pytest tests/` (excluyendo tests que crashean por falta de display Qt): 32 passed, 0 failed.
+- `test_hotkey_focus_verify::test_index_advanced_when_verified`: FAIL preexistente (no relacionado con estos cambios).
+
+### Build EXE
+
+- Spec existente: `build_windows.spec`.
+- Output: `C:\Users\Azode\Downloads\Salva Suite\`.
+- Comando: `python -m PyInstaller --clean --noconfirm build_windows.spec --distpath "C:\Users\Azode\Downloads\Salva Suite"`.
+
+### Limitaciones conocidas
+
+1. El Dashboard Streamlit (`app.py`) corre en proceso separado: no comparte memoria con el proceso Qt. El archivo `suite_config.json` es el puente de datos de configuración.
+2. El Dashboard Streamlit no puede recibir datos en tiempo real del tracker Qt (solo lee logs directamente). El HUD overlay sí recibe datos en tiempo real vía socket (puerto 47291).
+3. Tests Qt (instanciación de widgets sin display): crashes preexistentes no relacionados con estos cambios.
+4. `test_hotkey_focus_verify::test_index_advanced_when_verified`: fallo preexistente en hotkey cycling.

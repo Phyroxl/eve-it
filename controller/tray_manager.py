@@ -473,9 +473,11 @@ class TrayManager:
             except Exception:
                 initial_hwnds = {}
 
+            # Usar versión cacheada (TTL 2s) para no llamar EnumWindows por cada réplica
+            from overlay.win32_capture import find_eve_windows_cached as _find_cached
             def make_hwnd_getter(win_title):
                 def getter():
-                    for w in find_eve_windows():
+                    for w in _find_cached():
                         if w['title'] == win_title:
                             return w['hwnd']
                     return None
@@ -488,6 +490,10 @@ class TrayManager:
                                    .get(active_prof_name, {})
                                    .get('replicas', {}))
 
+            import time as _t
+            _t_launch = _t.perf_counter()
+            logger.info(f"REPLICATOR LAUNCH START count={len(titles)}")
+
             created = 0
             for i, title in enumerate(titles):
                 try:
@@ -499,14 +505,21 @@ class TrayManager:
 
                     ov_region = region.copy() if region else {'x':0, 'y':0, 'w':1, 'h':1}
 
+                    # Escalonar inicio de captura: primera réplica inmediata, resto +200ms cada una.
+                    # Evita que todas las PrintWindow arranquen en el mismo instante.
+                    _delay_ms = i * 200
+
+                    _t1 = _t.perf_counter()
                     ov = ReplicationOverlay(
-                        title        = title,
-                        hwnd         = initial_hwnds.get(title),   # ← hwnd inicial para notify_active
-                        hwnd_getter  = make_hwnd_getter(title),
-                        region_rel   = ov_region,
-                        cfg          = cfg,
-                        save_callback= lambda *a, c=cfg, m=cfg_mod: m.save_overlay_state(c, *a),
+                        title             = title,
+                        hwnd              = initial_hwnds.get(title),
+                        hwnd_getter       = make_hwnd_getter(title),
+                        region_rel        = ov_region,
+                        cfg               = cfg,
+                        save_callback     = lambda *a, c=cfg, m=cfg_mod: m.save_overlay_state(c, *a),
+                        _defer_capture_ms = _delay_ms,
                     )
+                    logger.info(f"REPLICATOR CREATE title={title!r} defer_ms={_delay_ms} ms={int((_t.perf_counter()-_t1)*1000)}")
 
                     # Priority order for initial geometry:
                     # 1. Profile replicas (user explicitly saved this layout)
@@ -541,16 +554,20 @@ class TrayManager:
                     ov.sync_triggered.connect(lambda rd, _ov=ov: self._on_sync_replicas(_ov, rd))
                     ov.show()
                     ov.raise_()
-                    ov.activateWindow()
+                    # activateWindow solo en la última réplica para evitar focus churn
+                    if i == len(titles) - 1:
+                        ov.activateWindow()
                     self._replicator_overlays.append(ov)
                     created += 1
                 except Exception as e:
                     logger.error(f"Error overlay '{title}': {e}", exc_info=True)
 
+            logger.info(f"REPLICATOR LAUNCH DONE created={created} total_ms={int((_t.perf_counter()-_t_launch)*1000)}")
+
             if created > 0:
                 self._ctrl.state.update(replicator_active=True)
                 self._act_replic.setChecked(True)
-                logger.info(f"Replicador: {created} overlay(s) activos")
+                logger.info(f"Replicador: {created} overlay(s) activos (capturas escalonadas cada 200ms)")
 
                 # Auto-apply hotkeys — eliminates need to manually click "Aplicar Hotkeys"
                 try:

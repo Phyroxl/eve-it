@@ -568,7 +568,7 @@ class ReplicationOverlay(QWidget):
     _global_hide_last_fg: int = 0
 
     def __init__(self, title, hwnd=None, region_rel=None, cfg=None,
-                 save_callback=None, hwnd_getter=None):
+                 save_callback=None, hwnd_getter=None, _defer_capture_ms=0):
         super().__init__(None)
         self._title = title
         self._hwnd_getter = hwnd_getter if hwnd_getter else (lambda: hwnd)
@@ -624,7 +624,10 @@ class ReplicationOverlay(QWidget):
         self._last_dwm_hwnd                = 0
 
         self._setup_ui()
-        self._start_capture()
+        if _defer_capture_ms > 0:
+            QTimer.singleShot(_defer_capture_ms, self._start_capture)
+        else:
+            self._start_capture()
 
         # 300 ms debounced autosave
         self._autosave_timer = QTimer(self)
