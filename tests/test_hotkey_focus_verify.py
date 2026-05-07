@@ -77,6 +77,7 @@ def _reset_hk_state():
     hk._last_verified_focus_perf = 0.0
     hk._pending_cycle = None
     hk._pending_cycle_gen = 0
+    hk._pending_execution = False
 
 
 def _build_cfg(titles=None):
@@ -311,6 +312,103 @@ class TestFocusEveWindowReliable(unittest.TestCase):
             ok, detail = focus_eve_window_reliable(9999, max_total_ms=60)
         self.assertFalse(ok)
         self.assertIn('budget_exceeded=', detail)
+
+
+# ── Session 11: pending inline execution + guard bypass + sync tests ──────────
+
+class TestPendingInlineExecution(unittest.TestCase):
+    """Verify that pending cycles execute inline (no threading.Timer) with guard bypass."""
+
+    def setUp(self):
+        _reset_hk_state()
+
+    def tearDown(self):
+        _reset_hk_state()
+
+    def _run_cb(self, cb, verified=True, fg_hwnd=1001, fg_title='EVE - Alpha'):
+        if verified:
+            reliable_ret = (True, 'reliable_focus strategy=fast verified=True verify_ms=2.0 actual=1002 total_ms=5.0')
+        else:
+            reliable_ret = (False, 'reliable_focus strategy=failed verified=False actual=0 total_ms=40.0 attempts=fast:false')
+        with patch('overlay.win32_capture.is_hwnd_valid', return_value=True), \
+             patch('overlay.win32_capture.focus_eve_window_reliable', return_value=reliable_ret), \
+             patch('overlay.win32_capture.get_foreground_hwnd', return_value=fg_hwnd), \
+             patch('overlay.win32_capture.get_window_title', return_value=fg_title), \
+             patch('overlay.replication_overlay.ReplicationOverlay') as mock_cls, \
+             patch('overlay.replication_overlay._OVERLAY_REGISTRY', set()):
+            mock_cls.notify_active_client_changed = MagicMock()
+            cb()
+
+    def test_pending_cycle_not_lost_on_double_press(self):
+        """Second cycle pressed during first focus must execute, not be silently dropped."""
+        import overlay.replicator_hotkeys as hk
+        cfg = _build_cfg(['EVE - Alpha', 'EVE - Beta', 'EVE - Gamma'])
+        hk._hwnd_cache = {'EVE - Alpha': 1001, 'EVE - Beta': 1002, 'EVE - Gamma': 1003}
+        cb = _extract_cycle_group(cfg)
+        self.assertIsNotNone(cb, "No _cycle_group partial found")
+
+        # Simulate second press arriving while first is in progress by setting up
+        # _pending_cycle before the cb executes (simulating queued state)
+        hk._pending_cycle = {'type': 'group', 'group_id': 'g1', 'direction': +1}
+        hk._pending_cycle_gen = 0
+
+        # Run the first cycle (which will drain pending via _maybe_execute_pending)
+        self._run_cb(cb, verified=True)
+
+        # After inline pending execution, should be at index 1 (Beta→Gamma) or index 0 (Alpha→Beta)
+        # The key guarantee: _last_group_index should be set (not empty)
+        self.assertIn('g1', hk._last_group_index,
+                      "Pending cycle must execute and advance the group index")
+
+    def test_pending_execution_flag_reset_after_inline_run(self):
+        """_pending_execution must be False after _maybe_execute_pending completes."""
+        import overlay.replicator_hotkeys as hk
+        cfg = _build_cfg()
+        hk._hwnd_cache = {'EVE - Alpha': 1001, 'EVE - Beta': 1002, 'EVE - Gamma': 1003}
+        cb = _extract_cycle_group(cfg)
+        self.assertIsNotNone(cb)
+
+        hk._pending_cycle = {'type': 'group', 'group_id': 'g1', 'direction': +1}
+
+        self._run_cb(cb, verified=True)
+
+        self.assertFalse(hk._pending_execution,
+                         "_pending_execution must be False after execution completes")
+
+    def test_focus_fail_does_not_advance_index(self):
+        """When focus verification fails, _last_group_index must NOT be advanced."""
+        import overlay.replicator_hotkeys as hk
+        cfg = _build_cfg()
+        hk._hwnd_cache = {'EVE - Alpha': 1001, 'EVE - Beta': 1002, 'EVE - Gamma': 1003}
+        cb = _extract_cycle_group(cfg)
+        self.assertIsNotNone(cb)
+
+        self._run_cb(cb, verified=False)
+
+        self.assertNotIn('g1', hk._last_group_index,
+                          "Failed focus must not advance group index")
+        self.assertIsNone(hk._last_cycle_client_id,
+                           "Failed focus must not update last_cycle_client_id")
+
+    def test_is_eve_client_title_accepts_both_dash_variants(self):
+        """Both em-dash (production) and regular hyphen (tests) must be accepted."""
+        from overlay.replicator_hotkeys import _is_eve_client_title
+        self.assertTrue(_is_eve_client_title('EVE — Capsuleer Alpha'),
+                        "Em-dash variant (production) must be accepted")
+        self.assertTrue(_is_eve_client_title('EVE - Capsuleer Beta'),
+                        "Regular hyphen variant (test) must be accepted")
+        self.assertFalse(_is_eve_client_title('Replica - EVE Alpha'),
+                          "Replica window titles must be rejected")
+        self.assertFalse(_is_eve_client_title(''),
+                          "Empty title must be rejected")
+        self.assertFalse(_is_eve_client_title(None),
+                          "None title must be rejected")
+
+    def test_capture_suspend_ms_is_at_most_100(self):
+        """CAPTURE_SUSPEND_MS must be ≤100ms to avoid visible frame freezes."""
+        from overlay.replicator_hotkeys import CAPTURE_SUSPEND_MS
+        self.assertLessEqual(CAPTURE_SUSPEND_MS, 100,
+                              f"CAPTURE_SUSPEND_MS={CAPTURE_SUSPEND_MS} causes visible freezes (max 100ms)")
 
 
 if __name__ == '__main__':

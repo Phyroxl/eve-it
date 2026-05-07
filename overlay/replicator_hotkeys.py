@@ -70,7 +70,7 @@ MIN_CYCLE_INTERVAL_MS: int = 10
 
 # Extra settle guard: capture threads stay suspended for this many ms after focus.
 # Reduces BitBlt competition with the DWM compositing triggered by focus change.
-CAPTURE_SUSPEND_MS: int = 150
+CAPTURE_SUSPEND_MS: int = 80
 
 # How long last_cycle_client_id is considered authoritative for index resolution.
 FOCUS_SETTLE_MS: int = 80
@@ -81,7 +81,8 @@ _last_cycle_client_id: Optional[str] = None       # Title of last focused client
 _last_cycle_client_id_time: float = 0.0           # monotonic() of above
 
 _pending_cycle: Optional[dict] = None             # Coalescing queue (size 1, last-write-wins)
-_pending_cycle_gen: int = 0                        # Incremented each time a cycle is accepted; stale-timer guard
+_pending_cycle_gen: int = 0                        # Incremented each time a cycle is accepted
+_pending_execution: bool = False                   # True while executing a queued pending (skips MACRO_COMPLETION_GUARD)
 
 # Written by _cycle/_cycle_group; read by CaptureThread.run() in replication_overlay.
 # CaptureThread skips one frame while < now, reducing competition with Win32 focus.
@@ -870,6 +871,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                     ReplicationOverlay.notify_active_client_changed(hwnd)
                     _last_cycle_client_id = t
                     _last_cycle_client_id_time = now
+                    note_active_client_changed(t, source='per_client_hotkey')
                 total_ms = (_time.perf_counter() - t0) * 1000
                 _perf_log(f'[HOTKEY PERF] per_client target={t!r} focus_ok={ok} total_ms={total_ms:.1f}')
 
@@ -880,48 +882,33 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
     # per-client focus and a group cycle don't race each other.
 
     def _maybe_execute_pending():
-        """Execute the pending coalesced cycle after MACRO_COMPLETION_GUARD_MS expires.
+        """Execute a queued pending cycle inline on the hotkey thread (no threading.Timer).
 
-        Schedules via threading.Timer when the guard hasn't expired yet; runs
-        inline when it already has.  A generation counter (_pending_cycle_gen)
-        detects races where a third cycle starts before the timer fires and
-        silently drops the stale pending request.
+        threading.Timer creates a race: if a third direct cycle starts while the timer
+        is waiting, the timer fires stale.  Running inline avoids that entirely.
+
+        _pending_execution=True tells _cycle/_cycle_group to skip MACRO_COMPLETION_GUARD —
+        the user already committed to the next account by pressing cycle while the previous
+        focus was still in flight.
         """
-        global _pending_cycle
+        global _pending_cycle, _pending_execution
         pending = _pending_cycle
         if not pending:
             return
         _pending_cycle = None
-        import time as _time
-        wait_ms = 0.0
-        if _last_verified_focus_perf > 0:
-            elapsed_ms = (_time.perf_counter() - _last_verified_focus_perf) * 1000.0
-            wait_ms = max(0.0, MACRO_COMPLETION_GUARD_MS - elapsed_ms)
-        gen_at_schedule = _pending_cycle_gen
-
-        def _run():
-            if _pending_cycle_gen != gen_at_schedule:
-                _perf_log(
-                    f'[INPUT DROPPED stale] type={pending["type"]} '
-                    f'gen_sched={gen_at_schedule} gen_now={_pending_cycle_gen}'
-                )
-                return
+        _pending_execution = True
+        try:
             _perf_log(
-                f'[PENDING CYCLE] type={pending["type"]} '
+                f'[HOTKEY_PENDING_EXECUTED] type={pending["type"]} '
                 f'direction={"next" if pending["direction"]>0 else "prev"} '
-                f'wait_ms={wait_ms:.1f} gen={gen_at_schedule}'
+                f'gen={_pending_cycle_gen}'
             )
             if pending['type'] == 'group':
                 _cycle_group(pending['group_id'], pending['direction'])
             else:
                 _cycle(pending['direction'])
-
-        if wait_ms > 1.0:
-            t = threading.Timer(wait_ms / 1000.0, _run)
-            t.daemon = True
-            t.start()
-        else:
-            _run()
+        finally:
+            _pending_execution = False
 
     def _cycle(direction: int):
         """Global cycle over _cached_titles / cycle_titles_getter order."""
@@ -967,7 +954,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 delta_ms=round(delta_ms, 1), min_ms=MIN_CYCLE_INTERVAL_MS)
             return
 
-        if _last_verified_focus_perf > 0:
+        if _last_verified_focus_perf > 0 and not _pending_execution:
             _guard_elapsed_ms = (t0 - _last_verified_focus_perf) * 1000.0
             if _guard_elapsed_ms < MACRO_COMPLETION_GUARD_MS:
                 _perf_log(
@@ -1242,7 +1229,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 delta_ms=round(delta_ms, 1), min_ms=MIN_CYCLE_INTERVAL_MS)
             return
 
-        if _last_verified_focus_perf > 0:
+        if _last_verified_focus_perf > 0 and not _pending_execution:
             _guard_elapsed_ms = (t0 - _last_verified_focus_perf) * 1000.0
             if _guard_elapsed_ms < MACRO_COMPLETION_GUARD_MS:
                 _perf_log(

@@ -1958,7 +1958,15 @@ class ReplicationOverlay(QWidget):
                         logger.debug(
                             f"[REPLICA CLICK FOCUS] total={(t_done - t_click) * 1000:.1f}ms"
                         )
-                        if not ok:
+                        if ok:
+                            try:
+                                import overlay.replicator_hotkeys as _hk_mod
+                                _hk_mod.note_active_client_changed(
+                                    self._title, source='click_release'
+                                )
+                            except Exception:
+                                pass
+                        else:
                             logger.warning(
                                 f"[REPLICA CLICK FOCUS] focus_failed title={self._title!r} "
                                 f"hwnd={self._hwnd}"

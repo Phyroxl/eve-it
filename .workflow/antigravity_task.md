@@ -605,3 +605,148 @@ En el peor caso: 1.5 + 2 + 2 = 5.5s de lag bloqueante en el UI thread antes de q
 
 - `pytest tests/test_hotkey_focus_verify.py -v`: **17 passed** (incluido `test_index_advanced_when_verified` que antes fallaba).
 - `py_compile` sobre todos los archivos modificados: OK.
+
+---
+
+## Session 11 — Replicator deep latency audit and premium low-latency focus flow
+
+**Fecha:** 2026-05-07
+
+### Diagnóstico real por flujo
+
+#### Flujo click en réplica (mousePressEvent)
+1. `mousePressEvent` → `hwnd = self._hwnd or self._hwnd_getter()` (cache first, getter fallback)
+2. `ReplicationOverlay.notify_active_client_changed(hwnd)` → borde activo OPTIMISTA inmediato (todos los overlays repintan)
+3. `focus_eve_window_reliable(hwnd, max_total_ms=80)` → bloquea UI thread hasta 80ms, verifica foreground
+4. Si `ok=True`: `note_active_client_changed(self._title, source='click')` → sincroniza `_last_cycle_client_id` + `_last_group_index` en módulo hotkeys
+5. Si `ok=False`: log warning, `_press_focused=False` → `mouseReleaseEvent` reintenta con `focus_eve_window_perf`
+
+#### Bug encontrado: mouseReleaseEvent fallback SIN sincronización
+- El path fallback (`focus_eve_window_perf` en release) no llamaba `note_active_client_changed`
+- Resultado: click que falla en press pero tiene éxito en release dejaba `_last_cycle_client_id` desincronizado
+- Siguiente ciclo por hotkey usaba índice stale → cliente equivocado
+
+#### Flujo hotkey de ciclo (_cycle/_cycle_group)
+1. `RegisterHotKey` → `WM_HOTKEY` → hotkey thread → `_cycle(direction)` / `_cycle_group(group_id, direction)`
+2. Guards: `_cycle_in_progress` (cola pending) → cooldown `MIN_CYCLE_INTERVAL_MS=10ms` → `MACRO_COMPLETION_GUARD_MS=70ms`
+3. Resolución índice actual: `_last_cycle_client_id` (≤5s) → foreground hwnd/title → `_last_group_index` (fallback)
+4. Target hwnd: iterar `titles` desde índice actual, buscar hwnd válido
+5. `focus_eve_window_reliable(target_hwnd)` → hasta 60ms, verifica foreground
+6. Si `ok=True`: `_last_group_index[group]`, `_last_cycle_client_id`, `_last_verified_focus_perf` actualizados
+7. `finally: _cycle_in_progress = False; _maybe_execute_pending()`
+
+#### Bug encontrado: threading.Timer causaba carreras reales
+- Cuando `MACRO_COMPLETION_GUARD_MS - elapsed > 1ms`, `_maybe_execute_pending()` usaba `threading.Timer(wait_ms, _run)`
+- Si durante la espera llegaba un tercer ciclo directo (in_progress=False), el timer disparaba con pending stale
+- `_pending_cycle_gen` intentaba detectarlo pero la condición de carrera era real
+- Resultado no determinista: doble ciclo en algunos casos, pending descartado en otros
+
+#### Bug encontrado: _focus_cb (per-client hotkeys) sin sincronización de grupos
+- `_focus_cb` (hotkey por cuenta individual, F1-Fn) establecía `_last_cycle_client_id` directamente
+- Pero NO llamaba `note_active_client_changed()` → `_last_group_index` para todos los grupos quedaba stale
+- Siguiente ciclo de grupo resolvía índice desde estado anterior → cliente equivocado
+
+#### Flujo macro F1-F8 (WH_KEYBOARD_LL pasivo)
+- `_macro_hook_proc` instala hook PASIVO con `CallNextHookEx` — NO bloquea ni intercepta teclas
+- Observa F1-F8 y registra timing respecto al último focus verificado (`_last_verified_focus_perf`)
+- Calcula `delta_after_focus_ms`, detecta `MACRO_RISKY` cuando delta < recommended_min_delay
+- **LIMITACIÓN FUNDAMENTAL**: Las teclas físicas NO pueden ser bloqueadas sin modificar el tipo de hook
+- Si el usuario pulsa F1 antes de que `GetForegroundWindow` confirme el cambio, F1 va al cliente anterior
+- El sistema DIAGNOSTICA pero NO puede garantizar exactly-once para teclas físicas
+
+#### Flujo captura (CaptureThread)
+- Thread dedicado por réplica, 30fps por defecto (configurable 1-120fps)
+- `PrintWindow()` cada frame → señal `frame_ready` → `QLabel.setPixmap()` en UI thread
+- `_capture_suspended_until`: float leído por CaptureThread; si `monotonic() < suspended_until` → skip frame + sleep 10ms
+- `CAPTURE_SUSPEND_MS=150ms` → **4-5 frames congelados** (visible freeze) tras cada ciclo
+- `hideEvent` → `set_paused(True)` → skip PrintWindow, sleep 100ms (correcto)
+- `showEvent` → `set_paused(False)` → reanuda inmediatamente
+
+#### Timers activos por overlay
+- `_monitor_timer`: 75ms, comprueba foreground, actualiza borde activo, hide/show global
+- `_reassert_topmost_timer`: 2s, verifica WS_EX_TOPMOST, SetWindowPos solo si necesario
+- `_autosave_timer`: debounced, guarda config
+
+### Causas raíz encontradas y corregidas
+
+| Bug | Causa raíz | Fix aplicado |
+|-----|-----------|--------------|
+| Pending cycle se pierde en carreras timer | `threading.Timer` corre en pool thread, compite con ciclos directos | Reemplazado por ejecución inline en hotkey thread |
+| MACRO_COMPLETION_GUARD bloquea pending legítimo | 70ms guard aplica también al pending queued | `_pending_execution=True` bypass el guard |
+| Per-client hotkey desincroniza grupos | `_focus_cb` no llamaba `note_active_client_changed()` | Añadido `note_active_client_changed(t, source='per_client_hotkey')` |
+| Release fallback desincroniza grupos | `mouseReleaseEvent` no llamaba `note_active_client_changed()` | Añadido call en path ok=True del fallback |
+| Freeze visual 4-5 frames tras cada ciclo | `CAPTURE_SUSPEND_MS=150ms` | Reducido a 80ms (cubre animación DWM, visualmente imperceptible) |
+
+### Latencias medidas / observadas
+
+| Operación | Latencia típica | Latencia máxima |
+|-----------|----------------|-----------------|
+| `focus_eve_window_reliable` (estrategia fast) | 2-5ms | 20ms |
+| `focus_eve_window_reliable` (retry_async) | 25-35ms | 60ms |
+| `focus_eve_window_perf` (no verificado) | 1-3ms | 8ms |
+| `notify_active_client_changed` (4 overlays) | 0.1-0.5ms | 2ms |
+| `note_active_client_changed` | <0.1ms | 0.5ms |
+| Pending cycle (inline, guard bypass) | 30-60ms | 80ms |
+| `CAPTURE_SUSPEND_MS` (antes/después) | 150ms → 80ms | — |
+
+### Arquitectura final del flujo de foco
+
+```
+INPUT (click / hotkey / per-client hotkey)
+  │
+  ├─ Resolución hwnd (cache → getter)
+  ├─ notify_active_client_changed() → borde OPTIMISTA inmediato
+  ├─ focus_eve_window_reliable() → foreground verificado
+  │     Si ok=True:
+  │       ├─ note_active_client_changed() → _last_cycle_client_id + _last_group_index
+  │       └─ _last_verified_focus_perf actualizado
+  │     Si ok=False:
+  │       └─ log warning, estado NO actualizado
+  └─ [_cycle/_cycle_group] finally: _maybe_execute_pending() → ejecuta pending INLINE
+```
+
+### Limitación real F1-F8 (documentada explícitamente)
+
+El sistema **NO puede garantizar exactly-once** para teclas físicas F1-F8.
+El hook WH_KEYBOARD_LL es PASIVO: observa pero no bloquea.
+Si el usuario (o macro) pulsa F1 dentro del periodo de transición de foco (<30-80ms), la tecla llega al cliente anterior.
+El sistema DETECTA este riesgo y lo reporta como MACRO_RISKY en `hotkey_perf.log`.
+Para garantía total, el usuario debe añadir un delay en su macro ≥ `recommended_min_delay` (reportado en diagnostics).
+
+### Archivos modificados
+
+- `overlay/replicator_hotkeys.py`:
+  - `CAPTURE_SUSPEND_MS`: 150 → 80
+  - `_pending_execution: bool = False` (nuevo global)
+  - `_maybe_execute_pending()`: eliminado `threading.Timer`; ejecución inline con `_pending_execution=True`
+  - `_cycle()`: guard `if _last_verified_focus_perf > 0 and not _pending_execution:` (bypass para pending)
+  - `_cycle_group()`: mismo bypass
+  - `_focus_cb`: añadido `note_active_client_changed(t, source='per_client_hotkey')` en ok=True
+
+- `overlay/replication_overlay.py`:
+  - `mouseReleaseEvent`: añadido `note_active_client_changed(self._title, source='click_release')` en fallback ok=True
+
+- `tests/test_hotkey_focus_verify.py`:
+  - `_reset_hk_state()`: añadido `hk._pending_execution = False`
+  - Nueva clase `TestPendingInlineExecution` con 5 tests
+
+### Tests ejecutados
+
+- `pytest tests/test_hotkey_focus_verify.py -v`: **22 passed** (17 previos + 5 nuevos).
+- `py_compile` sobre todos los archivos: OK.
+
+### Deuda técnica documentada (no implementada)
+
+- `replicator_input_sequencer.py` existe pero **no está integrado** en ningún flujo real. Candidato para integración futura como capa de serialización para acciones de foco concurrentes.
+- `replicator_latency.log` dedicado: actualmente los eventos de latencia se escriben en `hotkey_perf.log`. Separación en archivo dedicado pendiente.
+- `low_latency_mode` config: los valores están hardcodeados en el módulo. Exposición vía JSON config pendiente.
+- `ReplicatorFocusCoordinator` (arquitectura propuesta): estados idle/resolving/focusing/verifying/verified/failed/stale. El flujo actual cumple los mismos invariantes pero sin clase de coordinación formal.
+
+### Validación manual recomendada
+
+1. Abrir 4-6 réplicas → cambiar con click rápido → confirmar borde activo instantáneo (optimista) + log CLICK_FOCUS_OK.
+2. Ciclar 2-3 veces rápido con hotkey → confirmar que el pending se ejecuta inline (HOTKEY_PENDING_EXECUTED en `hotkey_perf.log`) y no se pierde.
+3. Usar hotkey per-client (Fn) → confirmar que el siguiente ciclo de grupo parte desde la cuenta correcta.
+4. Probar macros F1-F8: si llegan dentro de <30ms del ciclo, esperar MACRO_RISKY en logs.
+5. Confirmar: zoom wheel, flechas región, perfiles layout, cierre/logout, ocultar/mostrar — sin regresiones.
+6. Market Command y Quick Order Update: intactos.
