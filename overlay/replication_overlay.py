@@ -43,6 +43,7 @@ if not _qt_ok:
 from overlay.win32_capture import (
     capture_window_region, IS_WINDOWS, resolve_eve_window_handle,
     set_no_activate, user32, focus_eve_window, focus_eve_window_perf,
+    focus_eve_window_reliable,
     get_foreground_hwnd, get_foreground_hwnd_cached,
     find_eve_windows_cached,
     set_topmost, should_show_overlays, get_window_size,
@@ -1803,7 +1804,7 @@ class ReplicationOverlay(QWidget):
                 )
                 t_focus_start = time.perf_counter()
                 logger.debug(f"[REPLICA CLICK FOCUS] focus_start hwnd={hwnd}")
-                ok, perf_line = focus_eve_window_perf(hwnd)
+                ok, perf_line = focus_eve_window_reliable(hwnd, max_total_ms=80)
                 t_done = time.perf_counter()
                 logger.debug(
                     f"[REPLICA CLICK FOCUS] focus_done ok={ok} "
@@ -1816,7 +1817,13 @@ class ReplicationOverlay(QWidget):
                 logger.debug(
                     f"[REPLICA CLICK FOCUS] total={(t_done - t_click) * 1000:.1f}ms"
                 )
-                if not ok:
+                if ok:
+                    try:
+                        import overlay.replicator_hotkeys as _hk_mod
+                        _hk_mod.note_active_client_changed(self._title, source='click')
+                    except Exception:
+                        pass
+                else:
                     logger.warning(
                         f"[REPLICA CLICK FOCUS] stale_hwnd title={self._title!r} hwnd={hwnd} "
                         f"— will retry on release"

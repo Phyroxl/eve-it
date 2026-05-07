@@ -554,3 +554,54 @@ En el peor caso: 1.5 + 2 + 2 = 5.5s de lag bloqueante en el UI thread antes de q
 2. El Dashboard Streamlit no puede recibir datos en tiempo real del tracker Qt (solo lee logs directamente). El HUD overlay sí recibe datos en tiempo real vía socket (puerto 47291).
 3. Tests Qt (instanciación de widgets sin display): crashes preexistentes no relacionados con estos cambios.
 4. `test_hotkey_focus_verify::test_index_advanced_when_verified`: fallo preexistente en hotkey cycling.
+
+---
+
+## Session 10 — Low-latency verified input sequencing for Replicator
+
+**Fecha:** 2026-05-07
+**Commit:** FIX: Add low latency verified input sequencing for Replicator
+
+### Causas raíz encontradas
+
+#### 1. Ciclo doble descartado silenciosamente
+- `_cycle_in_progress=True` durante el tiempo de verificación de foco (~20-60ms).
+- Si el usuario pulsaba el hotkey de ciclo dos veces rápido, el segundo se descartaba con `return`.
+- Resultado: usuario acaba en la cuenta B creyendo estar en C → siguiente F1 va a ventana equivocada.
+
+#### 2. Click en réplica no sincronizaba el módulo de hotkeys
+- `mousePressEvent` usaba `focus_eve_window_perf()` (sin verificación de primer plano).
+- Después del click, `note_active_client_changed()` no se llamaba → `_last_cycle_client_id` desincronizado.
+- Siguiente ciclo por hotkey resolvía el índice desde el estado stale, apuntando a la cuenta incorrecta.
+
+#### 3. Test `test_index_advanced_when_verified` fallaba por dos bugs
+- `_reset_hk_state()` no reseteaba `_last_verified_focus_perf=0.0` → MACRO_COMPLETION_GUARD_MS de 70ms activaba early-return en el primer ciclo del test.
+- `_is_eve_client_title()` solo aceptaba `'EVE — '` (em-dash) pero los títulos de test usaban `'EVE - '` (guión normal) → foreground title rechazado → `current_idx=-1` → target incorrecto.
+
+### Archivos modificados
+
+- `overlay/replicator_hotkeys.py`:
+  - Nuevos globals: `_pending_cycle: Optional[dict] = None`, `_pending_cycle_gen: int = 0`.
+  - Nueva función `_maybe_execute_pending()` dentro de `register_hotkeys()`: ejecuta la cola coalescing tras que expira `MACRO_COMPLETION_GUARD_MS`. Usa `threading.Timer` para la espera; `_pending_cycle_gen` como guard ante ciclos directos que lleguen mientras el timer espera.
+  - `_cycle()`: bloque `_cycle_in_progress=True` ahora guarda `_pending_cycle` en vez de descartar (`[INPUT QUEUED]`). Incrementa `_pending_cycle_gen` al aceptar. Llama `_maybe_execute_pending()` en `finally`.
+  - `_cycle_group()`: mismo patrón.
+  - `_is_eve_client_title()`: acepta tanto `'EVE — '` (em-dash, producción) como `'EVE - '` (guión, tests y algunos sistemas).
+
+- `overlay/replication_overlay.py`:
+  - Añadido `focus_eve_window_reliable` al bloque de imports desde `win32_capture`.
+  - `mousePressEvent`: cambiado `focus_eve_window_perf()` → `focus_eve_window_reliable(hwnd, max_total_ms=80)`.
+  - Tras `ok=True`: llama `note_active_client_changed(self._title, source='click')` para sincronizar `_last_cycle_client_id` y los índices de grupo en el módulo de hotkeys.
+
+- `tests/test_hotkey_focus_verify.py`:
+  - `_reset_hk_state()`: añadidos `hk._last_verified_focus_perf = 0.0`, `hk._pending_cycle = None`, `hk._pending_cycle_gen = 0`.
+
+- `overlay/replicator_input_sequencer.py` (nuevo):
+  - `ReplicatorInputSequencer`: clase con worker thread y `queue.Queue(maxsize=4)`.
+  - `submit_action(hwnd, title, deadline_ms=120)` → devuelve `action_id`.
+  - Logs estructurados: `INPUT RECEIVED`, `INPUT SENT`, `INPUT BLOCKED`, `INPUT DROPPED stale/full_queue`.
+  - EULA-safe: solo llama `focus_eve_window_reliable()`, sin inyección de input.
+
+### Tests ejecutados
+
+- `pytest tests/test_hotkey_focus_verify.py -v`: **17 passed** (incluido `test_index_advanced_when_verified` que antes fallaba).
+- `py_compile` sobre todos los archivos modificados: OK.

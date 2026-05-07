@@ -74,6 +74,9 @@ def _reset_hk_state():
     hk._hotkey_diagnostics_callback = None
     hk._hotkey_diagnostics_events = deque(maxlen=1000)
     hk._hwnd_cache = {}
+    hk._last_verified_focus_perf = 0.0
+    hk._pending_cycle = None
+    hk._pending_cycle_gen = 0
 
 
 def _build_cfg(titles=None):

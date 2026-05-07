@@ -80,6 +80,9 @@ _last_cycle_time: float = 0.0             # monotonic() of last *accepted* cycle
 _last_cycle_client_id: Optional[str] = None       # Title of last focused client
 _last_cycle_client_id_time: float = 0.0           # monotonic() of above
 
+_pending_cycle: Optional[dict] = None             # Coalescing queue (size 1, last-write-wins)
+_pending_cycle_gen: int = 0                        # Incremented each time a cycle is accepted; stale-timer guard
+
 # Written by _cycle/_cycle_group; read by CaptureThread.run() in replication_overlay.
 # CaptureThread skips one frame while < now, reducing competition with Win32 focus.
 _capture_suspended_until: float = 0.0
@@ -206,8 +209,8 @@ def _is_replica_window_title(title: str) -> bool:
 
 
 def _is_eve_client_title(title: str) -> bool:
-    """Return True only if title is a genuine EVE game client (starts with 'EVE — ')."""
-    return bool(title and title.startswith(_EVE_CLIENT_PREFIX))
+    """Return True only if title is a genuine EVE game client (em-dash or hyphen variant)."""
+    return bool(title and (title.startswith(_EVE_CLIENT_PREFIX) or title.startswith('EVE - ')))
 
 
 # ── Public diagnostics API ────────────────────────────────────────────────────
@@ -876,6 +879,50 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
     # Both _cycle and _cycle_group share the same guard/cooldown state so a
     # per-client focus and a group cycle don't race each other.
 
+    def _maybe_execute_pending():
+        """Execute the pending coalesced cycle after MACRO_COMPLETION_GUARD_MS expires.
+
+        Schedules via threading.Timer when the guard hasn't expired yet; runs
+        inline when it already has.  A generation counter (_pending_cycle_gen)
+        detects races where a third cycle starts before the timer fires and
+        silently drops the stale pending request.
+        """
+        global _pending_cycle
+        pending = _pending_cycle
+        if not pending:
+            return
+        _pending_cycle = None
+        import time as _time
+        wait_ms = 0.0
+        if _last_verified_focus_perf > 0:
+            elapsed_ms = (_time.perf_counter() - _last_verified_focus_perf) * 1000.0
+            wait_ms = max(0.0, MACRO_COMPLETION_GUARD_MS - elapsed_ms)
+        gen_at_schedule = _pending_cycle_gen
+
+        def _run():
+            if _pending_cycle_gen != gen_at_schedule:
+                _perf_log(
+                    f'[INPUT DROPPED stale] type={pending["type"]} '
+                    f'gen_sched={gen_at_schedule} gen_now={_pending_cycle_gen}'
+                )
+                return
+            _perf_log(
+                f'[PENDING CYCLE] type={pending["type"]} '
+                f'direction={"next" if pending["direction"]>0 else "prev"} '
+                f'wait_ms={wait_ms:.1f} gen={gen_at_schedule}'
+            )
+            if pending['type'] == 'group':
+                _cycle_group(pending['group_id'], pending['direction'])
+            else:
+                _cycle(pending['direction'])
+
+        if wait_ms > 1.0:
+            t = threading.Timer(wait_ms / 1000.0, _run)
+            t.daemon = True
+            t.start()
+        else:
+            _run()
+
     def _cycle(direction: int):
         """Global cycle over _cached_titles / cycle_titles_getter order."""
         global _cycle_in_progress, _last_cycle_time
@@ -899,11 +946,13 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         # ── Anti-accumulation guards ──
         if _cycle_in_progress:
+            global _pending_cycle
+            _pending_cycle = {'type': 'global', 'direction': direction}
             _perf_log(
-                f'[HOTKEY PERF] skipped hotkey=cycle direction={"next" if direction>0 else "prev"} '
+                f'[INPUT QUEUED] hotkey=cycle direction={"next" if direction>0 else "prev"} '
                 f'reason=in_progress since_ms={(now - _last_cycle_time)*1000:.1f}'
             )
-            _diag_event('cycle_skipped', scope='global', reason='in_progress',
+            _diag_event('cycle_queued', scope='global', reason='in_progress',
                 direction='next' if direction > 0 else 'prev',
                 since_ms=round((now - _last_cycle_time) * 1000, 1))
             return
@@ -931,6 +980,8 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         _cycle_in_progress = True
         _last_cycle_time   = now
+        global _pending_cycle_gen
+        _pending_cycle_gen += 1
         _check_and_emit_missing_macro('next_cycle_without_macro')
         if _macro_seq_keys:
             _flush_macro_seq()
@@ -1144,6 +1195,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 used_last_cycle=used_last, resolver_used=_diag_resolver)
         finally:
             _cycle_in_progress = False
+            _maybe_execute_pending()
 
     def _cycle_group(group_id: str, direction: int):
         """Group cycle — uses group['clients_order']. Macro-safe fast path."""
@@ -1169,11 +1221,13 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         # ── Anti-accumulation guards ──
         if _cycle_in_progress:
+            global _pending_cycle
+            _pending_cycle = {'type': 'group', 'group_id': group_id, 'direction': direction}
             _perf_log(
-                f'[HOTKEY PERF] skipped group_id={group_id} direction={"next" if direction>0 else "prev"} '
+                f'[INPUT QUEUED] group_id={group_id} direction={"next" if direction>0 else "prev"} '
                 f'reason=in_progress since_ms={(now - _last_cycle_time)*1000:.1f}'
             )
-            _diag_event('cycle_group_skipped', group_id=group_id, reason='in_progress',
+            _diag_event('cycle_group_queued', group_id=group_id, reason='in_progress',
                 direction='next' if direction > 0 else 'prev',
                 since_ms=round((now - _last_cycle_time) * 1000, 1))
             return
@@ -1201,6 +1255,8 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
 
         _cycle_in_progress = True
         _last_cycle_time   = now
+        global _pending_cycle_gen
+        _pending_cycle_gen += 1
         _check_and_emit_missing_macro('next_cycle_without_macro')
         if _macro_seq_keys:
             _flush_macro_seq()
@@ -1440,6 +1496,7 @@ def register_hotkeys(cfg: dict, cycle_titles_getter: Callable[[], List[str]] = N
                 used_last_cycle=used_last, resolver_used=_diag_resolver)
         finally:
             _cycle_in_progress = False
+            _maybe_execute_pending()
 
     # ── Registration logic ────────────────────────────────────────────────────
 
